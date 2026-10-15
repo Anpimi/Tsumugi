@@ -113,7 +113,7 @@ impl WorkPlanTools {
             tool.binding
                 .validate()
                 .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "work-plan-tool"))?;
-            tool.execution.validate()?;
+            tool.execution.validate_project_or_attempt()?;
             if tool.execution.capability != tool.binding.capability
                 || tool.execution.profile != tool.binding.declaration.profile
             {

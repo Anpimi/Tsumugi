@@ -1062,6 +1062,7 @@ impl Automation {
                                         checker.expires_at_ms,
                                         PluginConsent {
                                             unsandboxed_execution: true,
+                                            application_execution: false,
                                         },
                                     )?;
                                     channel.submitted = true;
@@ -1561,6 +1562,7 @@ mod tracking_tests {
                     serde_json::from_value(wire["view"].clone()).unwrap();
                 let binding = PluginExecutionBinding {
                     component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+                    application_scope: None,
                     capability: view.binding,
                     profile: view.profile,
                     environment: view.environment,
@@ -1613,6 +1615,7 @@ mod tracking_tests {
                         expires_at,
                         PluginConsent {
                             unsandboxed_execution: true,
+                            application_execution: false,
                         },
                     )
                     .unwrap();

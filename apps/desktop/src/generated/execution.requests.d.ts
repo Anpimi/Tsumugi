@@ -14,6 +14,9 @@ export type UnsignedDecimal = string;
 export interface Requests {
   activity: TaskActivityRequest;
   adopt: AdoptRequest;
+  applicationInstance: ApplicationInstanceRequest;
+  applicationInstanceStop: StopApplicationInstanceRequest;
+  applicationShutdown: ApplicationShutdownRequest;
   attempt: AttemptRequest;
   cancel: CancelRequest;
   continuation: ContinuationRequest;
@@ -28,7 +31,7 @@ export interface Requests {
   taskView: TaskViewRequest;
   toolDiscard: PluginToolDiscardRequest;
   toolPrepare: PluginToolPrepareRequest;
-  toolStart: PluginStartRequest;
+  toolStart: PluginToolStartRequest;
 }
 export interface TaskActivityRequest {
   limit: number;
@@ -39,6 +42,24 @@ export interface AdoptRequest {
   actionId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
+}
+export interface ApplicationInstanceRequest {
+  basis: ApplicationScopeBasis;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
+}
+export interface StopApplicationInstanceRequest {
+  actionId: ExecutionId;
+  basis: ApplicationScopeBasis;
+}
+export interface ApplicationShutdownRequest {
+  actionId: ExecutionId;
 }
 export interface AttemptRequest {
   attemptId: ExecutionId;
@@ -152,7 +173,8 @@ export interface PluginIdentity {
   publisher: string;
   version: string;
 }
-export interface PluginStartRequest {
+export interface PluginToolStartRequest {
+  applicationExecution: boolean;
   attemptId: ExecutionId;
   expiresAtMs: UnsignedDecimal;
   grantId: ExecutionId;

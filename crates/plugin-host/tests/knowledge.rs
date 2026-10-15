@@ -287,6 +287,7 @@ fn actual_knowledge_worker_obeys_original_work_plan_grant_and_control() {
             std::time::Instant::now() + std::time::Duration::from_secs(60),
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();

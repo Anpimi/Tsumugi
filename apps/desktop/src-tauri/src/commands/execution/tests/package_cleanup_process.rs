@@ -488,6 +488,7 @@ fn start(
                 expires,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap();

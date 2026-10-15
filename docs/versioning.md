@@ -1,5 +1,30 @@
 # Application versioning and changelog maintenance
 
+Manual read-only Tool queries can explicitly authorize one shared Application
+instance lifetime separately from each project's exact query consent. The first
+supported profile is a JavaScript component with one callable contribution, no
+required dependencies and no ProjectService access. A stopped, revoked, failed
+or exhausted activation is retired; historical receipts and reopening cannot
+restore its lease. Project/Attempt composition remains unchanged, and domain,
+Agent, generation, Native Application and Windows execution remain refused.
+
+Original plugin grants also retain the exact `applicationExecution` consent
+fact. Repeating a fully enqueued start reads the original grant and input after
+later starts, quiescing, revocation or reopening without restoring execution.
+An unqueued grant is not an accepted-start receipt. Both direct and delegated
+grant rows require explicit metadata; there is no default or old-layout repair.
+
+Core execution bindings now require nullable `applicationScope`: Application
+captures its trusted instance UUID and activation generation; Project/Attempt
+explicitly capture null. Together with the required grant consent metadata,
+this advances the current-only format to schema 41.
+Older development directories are refused and preserved without conversion or
+reset. Rust generates the affected Desktop contracts. SDK/process protocols,
+installation formats, dependencies and lockfiles are unchanged. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed batch; both
+Unreleased changelogs are synchronized without another SemVer bump. Native
+product acceptance and broader Application composition remain separate gates.
+
 Application connection facts notify preparation consumers of Query state changes
 instead of render-time cache structure events. Focus invalidation cancels an
 unfinished earlier read before reading again; obsolete responses cannot become

@@ -156,10 +156,10 @@ fn scoped_image(
 }
 fn options() -> LaunchOptions {
     LaunchOptions {
-        scope: ScopeBinding {
+        scope: tsumugi_plugin_host::SessionScope::Bound(ScopeBinding {
             project_id: "project-a".into(),
             scope_id: "scope-a".into(),
-        },
+        }),
         allow_unsandboxed_execution: true,
         limits: HostLimits {
             handshake_timeout_ms: 2000,
@@ -281,7 +281,10 @@ fn attempt_channels_do_not_borrow_even_a_matching_optional_project_service() {
         offered.scope_id = "attempt-a".into();
         let broker = Broker::new(vec![offered], 0, "normal");
         let mut configured = options();
-        configured.scope.scope_id = "attempt-a".into();
+        let SessionScope::Bound(scope) = &mut configured.scope else {
+            panic!("expected project/attempt scope")
+        };
+        scope.scope_id = "attempt-a".into();
         let result = ProcessSession::launch_with_services(
             &image,
             "client.call",
@@ -570,7 +573,10 @@ mod javascript {
             service.error_schema = generation_service_error_contract();
             service.effect = EffectKind::External;
             let mut configured = options();
-            configured.scope.scope_id = "attempt-a".into();
+            let SessionScope::Bound(scope) = &mut configured.scope else {
+                panic!("expected project/attempt scope")
+            };
+            scope.scope_id = "attempt-a".into();
             for mutation in [
                 "missing",
                 "project-scope",
@@ -638,10 +644,7 @@ mod javascript {
             let seen = broker.seen.lock().unwrap();
             assert_eq!(seen.len(), 1);
             assert_eq!(seen[0].0.channel().provider, session.channel().provider);
-            assert_eq!(
-                seen[0].0.channel().scope.scope_id,
-                session.channel().scope.scope_id
-            );
+            assert_eq!(seen[0].0.channel().scope, session.channel().scope);
             assert_eq!(seen[0].0.context(), &invocation.context);
             drop(seen);
             session.close().await;

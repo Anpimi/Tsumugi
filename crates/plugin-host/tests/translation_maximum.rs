@@ -113,6 +113,7 @@ fn maximum_file_workflow(unicode: bool, key_length: usize) {
                         &source_resource.review,
                         &tsumugi_core::execution::PluginExecutionBinding {
                             component_scope: sdk::ComponentScope::Project,
+                            application_scope: None,
                             capability: (&source_resource.review).checker.clone(),
                             profile: Some((&source_resource.review).declaration.profile.clone()),
                             environment: (*(&source_producer
@@ -606,6 +607,7 @@ fn authorize_maximum(runtime: &ExecutionRuntime, store: &mut ProjectStore, input
             expires,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();

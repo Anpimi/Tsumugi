@@ -79,10 +79,10 @@ pub async fn launch(
             runtime: runtime_fixture::approved_runtime(),
         },
         LaunchOptions {
-            scope: ScopeBinding {
+            scope: tsumugi_plugin_host::SessionScope::Bound(ScopeBinding {
                 project_id: "synthetic-project".into(),
                 scope_id: "synthetic-project".into(),
-            },
+            }),
             allow_unsandboxed_execution: true,
             limits: HostLimits::default(),
         },
@@ -147,11 +147,7 @@ pub async fn invoke_received(
     let received = session.invoke(&request, || false, || true).await.unwrap();
     assert_eq!(received.channel().provider, channel.provider);
     assert_eq!(received.channel().child_pid, channel.child_pid);
-    assert_eq!(
-        received.channel().scope.project_id,
-        channel.scope.project_id
-    );
-    assert_eq!(received.channel().scope.scope_id, channel.scope.scope_id);
+    assert_eq!(received.channel().scope, channel.scope);
     assert_eq!(received.result().provider, channel.provider);
     assert_eq!(received.result().context, request.context);
     received

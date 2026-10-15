@@ -19,6 +19,52 @@ pub struct PluginConsent {
     /// Acknowledge native execution with the current user's OS privileges;
     /// this execution profile does not provide a filesystem or network sandbox.
     pub unsandboxed_execution: bool,
+    /// The original application's independent lifetime decision. Recording this
+    /// fact neither creates nor restores an application-instance lease.
+    pub application_execution: bool,
+}
+
+/// A trusted application entry captures this independent lifetime decision.
+/// It only narrows project grants and is never restored from persisted values.
+#[derive(Clone, Debug)]
+pub struct ApplicationExecutionLease {
+    binding: super::PluginExecutionBinding,
+    revocation: Cancellation,
+    settings_revocation: Cancellation,
+}
+impl ApplicationExecutionLease {
+    pub fn capture(
+        binding: super::PluginExecutionBinding,
+        allow_until_application_exit: bool,
+        revocation: Cancellation,
+        settings_revocation: Cancellation,
+    ) -> Result<Self, ExecutionError> {
+        binding.validate()?;
+        if !allow_until_application_exit
+            || binding.application_scope.is_none()
+            || revocation.is_requested()
+            || settings_revocation.is_requested()
+        {
+            return Err(denied());
+        }
+        Ok(Self {
+            binding,
+            revocation,
+            settings_revocation,
+        })
+    }
+    pub fn matches(&self, input: &FixedInput) -> bool {
+        input.envelope().plugin.as_ref() == Some(&self.binding) && self.is_live()
+    }
+    pub fn revocation(&self) -> Cancellation {
+        self.revocation.clone()
+    }
+    pub fn is_live(&self) -> bool {
+        if self.settings_revocation.is_requested() {
+            self.revocation.request();
+        }
+        !self.revocation.is_requested()
+    }
 }
 
 impl PluginConsent {
@@ -35,6 +81,12 @@ impl PluginConsent {
         input.envelope().plugin.is_some()
             && input.envelope().automation.is_none()
             && self.unsandboxed_execution
+            && (!self.application_execution
+                || input
+                    .envelope()
+                    .plugin
+                    .as_ref()
+                    .is_some_and(|binding| binding.application_scope.is_some()))
     }
 }
 
@@ -71,8 +123,10 @@ struct GrantState {
     package: super::runtime::PackageKey,
     generation: ExecutionId,
     expires_at_ms: u64,
+    application_execution: bool,
     deadline: Instant,
     delegation: Option<crate::application::WorkPlanToolDelegation>,
+    application_revocation: Option<ApplicationExecutionLease>,
     revoked: AtomicBool,
 }
 impl GrantState {
@@ -80,7 +134,11 @@ impl GrantState {
         if self.revoked.load(Ordering::Acquire) {
             return false;
         }
-        let live = Instant::now() < self.deadline
+        let live = self
+            .application_revocation
+            .as_ref()
+            .is_none_or(|lease| lease.is_live())
+            && Instant::now() < self.deadline
             && plugin_now_ms().is_ok_and(|now| now < self.expires_at_ms);
         // Once an expiry (or unavailable clock) is observed, moving the wall
         // clock backwards cannot make the same handle valid again.
@@ -162,11 +220,13 @@ impl PluginPermit {
         grant_id: ExecutionId,
         generation: ExecutionId,
         expires_at_ms: u64,
+        application_execution: bool,
     ) -> bool {
         self.matches(input)
             && self.grant.grant_id == grant_id
             && self.grant.generation == generation
             && self.grant.expires_at_ms == expires_at_ms
+            && self.grant.application_execution == application_execution
     }
 }
 
@@ -354,8 +414,19 @@ impl PluginAuthority {
         input: &FixedInput,
         expires_at_ms: u64,
         deadline: Instant,
+        consent: PluginConsent,
+        application_revocation: Option<ApplicationExecutionLease>,
     ) -> Result<PluginPermit, ExecutionError> {
-        self.activate_with_delegation(generation, grant_id, input, expires_at_ms, deadline, None)
+        self.activate_with_delegation(
+            generation,
+            grant_id,
+            input,
+            expires_at_ms,
+            deadline,
+            consent.application_execution,
+            None,
+            application_revocation,
+        )
     }
 
     pub(crate) fn activate_with_delegation(
@@ -365,7 +436,9 @@ impl PluginAuthority {
         input: &FixedInput,
         expires_at_ms: u64,
         deadline: Instant,
+        application_execution: bool,
         delegation: Option<crate::application::WorkPlanToolDelegation>,
+        application_revocation: Option<ApplicationExecutionLease>,
     ) -> Result<PluginPermit, ExecutionError> {
         let epoch = self.require_generation(generation)?;
         plugin_grant_deadline(expires_at_ms).map_err(|error| {
@@ -409,8 +482,10 @@ impl PluginAuthority {
             ),
             generation,
             expires_at_ms,
+            application_execution,
             deadline,
             delegation,
+            application_revocation,
             revoked: AtomicBool::new(false),
         });
         let permit = PluginPermit {

@@ -35,6 +35,7 @@ fn tool() -> WorkPlanToolSpec {
         selections: vec!["term".into()],
         execution: PluginExecutionBinding {
             component_scope: sdk::ComponentScope::Project,
+            application_scope: None,
             capability: binding.capability.clone(),
             profile: binding.declaration.profile.clone(),
             environment: sdk::RuntimeEnvironmentDescriptor {
@@ -178,6 +179,7 @@ fn fixture_with_tool_runners(
             std::time::Instant::now() + std::time::Duration::from_secs(60),
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
@@ -390,6 +392,8 @@ fn package_stop_rejects_new_tool_authority_without_stopping_an_independent_tool(
     ))
     .unwrap();
     other.binding = declaration.bind(&manifest, &"d".repeat(64)).unwrap();
+    other.execution.capability = other.binding.capability.clone();
+    other.execution.profile = other.binding.declaration.profile.clone();
     let (started, observed) = std::sync::mpsc::channel();
     let mut f = fixture_with_tool_runners(
         3,
@@ -568,7 +572,8 @@ fn consent_preserves_original_monotonic_deadline_and_rejects_scope_expansion() {
                     now_ms() + 60_000,
                     deadline,
                     PluginConsent {
-                        unsandboxed_execution: true
+                        unsandboxed_execution: true,
+                        application_execution: false
                     }
                 )
                 .unwrap_err()
@@ -585,7 +590,8 @@ fn consent_preserves_original_monotonic_deadline_and_rejects_scope_expansion() {
                     expires,
                     Instant::now() + Duration::from_secs(60),
                     PluginConsent {
-                        unsandboxed_execution: true
+                        unsandboxed_execution: true,
+                        application_execution: false
                     }
                 )
                 .unwrap_err()
@@ -602,6 +608,7 @@ fn consent_preserves_original_monotonic_deadline_and_rejects_scope_expansion() {
             Instant::now() + Duration::from_millis(100),
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
@@ -837,6 +844,7 @@ fn historical_plugin_results_bind_original_grant_even_after_revocation() {
                     now_ms() + 60_000,
                     PluginConsent {
                         unsandboxed_execution: true,
+                        application_execution: false,
                     },
                 )
                 .unwrap();
@@ -917,7 +925,8 @@ fn delegated_tool_derives_source_and_requires_independent_process_consent() {
                 now_ms() + 60_000,
                 std::time::Instant::now() + std::time::Duration::from_secs(60),
                 PluginConsent {
-                    unsandboxed_execution: false
+                    unsandboxed_execution: false,
+                    application_execution: false
                 }
             )
             .unwrap_err()
@@ -932,7 +941,8 @@ fn delegated_tool_derives_source_and_requires_independent_process_consent() {
                 prepared.input(),
                 now_ms() + 60_000,
                 PluginConsent {
-                    unsandboxed_execution: true
+                    unsandboxed_execution: true,
+                    application_execution: false
                 }
             )
             .is_err()
@@ -1062,6 +1072,7 @@ fn all_tool_items_share_original_limit_across_continue_and_root_cancellation() {
             std::time::Instant::now() + std::time::Duration::from_secs(60),
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
@@ -1222,8 +1233,8 @@ fn reopening_refuses_a_delegated_grant_without_its_original_attempt() {
     let database = path.join("project.sqlite3");
     let connection = rusqlite::Connection::open(&database).unwrap();
     assert_eq!(connection.execute(
-        "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation)
-         SELECT ?1,?2,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,1,delegation
+        "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation)
+         SELECT ?1,?2,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,0,1,delegation
          FROM plugin_execution_grants WHERE attempt_id=?3 AND delegation IS NOT NULL",
         rusqlite::params![ExecutionId::new().to_string(), ExecutionId::new().to_string(), prepared.input().envelope().attempt_id.to_string()],
     ).unwrap(), 1);
@@ -1234,6 +1245,39 @@ fn reopening_refuses_a_delegated_grant_without_its_original_attempt() {
         Err(tsumugi_core::PersistenceError::CorruptProject { .. })
     ));
     assert_eq!(std::fs::read(database).unwrap(), before);
+}
+
+#[test]
+fn reopening_refuses_application_lifetime_consent_on_a_delegated_grant() {
+    let mut f = fixture(1);
+    let prepared = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &request(&f, vec![f.units[0]]))
+        .unwrap();
+    f.runtime
+        .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, ExecutionId::new())
+        .unwrap();
+    let path = f.store.directory().to_owned();
+    drop(f.runtime);
+    drop(f.store);
+    let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    let original: bool = connection.query_row(
+        "SELECT application_execution FROM plugin_execution_grants WHERE attempt_id=?1 AND delegation IS NOT NULL",
+        [prepared.input().envelope().attempt_id.to_string()],
+        |row| row.get(0),
+    ).unwrap();
+    assert!(!original);
+    assert_eq!(connection.execute(
+        "UPDATE plugin_execution_grants SET application_execution=1 WHERE attempt_id=?1 AND delegation IS NOT NULL",
+        [prepared.input().envelope().attempt_id.to_string()],
+    ).unwrap(), 1);
+    drop(connection);
+    let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+    assert!(matches!(
+        ProjectStore::open(&path),
+        Err(tsumugi_core::PersistenceError::CorruptProject { .. })
+    ));
+    assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), before);
 }
 
 #[test]
@@ -1412,6 +1456,7 @@ fn crash_after_atomic_tool_commit_preserves_input_without_rearming_permission() 
             std::time::Instant::now() + std::time::Duration::from_secs(60),
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
@@ -1481,6 +1526,21 @@ fn attempt_tool_scope_is_the_child_attempt_and_fixed_in_plan_grant_and_history()
         f.runtime
             .submit_work_plan_tool(&mut f.store, &proposal, &f.consent, grant)
             .unwrap();
+        assert!(
+            f.store
+                .reconcile_plugin_start(
+                    grant,
+                    child,
+                    input.digest(),
+                    f.consent.expires_at_ms(),
+                    PluginConsent {
+                        unsandboxed_execution: true,
+                        application_execution: false
+                    },
+                )
+                .is_err(),
+            "a manual start cannot acknowledge an Agent-delegated grant"
+        );
         let deadline = Instant::now() + Duration::from_secs(5);
         let result = loop {
             f.runtime.tick(&mut f.store).unwrap();
@@ -1595,5 +1655,26 @@ fn tool_plan_requires_its_complete_execution_binding_without_scope_defaults() {
         }
         .validate()
         .is_err()
+    );
+}
+
+#[test]
+fn agent_tool_selection_rejects_a_structurally_valid_application_instance() {
+    let mut entry = tool();
+    entry.execution.component_scope = sdk::ComponentScope::Application;
+    entry.execution.application_scope = Some(ApplicationScopeBasis {
+        instance_id: ExecutionId::new(),
+        activation_generation: 1,
+    });
+    entry.execution.validate().unwrap();
+    assert_eq!(
+        WorkPlanTools {
+            max_invocations: 1,
+            entries: vec![entry]
+        }
+        .validate()
+        .unwrap_err()
+        .stage,
+        "plugin-composition-scope"
     );
 }

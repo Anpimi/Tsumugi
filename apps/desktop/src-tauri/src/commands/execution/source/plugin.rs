@@ -562,6 +562,7 @@ async fn start(
                             request.expires_at_ms.get(),
                             PluginConsent {
                                 unsandboxed_execution: request.unsandboxed_execution,
+                                application_execution: false,
                             },
                         )
                         .map_err(map_source)?;

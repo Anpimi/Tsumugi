@@ -76,6 +76,7 @@ fn authorize(
             expiry(),
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
@@ -295,7 +296,8 @@ fn native_fixed_input_live_grant_original_channel_and_history_survive_reopen() {
                 &input,
                 expiry(),
                 PluginConsent {
-                    unsandboxed_execution: true
+                    unsandboxed_execution: true,
+                    application_execution: false
                 }
             )
             .is_err()
@@ -330,7 +332,8 @@ fn native_environment_is_selected_by_the_registered_host_and_never_by_input_clai
                 &wrong,
                 expiry(),
                 PluginConsent {
-                    unsandboxed_execution: true
+                    unsandboxed_execution: true,
+                    application_execution: false
                 }
             )
             .is_err()
@@ -376,7 +379,8 @@ fn native_authority_consent_expiry_revocation_and_cancellation_precede_dispatch(
                     &input,
                     expiry(),
                     PluginConsent {
-                        unsandboxed_execution: false
+                        unsandboxed_execution: false,
+                        application_execution: false
                     }
                 )
                 .unwrap_err()
@@ -391,7 +395,8 @@ fn native_authority_consent_expiry_revocation_and_cancellation_precede_dispatch(
                     &input,
                     1,
                     PluginConsent {
-                        unsandboxed_execution: true
+                        unsandboxed_execution: true,
+                        application_execution: false
                     }
                 )
                 .is_err()
@@ -409,6 +414,7 @@ fn native_authority_consent_expiry_revocation_and_cancellation_precede_dispatch(
                 deadline,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap();

@@ -43,6 +43,7 @@ impl<B> DeclaredEnvironment<B> {
         let binding = tsumugi_core::execution::PluginExecutionBinding {
             capability: actual,
             component_scope: component.scope,
+            application_scope: None,
             profile,
             environment: self.runtime.environment(),
         };

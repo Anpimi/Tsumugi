@@ -266,6 +266,7 @@ export interface TextReviewResourceBinding {
   schema: ContractRef;
 }
 export interface PluginExecutionBinding {
+  applicationScope: ApplicationScopeBasis | null;
   capability: CapabilityBinding;
   /**
    * Captured from the selected component, never inferred from a result.
@@ -277,6 +278,14 @@ export interface PluginExecutionBinding {
    */
   environment: ExecutionEnvironmentDescriptor;
   profile: ContractRef | null;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
 }
 /**
  * Exact tool and Host choices for a fixed invocation. Paths are logical within

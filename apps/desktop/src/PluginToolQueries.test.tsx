@@ -22,9 +22,12 @@ const project: ProjectView = { sessionToken: "synthetic-query-session", locator:
 let serial: number, inventory: typeof toolQueryInventory, prepared: PluginToolPreflight | null, detail: AttemptDetail | null;
 let outputs: Map<string, ExecutionOutputView>, startUnknown: boolean, malformedOutput: boolean, queued: boolean;
 let holdPreparation: Promise<void> | null;
+let applicationMode: boolean, instanceState: "reserved" | "active" | "stopping" | "stopped", unknownStop: boolean;
+const applicationBasis = { instanceId: fixtureIdentity(1900), activationGeneration: 1 };
 
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
+  applicationMode = false; instanceState = "reserved"; unknownStop = false;
   serial = 901; inventory = structuredClone(toolQueryInventory); prepared = null; detail = null;
   outputs = new Map(); startUnknown = false; malformedOutput = false; queued = false; holdPreparation = null;
   invoke.mockReset();
@@ -35,16 +38,24 @@ beforeEach(async () => {
       case "read_terms": case "list_resource_captures": return [];
       case "read_plugin_inventory": return structuredClone(inventory);
       case "read_plugin_package": return structuredClone(toolQueryPackage);
-      case "read_plugin_tool": return structuredClone(toolQueryView);
+      case "read_plugin_tool": return { ...structuredClone(toolQueryView), componentScope: applicationMode ? "application" : "project" };
+      case "read_application_plugin_instance": return { basis: structuredClone(applicationBasis), state: instanceState };
+      case "stop_application_plugin_instance": {
+        instanceState = "stopped";
+        if (unknownStop) { unknownStop = false; return { unconfirmed: true }; }
+        return { basis: structuredClone(applicationBasis), state: instanceState };
+      }
       case "create_execution_identity": return fixtureIdentity(serial++);
       case "prepare_plugin_tool": {
         const input = request as unknown as PluginToolPrepareRequest;
         if (holdPreparation) await holdPreparation;
-        prepared = { attemptId: input.attemptId, inputDigest: "c".repeat(64), tool: structuredClone(toolQueryView),
+        prepared = { attemptId: input.attemptId, inputDigest: "c".repeat(64), tool: { ...structuredClone(toolQueryView), componentScope: applicationMode ? "application" : "project" },
+          applicationScope: applicationMode ? structuredClone(applicationBasis) : null,
           items: input.payloads.map((payload, index) => ({ itemId: fixtureIdentity(1000 + index), payload })).reverse() };
         return structuredClone(prepared);
       }
       case "start_plugin_tool": {
+        if (applicationMode) instanceState = "active";
         if (!prepared) throw new Error("Missing synthetic capture");
         detail = { attemptId: prepared.attemptId, taskId: fixtureIdentity(1200), operation: "plugin-tool-query", nextOffset: null,
           items: prepared.items.map((item, index) => ({ scope: { kind: "plugin-tool-query", id: project.metadata.projectId, locale: null },
@@ -448,4 +459,37 @@ it("keeps a failed saved-result read distinct from empty or malformed output and
   expect(invoke.mock.calls.filter(([command]) => command === "prepare_plugin_tool")).toHaveLength(1);
   expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
+});
+
+it("requires independent application lifetime consent and preserves drafts/results after an unknown exact stop", async () => {
+  applicationMode = true;
+  const { user, owner } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "kept query");
+  await review(user);
+  const lifetime = await screen.findByRole("checkbox", { name: /^I allow this exact shared instance/ });
+  const run = screen.getByRole("button", { name: "Run reference queries" });
+  await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
+  expect(run).toBeDisabled();
+  await user.click(lifetime);
+  expect(run).toBeEnabled();
+  await user.click(run);
+  await screen.findByRole("region", { name: "Query results" });
+  expect(invoke.mock.calls.find(([command]) => command === "start_plugin_tool")?.[1].request.applicationExecution).toBe(true);
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), " plus draft");
+  unknownStop = true;
+  const stop = await screen.findByRole("button", { name: "Stop shared instance" });
+  await waitFor(() => expect(stop).toBeEnabled());
+  await user.click(stop);
+  await screen.findByRole("button", { name: "Check the original action" });
+  expect(owner().current().pending?.kind).toBe("stop-instance");
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("kept query plus draft");
+  await user.click(screen.getByRole("button", { name: "Check the original action" }));
+  await waitFor(() => expect(owner().current().pending).toBeNull());
+  const stops = invoke.mock.calls.filter(([command]) => command === "stop_application_plugin_instance");
+  expect(stops).toHaveLength(2);
+  expect(stops[1][1]).toEqual(stops[0][1]);
+  expect(stops[0][1].request.basis).toEqual(applicationBasis);
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("kept query plus draft");
+  expect(screen.getByRole("region", { name: "Query results" })).toBeVisible();
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
 });

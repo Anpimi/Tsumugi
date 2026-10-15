@@ -3,7 +3,10 @@
 use super::*;
 use crate::commands::plugins::{PluginToolRequest, PluginToolView, tools::ToolEnvironment};
 use serde_json::{Value, json};
-use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
+use tsumugi_plugin_host::{
+    HostLimits,
+    core::{ApplicationInstance, RunnerProxy},
+};
 
 const OPERATION: &str = "plugin-tool-query";
 
@@ -11,7 +14,7 @@ const OPERATION: &str = "plugin-tool-query";
 pub(super) struct ToolSession {
     pending: Option<(ExecutionId, ExecutionId)>,
     prepared: Option<Arc<PreparedTool>>,
-    last_start: Option<PluginStartRequest>,
+    last_start: Option<PluginToolStartRequest>,
 }
 impl ToolSession {
     pub(super) fn stop_package(
@@ -67,7 +70,21 @@ struct PreparedTool {
     request: Arc<PluginToolPrepareRequest>,
     input: FixedInput,
     view: PluginToolPreflight,
+    application: Option<Arc<ApplicationInstance>>,
 }
+
+request!(
+    #[derive(PartialEq, Eq)]
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    PluginToolStartRequest {
+        attempt_id: ExecutionId,
+        input_digest: String,
+        grant_id: ExecutionId,
+        expires_at_ms: UnsignedDecimal,
+        unsandboxed_execution: bool,
+        application_execution: bool
+    }
+);
 
 request!(
     #[derive(PartialEq)]
@@ -100,6 +117,12 @@ pub struct PluginToolPreflight {
     pub input_digest: String,
     pub tool: PluginToolView,
     pub items: Vec<PluginToolItem>,
+    #[serde(deserialize_with = "tsumugi_core::execution::required_application_scope")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "tsumugi_core::execution::application_scope_schema")
+    )]
+    pub application_scope: Option<tsumugi_core::execution::ApplicationScopeBasis>,
 }
 
 fn stale() -> CommandError {
@@ -116,7 +139,7 @@ fn binding(environment: &ToolEnvironment) -> Result<PluginExecutionBinding, Comm
 }
 fn finish<'a>(
     sessions: &'a mut SessionManager,
-    request: &PluginStartRequest,
+    request: &PluginToolStartRequest,
     ticket: ExecutionId,
 ) -> Result<&'a mut ActiveSession, CommandError> {
     finish_job(sessions, &request.session_token, request.project_id, ticket)
@@ -140,7 +163,12 @@ fn capture(
     project: tsumugi_core::ProjectId,
     request: Arc<PluginToolPrepareRequest>,
     environment: ToolEnvironment,
+    application: Option<Arc<ApplicationInstance>>,
 ) -> Result<Arc<PreparedTool>, CommandError> {
+    let execution = match application.as_ref() {
+        Some(instance) => instance.binding().map_err(map_recover)?,
+        None => binding(&environment)?,
+    };
     let capability = &environment.binding.capability.declaration;
     let result_bytes = capability
         .limits
@@ -168,12 +196,12 @@ fn capture(
         project,
         OPERATION,
         &capability.contract.id,
-        &binding(&environment)?.capability_version(),
+        &execution.capability_version(),
         items,
     )
     .map_err(map_recover)?;
     envelope.attempt_id = request.attempt_id;
-    envelope.plugin = Some(binding(&environment)?);
+    envelope.plugin = Some(execution.clone());
     envelope.limits.timeout_ms = capability.limits.timeout_ms.min(60_000);
     envelope.limits.max_result_bytes = result_bytes;
     let tool = environment.view()?;
@@ -197,6 +225,7 @@ fn capture(
         attempt_id: request.attempt_id,
         input_digest: input.digest().into(),
         tool,
+        application_scope: execution.application_scope,
         items: input
             .envelope()
             .items
@@ -211,6 +240,7 @@ fn capture(
         request,
         input,
         view,
+        application,
     }))
 }
 
@@ -274,7 +304,8 @@ pub async fn prepare_plugin_tool(
             .run(CommandStage::ExecutionRecover, move || {
                 accepted_work.check()?;
                 let environment = plugins.capture_tool(&original.tool)?;
-                capture(project, original, environment)
+                let application = plugins.reserve_application_tool(&environment)?;
+                capture(project, original, environment, application)
             })
             .await;
         lease
@@ -301,7 +332,7 @@ pub async fn prepare_plugin_tool(
 #[tauri::command]
 pub async fn start_plugin_tool(
     state: State<'_, AppState>,
-    request: PluginStartRequest,
+    request: PluginToolStartRequest,
 ) -> Result<ExecutionId, CommandError> {
     if !request.unsandboxed_execution
         || tsumugi_plugin_sdk::validate_package_digest(&request.input_digest).is_err()
@@ -324,15 +355,25 @@ pub async fn start_plugin_tool(
                 CommandStage::ExecutionRecover,
             )?;
             let (host, store) = active.execution_parts()?;
-            host.allow_mutation()?;
-            if host.tools.last_start.as_ref() == Some(&initial) {
-                match store.execution_input(initial.attempt_id) {
-                    Ok(input) if input.digest() == initial.input_digest => return Ok(None),
-                    Ok(_) => return Err(stale()),
-                    Err(error) if error.code == ErrorCode::InvalidInput => {}
-                    Err(error) => return Err(map_recover(error)),
+            if let Some(input) = store
+                .reconcile_plugin_start(
+                    initial.grant_id,
+                    initial.attempt_id,
+                    &initial.input_digest,
+                    initial.expires_at_ms.get(),
+                    PluginConsent {
+                        unsandboxed_execution: initial.unsandboxed_execution,
+                        application_execution: initial.application_execution,
+                    },
+                )
+                .map_err(map_recover)?
+            {
+                if input.envelope().operation != OPERATION {
+                    return Err(stale());
                 }
+                return Ok(None);
             }
+            host.allow_mutation()?;
             let prepared = host
                 .tools
                 .prepared
@@ -368,12 +409,14 @@ pub async fn start_plugin_tool(
             .run(CommandStage::ExecutionRecover, move || {
                 accepted_work.check()?;
                 let environment = current_plugins.capture_tool(&fixed.request.tool)?;
-                if environment.view()? != fixed.view.tool
-                    || fixed.input.envelope().plugin.as_ref() != Some(&binding(&environment)?)
-                {
+                let execution = match &fixed.application {
+                    Some(instance) => instance.binding().map_err(map_recover)?,
+                    None => binding(&environment)?,
+                };
+                if environment.view()? != fixed.view.tool || fixed.input.envelope().plugin.as_ref() != Some(&execution) {
                     return Err(stale());
                 }
-                let proxy = RunnerProxy::new(
+                let proxy = if let Some(instance) = &fixed.application { instance.runner() } else { RunnerProxy::new(
                     environment.package.image().clone(),
                     &environment.binding.declaration.capability_id,
                     environment.runtime.clone(),
@@ -381,8 +424,8 @@ pub async fn start_plugin_tool(
                     HostLimits::default(),
                 )
                 .map(Arc::new)
-                .map_err(map_recover)?;
-                Ok((environment, proxy))
+                .map_err(map_recover)? };
+                Ok((environment, proxy, execution))
             })
             .await;
         lease
@@ -393,21 +436,37 @@ pub async fn start_plugin_tool(
                     let active = finish(sessions, &request, ticket)?;
                     work.check()?;
                     let (host, store) = active.execution_parts()?;
-                    let (environment, proxy) = loaded?;
-                    plugins.with_environment_revision(environment.settings_revision, || {
-                        host.register_plugin(proxy, binding(&environment)?)
+                    let (environment, proxy, execution) = loaded?;
+                    plugins.with_environment_authority(environment.settings_revision, |settings| {
+                        let previous = host.plugin_registrations.clone();
+                        for old in previous {
+                            if old.application_scope.as_ref().is_some_and(|basis|
+                                plugins.application_instance(basis).is_ok_and(|view| view.state == crate::commands::plugins::application::ApplicationInstanceState::Stopped))
+                                && host.runtime.retire_application_runner(store, &old).map_err(map_recover)? {
+                                host.plugin_registrations.retain(|binding| binding != &old);
+                            }
+                        }
+                        if request.application_execution && prepared.application.is_none() { return Err(stale()); }
+                        // Reject expired/invalid project consent before consuming an
+                        // independent application lifetime decision.
+                        PluginConsent { unsandboxed_execution: request.unsandboxed_execution, application_execution: request.application_execution }
+                            .validate(&prepared.input, request.expires_at_ms.get()).map_err(map_recover)?;
+                        let application_lease = prepared.application.as_ref().map(|instance|
+                            plugins.authorize_application_tool(instance, request.grant_id, request.application_execution, settings)).transpose()?;
+                        host.register_plugin(proxy, execution)
                             .map_err(map_recover)?;
-                        host.runtime
+                        if let Some(lease) = &application_lease {
+                            host.runtime.authorize_application_plugin(store, request.grant_id, &prepared.input, request.expires_at_ms.get(),
+                                PluginConsent { unsandboxed_execution: request.unsandboxed_execution, application_execution: request.application_execution }, lease).map_err(map_recover)?;
+                        } else { host.runtime
                             .authorize_plugin(
                                 store,
                                 request.grant_id,
                                 &prepared.input,
                                 request.expires_at_ms.get(),
-                                PluginConsent {
-                                    unsandboxed_execution: request.unsandboxed_execution,
-                                },
+                                PluginConsent { unsandboxed_execution: request.unsandboxed_execution, application_execution: request.application_execution },
                             )
-                            .map_err(map_recover)?;
+                            .map_err(map_recover)?; }
                         // Unknown enqueue outcomes retain the original consent, never a
                         // substituted grant or extended expiry on a retry.
                         host.tools.last_start = Some(request.clone());

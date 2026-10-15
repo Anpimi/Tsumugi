@@ -36,7 +36,7 @@ function advisoryViewFixture(status: "findings" | "failed" | "unknown" | "unavai
   const requirement = { ...structuredClone(formatRequirement), key, mandatory: false, waivable: false, inputDigest: "e".repeat(64) };
   evidence.requiredChecks.requirements.push(requirement);
   evidence.advisoryChecks.push({ binding: text.binding, declarationResourceId: text.resourceId,
-    execution: { capability: text.binding.checker, componentScope: "project",
+    execution: { capability: text.binding.checker, componentScope: "project", applicationScope: null,
       profile: text.binding.declaration.profile, environment: text.environment },
     resourcePins: text.resourcePins, rules: text.rules });
   evidence.origins.push({ checker: { provider: text.binding.checker.provider, profile: text.binding.declaration.profile },

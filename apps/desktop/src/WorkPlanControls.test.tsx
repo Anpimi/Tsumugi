@@ -37,7 +37,7 @@ function planFixture(): WorkPlanView {
   return { ...base, options: { ...base.options, selectionPolicy: "missing-only", stages: [
     { stage: "generation", mode: "assisted" }, { stage: "checks", mode: "assisted" },
   ], advisoryChecks: text.map(view => ({ binding: view.binding,
-    execution: { capability: view.binding.checker, componentScope: "project" as const,
+    execution: { capability: view.binding.checker, componentScope: "project" as const, applicationScope: null,
       profile: view.binding.declaration.profile, environment: view.environment },
     declarationResourceId: view.resourceId, resourcePins: view.resourcePins, rules: view.rules })) },
   checkers: [{ kind: "ready", checker: format.checker, plugin: format.plugin }, ...text.map(view => {

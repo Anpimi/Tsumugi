@@ -19,10 +19,30 @@ use tokio::{
 };
 use tsumugi_plugin_sdk::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScopeBinding {
     pub project_id: String,
     pub scope_id: String,
+}
+
+/// Process lifetime and individual project calls have separate identities.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SessionScope {
+    Bound(ScopeBinding),
+    Application {
+        instance_id: String,
+        activation_generation: u32,
+    },
+}
+impl SessionScope {
+    pub fn matches_invocation(&self, context: &InvocationContext) -> bool {
+        match self {
+            Self::Bound(scope) => {
+                scope.project_id == context.project_id && scope.scope_id == context.scope_id
+            }
+            Self::Application { instance_id, .. } => *instance_id == context.scope_id,
+        }
+    }
 }
 
 /// Host policy, not a permission request made by a plugin. Native processes have
@@ -30,7 +50,7 @@ pub struct ScopeBinding {
 /// and keep the live authority guard current; this crate cannot create a grant.
 #[derive(Clone, Debug)]
 pub struct LaunchOptions {
-    pub scope: ScopeBinding,
+    pub scope: SessionScope,
     pub allow_unsandboxed_execution: bool,
     pub limits: HostLimits,
 }
@@ -97,7 +117,7 @@ pub enum RuntimeLauncher {
 pub struct ChannelReceipt {
     pub provider: ProviderBinding,
     pub child_pid: u32,
-    pub scope: ScopeBinding,
+    pub scope: SessionScope,
 }
 /// Valid wire output bound to the captured request and this actual child. Domain
 /// semantics, current authority and adoption must still be checked by Core.
@@ -105,6 +125,7 @@ pub struct ChannelReceipt {
 pub struct ReceivedResult {
     result: InvocationResult,
     channel: ChannelReceipt,
+    invocation_scope: ScopeBinding,
 }
 impl ReceivedResult {
     pub fn result(&self) -> &InvocationResult {
@@ -112,6 +133,9 @@ impl ReceivedResult {
     }
     pub fn channel(&self) -> &ChannelReceipt {
         &self.channel
+    }
+    pub fn invocation_scope(&self) -> &ScopeBinding {
+        &self.invocation_scope
     }
 }
 
@@ -214,11 +238,19 @@ impl ProcessSession {
         if !authorized() {
             return Err(HostError::AuthorityRevoked);
         }
-        if options.scope.project_id.is_empty()
-            || options.scope.scope_id.is_empty()
-            || options.scope.project_id.len() > 128
-            || options.scope.scope_id.len() > 128
-        {
+        let valid_scope = match &options.scope {
+            SessionScope::Bound(scope) => {
+                !scope.project_id.is_empty()
+                    && !scope.scope_id.is_empty()
+                    && scope.project_id.len() <= 128
+                    && scope.scope_id.len() <= 128
+            }
+            SessionScope::Application {
+                instance_id,
+                activation_generation,
+            } => uuid::Uuid::parse_str(instance_id).is_ok() && *activation_generation > 0,
+        };
+        if !valid_scope {
             return Err(HostError::InvalidContract);
         }
         // Windows needs an owned Job Object before it can make the same bounded
@@ -242,15 +274,45 @@ impl ProcessSession {
                 .iter()
                 .find(|c| c.id == contribution.component_id)
                 .ok_or(HostError::MissingArtifact)?;
-            if component.scope == ComponentScope::Application {
-                return Err(HostError::UnsupportedRuntime);
-            }
-            let services = crate::service::select_service_bindings(
-                component,
-                declaration,
-                &options.scope,
-                broker.as_deref(),
-            )?;
+            let services = match (&options.scope, component.scope) {
+                (SessionScope::Application { .. }, ComponentScope::Application) => {
+                    if component.runtime != RuntimeKind::JavaScript
+                        || broker.is_some()
+                        || component
+                            .dependencies
+                            .iter()
+                            .any(|dependency| dependency.required)
+                        || declaration.permissions.iter().any(|permission| {
+                            matches!(permission, PermissionRequest::ProjectService { .. })
+                        })
+                        || declaration.effect != EffectKind::ReadOnly
+                        || manifest
+                            .contributions
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.component_id == component.id
+                                    && matches!(
+                                        candidate.contribution,
+                                        ContributionKind::Capability { .. }
+                                    )
+                            })
+                            .count()
+                            != 1
+                    {
+                        return Err(HostError::UnsupportedRuntime);
+                    }
+                    Vec::new()
+                }
+                (SessionScope::Bound(scope), ComponentScope::Project | ComponentScope::Attempt) => {
+                    crate::service::select_service_bindings(
+                        component,
+                        declaration,
+                        scope,
+                        broker.as_deref(),
+                    )?
+                }
+                _ => return Err(HostError::UnsupportedRuntime),
+            };
             let runtime = match (component.runtime, launcher) {
                 (RuntimeKind::NativeWorker, RuntimeLauncher::Native) => None,
                 (RuntimeKind::NativeWorker, RuntimeLauncher::NativeCore { runtime }) => {
@@ -359,8 +421,17 @@ impl ProcessSession {
                     component_id: component.id.clone(),
                     contribution_id: contribution.id.clone(),
                     package_digest: image.package_digest().into(),
-                    instance_id: uuid::Uuid::new_v4().to_string(),
-                    activation_generation: 1,
+                    instance_id: match &options.scope {
+                        SessionScope::Application { instance_id, .. } => instance_id.clone(),
+                        SessionScope::Bound(_) => uuid::Uuid::new_v4().to_string(),
+                    },
+                    activation_generation: match &options.scope {
+                        SessionScope::Application {
+                            activation_generation,
+                            ..
+                        } => *activation_generation,
+                        SessionScope::Bound(_) => 1,
+                    },
                 },
                 capability: declaration.clone(),
                 services,
@@ -456,7 +527,10 @@ impl ProcessSession {
     fn services_current(&self) -> bool {
         // Attempt channels retain the original admission guard. A caller's
         // later callback cannot substitute a new grant after this one expires.
-        (self.component_scope != ComponentScope::Attempt || {
+        (!matches!(
+            self.component_scope,
+            ComponentScope::Attempt | ComponentScope::Application
+        ) || {
             if !(self.authority)() {
                 self.attempt_revoked.store(true, Ordering::Release);
             }
@@ -540,10 +614,9 @@ impl ProcessSession {
                 .environment_digest
                 .as_ref()
                 .is_some_and(|digest| request.context.environment_digest != *digest)
-            || request.context.project_id != self.options.scope.project_id
-            || request.context.scope_id != self.options.scope.scope_id
+            || !self.options.scope.matches_invocation(&request.context)
             || (self.component_scope == ComponentScope::Attempt
-                && request.context.attempt_id != self.options.scope.scope_id)
+                && request.context.attempt_id != request.context.scope_id)
             || request.capability != c.contract
             || request.input.schema != c.input_schema
             || request.output_schema != c.output_schema
@@ -761,6 +834,10 @@ impl ProcessSession {
             Ok(ReceivedResult {
                 result,
                 channel: self.channel(),
+                invocation_scope: ScopeBinding {
+                    project_id: request.context.project_id.clone(),
+                    scope_id: request.context.scope_id.clone(),
+                },
             })
         }
         .await;

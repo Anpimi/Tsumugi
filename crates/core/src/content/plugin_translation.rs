@@ -33,8 +33,8 @@ impl PluginTranslationSettings {
         &self,
         producer: &PluginExecutionBinding,
     ) -> Result<sdk::TranslationImportBinding, ExecutionError> {
-        producer.validate()?;
-        self.checker.validate()?;
+        producer.validate_project_or_attempt()?;
+        self.checker.validate_project_or_attempt()?;
         if producer.profile.as_ref() != Some(&self.declaration.profile)
             || self.checker.profile.as_ref() != Some(&self.declaration.profile)
         {

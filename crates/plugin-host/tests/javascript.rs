@@ -22,6 +22,13 @@ fn image(mode: &str) -> PackageImage {
     image_with_observer(mode, None)
 }
 fn image_with_observer(mode: &str, observer: Option<&std::path::Path>) -> PackageImage {
+    scoped_image(mode, observer, ComponentScope::Project)
+}
+fn scoped_image(
+    mode: &str,
+    observer: Option<&std::path::Path>,
+    scope: ComponentScope,
+) -> PackageImage {
     let manifest = PluginManifest {
         protocol_version: MANIFEST_PROTOCOL,
         plugin: PluginIdentity {
@@ -32,7 +39,7 @@ fn image_with_observer(mode: &str, observer: Option<&std::path::Path>) -> Packag
         permissions: vec![PermissionRequest::CapturedInput],
         components: vec![ComponentDeclaration {
             id: "query".into(),
-            scope: ComponentScope::Project,
+            scope,
             runtime: RuntimeKind::JavaScript,
             entrypoint: Some("component.mjs".into()),
             dependencies: vec![],
@@ -94,10 +101,10 @@ fn image_with_observer(mode: &str, observer: Option<&std::path::Path>) -> Packag
 }
 fn options() -> LaunchOptions {
     LaunchOptions {
-        scope: ScopeBinding {
+        scope: tsumugi_plugin_host::SessionScope::Bound(ScopeBinding {
             project_id: "project-a".into(),
             scope_id: "scope-a".into(),
-        },
+        }),
         allow_unsandboxed_execution: true,
         limits: HostLimits {
             handshake_timeout_ms: 2000,
@@ -392,5 +399,116 @@ fn captured_environment_mismatch_is_refused_before_component_execution() {
             .unwrap();
         assert!(session.close().await.direct_child_reaped);
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    });
+}
+
+#[test]
+fn application_channel_keeps_instance_basis_and_each_project_principal_explicit() {
+    runtime().block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let basis = uuid::Uuid::new_v4().to_string();
+        let image = scoped_image("normal", None, ComponentScope::Application);
+        let mut options = options();
+        options.scope = SessionScope::Application {
+            instance_id: basis.clone(),
+            activation_generation: 7,
+        };
+        options.limits.max_invocations = 2;
+        // Project aliases cannot opt an Application manifest into execution.
+        assert!(
+            ProcessSession::launch(
+                &image,
+                "query.call",
+                dir.path(),
+                &launcher(),
+                self::options(),
+                || true
+            )
+            .await
+            .is_err()
+        );
+        let mut session = ProcessSession::launch(
+            &image,
+            "query.call",
+            dir.path(),
+            &launcher(),
+            options,
+            || true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(session.channel().provider.instance_id, basis);
+        assert_eq!(session.channel().provider.activation_generation, 7);
+        let pid = session.channel().child_pid;
+        for (project, dispatch) in [("project-a", "dispatch-a"), ("project-b", "dispatch-b")] {
+            let mut call = request(&session, dispatch, project);
+            call.context.project_id = project.into();
+            call.context.scope_id = basis.clone();
+            let received = session.invoke(&call, || false, || true).await.unwrap();
+            assert_eq!(received.channel().child_pid, pid);
+            assert_eq!(
+                received.invocation_scope(),
+                &ScopeBinding {
+                    project_id: project.into(),
+                    scope_id: basis.clone()
+                }
+            );
+            assert_eq!(received.result().context, call.context);
+            assert_eq!(received.result().provider, call.provider);
+        }
+        // The session-wide budget is shared by the complete activation. It
+        // cannot be refreshed by changing projects or replaying a request.
+        let mut exhausted = request(&session, "dispatch-c", "third");
+        exhausted.context.scope_id = basis;
+        assert!(session.invoke(&exhausted, || false, || true).await.is_err());
+        assert_eq!(session.channel().child_pid, pid);
+        assert!(session.close().await.direct_child_reaped);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    });
+}
+
+#[test]
+fn application_channel_rejects_wrong_scope_and_late_revoked_calls() {
+    runtime().block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let basis = uuid::Uuid::new_v4().to_string();
+        let mut options = options();
+        options.scope = SessionScope::Application {
+            instance_id: basis.clone(),
+            activation_generation: 1,
+        };
+        let mut session = ProcessSession::launch(
+            &scoped_image("late", None, ComponentScope::Application),
+            "query.call",
+            dir.path(),
+            &launcher(),
+            options,
+            || true,
+        )
+        .await
+        .unwrap();
+        let mut call = request(&session, "wrong-scope", "captured");
+        assert_eq!(
+            session.invoke(&call, || false, || true).await.unwrap_err(),
+            HostError::RequestMismatch
+        );
+        call.context.scope_id = basis;
+        call.context.dispatch_id = "original-dispatch".into();
+        let allowed = Arc::new(AtomicBool::new(true));
+        let withdraw = allowed.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            withdraw.store(false, Ordering::Release);
+        });
+        assert_eq!(
+            session
+                .invoke(&call, || false, || allowed.load(Ordering::Acquire))
+                .await
+                .unwrap_err(),
+            HostError::AuthorityRevoked
+        );
+        allowed.store(true, Ordering::Release);
+        assert!(session.invoke(&call, || false, || true).await.is_err());
+        assert!(session.close().await.direct_child_reaped);
     });
 }

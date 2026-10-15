@@ -152,10 +152,10 @@ async fn launch(
             runtime: runtime.clone(),
         },
         LaunchOptions {
-            scope: ScopeBinding {
+            scope: tsumugi_plugin_host::SessionScope::Bound(ScopeBinding {
                 project_id: "project".into(),
                 scope_id: "project".into(),
-            },
+            }),
             allow_unsandboxed_execution: true,
             limits: HostLimits::default(),
         },
@@ -504,6 +504,7 @@ fn native_catalog_normal_core_requires_source_qa_human_and_artifact_proofs_and_k
                         &source_binding.review,
                         &tsumugi_core::execution::PluginExecutionBinding {
                             component_scope: sdk::ComponentScope::Project,
+                            application_scope: None,
                             capability: (&source_binding.review).checker.clone(),
                             profile: Some((&source_binding.review).declaration.profile.clone()),
                             environment: (*(&producer.environment)).clone().into(),

@@ -685,7 +685,8 @@
             "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
             "entrypoint": "dist/main.js"
           }
-        }
+        },
+        "applicationScope": null
       },
       "checkerExecution": {
         "capability": {
@@ -765,7 +766,8 @@
             "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
             "entrypoint": "dist/main.js"
           }
-        }
+        },
+        "applicationScope": null
       }
     },
     "locales": [

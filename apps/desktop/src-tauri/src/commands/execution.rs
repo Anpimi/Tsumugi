@@ -38,6 +38,10 @@ macro_rules! handlers {
         cancel_execution_task,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
+        crate::commands::plugins::application::read_application_plugin_instance,
+        crate::commands::plugins::application::stop_application_plugin_instance,
+        crate::commands::plugins::application::stop_application_plugin_instances,
+        crate::commands::plugins::application::resume_application_plugin_instances,
         source::plugin::select_plugin_source,source::plugin::preflight_plugin_source,source::plugin::start_plugin_source,
         source::plugin::prepare_source_check,source::plugin::start_source_check,source::plugin::finish_source_check,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
@@ -493,7 +497,9 @@ impl ExecutionHost {
         // One capability/environment registration serves request profiles.
         // Core validates each fixed request's profile independently.
         if self.plugin_registrations.iter().any(|previous| {
-            previous.capability == binding.capability && previous.environment == binding.environment
+            previous.capability == binding.capability
+                && previous.environment == binding.environment
+                && previous.application_scope == binding.application_scope
         }) {
             return Ok(());
         }
@@ -525,6 +531,11 @@ impl SessionManager {
         action: ExecutionId,
         package: plugins::PluginPackageRequest,
     ) -> Result<(), CommandError> {
+        if let Some(context) = &self.services {
+            context
+                .plugins
+                .begin_application_cleanup(action, &package)?;
+        }
         if let Some(active) = self.active.as_mut() {
             let (host, store) = active.execution_parts()?;
             host.begin_package_cleanup(store, action, package)?;
@@ -535,6 +546,9 @@ impl SessionManager {
         &mut self,
         action: ExecutionId,
     ) -> Result<(), CommandError> {
+        if let Some(context) = &self.services {
+            context.plugins.finish_application_cleanup(action)?;
+        }
         if let Some(active) = self.active.as_mut() {
             let (host, store) = active.execution_parts()?;
             host.finish_package_cleanup(store, action)?;
@@ -546,6 +560,11 @@ impl SessionManager {
         action: ExecutionId,
         package: &plugins::PluginPackageRequest,
     ) -> Result<(), CommandError> {
+        if let Some(context) = &self.services {
+            context
+                .plugins
+                .complete_application_cleanup(action, package)?;
+        }
         if let Some(host) = self
             .active
             .as_mut()

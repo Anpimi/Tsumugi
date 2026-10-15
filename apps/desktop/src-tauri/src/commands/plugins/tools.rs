@@ -30,12 +30,15 @@ pub(in crate::commands) type ToolEnvironment = DeclaredEnvironment<sdk::Capabili
 
 impl ToolEnvironment {
     pub(in crate::commands) fn component_scope(&self) -> Result<sdk::ComponentScope, CommandError> {
-        Ok(self
-            .execution_binding(
-                &self.binding.capability,
-                self.binding.declaration.profile.clone(),
-            )?
-            .component_scope)
+        self.package
+            .image()
+            .manifest()
+            .manifest()
+            .components
+            .iter()
+            .find(|component| component.id == self.binding.capability.provider.component_id)
+            .map(|component| component.scope)
+            .ok_or_else(invalid)
     }
     pub(in crate::commands) fn view(&self) -> Result<PluginToolView, CommandError> {
         let environment = self.runtime.environment();
@@ -57,17 +60,30 @@ impl ApplicationPlugins {
         &self,
         request: &PluginToolRequest,
     ) -> Result<ToolEnvironment, CommandError> {
-        self.capture_declared_environment(
+        let environment = self.capture_declared_environment(
             &request.package,
             &request.resource_id,
             &request.environment_digest,
-            &[sdk::ComponentScope::Project, sdk::ComponentScope::Attempt],
+            &[
+                sdk::ComponentScope::Project,
+                sdk::ComponentScope::Attempt,
+                sdk::ComponentScope::Application,
+            ],
             |image, resource| {
                 let binding = image.capability_tool(resource)?;
                 let providers = [binding.capability.clone()];
                 Ok((binding, providers))
             },
-        )
+        )?;
+        if environment.component_scope()? == sdk::ComponentScope::Application {
+            tsumugi_plugin_host::core::ApplicationInstance::validate_selection(
+                environment.package.image(),
+                &request.resource_id,
+                &environment.runtime,
+            )
+            .map_err(|_| invalid())?;
+        }
+        Ok(environment)
     }
 }
 

@@ -24,7 +24,7 @@ async function opened() {
 
 it("retains the complete captured tool execution binding and rejects legacy split fields", () => {
   expect(fixture.spec.execution).toEqual({ capability: fixture.toolView.binding.capability,
-    componentScope: fixture.toolView.componentScope, profile: fixture.toolView.binding.declaration.profile,
+    componentScope: fixture.toolView.componentScope, applicationScope: null, profile: fixture.toolView.binding.declaration.profile,
     environment: fixture.toolView.environment });
   const plan = { ...planFixture.responses.plan, tools: { maxInvocations: 2, entries: [fixture.spec] } };
   expect(validators.validateResponseWorkPlan(plan)).toBe(true);

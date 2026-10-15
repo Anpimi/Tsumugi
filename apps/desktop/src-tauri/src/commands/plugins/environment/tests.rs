@@ -49,6 +49,7 @@ fn domain_compositions_reject_application_components_without_rescoping() {
             &selected.review,
             &tsumugi_core::execution::PluginExecutionBinding {
                 component_scope: sdk::ComponentScope::Project,
+                application_scope: None,
                 capability: (&selected.review).checker.clone(),
                 profile: Some((&selected.review).declaration.profile.clone()),
                 environment: (*(&approved.environment)).clone().into(),
@@ -125,6 +126,7 @@ fn current_native_host_resolves_source_and_adopted_review_without_node_installat
         &environment.binding.review,
         &tsumugi_core::execution::PluginExecutionBinding {
             component_scope: sdk::ComponentScope::Project,
+            application_scope: None,
             capability: (&environment.binding.review).checker.clone(),
             profile: Some((&environment.binding.review).declaration.profile.clone()),
             environment: (*(&environment.runtime.environment())).clone().into(),

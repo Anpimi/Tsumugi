@@ -8,8 +8,10 @@ exact approved installed packages and runtimes; default domain-package distribut
 and the complete extension lifecycle remain under development.
 
 The implemented profile is one serialized capability on a project- or
-attempt-scoped native worker or JavaScript component. Application-scoped
-executable components remain unsupported. The Unix launcher creates an owned process group;
+attempt-scoped native worker or JavaScript component. The limited Application
+profile supports one JavaScript read-only Tool callable with no required
+dependencies or ProjectService access, under a separate explicit lifetime lease.
+Native Application and all broader Application compositions remain unsupported. The Unix launcher creates an owned process group;
 this profile is tested on macOS. Windows is refused until an owned Job Object implementation is verified.
 The JavaScript launcher requires a `CapturedRuntime` containing the independently
 approved Node tool and complete [built component Host](../../runtimes/javascript-host/README.md) trees. That Host
@@ -17,6 +19,39 @@ owns the process protocol and privately uses Cordis behind the SDK facade. The
 plugin entrypoint exports a component; it is not launched as a protocol peer.
 The local installation store can retain and reopen the approved runtime trees.
 Trusted runtime acquisition and desktop distribution remain separate work.
+
+## Application Tool lifetime
+
+With `core-adapter`, `ApplicationInstance::reserve` captures one immutable Tool
+selection and allocates a fresh instance UUID/activation generation. It starts
+no component instructions. The trusted application owner separately authorizes
+its lifetime with the user's explicit consent and original settings-revocation
+signal; ordinary `RunnerProxy::new` and Core `authorize_plugin` refuse this
+scope. Each real dispatch still carries a separate project permit, cancellation,
+fixed input and original deadline. No project connection or service broker is
+retained by the idle Host owner.
+
+A bounded IO owner serializes calls to the same actual process across projects.
+`ChannelReceipt.scope` describes its lifetime basis; `ReceivedResult` separately
+records each request's project/scope principal. Core fixes the basis in its
+required nullable binding before consent and checks the actual channel identity
+on receipt and reopening. The process can retain its own state and previously
+supplied inputs in memory; this unsandboxed profile makes no in-process project
+memory-isolation claim. Unauthorized new input is refused before invocation.
+
+Only JavaScript, one callable contribution, read-only effects, no required
+dependencies and no ProjectService permission are supported. Resources/Skills
+remain inert data. Application generation/domain/Agent and Native workers stay
+refused. Stop, settings withdrawal, cancellation, failure or cumulative budget
+exhaustion retires the original activation. It is never silently replaced.
+Cleanup reports stopped only after the owned direct child is reaped; exact old
+keys cannot remove a later registration. Application exit snapshots its original
+instances, closes admission and waits for bounded cleanup. An explicit recovery
+after draining permits future separately consented instances without restoring
+old leases; replayed old controls cannot change a later exit fence. Historical output/ACKs stay data only
+and cannot restore a live lease after stop or project reopening. See the
+[Desktop Tool guide](../../docs/plugin-tools.md) for the explicit consent and
+stop controls.
 
 ## Project-service broker
 
@@ -28,8 +63,9 @@ Core's `PluginExecutionBinding.componentScope` is required captured input data;
 the immutable package determines it before consent. Requests and historical
 result validation derive scope from that input, never from a worker's output.
 The original input digest and grant therefore also bind the selected scope.
-Each Core dispatch still owns and closes its process; no shared scope registry,
-grant renewal or automatic activation is introduced.
+Each Project/Attempt Core dispatch owns and closes its process. Application
+Tools use the bounded owner below; no shared service registry, grant renewal or
+automatic activation is introduced.
 
 Composed source/translation, format/advisory review, build/artifact and Agent
 operations retain a complete binding per capability. Scopes can differ between
@@ -458,7 +494,8 @@ acknowledgement of unsandboxed execution. The manifest's requested permissions d
 not provide either. Launch resolves the declared entrypoint and contribution,
 does not inherit the parent environment, and assigns a fresh instance identity
 to the actual process/pipe channel. Required dependencies without an implemented broker
-are refused; Application executable scope remains refused. The handshake must echo the
+are refused. Application launch requires the explicit instance basis and limited
+JavaScript Tool profile below. The handshake must echo the
 captured capability and provider binding exactly. It cannot upgrade declarations,
 effects, versions, limits or permission requests.
 

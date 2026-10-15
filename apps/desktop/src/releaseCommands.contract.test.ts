@@ -25,7 +25,7 @@ it("retains separate complete build execution bindings and refuses the legacy en
     const capability = build.binding[role];
     const component = pluginBuildPackage.manifest.components.find(component => component.id === capability.provider.componentId);
     if (!component) throw new Error("Missing canonical build component");
-    expect(execution).toEqual({ capability, componentScope: component.scope,
+    expect(execution).toEqual({ capability, componentScope: component.scope, applicationScope: null,
       profile: build.binding.declaration.profile, environment: pluginBuildWorkflow.review.build.environment });
   }
   const { builderExecution, checkerExecution, ...withoutExecutions } = build;

@@ -108,10 +108,10 @@ fn image_with_scope(
 }
 fn options() -> LaunchOptions {
     LaunchOptions {
-        scope: ScopeBinding {
+        scope: tsumugi_plugin_host::SessionScope::Bound(ScopeBinding {
             project_id: "project-a".into(),
             scope_id: "scope-a".into(),
-        },
+        }),
         allow_unsandboxed_execution: true,
         limits: HostLimits {
             handshake_timeout_ms: 1000,
@@ -172,9 +172,15 @@ fn attempt_channels_bind_project_and_attempt_and_cleanup_only_the_owned_instance
         let directory = tempfile::tempdir().unwrap();
         let image = image_with_scope("normal", None, ComponentScope::Attempt);
         let mut a_options = options();
-        a_options.scope.scope_id = "attempt-a".into();
+        let SessionScope::Bound(scope) = &mut a_options.scope else {
+            panic!("expected project/attempt scope")
+        };
+        scope.scope_id = "attempt-a".into();
         let mut b_options = options();
-        b_options.scope.scope_id = "attempt-b".into();
+        let SessionScope::Bound(scope) = &mut b_options.scope else {
+            panic!("expected project/attempt scope")
+        };
+        scope.scope_id = "attempt-b".into();
         let mut a = ProcessSession::launch(
             &image,
             "query.call",
@@ -246,7 +252,10 @@ fn attempt_channels_retain_the_original_guard_and_reject_cancelled_or_revoked_la
             let cancelled = Arc::new(AtomicBool::new(false));
             let guard = original.clone();
             let mut configured = options();
-            configured.scope.scope_id = "attempt-a".into();
+            let SessionScope::Bound(scope) = &mut configured.scope else {
+                panic!("expected project/attempt scope")
+            };
+            scope.scope_id = "attempt-a".into();
             let mut session = ProcessSession::launch(
                 &image,
                 "query.call",
@@ -339,7 +348,10 @@ fn unsupported_scopes_and_required_attempt_services_refuse_launch_without_stagin
             assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
         }
         let mut configured = options();
-        configured.scope.scope_id = "attempt-a".into();
+        let SessionScope::Bound(scope) = &mut configured.scope else {
+            panic!("expected project/attempt scope")
+        };
+        scope.scope_id = "attempt-a".into();
         let mut session = ProcessSession::launch(
             &image_with_scope("optional-service", None, ComponentScope::Attempt),
             "query.call",

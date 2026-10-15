@@ -37,6 +37,7 @@ fn fixed(
         &resource.review,
         &tsumugi_core::execution::PluginExecutionBinding {
             component_scope: sdk::ComponentScope::Project,
+            application_scope: None,
             capability: (&resource.review).checker.clone(),
             profile: Some((&resource.review).declaration.profile.clone()),
             environment: (*(&producer.environment)).clone().into(),

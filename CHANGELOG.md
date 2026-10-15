@@ -6,6 +6,22 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Manual JavaScript reference tools can explicitly consent to one shared
+  application instance and stop it from the original query preview. Every
+  project query retains separate input, permission, grant, cancellation and
+  deadline. The shared unsandboxed process may retain previously supplied input
+  in memory until stopped; saved output and uncertain original actions remain
+  available. Unsupported Application compositions remain refused.
+- Repeating an accepted tool start returns its original acknowledgement after
+  later queries, stopping, revocation or reopening. The exact persisted grant,
+  expiry and both consent decisions must match; this read restores no execution
+  permission or shared instance. An unqueued grant cannot acknowledge a start.
+- Required nullable application-instance bindings advance the current-only
+  project format to schema 41, including required original grant-consent metadata.
+  Older development directories are preserved and
+  refused without migration or reset. SDK/process protocols and dependency
+  versions remain unchanged in this undistributed alpha batch.
+
 - Opening saved model connection choices no longer triggers render-time owner
   updates. A window focus check replaces an unfinished earlier read, so its late
   response cannot restore obsolete connection choices as current. Existing

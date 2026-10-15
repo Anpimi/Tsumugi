@@ -228,6 +228,7 @@ interface WorkbenchCommandPayloads {
   "translation.retry-protection": TranslationProtectionPendingCommandPayload;
   "resource.prepare-tool": ResourceToolPreparationCommandPayload;
   "resource.start-tool": ResourceToolCaptureCommandPayload;
+  "resource.stop-tool-instance": ResourceToolCaptureCommandPayload;
   "resource.discard-tool": ResourceToolCaptureCommandPayload;
   "resource.retry-tool": ResourceToolPendingCommandPayload;
   "resource.cancel-tool": ExecutionCancellationCommandPayload;
@@ -407,7 +408,7 @@ interface CommandMetadata {
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
     | "cancels-review-checks" | "retries-review-action" | "stops-review-batch"
-    | "writes-resources" | "captures-resources" | "reads-resources" | "runs-resource-tool" | "retries-resource-action" | "opens-translation"
+    | "writes-resources" | "captures-resources" | "reads-resources" | "runs-resource-tool" | "stops-application-component" | "retries-resource-action" | "opens-translation"
     | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"
     | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task"
     | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft"
@@ -511,7 +512,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"ai-saved-candidate", "ai.inspect-candidate" | "ai.open-comparison">
   | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation">
   | ResourceCommand<"resource-tool-preparation", "resource.prepare-tool">
-  | ResourceCommand<"resource-tool-capture", "resource.start-tool" | "resource.discard-tool">
+  | ResourceCommand<"resource-tool-capture", "resource.start-tool" | "resource.stop-tool-instance" | "resource.discard-tool">
   | ResourceCommand<"resource-tool-pending", "resource.retry-tool">
   | ResourceCommand<"resource-term", "resource.save-term">
   | ResourceCommand<"resource-context", "resource.save-context" | "resource.capture-context">
@@ -914,6 +915,7 @@ function validResourcePayload(payload: CommandPayload | undefined): payload is E
         case "prepare": return executionValidation.validateRequestToolPrepare(intent.request) && pluginValidation.validateResponseTool(intent.view) && editSequence(intent.sequence);
         case "start": return executionValidation.validateRequestToolStart(intent.request) && executionValidation.validateResponseToolPreflight(intent.review) && editSequence(intent.sequence);
         case "discard": return executionValidation.validateRequestToolDiscard(intent.request);
+        case "stop-instance": return executionValidation.validateRequestApplicationInstanceStop(intent.request);
         default: return false;
       }
     }

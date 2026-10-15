@@ -284,6 +284,26 @@
         ],
         "type": "object"
       },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
+      },
       "AutomationEffect": {
         "description": "Requested automatic effects, never a human language-review approval.",
         "enum": [
@@ -728,6 +748,16 @@
       "PluginExecutionBinding": {
         "additionalProperties": false,
         "properties": {
+          "applicationScope": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApplicationScopeBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "capability": {
             "$ref": "#/definitions/CapabilityBinding"
           },
@@ -761,6 +791,7 @@
         "required": [
           "capability",
           "componentScope",
+          "applicationScope",
           "environment"
         ],
         "type": "object"
@@ -2346,6 +2377,26 @@
           "recipe",
           "detail",
           "rows"
+        ],
+        "type": "object"
+      },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
         ],
         "type": "object"
       },
@@ -4271,6 +4322,16 @@
       "PluginExecutionBinding": {
         "additionalProperties": false,
         "properties": {
+          "applicationScope": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApplicationScopeBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "capability": {
             "$ref": "#/definitions/CapabilityBinding"
           },
@@ -4304,6 +4365,7 @@
         "required": [
           "capability",
           "componentScope",
+          "applicationScope",
           "profile",
           "environment"
         ],

@@ -22,6 +22,50 @@
         ],
         "type": "object"
       },
+      "ApplicationInstanceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/ApplicationScopeBasis"
+          }
+        },
+        "required": [
+          "basis"
+        ],
+        "type": "object"
+      },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "ApplicationShutdownRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId"
+        ],
+        "type": "object"
+      },
       "AttemptRequest": {
         "additionalProperties": false,
         "properties": {
@@ -289,42 +333,6 @@
         ],
         "type": "object"
       },
-      "PluginStartRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "attemptId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "expiresAtMs": {
-            "$ref": "#/definitions/UnsignedDecimal"
-          },
-          "grantId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "inputDigest": {
-            "type": "string"
-          },
-          "projectId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "sessionToken": {
-            "type": "string"
-          },
-          "unsandboxedExecution": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "sessionToken",
-          "projectId",
-          "attemptId",
-          "inputDigest",
-          "grantId",
-          "expiresAtMs",
-          "unsandboxedExecution"
-        ],
-        "type": "object"
-      },
       "PluginToolDiscardRequest": {
         "additionalProperties": false,
         "properties": {
@@ -391,6 +399,46 @@
           "package",
           "resourceId",
           "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginToolStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationExecution": {
+            "type": "boolean"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution",
+          "applicationExecution"
         ],
         "type": "object"
       },
@@ -495,6 +543,22 @@
         ],
         "type": "object"
       },
+      "StopApplicationInstanceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/ApplicationScopeBasis"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis"
+        ],
+        "type": "object"
+      },
       "TaskActivityRequest": {
         "additionalProperties": false,
         "properties": {
@@ -581,6 +645,15 @@
       "adopt": {
         "$ref": "#/definitions/AdoptRequest"
       },
+      "applicationInstance": {
+        "$ref": "#/definitions/ApplicationInstanceRequest"
+      },
+      "applicationInstanceStop": {
+        "$ref": "#/definitions/StopApplicationInstanceRequest"
+      },
+      "applicationShutdown": {
+        "$ref": "#/definitions/ApplicationShutdownRequest"
+      },
       "attempt": {
         "$ref": "#/definitions/AttemptRequest"
       },
@@ -624,7 +697,7 @@
         "$ref": "#/definitions/PluginToolPrepareRequest"
       },
       "toolStart": {
-        "$ref": "#/definitions/PluginStartRequest"
+        "$ref": "#/definitions/PluginToolStartRequest"
       }
     },
     "required": [
@@ -644,7 +717,10 @@
       "adopt",
       "toolPrepare",
       "toolStart",
-      "toolDiscard"
+      "toolDiscard",
+      "applicationInstance",
+      "applicationInstanceStop",
+      "applicationShutdown"
     ],
     "title": "Requests",
     "type": "object",
@@ -738,6 +814,75 @@
           "rejected"
         ],
         "type": "string"
+      },
+      "ApplicationInstanceState": {
+        "enum": [
+          "reserved",
+          "active",
+          "stopping",
+          "stopped"
+        ],
+        "type": "string"
+      },
+      "ApplicationInstanceView": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/ApplicationScopeBasis"
+          },
+          "state": {
+            "$ref": "#/definitions/ApplicationInstanceState"
+          }
+        },
+        "required": [
+          "basis",
+          "state"
+        ],
+        "type": "object"
+      },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "ApplicationShutdownState": {
+        "enum": [
+          "stopping",
+          "stopped",
+          "resumed"
+        ],
+        "type": "string"
+      },
+      "ApplicationShutdownView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/ApplicationShutdownState"
+          }
+        },
+        "required": [
+          "actionId",
+          "state"
+        ],
+        "type": "object"
       },
       "AttemptDetail": {
         "additionalProperties": false,
@@ -2272,6 +2417,16 @@
       "PluginToolPreflight": {
         "additionalProperties": false,
         "properties": {
+          "applicationScope": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApplicationScopeBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "attemptId": {
             "$ref": "#/definitions/ExecutionId"
           },
@@ -2292,7 +2447,8 @@
           "attemptId",
           "inputDigest",
           "tool",
-          "items"
+          "items",
+          "applicationScope"
         ],
         "type": "object"
       },
@@ -3095,6 +3251,12 @@
       "adoption": {
         "$ref": "#/definitions/AdoptionReceipt"
       },
+      "applicationInstance": {
+        "$ref": "#/definitions/ApplicationInstanceView"
+      },
+      "applicationShutdown": {
+        "$ref": "#/definitions/ApplicationShutdownView"
+      },
       "attempt": {
         "$ref": "#/definitions/AttemptDetail"
       },
@@ -3179,7 +3341,9 @@
       "adoption",
       "receipt",
       "toolPreflight",
-      "toolDiscarded"
+      "toolDiscarded",
+      "applicationInstance",
+      "applicationShutdown"
     ],
     "title": "Responses",
     "type": "object",

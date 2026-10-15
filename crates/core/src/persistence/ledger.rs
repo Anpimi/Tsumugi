@@ -2044,7 +2044,9 @@ impl ProjectStore {
                     input,
                     consent.expires_at_ms,
                     consent.deadline,
+                    false,
                     Some(delegation),
+                    None,
                 )
                 .map_err(|_| error(ErrorCode::OutcomeUnknown, "work-plan-tool-activation"))?;
         }

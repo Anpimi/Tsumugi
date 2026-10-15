@@ -52,6 +52,7 @@ import {
 } from "./recentProjects";
 import {
   isCommandError,
+  hasUnknownOutcome,
   projectCommands,
   type SetTargetLocalesRequest,
   type CloseProjectView,
@@ -374,6 +375,9 @@ function AppWorkbench() {
   const pendingSave = useRef<PendingSave | null>(null);
   const pluginManager = useRef<PluginManagerHandle>(null);
   const connectionManager = useRef<ConnectionManagerHandle>(null);
+  const applicationExitAction = useRef<Readonly<{ actionId: string }> | null>(null);
+  const applicationResumeAction = useRef<Readonly<{ actionId: string }> | null>(null);
+  const [applicationResumeUnknown, setApplicationResumeUnknown] = useState(false);
   const windowCloseIntent = useRef<object | null>(null);
   const metadataOwnerAlive = useRef(true);
   useLayoutEffect(() => {
@@ -688,6 +692,39 @@ function AppWorkbench() {
       if (lifecycleFlight.current === ticket) { lifecycleFlight.current = null; setOperation("idle"); }
     }
   }
+  async function stopApplicationInstancesForExit(current: () => boolean) {
+    const request = applicationExitAction.current ?? Object.freeze({ actionId: crypto.randomUUID() });
+    applicationExitAction.current = request;
+    try {
+      const status = await executionCommands.stopApplicationInstances(request);
+      if (status.state === "stopped" && applicationExitAction.current === request && !applicationResumeAction.current) return true;
+      if (current()) setFeedback({ tone: "info", messageKey: "errors.applicationStopPending" });
+    } catch {
+      // The original action stays fixed across Busy, transport loss, native
+      // destroy failure and later exit requests. No request creates new leases.
+      if (current()) setFeedback({ tone: "error", messageKey: "errors.applicationStopUnknown" });
+    }
+    return false;
+  }
+  async function resumeApplicationInstances() {
+    const request = applicationResumeAction.current ?? applicationExitAction.current;
+    if (!request || busy || projectActionInFlight()) return;
+    const ticket = beginLifecycle(); if (!ticket) return;
+    applicationResumeAction.current = request;
+    setOperation("closing");
+    try {
+      await executionCommands.resumeApplicationInstances(request);
+      if (!lifecycleCurrent(ticket) || applicationResumeAction.current !== request) return;
+      if (applicationExitAction.current === request) applicationExitAction.current = null;
+      applicationResumeAction.current = null; setApplicationResumeUnknown(false);
+      setFeedback({ tone: "success", messageKey: "feedback.applicationAdmissionRestored" });
+    } catch (error) {
+      if (!lifecycleCurrent(ticket)) return;
+      if (!hasUnknownOutcome(error)) applicationResumeAction.current = null;
+      setApplicationResumeUnknown(hasUnknownOutcome(error));
+      setFeedback({ tone: "error", messageKey: hasUnknownOutcome(error) ? "errors.applicationResumeUnknown" : "errors.applicationResumePending" });
+    } finally { if (lifecycleFlight.current === ticket) { lifecycleFlight.current = null; setOperation("idle"); } }
+  }
   async function executeClose(preserveRestoreCandidate = false, coordinated = false, destroyWindow = false, settingsPermit?: SessionExitPermit) {
     if (!project || (busy && !coordinated)) return false;
     const ticket = beginLifecycle(); if (!ticket) return false;
@@ -713,6 +750,8 @@ function AppWorkbench() {
       if (destroyWindow) {
         // Closing the Core session cannot be undone; a replacement project must never be destroyed.
         if (!canContinue || currentRetiredSession.current || !lifecycleCurrent(ticket) || !metadataReady() || !settingsPermit?.current()) return false;
+        if (!await stopApplicationInstancesForExit(() => lifecycleCurrent(ticket))) return false;
+        if (currentRetiredSession.current || !lifecycleCurrent(ticket) || !metadataReady() || !settingsPermit?.current()) return false;
         try { await getCurrentWindow().destroy(); }
         catch { if (lifecycleCurrent(ticket)) setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" }); return false; }
         if (!lifecycleCurrent(ticket)) return false;
@@ -730,7 +769,7 @@ function AppWorkbench() {
     }
   }
   async function executeWindowClose(coordinated = false) {
-    if (windowCloseIntent.current) return false;
+    if (windowCloseIntent.current || applicationResumeAction.current) return false;
     const intent = {}; windowCloseIntent.current = intent;
     const session = currentSession.current, projectId = currentProject.current?.metadata.projectId ?? null;
     const current = () => {
@@ -750,6 +789,8 @@ function AppWorkbench() {
       const ticket = beginLifecycle(); if (!ticket) return false;
       setOperation("closing");
       try {
+        if (!lifecycleCurrent(ticket) || !settingsPermit.current() || !windowMetadataReady()) return false;
+        if (!await stopApplicationInstancesForExit(() => lifecycleCurrent(ticket))) return false;
         if (!lifecycleCurrent(ticket) || !settingsPermit.current() || !windowMetadataReady()) return false;
         await getCurrentWindow().destroy(); return lifecycleCurrent(ticket);
       } catch {
@@ -1245,7 +1286,7 @@ function AppWorkbench() {
         .onCloseRequested(async (event) => {
           event.preventDefault();
           if (disposed) return;
-          if (busy || projectActionInFlight()) {
+          if (busy || projectActionInFlight() || applicationResumeAction.current) {
             return;
           }
            if (!project && createDraftDirty) {
@@ -1386,6 +1427,11 @@ function AppWorkbench() {
         </header>
 
         <div className="workspace-body">
+          {applicationExitAction.current ? <div className="feedback feedback-info" role="status">
+            <div className="feedback-copy"><span>{t("feedback.applicationAdmissionHeld")}</span></div>
+            <div className="feedback-actions"><button type="button" className="text-button" disabled={busy || projectActionInFlight()}
+              onClick={() => void resumeApplicationInstances()}>{t(applicationResumeUnknown ? "action.retryApplicationResume" : "action.resumeApplicationAdmission")}</button></div>
+          </div> : null}
           <div hidden={area !== "overview"} className={`workbench-content${project ? " is-project" : " is-closed"}`}>
             {stopIntent ? null : renderFeedback}
             {project && stoppedSession === project.sessionToken ? <p role="status">{t("execution.stopped")}</p> : null}

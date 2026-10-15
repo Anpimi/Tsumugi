@@ -3,6 +3,8 @@
 export type ExecutionId = string;
 export type Revision = string;
 export type TaskActivityPhase = "active" | "attention" | "saved";
+export type ApplicationInstanceState = "reserved" | "active" | "stopping" | "stopped";
+export type ApplicationShutdownState = "stopping" | "stopped" | "resumed";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
@@ -204,6 +206,8 @@ export interface Responses {
   action: AdoptionAction;
   activity: TaskActivity;
   adoption: AdoptionReceipt;
+  applicationInstance: ApplicationInstanceView;
+  applicationShutdown: ApplicationShutdownView;
   attempt: AttemptDetail;
   attempts: AttemptSummary[];
   cancellation: Revision;
@@ -267,6 +271,22 @@ export interface ChangeReference {
   id: string;
   kind: string;
   revision: Revision;
+}
+export interface ApplicationInstanceView {
+  basis: ApplicationScopeBasis;
+  state: ApplicationInstanceState;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
+}
+export interface ApplicationShutdownView {
+  actionId: ExecutionId;
+  state: ApplicationShutdownState;
 }
 export interface AttemptDetail {
   attemptId: ExecutionId;
@@ -471,6 +491,7 @@ export interface TaskView {
   taskId: ExecutionId;
 }
 export interface PluginToolPreflight {
+  applicationScope: ApplicationScopeBasis | null;
   attemptId: ExecutionId;
   inputDigest: string;
   items: PluginToolItem[];

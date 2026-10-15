@@ -186,6 +186,7 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
         .unwrap();
     let checker = PluginExecutionBinding {
         component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
         capability: source.binding.checker.clone(),
         profile: Some(source.binding.declaration.profile.clone()),
         environment: source.runtime.environment(),
@@ -211,6 +212,7 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
                                 &source.binding.review,
                                 &tsumugi_core::execution::PluginExecutionBinding {
                                     component_scope: sdk::ComponentScope::Project,
+                                    application_scope: None,
                                     capability: (&source.binding.review).checker.clone(),
                                     profile: Some(
                                         (&source.binding.review).declaration.profile.clone(),
@@ -240,6 +242,7 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
                     + 600_000) as u64,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap();

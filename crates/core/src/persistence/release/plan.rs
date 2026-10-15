@@ -45,8 +45,8 @@ impl ReleaseBuildEnvironment {
     }
     fn validate(&self) -> Result<(), ExecutionError> {
         self.binding.validate().map_err(|_| invalid())?;
-        self.builder_execution.validate()?;
-        self.checker_execution.validate()?;
+        self.builder_execution.validate_project_or_attempt()?;
+        self.checker_execution.validate_project_or_attempt()?;
         if self.builder_execution.capability != self.binding.builder
             || self.checker_execution.capability != self.binding.checker
             || self.builder_execution.profile.as_ref() != Some(&self.binding.declaration.profile)

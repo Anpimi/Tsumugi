@@ -14,12 +14,19 @@ pub(crate) use package_quiesce::PackageKey;
 pub use package_quiesce::PackageQuiescence;
 use package_quiesce::{PackageControl, PackageQueries, QueryGate, RetiredWorker, RunnerEntry};
 
-type RunnerKey = (String, String, Option<String>, Option<String>);
+type RunnerKey = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 fn runner_key(
     capability: &str,
     version: &str,
     provider: Option<&tsumugi_plugin_sdk::ProviderSelectionBinding>,
     environment: Option<&tsumugi_plugin_sdk::ExecutionEnvironmentDescriptor>,
+    application_scope: Option<&ApplicationScopeBasis>,
 ) -> Result<RunnerKey, ExecutionError> {
     label(capability)?;
     label(version)?;
@@ -36,7 +43,22 @@ fn runner_key(
             ));
         }
     };
-    Ok((capability.into(), version.into(), provider, environment))
+    let application = application_scope
+        .map(|basis| codec::encode(basis, MAX_INPUT_BYTES).map(|bytes| codec::digest(&bytes)))
+        .transpose()?;
+    if application.is_some() && provider.is_none() {
+        return Err(ExecutionError::new(
+            ErrorCode::InvalidInput,
+            "runner-registration",
+        ));
+    }
+    Ok((
+        capability.into(),
+        version.into(),
+        provider,
+        environment,
+        application,
+    ))
 }
 fn input_key(input: &FixedInput) -> Result<RunnerKey, ExecutionError> {
     let e = input.envelope();
@@ -45,6 +67,7 @@ fn input_key(input: &FixedInput) -> Result<RunnerKey, ExecutionError> {
         &e.capability_version,
         e.plugin.as_ref().map(|p| &p.capability.provider),
         e.plugin.as_ref().map(|p| &p.environment),
+        e.plugin.as_ref().and_then(|p| p.application_scope.as_ref()),
     )
 }
 const CONCURRENCY: usize = 2;
@@ -188,6 +211,7 @@ impl ExecutionRuntime {
             runner.capability_version(),
             runner.plugin_provider(),
             runner.plugin_environment(),
+            runner.plugin_application_scope(),
         )?;
         if self.runners.contains_key(&key) {
             return Err(ExecutionError::new(
@@ -198,6 +222,27 @@ impl ExecutionRuntime {
         self.policies.insert(key.clone(), policy);
         self.runners.insert(key, RunnerEntry::new(runner));
         Ok(())
+    }
+    /// Retire an exact application registration after all project worker/query
+    /// handles are reaped. Persisted history never requires a dead runner.
+    pub fn retire_application_runner(
+        &mut self,
+        store: &ProjectStore,
+        binding: &PluginExecutionBinding,
+    ) -> Result<bool, ExecutionError> {
+        if binding.application_scope.is_none() || self.has_active_work(store)? {
+            return Ok(false);
+        }
+        let key = runner_key(
+            &binding.capability.declaration.contract.id,
+            &binding.capability_version(),
+            Some(&binding.capability.provider),
+            Some(&binding.environment),
+            binding.application_scope.as_ref(),
+        )?;
+        self.runners.remove(&key);
+        self.policies.remove(&key);
+        Ok(true)
     }
     pub fn register_validator(
         &mut self,
@@ -232,7 +277,46 @@ impl ExecutionRuntime {
                 "plugin-runtime",
             ));
         }
-        store.authorize_plugin_input(self.generation, grant_id, input, expires_at_ms, consent)
+        store.authorize_plugin_input(
+            self.generation,
+            grant_id,
+            input,
+            expires_at_ms,
+            consent,
+            None,
+        )
+    }
+    /// The trusted application owner supplies its original one-way instance
+    /// signal. This only narrows a new project grant; it cannot create an
+    /// application lease or reconstruct one from persisted input.
+    pub fn authorize_application_plugin(
+        &self,
+        store: &mut ProjectStore,
+        grant_id: ExecutionId,
+        input: &FixedInput,
+        expires_at_ms: u64,
+        consent: PluginConsent,
+        application_lease: &super::ApplicationExecutionLease,
+    ) -> Result<(), ExecutionError> {
+        if !self.accepting
+            || !self.plugin_epoch.is_active()
+            || self.input_package_stopped(input)
+            || !self.runners.contains_key(&input_key(input)?)
+            || !application_lease.matches(input)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        store.authorize_plugin_input(
+            self.generation,
+            grant_id,
+            input,
+            expires_at_ms,
+            consent,
+            Some(application_lease.clone()),
+        )
     }
     /// Trusted human entry only: capture independent process consent now, even
     /// before the model root is queued. Later calls cannot extend its deadline.

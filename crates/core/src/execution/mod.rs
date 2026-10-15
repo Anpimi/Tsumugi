@@ -27,7 +27,7 @@ pub use artifact_validation::{
     ARTIFACT_CHECK_OPERATION, ArtifactValidationCapture, PreparedArtifactValidation,
 };
 pub use plugin::*;
-pub use plugin_authority::{PluginConsent, PluginPermit};
+pub use plugin_authority::{ApplicationExecutionLease, PluginConsent, PluginPermit};
 pub use runner::*;
 pub use runtime::{ExecutionRuntime, OutcomeQuery, PackageQuiescence};
 pub use source_validation::{

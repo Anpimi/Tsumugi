@@ -297,7 +297,7 @@ impl SourceBundle {
         source.validate().map_err(source_contract_error)?;
         let settings = SourceSettings::from_input(input)?;
         let (plugin_id, plugin_version) = if let Some(binding) = &e.plugin {
-            binding.validate()?;
+            binding.validate_project_or_attempt()?;
             let declaration = &binding.capability.declaration;
             if binding.profile.as_ref() != Some(&source.profile)
                 || declaration.input_schema != sdk::source_extraction_input_contract()
@@ -398,7 +398,7 @@ impl SourceReviewBinding {
         checker: &PluginExecutionBinding,
     ) -> Result<Self, ExecutionError> {
         binding.validate().map_err(source_contract_error)?;
-        checker.validate()?;
+        checker.validate_project_or_attempt()?;
         if checker.capability != binding.checker
             || checker.profile.as_ref() != Some(&binding.declaration.profile)
         {
@@ -414,7 +414,7 @@ impl SourceReviewBinding {
         source: &sdk::SourceExtractionInput,
         producer: &PluginExecutionBinding,
     ) -> Result<(), ExecutionError> {
-        self.checker.validate()?;
+        self.checker.validate_project_or_attempt()?;
         sdk::ReviewBinding {
             declaration: self.declaration.clone(),
             checker: self.checker.capability.clone(),
@@ -473,7 +473,7 @@ impl SourceSettings {
             return Err(failure(ErrorCode::InvalidInput, "source-review-required"));
         }
         if let Some(checker) = &settings.checker {
-            checker.validate()?;
+            checker.validate_project_or_attempt()?;
             let declaration = &checker.capability.declaration;
             if checker.profile.as_ref() != Some(&source.profile)
                 || declaration.input_schema != sdk::source_extraction_check_input_contract()

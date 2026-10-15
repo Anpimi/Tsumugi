@@ -908,6 +908,7 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
                 old_expiry,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap_err();
@@ -1003,7 +1004,11 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
     assert_eq!(grant_record(&project_path, b_grant), b_record);
     assert!(b_dispatch.plugin_permit().unwrap().is_authorized() && child_alive(&b_entered));
     assert!(b_stage.exists() && !held_stage.exists());
-    assert!(!observations.join(format!("{b_attempt}.disposed.json")).exists());
+    assert!(
+        !observations
+            .join(format!("{b_attempt}.disposed.json"))
+            .exists()
+    );
     app.state::<AppState>().sessions.with(move |sessions| {
         let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
         assert_eq!(host.runtime.generation().to_string(), generation);

@@ -46,6 +46,7 @@ impl Runner for Registered {
 fn binding() -> PluginExecutionBinding {
     PluginExecutionBinding {
         component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
         capability: sdk::CapabilityBinding {
             provider: sdk::ProviderSelectionBinding {
                 plugin: sdk::PluginIdentity {
@@ -204,6 +205,7 @@ impl Fixture {
                 plugin_now_ms().unwrap() + 60000,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap();
@@ -390,6 +392,7 @@ impl Fixture {
                 plugin_now_ms().unwrap() + 60_000,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap();

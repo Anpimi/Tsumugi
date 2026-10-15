@@ -17,6 +17,10 @@ it("shares exact installed tool choices and fixed opaque query payloads with Rus
   expect(validateRequestToolStart(fixture.start)).toBe(true);
   expect(validateRequestToolDiscard(fixture.discard)).toBe(true);
   expect(validateResponseToolPreflight(fixture.preflight)).toBe(true);
+  const { applicationScope: _scope, ...missingScope } = fixture.preflight;
+  const { applicationExecution: _consent, ...missingConsent } = fixture.start;
+  expect(validateResponseToolPreflight(missingScope)).toBe(false);
+  expect(validateRequestToolStart(missingConsent)).toBe(false);
   expect(fixture.preflight.items[0].payload).toEqual(fixture.prepare.payloads[0]);
   expect(fixture.view.binding.capability.provider.plugin).toEqual(fixture.request.package.plugin);
   expect(fixture.view.binding.capability.declaration.effect).toBe("read-only");
@@ -54,4 +58,27 @@ it("keeps malformed start acknowledgements unknown without replaying or renewing
   expect(invoke).toHaveBeenLastCalledWith("start_plugin_tool", { request: fixture.start });
   invoke.mockResolvedValueOnce({ ...fixture.preflight, tool: { ...fixture.view, runtimeOrigin: undefined } });
   await expect(executionCommands.prepareTool(fixture.prepare)).rejects.toThrow("Invalid IPC response: prepare_plugin_tool");
+});
+
+it("checks exact application instance and stop-all acknowledgements without inventing authority", async () => {
+  const basis = { instanceId: fixture.start.attemptId, activationGeneration: 1 };
+  const stop = { actionId: fixture.start.grantId, basis };
+  invoke.mockResolvedValueOnce({ basis, state: "active" });
+  await expect(executionCommands.applicationInstance({ basis })).resolves.toEqual({ basis, state: "active" });
+  invoke.mockResolvedValueOnce({ basis: { ...basis, activationGeneration: 2 }, state: "stopped" });
+  await expect(executionCommands.stopApplicationInstance(stop)).rejects.toThrow("Invalid IPC response");
+  invoke.mockResolvedValueOnce({ actionId: stop.actionId, state: "stopping" });
+  await expect(executionCommands.stopApplicationInstances({ actionId: stop.actionId })).resolves.toEqual({ actionId: stop.actionId, state: "stopping" });
+  invoke.mockResolvedValueOnce({ actionId: fixture.discard.attemptId, state: "stopped" });
+  await expect(executionCommands.stopApplicationInstances({ actionId: stop.actionId })).rejects.toThrow("Invalid IPC response");
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(0);
+});
+
+it("acknowledges explicit admission recovery only for its exact original exit action", async () => {
+  const request = { actionId: fixture.start.grantId };
+  invoke.mockResolvedValueOnce({ actionId: request.actionId, state: "resumed" });
+  await expect(executionCommands.resumeApplicationInstances(request)).resolves.toEqual({ actionId: request.actionId, state: "resumed" });
+  invoke.mockResolvedValueOnce({ actionId: request.actionId, state: "stopped" });
+  await expect(executionCommands.resumeApplicationInstances(request)).rejects.toThrow("Invalid IPC response");
+  expect(invoke).toHaveBeenLastCalledWith("resume_application_plugin_instances", { request });
 });

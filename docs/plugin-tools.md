@@ -44,7 +44,8 @@ Discovery starts no worker and creates no execution grant.
 attempt ID, the exact tool choice and one or more opaque JSON `payloads`.
 The captured tool view includes its required `componentScope`. Project and
 Attempt components are supported for manual tools; an Attempt uses the original
-attempt ID as its scope ID. The captured manifest fixes this value in Core's
+attempt ID as its scope ID. The limited Application profile below fixes a trusted
+instance UUID and activation generation in the same input. The captured manifest fixes this value in Core's
 input before execution consent, so results cannot choose a different scope.
 Work-plan Agent tools retain the same complete binding and use their own child
 attempt identity, independently of the root attempt and Agent scope handle.
@@ -69,8 +70,9 @@ aggregate attempt limit. An unsupported declared output bound is refused rather
 than silently reduced. Domain semantics remain the original worker's authority.
 
 `start_plugin_tool` takes the reviewed attempt/input digest and the existing
-strict plugin start consent: grant ID, original expiry and explicit consent to
-unsandboxed execution. Before authorizing, the application reopens and compares
+strict Tool start consent: grant ID, original expiry, explicit consent to
+unsandboxed execution and the required `applicationExecution` lifetime decision.
+Project/Attempt requests explicitly set the latter to false. Before authorizing, the application reopens and compares
 the captured tool and environment, then serializes its final settings revision
 check with application-owned settings changes. Disabled/replaced packages,
 revoked runtime decisions and changed settings require a new preparation.
@@ -82,8 +84,14 @@ not cancel an already queued task; use the existing task cancellation command.
 
 Execution uses the original `RunnerProxy` and Core grant/dispatch/result checks.
 Single and batch queries use this same path. Repeating an accepted original
-start reconciles its stored input; substituting a grant or renewing expiry for
-that attempt is refused. An unknown acknowledgement retains the original action
+start reads its original enqueued input and persisted grant, including the exact
+expiry, unsandboxed consent and Application lifetime decision. This data-only
+acknowledgement remains available after later queries, quiescing, revocation or
+reopening; it does not start a worker or restore any execution or instance lease.
+Substituting a grant, changing either consent decision or renewing expiry for
+that attempt is refused. A recorded grant without an enqueued input is not a
+start acknowledgement and still needs its original pending admission.
+An unknown acknowledgement retains the original action
 for reconciliation. Inspect results, progress and recovery through the existing
 execution commands, and cancel running tasks through their original task ID.
 
@@ -105,3 +113,65 @@ Rust/Serde owns these internal IPC shapes. Regenerate frontend types, schemas
 and validators with `pnpm generate:contracts`; use the centralized
 `pluginCommands.tool`, `executionCommands.prepareTool` and
 `executionCommands.startTool` / `executionCommands.discardTool` adapters.
+
+## Shared Application query instances
+
+For an approved JavaScript Tool component with exactly one callable capability,
+no required dependencies and no ProjectService permission, **Review queries**
+reserves an exact instance identity without starting component code. The preview
+includes required nullable `applicationScope`: an instance UUID/activation
+generation for Application, and explicit null for Project/Attempt. Its original
+Core binding, input digest and actual channel must agree on that identity.
+
+The first run requires both the existing exact query consent and a separate
+checkbox allowing this instance to live until application exit, explicit stop,
+package withdrawal or retirement. A package/runtime approval, project grant,
+manifest scope or query result cannot create this lifetime lease. Later project
+queries can reuse the same live instance, but each requires its own fixed input,
+project authorization, cancellation, grant and original deadline. Closing one
+project withdraws its authority while the independently consented instance may
+remain running for another project.
+
+This profile is unsandboxed. The same process can retain runtime state and
+previously supplied input in memory across projects until stopped; it provides
+no in-process project memory isolation. The Host sends each new input only
+under that project's current permit, with no inherited project service handles.
+
+The preview shows the reserved/active/stopping/stopped state and an explicit
+**Stop shared instance** action. Stopping interrupts calls on this shared
+activation while keeping query drafts and saved ledger output. Unknown stop
+acknowledgements retain the exact original stop action for reconciliation.
+A historical start/stop ACK is data only and cannot restart an old activation.
+The owner waits for its original process to be reaped before reporting stopped
+or completing package removal. A later review reserves a fresh identity and
+requires new lifetime consent; old cleanup cannot stop that replacement.
+
+The existing session IO/frame/stderr/invocation limits apply cumulatively to
+one activation. Failure, cancellation or exhaustion retires that activation,
+without automatic replacement or renewed budgets. Application instance/status
+records and control actions are bounded for one application session; exhausted
+capacity is reported explicitly. Drained processes, runtime images and obsolete
+runner registrations are released by their original owners.
+
+Application Native workers, multiple callable contributions, required/offered
+project services, domain Source/Translation/Review/Build, work-plan Agent tools
+and generation components remain explicitly unsupported. Data Resources and
+Skills remain readable without activating an executable component. Internal IPC
+status/stop adapters are `executionCommands.applicationInstance` and
+`executionCommands.stopApplicationInstance`; they create no project grant.
+
+Normal application exit closes instance admission, withdraws every original
+lifetime lease and waits for bounded owned cleanup before destroying the native
+window. If cleanup is still stopping or its acknowledgement is unknown, the
+window remains open. Closing it again checks the same original stop-all action;
+it does not activate a replacement. Closing a project alone does not invoke
+this application-exit control. Automated checks cover direct-child reaping;
+actual native application exit remains a separate acceptance step.
+
+If exit is cancelled by newer edits or native window destruction fails, the
+original App feedback provides **Allow new shared instances**. This explicitly
+reopens admission only after the exact shutdown has drained; old instances and
+leases stay stopped. An uncertain recovery retains its original action for
+checking and blocks conflicting exit/recovery requests. Later exit uses a new
+action and snapshot. Replaying an earlier stop or recovery cannot stop newer
+instances or release a newer exit's admission fence.

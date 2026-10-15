@@ -228,7 +228,8 @@ fn exact_package_stop_revokes_all_environments_and_drains_without_stopping_other
                 &rejected,
                 plugin_authority::plugin_now_ms().unwrap() + 60_000,
                 PluginConsent {
-                    unsandboxed_execution: true
+                    unsandboxed_execution: true,
+                    application_execution: false
                 }
             )
             .is_err()
