@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/reviewCommands.contract.json";
 import nativeEnvironment from "../test/fixtures/nativeRuntime.contract.json";
-import { reviewCommands } from "./reviewCommands";
+import { reviewCommands, confirmReviewFindingBasis, confirmReviewFindingEvidence, type ReviewFindingWrite, type ReviewFindingDecision } from "./reviewCommands";
 import * as validators from "./generated/review.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 
@@ -190,4 +190,48 @@ it("rejects a summary for another fixed scope or language while preserving valid
   await expect(reviewCommands.summaryPage(request)).rejects.toThrow("Invalid IPC response: read_review_summary_page");
   invoke.mockResolvedValueOnce({ ...page, rows: [] });
   expect(await reviewCommands.summaryPage(request)).toEqual({ ...page, rows: [] });
+});
+
+
+it("validates finding transport and exact action/evidence receipts without granting mandatory authority", async () => {
+  const target: unknown = fixture.responses.target;
+  if (!validators.validateResponseTarget(target)) throw new Error("Valid target required");
+  const original: unknown = fixture.responses.check;
+  if (!validators.validateResponseCheck(original)) throw new Error("Valid check required");
+  const rule = original.rules.find(rule => rule.key.implementation.kind === "plugin");
+  if (!rule) throw new Error("Captured provider required");
+  const request: ReviewFindingWrite = { projectId: session.projectId, actionId: fixture.requests.decision.decision.actionId,
+    unitId: target.unitId, locale: target.locale, expectedBasis: target.basis, runId: original.runId, issueId: "a".repeat(64),
+    expectedDecisionId: null, disposition: "rejected", actor: "Synthetic reviewer", reason: "Original finding evidence" };
+  const result: ReviewFindingDecision = { decisionId: fixture.responses.decision.decisionId,
+    request: { ...request, expectedDecisionId: request.expectedDecisionId ?? null },
+    basisEvidence: target.basisEvidence, finding: { issueId: request.issueId, rule: rule.rule, code: "synthetic", detail: "Synthetic report", severity: "warning", waivable: false },
+    requirement: { key: rule.key, inputDigest: "b".repeat(64), scopeDigest: "c".repeat(64), targets: [target.unitId], mandatory: false, waivable: false, notApplicable: null },
+    createdAt: fixture.responses.decision.createdAt };
+  const writeRequest = { ...session, finding: request };
+  expect(validators.validateRequestFinding(writeRequest)).toBe(true);
+  expect(validators.validateResponseFinding(result)).toBe(true);
+  expect(validators.validateRequestFinding({ ...writeRequest, finding: { ...request, disposition: "waived" } })).toBe(false);
+  invoke.mockResolvedValueOnce(result);
+  expect(await reviewCommands.finding(session,request)).toEqual(result);
+  expect(invoke).toHaveBeenLastCalledWith("write_review_finding",{request:writeRequest});
+  invoke.mockResolvedValueOnce(result);
+  expect(await reviewCommands.findingAction({...session,actionId:request.actionId})).toEqual(result);
+  expect(invoke).toHaveBeenLastCalledWith("read_review_finding_action",{request:{...session,actionId:request.actionId}});
+  const page = { unitId: target.unitId, locale: target.locale, basis: target.basis, runId: original.runId,
+    findings: [{ finding: result.finding, requirement: result.requirement, decision: result }], repairs: [], history: [result], nextOffset: null };
+  invoke.mockResolvedValueOnce(page);
+  expect(await reviewCommands.findings({...session,unitId:target.unitId,locale:target.locale,offset:0,limit:20})).toEqual(page);
+  for (const invalid of [ { ...result, request: { ...request, reason: "Different reason" } },
+    { ...result, request: { ...request, runId: target.unitId } },
+    { ...result, requirement: { ...result.requirement, mandatory: true } } ]) {
+    invoke.mockResolvedValueOnce(invalid);
+    const error = await reviewCommands.finding(session,request).catch(value => value);
+    expect(hasUnknownOutcome(error)).toBe(true);
+    expect(error.reason).toBe("invalid-review-finding-receipt");
+  }
+  expect(()=>confirmReviewFindingBasis({...result,basisEvidence:{...result.basisEvidence,sourceRevisionId:target.unitId}},target.basisEvidence)).toThrow("Invalid review finding acknowledgement");
+  expect(()=>confirmReviewFindingEvidence({...result,requirement:{...result.requirement,inputDigest:"d".repeat(64)}},result)).toThrow("Invalid review finding acknowledgement");
+  invoke.mockResolvedValueOnce({...page,findings:[{...page.findings[0],requirement:{...result.requirement,mandatory:true}}]});
+  await expect(reviewCommands.findings({...session,unitId:target.unitId,locale:target.locale,offset:0,limit:20})).rejects.toThrow();
 });

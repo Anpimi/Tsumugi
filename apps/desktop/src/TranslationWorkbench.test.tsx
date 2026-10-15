@@ -13,7 +13,7 @@ import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { translationActionFixture, translationAttemptFixture, translationReceiptFixture, translationRecoveryUnit } from "./testSupport/translationFixture";
 import type { TranslationAdoptRequest } from "./translationCommands";
-import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
+import { reviewFindingViewFixture, reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import { translationCapture, translationSelection, translationView, translationInventory, translationPackage, translationCheck, translationProjection } from "./testSupport/pluginTranslationFixture";
 import type { AttemptDetail } from "./executionCommands";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
@@ -87,6 +87,7 @@ beforeEach(async () => {
     }
     if (command === "read_review_summary_page") return reviewSummaryPageFixture(content.rows.map(row => reviewSummaryFor(reviewTargetFixture({ unitId: row.unitId!, locale: String(args.request.locale), nativeKey: row.occurrence.key, sourceText: row.occurrence.text, sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: row.sourceRevisionId!, selectionId: history.locale === args.request.locale ? history.current?.eventId ?? null : null, revisionId: history.locale === args.request.locale ? history.current?.revisionId ?? null : null, translationText: history.locale === args.request.locale ? history.currentText : null, basis: "basis" }))));
     if (command === "read_review_target") return reviewTargetFixture({ unitId: fixtureIdentity(204), nativeKey: "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" });
+    if (command === "read_review_findings") return reviewFindingViewFixture(reviewTargetFixture({ unitId: fixtureIdentity(204), nativeKey: "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" }));
     if (command === "read_review_editor_snapshot") {
       const scoped = history.unitId === args.request.unitId && history.locale === args.request.locale ? history
         : { ...emptyHistory, unitId: String(args.request.unitId), locale: String(args.request.locale) };

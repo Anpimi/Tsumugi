@@ -97,8 +97,32 @@ fn assert_no_worker_stages(application: &Path) {
     );
 }
 
-#[test]
-fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa_across_reopen() {
+fn review_phase(phase: &str) {
+    eprintln!("joint-review phase={phase}");
+}
+
+/// Borrow the same real setup while each test owns a separate temporary project.
+struct JointReviewFixture<'a> {
+    app: &'a tauri::App<tauri::test::MockRuntime>,
+    window: &'a Window,
+    application: &'a Path,
+    project_path: &'a Path,
+    context: &'a Value,
+    intent: &'a Value,
+    checked: &'a Value,
+    unit: &'a Value,
+    source_action: &'a Value,
+    source_receipt: &'a Value,
+    history: &'a Value,
+    choice: &'a Value,
+    view: &'a Value,
+    captured_slots: &'a [Slot],
+    format_approval: &'a PackageApproval,
+    runtime_approval: &'a RuntimeApproval,
+}
+
+fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
+    review_phase("setup: independent packages and runtime");
     let temporary = OwnedDirectory(tempfile::tempdir().unwrap());
     let root = temporary.0.path();
     let (format, format_approval) = selected_package(
@@ -193,6 +217,7 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
     let raw_source = format!("WEBVTT\n\nCue\n00:01.000 --> 00:02.000\n{source_text}\n\n");
     // Source setup uses the ordinary capture/runtime APIs and an actual Node
     // extractor. The independent proof and adoption use registered IPC below.
+    review_phase("setup: real source extraction");
     let source_attempt = state.sessions.with(move |sessions| {
         let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
         let input =
@@ -268,6 +293,7 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
         "sourceAttemptId":source_attempt,"sourceResultId":source_result,"attemptId":ExecutionId::new(),"source":source_choice
     })))).unwrap();
     let source_check_start = consent(&context, &source_check);
+    review_phase("setup: independent source check");
     let checked_source = call(&window, "start_source_check", Some(source_check_start)).unwrap();
     let checked_source_result = completed_result(&window, &context, checked_source.clone());
     call(
@@ -282,6 +308,7 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
     adoption["actionId"] = json!(ExecutionId::new());
     call(&window, "prepare_source_adoption", Some(adoption.clone())).unwrap();
     let source_action = scoped(&context, json!({"actionId":adoption["actionId"]}));
+    review_phase("setup: adopt checked source");
     let source_receipt = call(&window, "adopt_execution", Some(source_action.clone())).unwrap();
 
     let page = call(
@@ -420,6 +447,7 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
             .is_null()
     );
     assert_no_worker_stages(&application);
+    review_phase("setup: granted joint QA");
     let checked = call(&window, "run_review_checks", Some(start.clone())).unwrap();
     assert_eq!(checked["actionId"], intent["actionId"]);
     assert_eq!(checked["outcome"], "completed");
@@ -637,6 +665,42 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
         "checking an editorial resource must not adopt terminology"
     );
 
+    review_phase("setup: current QA and approval verified");
+    assertions(JointReviewFixture {
+        app: &app,
+        window: &window,
+        application: &application,
+        project_path: &project_path,
+        context: &context,
+        intent: &intent,
+        checked: &checked,
+        unit: &unit,
+        source_action: &source_action,
+        source_receipt: &source_receipt,
+        history: &history,
+        choice: &choice,
+        view,
+        captured_slots: &captured_slots,
+        format_approval: &format_approval,
+        runtime_approval: &runtime_approval,
+    });
+    state.plugins.close();
+}
+
+/// Reopening checks original receipts and QA without reconstructing authority.
+fn reopen_joint_review_fixture(fixture: &JointReviewFixture<'_>) -> (Value, Value) {
+    review_phase("reopen: original receipts and current QA");
+    let window = fixture.window;
+    let context = fixture.context.clone();
+    let intent = fixture.intent.clone();
+    let checked = fixture.checked.clone();
+    let unit = fixture.unit.clone();
+    let project_path = fixture.project_path;
+    let source_action = fixture.source_action.clone();
+    let source_receipt = fixture.source_receipt.clone();
+    let history = fixture.history.clone();
+    let choice = fixture.choice.clone();
+    let view = fixture.view;
     call(&window, "quiesce_execution", Some(context.clone())).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
     while call(&window, "execution_status", Some(context.clone())).unwrap()["active"] == true {
@@ -725,50 +789,75 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
         call(&window, "read_plugin_text_review", Some(choice)).unwrap(),
         *view
     );
-    let plugins = state.plugins.clone();
-    let recaptured = captured_slots
-        .into_iter()
-        .map(|slot| {
-            let environment = slot.environment.reopen(&plugins).unwrap();
-            (slot.input, environment)
-        })
-        .collect::<Vec<_>>();
-    state.sessions.with(move |sessions| {
-        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-        for (input, environment) in recaptured {
-            let saved = store.execution_input(input.envelope().attempt_id).unwrap();
-            assert_eq!(saved.bytes(), input.bytes());
-            host.register_plugin(
-                environment.clone().runner().unwrap(),
-                environment.binding().unwrap(),
-            )
-            .unwrap();
-            assert_eq!(
-                host.runtime.submit(store, &saved).unwrap_err().code,
-                ErrorCode::Unauthorized,
-                "reopened captures/history/receipts cannot restore live checker authority"
-            );
-        }
+    review_phase("reopen: original receipts and current QA verified");
+    (reopened_context, reopened_intent)
+}
+
+#[test]
+fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa_across_reopen() {
+    review_phase("joint: start");
+    with_joint_review_fixture(|fixture| {
+        let (reopened_context, reopened_intent) = reopen_joint_review_fixture(&fixture);
+        let app = fixture.app;
+        let state = app.state::<AppState>();
+        let window = fixture.window;
+        let checked = fixture.checked.clone();
+        let application = fixture.application;
+        let project_path = fixture.project_path;
+        let format_approval = fixture.format_approval;
+        let runtime_approval = fixture.runtime_approval;
+        let captured_slots = fixture.captured_slots.to_vec();
+        review_phase("joint: reopened captures cannot restore authority");
+        let plugins = state.plugins.clone();
+        let recaptured = captured_slots
+            .into_iter()
+            .map(|slot| {
+                let environment = slot.environment.reopen(&plugins).unwrap();
+                (slot.input, environment)
+            })
+            .collect::<Vec<_>>();
+        state.sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            for (input, environment) in recaptured {
+                let saved = store.execution_input(input.envelope().attempt_id).unwrap();
+                assert_eq!(saved.bytes(), input.bytes());
+                host.register_plugin(
+                    environment.clone().runner().unwrap(),
+                    environment.binding().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    host.runtime.submit(store, &saved).unwrap_err().code,
+                    ErrorCode::Unauthorized,
+                    "reopened captures/history/receipts cannot restore live checker authority"
+                );
+            }
+        });
+        assert_no_worker_stages(&application);
+        review_phase("joint: currentness and revocation group");
+        currentness::rejects_revoked_manual_computation(
+            &app,
+            &window,
+            &reopened_context,
+            &reopened_intent,
+            &checked,
+            &format_approval,
+            &runtime_approval,
+            &project_path,
+        );
+        review_phase("joint: currentness and revocation group complete");
+        call(
+            window,
+            "close_project",
+            Some(json!({"sessionToken":reopened_context["sessionToken"]})),
+        )
+        .unwrap();
     });
-    assert_no_worker_stages(&application);
-    currentness::rejects_revoked_manual_computation(
-        &app,
-        &window,
-        &reopened_context,
-        &reopened_intent,
-        &checked,
-        &format_approval,
-        &runtime_approval,
-        &project_path,
-    );
-    call(
-        &window,
-        "close_project",
-        Some(json!({"sessionToken":reopened["sessionToken"]})),
-    )
-    .unwrap();
-    state.plugins.close();
+    review_phase("joint: complete");
 }
 
 #[path = "currentness.rs"]
 mod currentness;
+
+#[path = "findings.rs"]
+mod findings;

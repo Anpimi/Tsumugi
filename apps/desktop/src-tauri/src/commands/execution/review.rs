@@ -1,4 +1,5 @@
 use super::*;
+use tsumugi_core::{ReviewFindingDecision, ReviewFindingView, ReviewFindingWrite};
 pub(in crate::commands::execution) mod checkers;
 pub(in crate::commands) mod plugin;
 pub(super) use plugin::ReviewSession;
@@ -732,6 +733,106 @@ pub async fn read_review_eligibility(
                 .store
                 .review_eligibility(request.project_id, &request.locales)
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewFindingWriteRequest {
+        finding: ReviewFindingWrite
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewFindingActionRequest {
+        action_id: ExecutionId
+    }
+);
+
+#[tauri::command]
+pub async fn read_review_findings(
+    state: State<'_, AppState>,
+    request: ReviewHistoryRequest,
+) -> Result<ReviewFindingView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_findings",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_findings(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.offset,
+                    request.limit,
+                )
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_review_finding_action(
+    state: State<'_, AppState>,
+    request: ReviewFindingActionRequest,
+) -> Result<Option<ReviewFindingDecision>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_finding_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_finding_action(request.project_id, request.action_id)
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn write_review_finding(
+    state: State<'_, AppState>,
+    request: ReviewFindingWriteRequest,
+) -> Result<ReviewFindingDecision, CommandError> {
+    state
+        .sessions
+        .run(
+            "write_review_finding",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                if request.finding.project_id != request.project_id {
+                    return Err(CommandError::invalid_input(
+                        CommandStage::ExecutionAdopt,
+                        Some("review-project"),
+                    ));
+                }
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .write_review_finding(&request.finding)
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
             },
         )
         .await

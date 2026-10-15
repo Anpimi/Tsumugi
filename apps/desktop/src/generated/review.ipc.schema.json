@@ -317,6 +317,112 @@
         ],
         "type": "string"
       },
+      "ReviewFindingActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "ReviewFindingDisposition": {
+        "enum": [
+          "rejected",
+          "restored",
+          "repair-requested"
+        ],
+        "type": "string"
+      },
+      "ReviewFindingWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/ReviewFindingDisposition"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issueId": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "runId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "runId",
+          "issueId",
+          "disposition",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ReviewFindingWriteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "finding": {
+            "$ref": "#/definitions/ReviewFindingWrite"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "finding"
+        ],
+        "type": "object"
+      },
       "ReviewHistoryRequest": {
         "additionalProperties": false,
         "properties": {
@@ -732,6 +838,15 @@
       "fallback": {
         "$ref": "#/definitions/FallbackRequest"
       },
+      "finding": {
+        "$ref": "#/definitions/ReviewFindingWriteRequest"
+      },
+      "findingAction": {
+        "$ref": "#/definitions/ReviewFindingActionRequest"
+      },
+      "findings": {
+        "$ref": "#/definitions/ReviewHistoryRequest"
+      },
       "history": {
         "$ref": "#/definitions/ReviewHistoryRequest"
       },
@@ -767,6 +882,9 @@
       "neighbor",
       "scope",
       "history",
+      "finding",
+      "findingAction",
+      "findings",
       "decision",
       "prepareCheck",
       "check",
@@ -784,6 +902,33 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AdvisoryFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ReviewFindingDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finding": {
+            "$ref": "#/definitions/CheckFinding"
+          },
+          "requirement": {
+            "$ref": "#/definitions/CheckRequirement"
+          }
+        },
+        "required": [
+          "requirement",
+          "finding",
+          "decision"
+        ],
+        "type": "object"
+      },
       "AdvisoryReviewCheck": {
         "additionalProperties": false,
         "description": "Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.",
@@ -2403,6 +2548,194 @@
         ],
         "type": "object"
       },
+      "ReviewFindingDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "basisEvidence": {
+            "$ref": "#/definitions/ReviewBasis"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "decisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "finding": {
+            "$ref": "#/definitions/CheckFinding"
+          },
+          "request": {
+            "$ref": "#/definitions/ReviewFindingWrite"
+          },
+          "requirement": {
+            "$ref": "#/definitions/CheckRequirement"
+          }
+        },
+        "required": [
+          "decisionId",
+          "request",
+          "basisEvidence",
+          "requirement",
+          "finding",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ReviewFindingDisposition": {
+        "enum": [
+          "rejected",
+          "restored",
+          "repair-requested"
+        ],
+        "type": "string"
+      },
+      "ReviewFindingRepair": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/ReviewFindingDecision"
+          },
+          "recheckRunId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/definitions/ReviewRepairStatus"
+          }
+        },
+        "required": [
+          "decision",
+          "status",
+          "recheckRunId"
+        ],
+        "type": "object"
+      },
+      "ReviewFindingView": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/definitions/AdvisoryFinding"
+            },
+            "type": "array"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/definitions/ReviewFindingDecision"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "repairs": {
+            "items": {
+              "$ref": "#/definitions/ReviewFindingRepair"
+            },
+            "type": "array"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "basis",
+          "runId",
+          "findings",
+          "repairs",
+          "history",
+          "nextOffset"
+        ],
+        "type": "object"
+      },
+      "ReviewFindingWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/ReviewFindingDisposition"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issueId": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "runId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "runId",
+          "issueId",
+          "expectedDecisionId",
+          "disposition",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
       "ReviewHistoryPage": {
         "additionalProperties": false,
         "properties": {
@@ -2552,6 +2885,15 @@
           "checkers"
         ],
         "type": "object"
+      },
+      "ReviewRepairStatus": {
+        "enum": [
+          "awaiting-current-recheck",
+          "current-rule-clear",
+          "current-rule-findings",
+          "superseded"
+        ],
+        "type": "string"
       },
       "ReviewRuleDeclaration": {
         "additionalProperties": false,
@@ -3850,6 +4192,22 @@
       "fallback": {
         "$ref": "#/definitions/FallbackDecision"
       },
+      "finding": {
+        "$ref": "#/definitions/ReviewFindingDecision"
+      },
+      "findingAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ReviewFindingDecision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "findings": {
+        "$ref": "#/definitions/ReviewFindingView"
+      },
       "history": {
         "$ref": "#/definitions/ReviewHistoryPage"
       },
@@ -3885,6 +4243,9 @@
       "neighbor",
       "scope",
       "history",
+      "finding",
+      "findingAction",
+      "findings",
       "decision",
       "prepareCheck",
       "check",

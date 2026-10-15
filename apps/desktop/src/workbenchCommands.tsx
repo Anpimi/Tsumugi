@@ -45,6 +45,9 @@ export interface ReviewFallbackCommandPayload {
   basis: string;
   expectedFallbackId: string | null;
 }
+export interface ReviewFindingCommandPayload {
+  kind: "review-finding"; unitId: string; locale: string; basis: string; runId: string; issueId: string; expectedDecisionId: string | null;
+}
 export interface ReviewWaiverCommandPayload {
   kind: "review-waiver";
   unitId: string;
@@ -350,6 +353,9 @@ interface WorkbenchCommandPayloads {
   "ai.decide-candidate": TranslationCandidateCommandPayload;
   "ai.check-candidate-decision": TranslationCandidatePendingCommandPayload;
   "ai.retry-candidate-decision": TranslationCandidatePendingCommandPayload;
+  "review.reject-finding": ReviewFindingCommandPayload;
+  "review.restore-finding": ReviewFindingCommandPayload;
+  "review.repair-finding": ReviewFindingCommandPayload;
   "review.allow-fallback": ReviewFallbackCommandPayload;
   "review.withdraw-fallback": ReviewFallbackCommandPayload;
   "review.grant-waiver": ReviewWaiverCommandPayload;
@@ -437,7 +443,7 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   availability: (payload: Extract<CommandPayload, { kind: K }> | undefined) => CommandAvailability;
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
-export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-finding" | "review.restore-finding" | "review.repair-finding"> | PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
   | ResourceCommand<"source-check", "source.prepare-check" | "source.start-check" | "source.finish-check">
   | ResourceCommand<"source-plugin-pending", "source.retry-plugin-request">
   | ResourceCommand<"task-saved-build", "tasks.open-saved-build">
@@ -683,6 +689,10 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       && (payload.expectedFallbackId === null || validIdentity(payload.expectedFallbackId))) return command.availability(payload);
     return { enabled: false, reason: command.availability(undefined).reason ?? "unavailable" };
   }
+  if (command.payloadKind === "review-finding") {
+    return payload?.kind === "review-finding" && validTarget(payload) && validIdentity(payload.runId) && validIdentity(payload.issueId)
+      && nullableIdentity(payload.expectedDecisionId) ? command.availability(payload) : unavailable;
+  }
   if (command.payloadKind === "review-waiver") {
     if (payload?.kind === "review-waiver" && validTarget(payload) && validIdentity(payload.issueId)
       && (payload.expectedWaiverId === null || validIdentity(payload.expectedWaiverId))) return command.availability(payload);
@@ -691,7 +701,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
   return !command.payloadKind && payload === undefined ? command.availability() : { enabled: false, reason: "unavailable" };
 }
 function validIdentity(value: unknown): value is string { return typeof value === "string" && value.length > 0; }
-function validTarget(payload: ReviewFallbackCommandPayload | ReviewWaiverCommandPayload) { return validIdentity(payload.unitId) && validIdentity(payload.locale) && validIdentity(payload.basis); }
+function validTarget(payload: ReviewFallbackCommandPayload | ReviewWaiverCommandPayload | ReviewFindingCommandPayload) { return validIdentity(payload.unitId) && validIdentity(payload.locale) && validIdentity(payload.basis); }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 function nullableIdentity(value: unknown) { return value === null || validIdentity(value); }
 function editSequence(value: unknown) { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
@@ -1077,7 +1087,8 @@ export class WorkbenchCommands {
     } else if (command.payloadKind === "review-waiver") {
       if (payload?.kind !== "review-waiver") return false;
       command.handler(payload);
-    } else if (command.payloadKind === "resource-tool-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
+    } else if (command.payloadKind === "review-finding" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "resource-tool-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-tool-capture" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-tool-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-term" && payload?.kind === command.payloadKind) command.handler(payload);

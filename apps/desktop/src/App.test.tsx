@@ -11,7 +11,7 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture, sourceImpactFixture } from "./testSupport/sourceFixture";
 import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
-import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
+import { reviewFindingViewFixture, reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 import { defaultAiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
 import { aiAttempt, aiViewFixture, aiWorkPlanFixture, arenaViewFixture } from "./testSupport/aiFixture";
@@ -26,6 +26,9 @@ import type { AttemptDetail } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import type { ContentScope } from "./sourceCommands";
 import { sourceKeys } from "./sourceQueries";
+import { pluginRuleKeyFixture } from "./testSupport/textReviewFixture";
+import { validateRequestFinding } from "./generated/review.validators";
+import type { ReviewFindingDecision } from "./reviewCommands";
 import type { Eligibility } from "./reviewCommands";
 import { StrictMode } from "react";
 import { connectionFixture } from "./testSupport/connectionFixture";
@@ -190,6 +193,7 @@ function installTranslationEditor() {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(500) };
     if (command === "read_source_content") return sourcePageFixture({ snapshotId: fixtureIdentity(500), scope: { revision: "2", currentSnapshot: fixtureIdentity(500) }, namespace: "Example.Mod", rows: [], total: 1 });
     if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor({ ...target, locale, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text })]);
+    if (command === "read_review_findings") return reviewFindingViewFixture({ ...target, locale, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text });
     if (command === "read_review_editor_snapshot") return {
       target: { ...target, locale, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text },
       translations: { unitId: fixtureIdentity(501), locale, total: selection?.sequence ?? "0", rows: [], nextOrdinal: null, currentText: text, current: selection },
@@ -1384,6 +1388,7 @@ describe("project lifecycle workbench", () => {
     mocks.invoke.mockImplementation(async (command: string, args: { request: { offset?: number } }) => {
       if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(target)]);
       if (command === "read_review_target") return target;
+      if (command === "read_review_findings") return reviewFindingViewFixture(target);
       if (command === "read_review_history") return { decisions: [],
         checks: [reviewCheckFixture(target, fixtureIdentity(650), "completed", { runId: fixtureIdentity(651),
           validatorVersion: args.request.offset === 20 ? "older-history-page" : currentHistory })],
@@ -1521,6 +1526,7 @@ describe("project lifecycle workbench", () => {
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(target)]);
       if (command === "read_review_target") return target;
+      if (command === "read_review_findings") return reviewFindingViewFixture(target);
       if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
       if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
       if (command === "list_execution_tasks") return [];
@@ -1540,6 +1546,50 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Close project" }));
     expect(await screen.findByRole("dialog", { name: "Leave with an unfinished review?" })).toBeVisible();
     expect(mocks.invoke.mock.calls.some(([command]) => command === "close_project")).toBe(false);
+  });
+
+  it("keeps unknown finding recovery reachable through actual App navigation and native close", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const original = mocks.invoke.getMockImplementation()!;
+    const target = reviewTargetFixture({ basis: "a".repeat(64) });
+    const finding = { issueId: "b".repeat(64), rule: "plugin:synthetic-advisory", code: "same-code", detail: "App advisory evidence", severity: "warning", waivable: false };
+    const requirement = { key: pluginRuleKeyFixture("synthetic-advisory"), inputDigest: "c".repeat(64), scopeDigest: "d".repeat(64), targets: [target.unitId], mandatory: false, waivable: false, notApplicable: null };
+    target.currentCheck = reviewCheckFixture(target, fixtureIdentity(1100), "completed", { runId: fixtureIdentity(1101), rules: [{ rule: finding.rule, key: requirement.key, mandatory: false, status: "findings", reason: null, findings: [finding] }] });
+    let saved: ReviewFindingDecision | null = null;
+    mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+      if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(target)]);
+      if (command === "read_review_target") return target;
+      if (command === "read_review_findings") return { ...reviewFindingViewFixture(target), findings: [{ finding, requirement, decision: saved }], history: saved ? [saved] : [] };
+      if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
+      if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [] };
+      if (command === "create_execution_identity") return fixtureIdentity(1102);
+      if (command === "write_review_finding") {
+        if (!validateRequestFinding(args.request)) throw new Error("Invalid finding request");
+        saved = { decisionId: fixtureIdentity(1103), request: structuredClone({ ...args.request.finding, expectedDecisionId: args.request.finding.expectedDecisionId ?? null }), basisEvidence: target.basisEvidence, requirement, finding, createdAt: "2026-10-16T00:00:00Z" };
+        throw new Error("Lost response after commit");
+      }
+      if (command === "read_review_finding_action") return saved;
+      return original(command, args);
+    });
+    await user.click(screen.getByRole("button", { name: "Review and QA" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const findingsPanel = await screen.findByRole("region", { name: "Advisory findings" });
+    await within(findingsPanel).findByText("App advisory evidence", { exact: false });
+    await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+    await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Reason A");
+    await user.click(screen.getByRole("button", { name: "Reject as false positive" }));
+    await screen.findByRole("region", { name: "Original finding action awaiting confirmation" });
+    await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), " plus B");
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    expect(screen.getByRole("region", { name: "Original finding action awaiting confirmation" })).toBeVisible();
+    const nativeClose = mocks.onCloseRequested.mock.calls.at(-1)?.[0]; if (!nativeClose) throw new Error("No native close handler");
+    await act(async () => { await nativeClose({ preventDefault: vi.fn() }); });
+    expect(mocks.close).not.toHaveBeenCalled();
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "close_project")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Retry the same action" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Original finding action awaiting confirmation" })).toBeNull());
+    expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Reason A plus B");
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === "write_review_finding")).toHaveLength(1);
   });
 
   it("keeps resource edits during ordinary navigation and confirms real project close", async () => {

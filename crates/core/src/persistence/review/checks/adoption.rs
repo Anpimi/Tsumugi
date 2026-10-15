@@ -82,6 +82,45 @@ pub(in crate::persistence::review) fn coverage_complete(run: &CheckRun) -> bool 
         .is_ok_and(|coverage| coverage.complete)
 }
 
+fn finding_issue_id(
+    requirement: &sdk::CheckRequirement,
+    finding: &sdk::CheckFinding,
+    diagnostics: &[sdk::TextReviewDiagnostic],
+) -> Result<String, ExecutionError> {
+    if requirement.mandatory {
+        // Mechanical identities and their existing waiver basis are unchanged.
+        return digest(&(
+            "domain-review-issue-1",
+            &requirement.key,
+            &requirement.input_digest,
+            &requirement.scope_digest,
+            finding,
+        ));
+    }
+    // Diagnostic presentation is optional in the actual report. Its explicit
+    // absence is distinct from later evidence containing a suggestion/range.
+    // Match the full contributing key and exact target, not merely its code.
+    let mut diagnostic_bytes = diagnostics
+        .iter()
+        .filter(|d| {
+            d.key == requirement.key
+                && d.code == finding.code
+                && d.target == finding.target
+                && requirement.targets.contains(&d.target)
+        })
+        .map(|d| codec::encode(d, MAX_INPUT_BYTES))
+        .collect::<Result<Vec<_>, _>>()?;
+    diagnostic_bytes.sort();
+    digest(&(
+        "advisory-review-issue-2",
+        &requirement.key,
+        &requirement.input_digest,
+        &requirement.scope_digest,
+        finding,
+        diagnostic_bytes,
+    ))
+}
+
 fn project_rules(
     evidence: &ReviewCheckEvidence,
     core_rules: &[CheckRuleResult],
@@ -169,13 +208,11 @@ fn project_rules(
                     .iter()
                     .map(|finding| {
                         Ok(CheckFinding {
-                            issue_id: digest(&(
-                                "domain-review-issue-1",
-                                &requirement.key,
-                                &requirement.input_digest,
-                                &requirement.scope_digest,
+                            issue_id: finding_issue_id(
+                                requirement,
                                 finding,
-                            ))?,
+                                &evidence.diagnostics,
+                            )?,
                             rule: rule.clone(),
                             code: finding.code.clone(),
                             detail: finding.code.clone(),
@@ -683,5 +720,119 @@ impl ProjectStore {
             failure(ErrorCode::OutcomeUnknown, "review-check-commit")
         })?;
         Ok(run)
+    }
+}
+
+#[cfg(test)]
+mod finding_identity_tests {
+    use super::*;
+    fn values() -> (
+        sdk::CheckRequirement,
+        sdk::CheckFinding,
+        sdk::TextReviewDiagnostic,
+    ) {
+        let contract = |id: &str| sdk::ContractRef {
+            id: id.into(),
+            schema_version: 1,
+            behavior_version: 1,
+        };
+        let key = sdk::CheckKey {
+            rule: contract("synthetic-rule"),
+            implementation: sdk::CheckImplementation::Core {
+                validator: contract("synthetic-validator"),
+            },
+        };
+        let requirement = sdk::CheckRequirement {
+            key: key.clone(),
+            input_digest: "a".repeat(64),
+            scope_digest: "b".repeat(64),
+            targets: vec!["target-a".into()],
+            mandatory: false,
+            waivable: false,
+            not_applicable: None,
+        };
+        let finding = sdk::CheckFinding {
+            code: "same-code".into(),
+            target: "target-a".into(),
+            severity: sdk::FindingSeverity::Warning,
+        };
+        let diagnostic = sdk::TextReviewDiagnostic {
+            key,
+            code: "same-code".into(),
+            target: "target-a".into(),
+            location: None,
+            detail: Some("Actual report detail".into()),
+            suggestion: Some("First suggestion".into()),
+            resource_entry: None,
+        };
+        (requirement, finding, diagnostic)
+    }
+    #[test]
+    fn advisory_identity_includes_exact_rich_evidence_without_folding_other_sources() {
+        let (requirement, finding, diagnostic) = values();
+        let original =
+            finding_issue_id(&requirement, &finding, std::slice::from_ref(&diagnostic)).unwrap();
+        assert_eq!(
+            original,
+            finding_issue_id(&requirement, &finding, std::slice::from_ref(&diagnostic)).unwrap()
+        );
+        let mut changed = diagnostic.clone();
+        changed.suggestion = Some("New suggestion".into());
+        assert_ne!(
+            original,
+            finding_issue_id(&requirement, &finding, &[changed]).unwrap()
+        );
+        let mut changed = diagnostic.clone();
+        changed.location = Some(sdk::TextReviewLocation {
+            field: sdk::TextReviewField::Translation,
+            range: sdk::TextRange {
+                encoding: sdk::TextEncoding::Utf16,
+                start: 0,
+                end: 1,
+            },
+        });
+        assert_ne!(
+            original,
+            finding_issue_id(&requirement, &finding, &[changed]).unwrap()
+        );
+        assert_ne!(
+            original,
+            finding_issue_id(&requirement, &finding, &[]).unwrap()
+        );
+        let mut other = diagnostic.clone();
+        other.target = "other-target".into();
+        assert_eq!(
+            original,
+            finding_issue_id(&requirement, &finding, &[diagnostic.clone(), other]).unwrap()
+        );
+        let mut other = diagnostic.clone();
+        other.key.rule.id = "other-contribution".into();
+        assert_eq!(
+            original,
+            finding_issue_id(&requirement, &finding, &[diagnostic.clone(), other]).unwrap()
+        );
+        let mut other = diagnostic.clone();
+        other.code = "other-code".into();
+        assert_eq!(
+            original,
+            finding_issue_id(&requirement, &finding, &[diagnostic, other]).unwrap()
+        );
+    }
+    #[test]
+    fn mandatory_identity_retains_the_original_algorithm() {
+        let (mut requirement, finding, diagnostic) = values();
+        requirement.mandatory = true;
+        let expected = digest(&(
+            "domain-review-issue-1",
+            &requirement.key,
+            &requirement.input_digest,
+            &requirement.scope_digest,
+            &finding,
+        ))
+        .unwrap();
+        assert_eq!(
+            finding_issue_id(&requirement, &finding, &[diagnostic]).unwrap(),
+            expected
+        );
     }
 }

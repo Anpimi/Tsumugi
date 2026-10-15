@@ -3,6 +3,7 @@
 export type ExecutionId = string;
 export type UnsignedDecimal = string;
 export type ReviewDecisionKind = "approve" | "request-changes";
+export type ReviewFindingDisposition = "rejected" | "restored" | "repair-requested";
 
 export interface Requests {
   cancelCheck: ReviewCancelCheckRequest;
@@ -10,6 +11,9 @@ export interface Requests {
   decision: ReviewWriteRequest;
   eligibility: EligibilityRequest;
   fallback: FallbackRequest;
+  finding: ReviewFindingWriteRequest;
+  findingAction: ReviewFindingActionRequest;
+  findings: ReviewHistoryRequest;
   history: ReviewHistoryRequest;
   neighbor: ReviewNeighborRequest;
   page: ReviewPageRequest;
@@ -115,6 +119,29 @@ export interface FallbackWrite {
   projectId: ExecutionId;
   reason: string;
   unitId: ExecutionId;
+}
+export interface ReviewFindingWriteRequest {
+  finding: ReviewFindingWrite;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ReviewFindingWrite {
+  actionId: ExecutionId;
+  actor: string;
+  disposition: ReviewFindingDisposition;
+  expectedBasis: string;
+  expectedDecisionId?: ExecutionId | null;
+  issueId: string;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  runId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ReviewFindingActionRequest {
+  actionId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
 }
 export interface ReviewHistoryRequest {
   limit: number;

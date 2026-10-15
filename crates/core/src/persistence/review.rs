@@ -29,6 +29,11 @@ pub(super) use checks::{
 pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
+mod findings;
+pub use findings::{
+    AdvisoryFinding, ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingRepair,
+    ReviewFindingView, ReviewFindingWrite, ReviewRepairStatus,
+};
 mod queries;
 pub(super) use queries::{read_snapshot, targets_in};
 #[cfg(test)]
@@ -373,6 +378,7 @@ pub struct ReviewHistoryPage {
 }
 
 const TABLES: &[(&str, &str)] = &[
+    findings::TABLE,
     (
         "review_decisions",
         "CREATE TABLE review_decisions (
@@ -454,6 +460,7 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (_, definition) in TABLES {
         connection.execute_batch(definition)?;
     }
+    findings::initialize(connection)?;
     Ok(())
 }
 // The open path needs only identities between the metadata pass and the ledger
@@ -573,6 +580,7 @@ pub(super) fn prepare_open(connection: &Connection) -> rusqlite::Result<OpenRevi
             }
         }
     }
+    findings::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(OpenReviewValidation { pending })
 }
 

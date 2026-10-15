@@ -2,13 +2,36 @@
 use super::*;
 use std::{
     future::Future,
+    pin::Pin,
     task::{Context, Poll, Waker},
     time::Instant,
 };
 
+// The command already runs on Tauri's runtime. Poll only its original waiter,
+// using the same Future API as probe admission, without another runtime or an
+// unbounded block_on that could conceal an early failure during cleanup.
+fn finish_review_command<T>(
+    mut pending: Pin<&mut impl Future<Output = T>>,
+    action: ExecutionId,
+    phase: &str,
+) -> T {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut context = Context::from_waker(Waker::noop());
+    loop {
+        if let Poll::Ready(result) = pending.as_mut().poll(&mut context) {
+            return result;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Review action {action} did not return within 10 seconds during {phase}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 // Only fresh metadata loads may contend with the existing owner tick. Retry
 // the same complete intent; deliberate held-lock and recorded reads stay direct.
-fn prepare_with_store_retry(window: &Window, intent: &Value) -> Value {
+pub(super) fn prepare_with_store_retry(window: &Window, intent: &Value) -> Value {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match call(window, "prepare_review_checks", Some(intent.clone())) {
@@ -46,6 +69,10 @@ pub(super) fn rejects_revoked_manual_computation(
     );
     for disable_package in [true, false] {
         let action = ExecutionId::new();
+        eprintln!(
+            "joint-review phase=currentness: prepare compute revocation \
+             action={action} disable_package={disable_package}"
+        );
         let mut intent = recorded_intent.clone();
         intent["actionId"] = json!(action);
         let preparation = prepare_with_store_retry(window, &intent);
@@ -68,13 +95,35 @@ pub(super) fn rejects_revoked_manual_computation(
             app.state(),
             serde_json::from_value(start.clone()).unwrap(),
         ));
-        assert!(matches!(
-            pending
-                .as_mut()
-                .poll(&mut Context::from_waker(Waker::noop())),
-            Poll::Pending
-        ));
-        waiting.recv_timeout(Duration::from_secs(60)).unwrap();
+        match pending
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        {
+            Poll::Pending => {}
+            Poll::Ready(result) => {
+                panic!("Review action {action} completed before the compute probe: {result:?}");
+            }
+        }
+        match waiting.recv_timeout(Duration::from_secs(60)) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                // A dropped probe can mean the command returned before compute.
+                // Preserve that failure and report its actual command result,
+                // rather than replacing the cause with a channel unwrap panic.
+                let result = finish_review_command(pending.as_mut(), action, "probe disconnect");
+                panic!(
+                    "Review action {action} disconnected before the compute probe \
+                     (disable_package={disable_package}): {result:?}"
+                );
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("Review action {action} did not reach the compute probe within 60 seconds");
+            }
+        }
+        eprintln!(
+            "joint-review phase=currentness: compute reached \
+             action={action} disable_package={disable_package}"
+        );
         // The real independently granted workers have completed. Keep their
         // exact original frames before withdrawing permission during compute.
         let history_slots = slots.to_vec();
@@ -115,7 +164,8 @@ pub(super) fn rejects_revoked_manual_computation(
             state.plugins.replace_test_runtime_approvals(vec![]);
         }
         release.send(()).unwrap();
-        let error = tauri::async_runtime::block_on(pending).unwrap_err();
+        let error = finish_review_command(pending.as_mut(), action, "revoked compute completion")
+            .unwrap_err();
         assert!(
             error.code == CommandErrorCode::Cancelled
                 || (error.code == CommandErrorCode::DependencyConflict
@@ -183,7 +233,12 @@ pub(super) fn rejects_revoked_manual_computation(
             call(window, "read_review_target", Some(target_request.clone())).unwrap()["currentCheck"],
             *recorded_check
         );
+        eprintln!(
+            "joint-review phase=currentness: original authority and QA preserved \
+             action={action} disable_package={disable_package}"
+        );
     }
+    review_phase("currentness: partial submission with cancellation");
     partial_submission(
         app,
         window,
@@ -193,6 +248,7 @@ pub(super) fn rejects_revoked_manual_computation(
         project_path,
         true,
     );
+    review_phase("currentness: partial submission with exact reattachment");
     partial_submission(
         app,
         window,
@@ -202,6 +258,7 @@ pub(super) fn rejects_revoked_manual_computation(
         project_path,
         false,
     );
+    review_phase("currentness: pre-dispatch settings contention");
     rejects_pre_dispatch_busy(
         app,
         window,
@@ -210,6 +267,7 @@ pub(super) fn rejects_revoked_manual_computation(
         recorded_check,
         project_path,
     );
+    review_phase("currentness: all original revocation scenarios complete");
 }
 
 fn rejects_pre_dispatch_busy(
