@@ -15,6 +15,7 @@ export type AutomationEffect =
   | "deliver"
   | "query-tools";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
+export type MaintenanceAction = "keep" | "recheck" | "repair" | "unresolved";
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
  * Network/process effects still require their own host authorization.
@@ -84,6 +85,7 @@ export type WorkStage = "understanding" | "resources" | "generation" | "checks" 
 
 export interface Requests {
   effectRetry: AiEffectRetryRequest;
+  maintenanceAssessment: MaintenanceAssessmentRequest;
   preview: AiPreviewRequest;
   read: AiReadRequest;
   start: AiStartRequest;
@@ -109,6 +111,14 @@ export interface AiEffectRetryRequest {
   itemId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
+}
+export interface MaintenanceAssessmentRequest {
+  after: number;
+  limit: number;
+  locale: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  snapshotId: ExecutionId;
 }
 export interface AiPreviewRequest {
   config: AiConfig;
@@ -333,6 +343,7 @@ export interface WorkPlanPrepareRequest {
   advisoryChecks: PluginTextReviewSelection[];
   config?: AiConfig | null;
   locale: string;
+  maintenance: MaintenancePlanBasis | null;
   options: PlanOptions;
   projectId: ExecutionId;
   sessionToken: string;
@@ -351,6 +362,46 @@ export interface PluginTextReviewSelection {
 export interface PluginPackageRequest {
   packageDigest: string;
   plugin: PluginIdentity;
+}
+export interface MaintenancePlanBasis {
+  assessment: MaintenanceAssessment;
+  choices: MaintenanceChoice[];
+}
+export interface MaintenanceAssessment {
+  after: number;
+  coverage: string;
+  digest: string;
+  limit: number;
+  locale: string;
+  nextOrdinal?: number | null;
+  projectId: ExecutionId;
+  rows: MaintenanceRow[];
+  sourceSnapshotId: ExecutionId;
+}
+export interface MaintenanceRow {
+  mappingUnresolved: boolean;
+  nativeKey: string;
+  protection: WorkProtection;
+  reasons: string[];
+  reviewBasis: string;
+  selectionId?: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceText: string;
+  suggested: MaintenanceAction;
+  translationRevisionId?: ExecutionId | null;
+  translationText?: string | null;
+  unitId: ExecutionId;
+}
+export interface WorkProtection {
+  locale: string;
+  protected: boolean;
+  revision: Revision;
+  unitId: ExecutionId;
+}
+export interface MaintenanceChoice {
+  action: MaintenanceAction;
+  excluded: boolean;
+  unitId: ExecutionId;
 }
 export interface PlanOptions {
   adoptResources: boolean;

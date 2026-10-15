@@ -13,6 +13,14 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+mod maintenance;
+#[cfg(feature = "wire-schema")]
+pub use maintenance::maintenance_schema;
+pub use maintenance::required_maintenance;
+pub use maintenance::{
+    MaintenanceAction, MaintenanceAssessment, MaintenanceChoice, MaintenancePlanBasis,
+    MaintenanceRow,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -549,6 +557,8 @@ pub struct WorkPlan {
     pub selection_basis: Vec<PlanSelectionBasis>,
     pub options: PlanOptions,
     pub tools: Option<WorkPlanTools>,
+    #[serde(deserialize_with = "required_maintenance")]
+    pub maintenance: Option<MaintenancePlanBasis>,
     pub digest: String,
 }
 
@@ -578,7 +588,7 @@ impl WorkPlan {
         selection_basis.sort_by_key(|basis| basis.unit_id);
         options.stages.sort_by_key(|choice| choice.stage);
         let mut plan = Self {
-            version: 2,
+            version: 3,
             plan_id: ExecutionId::new(),
             project_id: ExecutionId::parse(&project.to_string())?,
             input,
@@ -586,6 +596,7 @@ impl WorkPlan {
             selection_basis,
             options,
             tools: None,
+            maintenance: None,
             digest: String::new(),
         };
         plan.digest = plan.computed_digest()?;
@@ -604,6 +615,7 @@ impl WorkPlan {
                 &self.selection_basis,
                 &self.options,
                 &self.tools,
+                &self.maintenance,
             ),
             MAX_INPUT_BYTES,
         )?))
@@ -619,7 +631,7 @@ impl WorkPlan {
         selection_basis.sort_by_key(|basis| basis.unit_id);
         options.stages.sort_by_key(|choice| choice.stage);
         let mut plan = Self {
-            version: 2,
+            version: 3,
             plan_id: ExecutionId::new(),
             project_id: ExecutionId::parse(&project.to_string())?,
             input: None,
@@ -627,6 +639,7 @@ impl WorkPlan {
             selection_basis,
             options,
             tools: None,
+            maintenance: None,
             digest: String::new(),
         };
         plan.digest = plan.computed_digest()?;
@@ -639,6 +652,16 @@ impl WorkPlan {
         tools: Option<WorkPlanTools>,
     ) -> Result<Self, ExecutionError> {
         self.tools = tools;
+        self.digest = self.computed_digest()?;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub(crate) fn with_maintenance(
+        mut self,
+        basis: MaintenancePlanBasis,
+    ) -> Result<Self, ExecutionError> {
+        self.maintenance = Some(basis);
         self.digest = self.computed_digest()?;
         self.validate()?;
         Ok(self)
@@ -662,6 +685,33 @@ impl WorkPlan {
 
     pub fn validate(&self) -> Result<(), ExecutionError> {
         self.options.validate()?;
+        if let Some(basis) = &self.maintenance {
+            let units = basis.repair_units()?;
+            if basis.assessment.project_id != self.project_id
+                || basis.assessment.locale != self.locale
+                || units
+                    != self
+                        .selection_basis
+                        .iter()
+                        .map(|basis| basis.unit_id)
+                        .collect::<Vec<_>>()
+                || self.selection_basis.iter().any(|captured| {
+                    captured.source_snapshot_id != basis.assessment.source_snapshot_id
+                        || !basis.assessment.rows.iter().any(|row| {
+                            // A window may show a later occurrence's display key.
+                            // The plan keeps its independently captured canonical key.
+                            row.unit_id == captured.unit_id
+                                && row.source_revision_id == captured.source_revision_id
+                                && row.selection_id == captured.selection_id
+                        })
+                })
+            {
+                return Err(ExecutionError::new(
+                    ErrorCode::InvalidInput,
+                    "maintenance-scope",
+                ));
+            }
+        }
         if let Some(tools) = &self.tools {
             tools.validate()?;
             if self.input.is_none() {
@@ -673,7 +723,7 @@ impl WorkPlan {
         }
         let locale = crate::Locale::parse(&self.locale)
             .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "work-plan-locale"))?;
-        if self.version != 2
+        if self.version != 3
             || locale.as_str() != self.locale
             || self.selection_basis.is_empty()
             || self.selection_basis.len() > 1000

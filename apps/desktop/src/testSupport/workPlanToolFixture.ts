@@ -11,6 +11,7 @@ const captured: unknown = {
   toolInvocations: { reserved: 0, limit: 2 },
   plan: {
     ...planFixture.responses.plan,
+    maintenance: null,
     planId: agentFixture.requests.open.lease.planId,
     tools: { maxInvocations: 2, entries: [toolFixture.spec] },
     scope: agentFixture.responses.scope.scope,

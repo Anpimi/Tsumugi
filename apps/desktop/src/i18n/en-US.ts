@@ -681,6 +681,17 @@ protection: {
   "retry": "Retry same protection action"
 },
 ai: {
+  maintenance: {
+    basis: "Captured source, translation, review and protection evidence",
+    title: "Maintain changed work", help: "Assess one finite window of current entries. Keep applicable work, request a current review, or explicitly choose a repair subset. This does not start AI or approve anything.",
+    coverage: "Only this source window is assessed. Resource matches may be possible dependencies; historical and external query coverage is unknown. Unmarked entries and the full manual review remain available.",
+    failed: "The assessment could not be confirmed. This does not mean there is no affected work.", refresh: "Recheck this window", capture: "Adjust this finite plan", replace: "Use current assessment and reset these choices",
+    discard: "Discard maintenance choices", changed: "Current facts differ or are unavailable. Your choices are retained; recheck before preparing a new plan.", empty: "This source window has no entries.",
+    sourceChanged: "The source basis changed.", mapping: "The source correspondence is unresolved. Resolve it in source maintenance before automatic repair.", protected: "This entry is protected and excluded from automatic maintenance. Required checks still apply.",
+    action: "Next step", actionFor: "Next step for {{name}}", exclude: "Exclude {{name}} from this plan", actions: { keep: "Keep current work", recheck: "Review on the current basis", repair: "Prepare repair candidates", unresolved: "Keep unresolved for manual investigation" },
+    prepareHelp: "{{count}} repair entries are selected below. Use the existing preview, budget and consent controls to prepare a new plan. Other steps remain manual; task completion does not resolve findings. Discard these choices before selecting another window.",
+    review: "Open full current review", source: "Inspect source correspondence"
+  },
   workspace: {
     prepare: "Prepare AI localization", manualTitle: "Work with AI or by hand",
     manualHelp: "Choose the stages AI may assist below. Every stage also has a manual workspace. Model setup is required only for AI generation; your settings and selected scope stay here when you switch workspaces.",
@@ -874,6 +885,13 @@ ai: {
       "unknown": "The call may have been queued. Check its original execution record before another call."
   },
   "errors": {
+    "maintenance-current": "The assessed source, translation, review or protection facts changed. Your choices are retained; recheck this window and explicitly capture a new plan.",
+    "maintenance-protection": "Protection changed after this maintenance plan was captured. Existing work and receipts are retained; recheck the window and prepare a new plan.",
+    "maintenance-empty": "Choose at least one unprotected repair entry for a new AI plan. Use current review or source maintenance for the other steps.",
+    "maintenance-excluded": "Protected entries and unresolved source mappings cannot enter automatic maintenance. Keep them excluded and use their manual workspaces.",
+    "maintenance-assessment": "This assessment is incomplete or does not match its captured evidence. Recheck the source window before preparing a new plan.",
+    "maintenance-choices": "The choices do not cover exactly the assessed entries. Recheck and capture this finite window again.",
+    "maintenance-scope": "The repair scope does not match the captured maintenance choices. Your work is retained; prepare a new plan from the current window.",
     "work-plan-tool-unavailable": "Select an available tool, environment and valid options, then prepare the plan again.",
     "work-plan-tool-budget": "The original tool-call limit is exhausted. Existing results and reservations are retained.",
     "work-plan-tool-invocations": "This subset exceeds the remaining original tool-call limit. Select fewer entries or prepare a new plan; existing reservations are retained.",

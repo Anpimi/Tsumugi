@@ -496,6 +496,223 @@
         ],
         "type": "object"
       },
+      "MaintenanceAction": {
+        "enum": [
+          "keep",
+          "recheck",
+          "repair",
+          "unresolved"
+        ],
+        "type": "string"
+      },
+      "MaintenanceAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "coverage": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/MaintenanceRow"
+            },
+            "type": "array"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "locale",
+          "after",
+          "limit",
+          "rows",
+          "coverage",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "MaintenanceAssessmentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "snapshotId",
+          "locale",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "MaintenanceChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/MaintenanceAction"
+          },
+          "excluded": {
+            "type": "boolean"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "action",
+          "excluded"
+        ],
+        "type": "object"
+      },
+      "MaintenancePlanBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment": {
+            "$ref": "#/definitions/MaintenanceAssessment"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/definitions/MaintenanceChoice"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "assessment",
+          "choices"
+        ],
+        "type": "object"
+      },
+      "MaintenanceRow": {
+        "additionalProperties": false,
+        "properties": {
+          "mappingUnresolved": {
+            "type": "boolean"
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "protection": {
+            "$ref": "#/definitions/WorkProtection"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reviewBasis": {
+            "type": "string"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceText": {
+            "type": "string"
+          },
+          "suggested": {
+            "$ref": "#/definitions/MaintenanceAction"
+          },
+          "translationRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "translationText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceRevisionId",
+          "nativeKey",
+          "sourceText",
+          "reviewBasis",
+          "protection",
+          "mappingUnresolved",
+          "reasons",
+          "suggested"
+        ],
+        "type": "object"
+      },
       "ModelConnectionReference": {
         "additionalProperties": false,
         "description": "A persistent data identity, never a credential, execution grant or consent.",
@@ -1600,6 +1817,16 @@
           "locale": {
             "type": "string"
           },
+          "maintenance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/MaintenancePlanBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "options": {
             "$ref": "#/definitions/PlanOptions"
           },
@@ -1632,7 +1859,8 @@
           "locale",
           "unitIds",
           "options",
-          "advisoryChecks"
+          "advisoryChecks",
+          "maintenance"
         ],
         "type": "object"
       },
@@ -1735,6 +1963,30 @@
         ],
         "type": "object"
       },
+      "WorkProtection": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "revision",
+          "protected"
+        ],
+        "type": "object"
+      },
       "WorkProtectionReadRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1828,6 +2080,9 @@
       "effectRetry": {
         "$ref": "#/definitions/AiEffectRetryRequest"
       },
+      "maintenanceAssessment": {
+        "$ref": "#/definitions/MaintenanceAssessmentRequest"
+      },
       "preview": {
         "$ref": "#/definitions/AiPreviewRequest"
       },
@@ -1892,6 +2147,7 @@
       "read",
       "effectRetry",
       "workPlanPrepare",
+      "maintenanceAssessment",
       "workPlanAuthorize",
       "workPlanStart",
       "workPlanGenerationPrepare",
@@ -3984,6 +4240,189 @@
           "status",
           "scope",
           "resultId"
+        ],
+        "type": "object"
+      },
+      "MaintenanceAction": {
+        "enum": [
+          "keep",
+          "recheck",
+          "repair",
+          "unresolved"
+        ],
+        "type": "string"
+      },
+      "MaintenanceAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "coverage": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/MaintenanceRow"
+            },
+            "type": "array"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "locale",
+          "after",
+          "limit",
+          "nextOrdinal",
+          "rows",
+          "coverage",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "MaintenanceChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/MaintenanceAction"
+          },
+          "excluded": {
+            "type": "boolean"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "action",
+          "excluded"
+        ],
+        "type": "object"
+      },
+      "MaintenancePlanBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment": {
+            "$ref": "#/definitions/MaintenanceAssessment"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/definitions/MaintenanceChoice"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "assessment",
+          "choices"
+        ],
+        "type": "object"
+      },
+      "MaintenanceRow": {
+        "additionalProperties": false,
+        "properties": {
+          "mappingUnresolved": {
+            "type": "boolean"
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "protection": {
+            "$ref": "#/definitions/WorkProtection"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reviewBasis": {
+            "type": "string"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceText": {
+            "type": "string"
+          },
+          "suggested": {
+            "$ref": "#/definitions/MaintenanceAction"
+          },
+          "translationRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "translationText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceRevisionId",
+          "nativeKey",
+          "sourceText",
+          "translationText",
+          "selectionId",
+          "translationRevisionId",
+          "reviewBasis",
+          "protection",
+          "mappingUnresolved",
+          "reasons",
+          "suggested"
         ],
         "type": "object"
       },
@@ -6701,6 +7140,16 @@
           "locale": {
             "type": "string"
           },
+          "maintenance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/MaintenancePlanBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "options": {
             "$ref": "#/definitions/PlanOptions"
           },
@@ -6743,7 +7192,8 @@
           "preview",
           "attemptId",
           "checkers",
-          "tools"
+          "tools",
+          "maintenance"
         ],
         "type": "object"
       },
@@ -6788,6 +7238,9 @@
       },
       "identity": {
         "$ref": "#/definitions/ExecutionId"
+      },
+      "maintenanceAssessment": {
+        "$ref": "#/definitions/MaintenanceAssessment"
       },
       "prepared": {
         "$ref": "#/definitions/AiPrepared"
@@ -6836,6 +7289,7 @@
       "view",
       "effectRetry",
       "workPlan",
+      "maintenanceAssessment",
       "workPlanGenerationPreflight",
       "workPlanAgent",
       "workPlanAgentGeneration",

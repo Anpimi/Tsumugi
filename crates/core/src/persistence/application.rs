@@ -1,5 +1,6 @@
 //! Work plans use the existing project and execution authorities.
 mod control;
+mod maintenance;
 mod selection;
 mod services;
 mod tools;
@@ -177,6 +178,7 @@ impl ProjectStore {
                     "work-plan-project",
                 ));
             }
+            maintenance::check_protection(connection, plan)?;
             if plan.input.is_some() {
                 let input = plan.fixed_input()?;
                 let settings = ai::settings(&input)?;
@@ -292,6 +294,272 @@ mod tests {
             .map(|row| row.unit_id.unwrap())
             .collect();
         (temp, store, units)
+    }
+
+    fn maintenance_basis(
+        store: &mut ProjectStore,
+        unit: ExecutionId,
+    ) -> crate::application::MaintenancePlanBasis {
+        let project =
+            ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let target = store.review_target(project, unit, "zh-CN").unwrap();
+        let protection = store.work_protection(unit, "zh-CN").unwrap();
+        if protection.protected {
+            store
+                .set_work_protection(&crate::application::SetWorkProtection {
+                    action_id: ExecutionId::new(),
+                    project_id: project,
+                    unit_id: unit,
+                    locale: "zh-CN".into(),
+                    source_revision_id: target.source_revision_id,
+                    selection_id: target.selection_id,
+                    expected_revision: protection.revision,
+                    protected: false,
+                    confirmed_release: true,
+                })
+                .unwrap();
+        }
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        let assessment = store
+            .maintenance_assessment(project, snapshot, "zh-CN", 0, 100)
+            .unwrap();
+        let choices = assessment
+            .rows
+            .iter()
+            .map(|row| crate::application::MaintenanceChoice {
+                unit_id: row.unit_id,
+                action: if row.unit_id == unit {
+                    crate::application::MaintenanceAction::Repair
+                } else {
+                    crate::application::MaintenanceAction::Keep
+                },
+                excluded: row.unit_id != unit,
+            })
+            .collect();
+        crate::application::MaintenancePlanBasis {
+            assessment,
+            choices,
+        }
+    }
+
+    #[test]
+    fn maintenance_assessment_is_bounded_read_only_and_captures_exact_human_choices() {
+        let (_temp, mut store, units) = fixture();
+        let basis = maintenance_basis(&mut store, units[0]);
+        let before = fs::read(store.directory().join("project.sqlite3")).unwrap();
+        let read = store
+            .maintenance_assessment(
+                basis.assessment.project_id,
+                basis.assessment.source_snapshot_id,
+                "zh-CN",
+                0,
+                1,
+            )
+            .unwrap();
+        assert_eq!(read.rows.len(), 1);
+        assert!(read.next_ordinal.is_some());
+        assert!(read.coverage.contains("coverage-unknown"));
+        assert_eq!(
+            before,
+            fs::read(store.directory().join("project.sqlite3")).unwrap()
+        );
+        let plan = store
+            .prepare_maintenance_work_plan(
+                Some(config()),
+                "zh-CN",
+                &[units[0]],
+                PlanOptions::default(),
+                None,
+                basis.clone(),
+            )
+            .unwrap();
+        assert_eq!(plan.version, 3);
+        assert_eq!(plan.maintenance, Some(basis.clone()));
+        assert_eq!(plan.selection_basis.len(), 1);
+        store.verify_work_plan(&plan).unwrap();
+        let mut malformed = basis.clone();
+        malformed.choices.push(malformed.choices[0].clone());
+        assert!(
+            store
+                .prepare_maintenance_work_plan(
+                    Some(config()),
+                    "zh-CN",
+                    &[units[0]],
+                    PlanOptions::default(),
+                    None,
+                    malformed
+                )
+                .is_err()
+        );
+        let mut bytes = serde_json::to_value(&plan).unwrap();
+        bytes.as_object_mut().unwrap().remove("maintenance");
+        assert!(serde_json::from_value::<WorkPlan>(bytes).is_err());
+        let ordinary = store
+            .prepare_work_plan(Some(config()), "zh-CN", &[units[1]], PlanOptions::default())
+            .unwrap();
+        assert!(ordinary.maintenance.is_none());
+        store.verify_work_plan(&ordinary).unwrap();
+    }
+
+    #[test]
+    fn maintenance_protection_changes_refuse_preparation_dispatch_and_continue_but_keep_original_receipts()
+     {
+        let (_temp, mut store, units) = fixture();
+        let basis = maintenance_basis(&mut store, units[0]);
+        let plan = store
+            .prepare_maintenance_work_plan(
+                Some(config()),
+                "zh-CN",
+                &[units[0]],
+                PlanOptions::default(),
+                None,
+                basis.clone(),
+            )
+            .unwrap();
+        let authorization = consent(&plan);
+        let grant = store.authorize_work_plan(&plan, &authorization).unwrap();
+        let paused = store
+            .control_work_plan(&control(
+                &plan,
+                1,
+                crate::application::WorkPlanCommand::Pause,
+            ))
+            .unwrap();
+        let row = &basis
+            .assessment
+            .rows
+            .iter()
+            .find(|r| r.unit_id == units[0])
+            .unwrap();
+        store
+            .set_work_protection(&crate::application::SetWorkProtection {
+                action_id: ExecutionId::new(),
+                project_id: plan.project_id,
+                unit_id: units[0],
+                locale: "zh-CN".into(),
+                source_revision_id: row.source_revision_id,
+                selection_id: row.selection_id,
+                expected_revision: row.protection.revision,
+                protected: true,
+                confirmed_release: false,
+            })
+            .unwrap();
+        assert_eq!(
+            store.verify_work_plan(&plan).unwrap_err().stage,
+            "maintenance-protection"
+        );
+        assert_eq!(
+            store
+                .check_work_plan_input(
+                    &crate::execution::FixedInput::capture(grant.input.clone().unwrap()).unwrap()
+                )
+                .unwrap_err()
+                .stage,
+            "maintenance-protection"
+        );
+        assert_eq!(
+            store
+                .prepare_maintenance_work_plan(
+                    Some(config()),
+                    "zh-CN",
+                    &[units[0]],
+                    PlanOptions::default(),
+                    None,
+                    basis
+                )
+                .unwrap_err()
+                .stage,
+            "maintenance-current"
+        );
+        assert_eq!(
+            store
+                .control_work_plan(&control(
+                    &plan,
+                    paused.lease.generation.get(),
+                    crate::application::WorkPlanCommand::Continue
+                ))
+                .unwrap_err()
+                .stage,
+            "maintenance-protection"
+        );
+        assert_eq!(
+            store.authorize_work_plan(&plan, &authorization).unwrap(),
+            grant
+        );
+        assert_eq!(
+            store.work_plan_receipt(authorization.action_id).unwrap(),
+            Some(grant)
+        );
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let reopened = ProjectStore::open(directory).unwrap();
+        assert_eq!(reopened.work_plan(plan.plan_id).unwrap(), plan);
+    }
+
+    #[test]
+    fn maintenance_empty_term_query_rechecks_related_content_without_invalidating_unrelated_work() {
+        let (_temp, mut store, units) = fixture();
+        let basis = maintenance_basis(&mut store, units[0]);
+        let mut model = config();
+        model.share_terms = true;
+        let plan = store
+            .prepare_maintenance_work_plan(
+                Some(model),
+                "zh-CN",
+                &[units[0]],
+                PlanOptions::default(),
+                None,
+                basis.clone(),
+            )
+            .unwrap();
+        let input = plan.fixed_input().unwrap();
+        let item = crate::ai::item_payload(&input, input.envelope().items[0].item_id).unwrap();
+        assert!(item.terms.is_empty());
+        let term = crate::SaveTerm {
+            project_id: plan.project_id,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: item.source_text,
+            aliases: vec![],
+            target: "Synthetic maintenance term".into(),
+            protected: false,
+            scope_unit_id: Some(units[1]),
+            expected_revision_id: None,
+            reason: "Synthetic maintenance".into(),
+        };
+        store.save_term(&term).unwrap();
+        store.verify_work_plan(&plan).unwrap();
+        store
+            .save_term(&crate::SaveTerm {
+                action_id: ExecutionId::new(),
+                scope_unit_id: Some(units[0]),
+                ..term
+            })
+            .unwrap();
+        assert_eq!(
+            store.verify_work_plan(&plan).unwrap_err().stage,
+            "work-plan-evidence"
+        );
+        let assessment = store
+            .maintenance_assessment(
+                plan.project_id,
+                basis.assessment.source_snapshot_id,
+                "zh-CN",
+                0,
+                100,
+            )
+            .unwrap();
+        assert!(
+            assessment
+                .rows
+                .iter()
+                .find(|row| row.unit_id == units[0])
+                .unwrap()
+                .reasons
+                .iter()
+                .any(|reason| reason.starts_with("resource-"))
+        );
     }
 
     #[test]

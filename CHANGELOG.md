@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Current development projects use current-only schema 40 and internal immutable
+  WorkPlan format 3. Captured component scope and maintenance fields have no
+  implicit defaults. Other development project formats are refused before
+  application schema changes, with directories preserved without conversion,
+  migration, rebuild or reset. Keep them and reimport source files into a new
+  project. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same
+  undistributed batch without another version bump.
+
 - Advisory Review findings support explicit false-positive rejection and
   restoration with original check, finding, actor, reason and basis history.
   Identical complete evidence associates its earlier decision across check runs;
@@ -16,6 +24,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   evidence. Uncertain actions recover their original receipts and preserve newer
   reason edits and independent manual drafts.
 
+- Review a finite window of maintenance work, retain applicable entries, mark
+  current rechecks or unresolved work, and explicitly choose a repair subset.
+  Protected entries and unresolved source mappings are excluded from automatic
+  maintenance. New plans capture the exact choices and protection revisions;
+  changed protection is checked again before authorization and execution.
+  Historical and external query coverage stays explicit, and task completion
+  does not replace current review or build validation.
 - Opening saved model connection choices no longer triggers render-time owner
   updates. A window focus check replaces an unfinished earlier read, so its late
   response cannot restore obsolete connection choices as current. Existing
@@ -33,19 +48,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   bound to the fixed outer input, original grant and deadline. Unsupported service
   dependencies and Application execution remain refused. Accepted child work
   retains its original budget and authority after the component channel closes.
-- Complete build, advisory-review and Agent-tool bindings advance the current-only
-  project format to schema 39. Preserve older development directories and reimport
-  into a new project; no default scope, migration or additional application/SDK
-  version bump is introduced in this undistributed alpha batch.
 - Saved AI translation candidates support explicit rejection and restoration with
   an actor, reason and fixed source/selection basis. Decisions and original
   receipts survive reopening. Rejected candidates keep their text and provenance
   but cannot be selected, automatically applied or recommended through translation
   memory until explicitly restored.
-- Candidate decision history advances the current-only project format to schema
-  37. Preserve older development directories and reimport into a new project;
-  no automatic conversion, reset or additional application/SDK version bump is
-  performed in this same undistributed alpha batch.
 
 - Source-ready projects offer AI localization alongside direct editing. The AI
   workspace retains unsent settings and explicit cross-page scope while users
@@ -105,9 +112,6 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   confirmation. Provider requests contain only selected semantic text, fact
   origins and inference rationale, excluding source coordinates and provenance
   identifiers. Accepted requests retain their original capture during recovery.
-- These required selection and capture fields advance the current-only project
-  format to schema 36. Preserve older development directories and reimport their
-  sources into a new project; no conversion or reset is performed.
 
 - AI and Arena previews read source evidence and opted-in resources from one
   SQLite snapshot. Each preparation verifies the original source result,
@@ -119,10 +123,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   schema/digest projection instead of duplicating the parsed proposal. Bounded
   quoted content above 2 MiB can complete checking, adoption and reopening within
   the existing 8 MiB result ledger; source identity and semantic proof are still
-  verified from the exact original bytes. The stored representation advances
-  the current-only project format to schema 35. Preserve older development
-  directories and reimport their sources into a new project; no conversion or
-  reset is performed.
+  verified from the exact original bytes.
 
 - SDK content exchanges allow up to 4,000 domain blocks and 4 MiB encoded content,
   so separate identity and context extensions can cover the existing 2,000-item
@@ -161,9 +162,6 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   defaults; edits or archival invalidate that preparation. Accepted requests,
   original receipts and deadlines keep their captured configuration. Profile
   identities do not enter provider payloads.
-- The schema 34 development boundary introduced captured connection
-  provenance. Earlier development directories are refused without conversion
-  or reset; retain them and reimport sources into a new project.
 
 - Connection settings save, archive and restore named non-secret defaults.
   Closing the panel or changing projects keeps the draft and original save;
@@ -186,11 +184,6 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   draft, distinguish AI/import/manual origins and check the current source basis.
   A reference does not grant approval or run a model; failed reads can be retried
   inside the sidebar.
-
-
-The combined development build opens project schema 39 only. Earlier Unreleased
-entries retain intermediate format boundaries from this undistributed batch;
-they do not define alternate current project formats.
 
 - Content range selection captures every match across pages, including its
   original bases and explicit exclusions. Later searches keep that fixed set;
@@ -337,8 +330,7 @@ they do not define alternate current project formats.
   service provenance with the original WorkPlan scope, grant, deadline and
   ancestor budget. Durable call receipts reconcile without resubmitting or
   renewing authority. HTTP dispatch and candidate adoption recheck the original
-  caller; IO waits share its remaining deadline. Current project schema is 31;
-  earlier development projects are refused unchanged. Matching Process-2
+  caller; IO waits share its remaining deadline. Matching Process-2
   SDK/Host and production Desktop integration are required.
 
 - Installed-settings changes withdraw the original service revocation signal
@@ -359,10 +351,8 @@ they do not define alternate current project formats.
   renew it. Bounded Agent controls query captured source subsets through the
   original worker and ledger, show escaped unapplied references, and generate
   further candidates through the original model service. Pause, source changes,
-  expiry and reopen preserve history without restoring authority. Current
-  development projects use schema 31 and WorkPlan format 2; earlier development
-  formats are refused unchanged without migration. Full autonomous orchestration
-  and native product acceptance remain in development.
+  expiry and reopen preserve history without restoring authority. Full autonomous
+  orchestration and native product acceptance remain in development.
 
 - Scoped Agent generation can prepare captured source subsets and run them
   through the original work-plan runtime, candidate service and ancestor budget.
@@ -389,7 +379,6 @@ they do not define alternate current project formats.
   Use a fresh development profile and project. AI execution and durable child
   authority remain separate application integration. The basic native component
   helper refuses service tables it cannot consume.
-
 
 - Provider child tasks cannot add, remove or change their parent's captured
   input dependencies. Exact dependency identities and expected revisions remain
@@ -437,8 +426,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
   checked selection distinguish required coverage from advisory findings and
   invocation failures; history preserves typed rules and text diagnostics.
   Desktop previews and WorkPlans require consent for each selected checker.
-  The current project format is schema 33; earlier development directories are
-  refused unchanged without migration. Knowledge Resources remain unadopted.
+  Knowledge Resources remain unadopted.
 
 - Experimental SDK advisory text checks now declare explicit rule subsets and
   exact resource pins independently of file formats, with typed Unicode finding
@@ -453,14 +441,12 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 - Exact execution inputs now share immutable byte chunks in the original SQLite
   ledger. QA retains complete source material and independent per-item evidence;
   reads reconstruct and validate original bytes in their existing snapshot.
-  The current project format advances to schema 28; earlier development
-  directories are refused unchanged without migration.
 
 - Execution envelope depth checks now traverse borrowed fields directly, avoiding
   a duplicate JSON payload tree during QA and ledger restoration. The same depth
   limit, exact stored bytes, digest checks and result associations remain required.
 
-- The experimental Host/Core adapter now runs captured Native Worker packages with an independently approved identity of the actual application Host, exact live consent and original channel evidence. Core stores the strict Native or Node environment in the existing ledger and reopens historical results without restoring execution grants. Native environments carry no artificial Node artifacts; desktop discovery and approval use the current application Host; desktop capability selection resolves the same strict SDK environment union and refuses mixed or mismatched provider runtime families. The experimental Rust environment port now uses `ExecutionEnvironmentDescriptor`, and current project schema 27 refuses earlier development directories unchanged, without migration.
+- The experimental Host/Core adapter now runs captured Native Worker packages with an independently approved identity of the actual application Host, exact live consent and original channel evidence. Core stores the strict Native or Node environment in the existing ledger and reopens historical results without restoring execution grants. Native environments carry no artificial Node artifacts; desktop discovery and approval use the current application Host; desktop capability selection resolves the same strict SDK environment union and refuses mixed or mismatched provider runtime families. The experimental Rust environment port now uses `ExecutionEnvironmentDescriptor`.
 
 - The experimental public SDK offers an optional Rust native component entry point that owns strict framing, exact request/result identity, cooperative cancellation and cleanup. Authors return opaque capability output through the existing protocol; captured package/channel authorization and complete Native/Core environment binding remain Host responsibilities.
 
@@ -476,11 +462,11 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Desktop Review now prepares the exact adopted checker and approved runtime for explicit local execution consent, runs it through the existing execution ledger, and computes/adopts the complete Core/plugin QA union outside the command queue and inside the original short commit boundary. Cancellation and project stop prevent late QA writes; accepted work survives a lost reply, and original saved checks remain readable without renewed permission. The experimental Review IPC requires preparation and a fixed per-attempt grant. Native interaction acceptance remains pending.
 
-- Core automatic selection now checks saved candidates with the exact adopted Core/plugin policy union. Clean actual evidence selects the candidate and saves current QA in one transaction; missing checks or findings retain the candidate without selection. Receipts preserve the original QA and remain readable after grants expire. The current-only project format advances to schema 26; earlier development formats are refused unchanged. Review and automation displays identify opaque plugin rules instead of labelling them as terminology. Complete native checker interaction acceptance remains in development.
+- Core automatic selection now checks saved candidates with the exact adopted Core/plugin policy union. Clean actual evidence selects the candidate and saves current QA in one transaction; missing checks or findings retain the candidate without selection. Receipts preserve the original QA and remain readable after grants expire. Review and automation displays identify opaque plugin rules instead of labelling them as terminology. Complete native checker interaction acceptance remains in development.
 
-- Core can capture a read-only Review plan from the adopted source and current selection, preserving complete original evidence, exact local identity mappings, resource dependencies, checker/runtime selection and the policy/domain required-check union. Core choice and terminology computation shares its existing validator and runs over owned values outside SQLite. A prepared action projects that plan into the ordinary authorized runtime, and Core receives only its live, current, correctly associated ledger result before computing the complete Core/domain union outside SQLite. Empty, omitted, misbound or forged coverage stays incomplete or is rejected. Capture and computation create no QA receipt or release qualification; owned actual evidence can now be adopted atomically after live authority, current dependencies and concurrent-check rechecks. Current reads and eligibility evaluate the exact saved Core/domain union; missing coverage blocks qualification, and historical receipts survive grant expiry. This advances the current-only project format to schema 25 without migrating earlier development directories. Native checker and release interaction acceptance remain in development.
+- Core can capture a read-only Review plan from the adopted source and current selection, preserving complete original evidence, exact local identity mappings, resource dependencies, checker/runtime selection and the policy/domain required-check union. Core choice and terminology computation shares its existing validator and runs over owned values outside SQLite. A prepared action projects that plan into the ordinary authorized runtime, and Core receives only its live, current, correctly associated ledger result before computing the complete Core/domain union outside SQLite. Empty, omitted, misbound or forged coverage stays incomplete or is rejected. Capture and computation create no QA receipt or release qualification; owned actual evidence can now be adopted atomically after live authority, current dependencies and concurrent-check rechecks. Current reads and eligibility evaluate the exact saved Core/domain union; missing coverage blocks qualification, and historical receipts survive grant expiry. Native checker and release interaction acceptance remain in development.
 
-- Source declarations now require an exact immutable Review Resource and capture its complete domain rules, checker and runtime with the adopted source. Missing or substituted bindings refuse source adoption; reading stored bindings grants no execution or approval. This breaks the experimental source-declaration API (schema/behavior 2/2) and advances current projects to schema 24; earlier development directories are refused unchanged, without migration. Core Review execution and qualification integration remain in development.
+- Source declarations now require an exact immutable Review Resource and capture its complete domain rules, checker and runtime with the adopted source. Missing or substituted bindings refuse source adoption; reading stored bindings grants no execution or approval. This breaks the experimental source-declaration API (schema/behavior 2/2). Core Review execution and qualification integration remain in development.
 
 - Experimental SDK review contracts now capture complete original source evidence, an explicit selected-text scope and exact mandatory domain rules, with missing text distinguished from empty text. Host inspection binds a captured review Resource to its exact package/checker. Generated JavaScript structure and Rust receiving checks share the same definitions; results reuse the existing Core/domain coverage union. These APIs do not run checkers or grant approval, waivers or release eligibility. Production Review integration remains in development.
 
@@ -555,13 +541,12 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Execution continuation identities and their unique new attempt are stored in one transaction with the existing chunked input, package, grant, budget and release checks. Current development project compatibility is described in the [README](README.md#development); earlier formats are preserved and refused without conversion.
 
-- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation. Current projects use schema 33 and refuse earlier development directories unchanged.
-- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Current projects use schema 33 and refuse earlier development directories unchanged. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
-- Current development projects use schema 33, combining exact recovery intent and cancellation associations with the original work-plan service children, captured input chunks and ancestor budgets. Other development formats are refused before application schema changes, without an upgrade, rebuild or reset. Keep their directories and reimport source files into a new project. Internal execution consumers regenerate the typed continuation requests; stored receipt replay does not renew a grant, lease or scheduling authority.
+- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation.
+- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
+- Exact recovery intent and cancellation associations remain linked to the original work-plan service children, captured input chunks and ancestor budgets. Internal execution consumers must regenerate the typed continuation requests; stored receipt replay does not renew a grant, lease or scheduling authority.
 
-
-- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation. Current projects use schema 33 and refuse earlier development directories unchanged.
-- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Current projects use schema 33 and refuse earlier development directories unchanged. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
+- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation.
+- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
 
 - Desktop translation imports use declared installed plugin capabilities only. Production omits the built-in file listing, preflight and import commands and no longer registers their extractor runner; regenerate earlier development IPC consumers. Normal Core builds also exclude the built-in translation parser and runner and reject its former captured inputs without recording an attempt. Experimental Rust consumers must use the checked plugin projection workflow; the former importer is available only for tests or the explicit `execution-test-host` feature. Generic editing, history, preview and adoption remain available.
 
@@ -569,7 +554,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically. Experimental plugin source adoption fixes mandatory semantic checks to the original source, proposal and selected checker, stores their exact result link and rechecks both permissions at commit. Core maps generic SDK units to project identities and derives revisions from the captured policy's opaque evidence. Source history displays original names and encoded references, with local retry when file details are unavailable.
 - Manual translation saves and selections now persist unit protection. The translation editor confirms persistent protection before enabling draft input, keeps uncertain actions for reconciliation, and releases protection only after confirming the current entry, language, source, selection and protection revision. Dirty or pending saves block release; old acknowledgements cannot clear newer protection.
-- Project storage now uses schema 33 for durable work-plan authorization, human control, checked-selection policy receipts, plugin execution grants, complete captured runtime-environment bindings, generic source-unit mappings, mandatory source/artifact-check provenance and immutable multi-artifact releases. This development build opens schema 33 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
+- Project storage durably records work-plan authorization, human control, checked-selection policy receipts, plugin execution grants, complete captured runtime-environment bindings, generic source-unit mappings, mandatory source/artifact-check provenance and immutable multi-artifact releases. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 

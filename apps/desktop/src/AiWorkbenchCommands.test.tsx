@@ -11,8 +11,8 @@ import { useSessionReads } from "./SessionReadProvider";
 import { useWorkbenchCommands, type AiCandidateCommandPayload, type AiTranslationCommandPayload, type AiStartCommandPayload } from "./workbenchCommands";
 import { defaultAiConfig, type AiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
 import { validateRequestPrepare } from "./generated/execution.validators";
-import { validateRequestWorkPlanPrepare, validateRequestWorkPlanAuthorize, validateRequestWorkPlanStart } from "./generated/ai.validators";
-import type { WorkPlanView, WorkPlanStatusView, WorkPlanReceiptView } from "./workPlanCommands";
+import { validateRequestWorkPlanPrepare, validateRequestWorkPlanAuthorize, validateRequestWorkPlanStart, validateResponseWorkPlan } from "./generated/ai.validators";
+import type { WorkPlanView, WorkPlanStatusView, WorkPlanReceiptView, MaintenanceAssessment } from "./workPlanCommands";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
 import { isCommandError, type CommandError, type ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
@@ -115,7 +115,9 @@ beforeEach(async () => {
     if (command === "prepare_work_plan") {
       if (!validateRequestWorkPlanPrepare(payload.request) || !payload.request.config) throw new Error("Invalid assisted plan request");
       prepared = { ...prepared, preview: { ...prepared.preview, config: payload.request.config } };
-      plan = aiWorkPlanFixture(prepared,payload.request.options);
+      const response: unknown = {...aiWorkPlanFixture(prepared,payload.request.options),maintenance:structuredClone(payload.request.maintenance)};
+      if (!validateResponseWorkPlan(response)) throw new Error("Invalid captured maintenance plan response");
+      plan = response;
       view = aiViewFixture(item,prepared.preview.config);view.planId=plan.planId;view.planGeneration="1";
       return plan;
     }
@@ -780,4 +782,26 @@ it("prepares a manual plan without resolving its unused saved model reference",a
   await act(async()=>{expect(registry.dispatch("ai.preview",scope,previewPayload())).toBe(true);});
   await waitFor(()=>expect(owner.busy).toBe(false));expect(owner.failure).toBeNull();
   expect(owner.preparedPlan).not.toBeNull();expect(owner.preparedPlan?.preview).toBeNull();expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("prepares an explicitly adjusted maintenance subset through the original typed preview without granting execution",async()=>{
+  const {user}=await open();
+  const assessment:MaintenanceAssessment={projectId:project.metadata.projectId,sourceSnapshotId:item.sourceSnapshotId,locale:item.targetLocale,after:0,limit:100,nextOrdinal:null,
+    coverage:"finite-current-source-window; historical-and-external-query-coverage-unknown",digest:"a".repeat(64),rows:[{
+      unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,sourceText:item.sourceText,translationText:null,selectionId:null,translationRevisionId:null,
+      reviewBasis:"b".repeat(64),protection:{unitId:item.unitId,locale:item.targetLocale,revision:"0",protected:false},mappingUnresolved:false,reasons:["translation-missing"],suggested:"repair"}]};
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command,args)=>command==="read_maintenance_assessment"?Promise.resolve(structuredClone(assessment)):original(command,args));
+  await user.click(screen.getByRole("button",{name:i18n.t("ai.maintenance.title")}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("ai.maintenance.capture")})).toBeEnabled());
+  await user.click(screen.getByRole("button",{name:i18n.t("ai.maintenance.capture")}));
+  await waitFor(()=>expect(owner.maintenance).not.toBeNull());
+  await user.selectOptions(screen.getByRole("combobox",{name:i18n.t("ai.maintenance.actionFor",{name:item.nativeKey})}),"recheck");
+  expect(owner.selected).toEqual([]);expect(registry.describe("ai.preview",scope,previewPayload())?.availability.enabled).toBe(false);
+  await user.selectOptions(screen.getByRole("combobox",{name:i18n.t("ai.maintenance.actionFor",{name:item.nativeKey})}),"repair");
+  const captured=structuredClone(owner.maintenance);
+  await prepareThroughRegistry();
+  expect(payloads("prepare_work_plan")[0]).toMatchObject({unitIds:[item.unitId],maintenance:captured});
+  expect(owner.preparedPlan?.maintenance).toEqual(captured);
+  expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("start_work_plan")).toHaveLength(0);
 });

@@ -644,7 +644,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         credential_env: String::new(),
         ..Default::default()
     };
-    let prepared_plan = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options,"advisoryChecks":[]})).unwrap();
+    let prepared_plan = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options,"advisoryChecks":[],"maintenance":null})).unwrap();
     assert_eq!(prepared_plan["checkers"][0]["kind"], "ready");
     let checker_key = prepared_plan["checkers"][0]["checker"].clone();
     assert_eq!(checker_key, review["view"]["checkers"][0]["checker"]);
@@ -707,7 +707,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     );
 
     options.selection_policy = tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection;
-    let replacement = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options,"advisoryChecks":[]})).unwrap();
+    let replacement = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options,"advisoryChecks":[],"maintenance":null})).unwrap();
     let replacement_checker_key = replacement["checkers"][0]["checker"].clone();
     let replacement_auth = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"digest":replacement["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":[replacement_checker_key],"effects":["save-candidate","run-checks","replace-captured-selection"],"expiresAt":(now+600).to_string()});
     let replacement_receipt = call(&window, "authorize_work_plan", replacement_auth).unwrap();

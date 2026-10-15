@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/workPlanCommands.contract.json";
-import { workPlanCommands } from "./workPlanCommands";
+import { workPlanCommands, type MaintenanceAssessment, type MaintenancePlanBasis } from "./workPlanCommands";
 import * as validators from "./generated/ai.validators";
 import type { Requests, WorkPlanControlRequest } from "./generated/ai.requests";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -127,5 +127,33 @@ it.each(["storeId","profileId","revision","digest"] as const)("rejects a transpl
   config.connectionProfile[field]=field==="revision"?"2":field==="digest"?"b".repeat(64):fixtureIdentity(702);
   const response={...structuredClone(fixture.responses.plan),preview:{...structuredClone(fixture.responses.plan.preview),config}};
   expect(validators.validateResponseWorkPlan(response)).toBe(true);invoke.mockResolvedValueOnce(response);
+  await expect(workPlanCommands.prepare(request)).rejects.toMatchObject({reason:"invalid-work-plan-acknowledgement",outcome:"unknown"});
+});
+
+function maintenanceAssessment(): MaintenanceAssessment {
+  const basis=fixture.responses.plan.scope[0];
+  return {projectId:requests.workPlanPrepare.projectId,sourceSnapshotId:basis.sourceSnapshotId,locale:requests.workPlanPrepare.locale,
+    after:0,limit:100,nextOrdinal:null,digest:"a".repeat(64),coverage:"finite-current-source-window; historical-and-external-query-coverage-unknown",
+    rows:[{unitId:basis.unitId,sourceRevisionId:basis.sourceRevisionId,nativeKey:basis.nativeKey,sourceText:fixture.responses.plan.preview.items[0].sourceText,
+      translationText:null,translationRevisionId:null,selectionId:basis.selectionId,reviewBasis:"b".repeat(64),mappingUnresolved:false,reasons:["translation-missing"],suggested:"repair",
+      protection:{unitId:basis.unitId,locale:requests.workPlanPrepare.locale,revision:"0",protected:false}}]};
+}
+it("requires explicit null for ordinary maintenance and correlates finite assessment reads",async()=>{
+  const missingRequest:Record<string,unknown>={...requests.workPlanPrepare},missingPlan:Record<string,unknown>={...fixture.responses.plan};
+  delete missingRequest.maintenance;delete missingPlan.maintenance;
+  expect(validators.validateRequestWorkPlanPrepare(missingRequest)).toBe(false);expect(validators.validateResponseWorkPlan(missingPlan)).toBe(false);
+  const assessment=maintenanceAssessment(),request={projectId:assessment.projectId,sessionToken:requests.workPlanPrepare.sessionToken,
+    snapshotId:assessment.sourceSnapshotId,locale:assessment.locale,after:assessment.after,limit:assessment.limit};
+  invoke.mockResolvedValueOnce(assessment);expect(await workPlanCommands.maintenance(request)).toEqual(assessment);
+  expect(invoke).toHaveBeenLastCalledWith("read_maintenance_assessment",{request});
+  invoke.mockResolvedValueOnce({...assessment,after:100});await expect(workPlanCommands.maintenance(request)).rejects.toBeDefined();
+});
+it("rejects an acknowledgement which replaces the captured maintenance choices",async()=>{
+  const assessment=maintenanceAssessment(),maintenance:MaintenancePlanBasis={assessment,choices:[{unitId:assessment.rows[0].unitId,action:"repair",excluded:false}]};
+  const request={...requests.workPlanPrepare,maintenance},response={...fixture.responses.plan,maintenance};
+  expect(validators.validateResponseWorkPlan(response)).toBe(true);invoke.mockResolvedValueOnce(response);
+  expect(await workPlanCommands.prepare(request)).toEqual(response);
+  const changed={...response,maintenance:{...maintenance,choices:[{...maintenance.choices[0],action:"keep" as const}]}};
+  expect(validators.validateResponseWorkPlan(changed)).toBe(true);invoke.mockResolvedValueOnce(changed);
   await expect(workPlanCommands.prepare(request)).rejects.toMatchObject({reason:"invalid-work-plan-acknowledgement",outcome:"unknown"});
 });

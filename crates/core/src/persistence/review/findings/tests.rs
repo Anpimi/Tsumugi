@@ -155,7 +155,7 @@ fn current_schema_reopens_finding_layout_and_refuses_missing_index_without_reset
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        38
+        crate::persistence::SCHEMA_VERSION
     );
 }
 

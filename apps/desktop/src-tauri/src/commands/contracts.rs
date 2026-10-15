@@ -340,6 +340,7 @@ struct AiRequests {
     read: execution::ai::AiReadRequest,
     effect_retry: execution::ai::AiEffectRetryRequest,
     work_plan_prepare: execution::work_plans::WorkPlanPrepareRequest,
+    maintenance_assessment: execution::work_plans::MaintenanceAssessmentRequest,
     work_plan_authorize: execution::work_plans::WorkPlanAuthorizeRequest,
     work_plan_start: execution::work_plans::WorkPlanStartRequest,
     work_plan_generation_prepare:
@@ -367,6 +368,7 @@ struct AiResponses {
     view: execution::ai::AiView,
     effect_retry: bool,
     work_plan: execution::work_plans::WorkPlanView,
+    maintenance_assessment: tsumugi_core::application::MaintenanceAssessment,
     work_plan_generation_preflight: execution::work_plans::generation::WorkPlanGenerationPreflight,
     work_plan_agent: execution::work_plans::agent::WorkPlanAgentView,
     work_plan_agent_generation: execution::work_plans::agent::WorkPlanAgentGenerationView,
@@ -503,6 +505,30 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn maintenance_schema_requires_the_nullable_capture_and_response_field() {
+        let schema = schemas::<
+            execution::work_plans::WorkPlanPrepareRequest,
+            execution::work_plans::WorkPlanView,
+        >();
+        for group in ["requests", "responses"] {
+            assert!(
+                schema[group]["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value == "maintenance")
+            );
+            assert!(
+                schema[group]["properties"]["maintenance"]["anyOf"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value["type"] == "null")
+            );
+        }
+    }
+
     #[test]
     fn schema_bounds_intersect_declared_constraints_with_primitive_limits() {
         #[derive(JsonSchema)]

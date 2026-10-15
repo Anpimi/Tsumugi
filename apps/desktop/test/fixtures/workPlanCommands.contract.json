@@ -41,7 +41,8 @@
         "advisoryChecks": []
       },
       "toolSelection": null,
-      "advisoryChecks": []
+      "advisoryChecks": [],
+      "maintenance": null
     },
     "authorize": {
       "projectId": "60000000-0000-4000-8000-000000000001",
@@ -190,7 +191,8 @@
         "recipe": "direct-translation-1"
       },
       "attemptId": "60000000-0000-4000-8000-000000000002",
-      "checkers": []
+      "checkers": [],
+      "maintenance": null
     },
     "receipt": {
       "actionId": "60000000-0000-4000-8000-000000000008",
@@ -297,7 +299,8 @@
         },
         "attemptId": "60000000-0000-4000-8000-000000000002",
         "tools": null,
-        "checkers": []
+        "checkers": [],
+        "maintenance": null
       },
       "lease": {
         "planId": "60000000-0000-4000-8000-000000000007",

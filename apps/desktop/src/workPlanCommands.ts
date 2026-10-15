@@ -5,6 +5,7 @@ import type {
   WorkPlanControlRequest, WorkPlanStatusRequest, WorkPlanActionRequest,
   WorkProtectionReadRequest, WorkProtectionSetRequest,
   WorkPlanAgentOpenRequest, WorkPlanAgentStartRequest, WorkPlanAgentToolStartRequest,
+  MaintenanceAssessmentRequest,
 } from "./generated/ai.requests";
 import type { WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
@@ -13,6 +14,7 @@ import { jsonIdentity } from "./pluginToolChoices";
 import { checkerIdentity, contractIdentity } from "./reviewIdentity";
 export type {
   WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkProtection,
+  MaintenanceAssessment, MaintenanceAction, MaintenanceChoice, MaintenancePlanBasis,
 } from "./generated/ai.responses";
 export type { PlanOptions, WorkPlanCommand, AutomationEffect } from "./generated/ai.requests";
 
@@ -24,12 +26,17 @@ function invalidAcknowledgement(): never {
 
 /** Receipts report an action's historical result. Read status for current authority. */
 export const workPlanCommands = {
+  maintenance: (request: MaintenanceAssessmentRequest) => checkedInvoke("read_maintenance_assessment", request,
+    (value): value is import("./generated/ai.responses").MaintenanceAssessment => validators.validateResponseMaintenanceAssessment(value)
+      && value.projectId===request.projectId && value.sourceSnapshotId===request.snapshotId && value.locale===request.locale
+      && value.after===request.after && value.limit===request.limit),
   prepare: async (input: WorkPlanPrepareRequest, expectedTools: readonly PluginToolView[] = []) => {
     const request = structuredClone(input), tools = structuredClone(expectedTools);
     const value = await checkedInvoke("prepare_work_plan", request, validators.validateResponseWorkPlan);
     const units = new Set(request.unitIds);
     const stages = new Map(request.options.stages.map(choice => [choice.stage, choice.mode]));
-    if (value.locale !== request.locale || value.scope.length !== units.size
+    if (jsonIdentity(value.maintenance)!==jsonIdentity(request.maintenance)
+      || value.locale !== request.locale || value.scope.length !== units.size
       || new Set(value.scope.map(unit => unit.unitId)).size !== units.size
       || value.scope.some(unit => !units.has(unit.unitId))
       || value.options.selectionPolicy !== request.options.selectionPolicy
