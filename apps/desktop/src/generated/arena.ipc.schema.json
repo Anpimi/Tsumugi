@@ -61,6 +61,9 @@
           "shareTerms": {
             "type": "boolean"
           },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextSelection"
+          },
           "timeoutSeconds": {
             "format": "uint32",
             "maximum": 4294967295,
@@ -83,7 +86,8 @@
           "maxRetries",
           "timeoutSeconds",
           "shareTerms",
-          "shareContext"
+          "shareContext",
+          "sourceContext"
         ],
         "type": "object"
       },
@@ -384,6 +388,40 @@
         ],
         "type": "object"
       },
+      "SourceContextSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "extracted": {
+            "type": "boolean"
+          },
+          "inferred": {
+            "type": "boolean"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neighbors": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "extracted",
+          "inferred",
+          "neighbors",
+          "maxBytes",
+          "maxItems"
+        ],
+        "type": "object"
+      },
       "StartRequest": {
         "additionalProperties": false,
         "properties": {
@@ -529,6 +567,9 @@
           "shareTerms": {
             "type": "boolean"
           },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextSelection"
+          },
           "timeoutSeconds": {
             "format": "uint32",
             "maximum": 4294967295,
@@ -551,7 +592,8 @@
           "maxRetries",
           "timeoutSeconds",
           "shareTerms",
-          "shareContext"
+          "shareContext",
+          "sourceContext"
         ],
         "type": "object"
       },
@@ -579,6 +621,9 @@
           },
           "resourceBaseline": {
             "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextCapture"
           },
           "sourceLocale": {
             "type": "string"
@@ -615,6 +660,7 @@
           "targetLocale",
           "terms",
           "context",
+          "sourceContext",
           "omissions",
           "resourceBaseline"
         ],
@@ -979,6 +1025,57 @@
         ],
         "type": "object"
       },
+      "ContentTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ContextRevision": {
         "additionalProperties": false,
         "properties": {
@@ -1018,6 +1115,31 @@
         ],
         "type": "object"
       },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
@@ -1032,6 +1154,25 @@
           "unknown"
         ],
         "type": "string"
+      },
+      "ExtensionHandling": {
+        "oneOf": [
+          {
+            "const": "required",
+            "description": "An operation that needs this block must have the exact interpreter.",
+            "type": "string"
+          },
+          {
+            "const": "preserve",
+            "description": "Preserve the payload exactly, including when its schema is understood.",
+            "type": "string"
+          },
+          {
+            "const": "optional",
+            "description": "Interpretation is optional; an unknown payload is still preserved.",
+            "type": "string"
+          }
+        ]
       },
       "ItemStatus": {
         "additionalProperties": false,
@@ -1431,6 +1572,111 @@
         ],
         "type": "object"
       },
+      "SelectedSourceContext": {
+        "additionalProperties": false,
+        "properties": {
+          "contentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/definitions/SelectedSourceFact"
+            },
+            "type": "array"
+          },
+          "localUnitId": {
+            "type": "string"
+          },
+          "neighbors": {
+            "items": {
+              "$ref": "#/definitions/SourceContextNeighbor"
+            },
+            "type": "array"
+          },
+          "observations": {
+            "$ref": "#/definitions/SourceContextObservations"
+          },
+          "omissions": {
+            "$ref": "#/definitions/SourceContextOmissions"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "selection": {
+            "$ref": "#/definitions/SourceContextSelection"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "contentRevision",
+          "sourceAttemptId",
+          "sourceResultId",
+          "sourceResultDigest",
+          "sourceLocale",
+          "localUnitId",
+          "selection",
+          "observations",
+          "facts",
+          "neighbors",
+          "omissions"
+        ],
+        "type": "object"
+      },
+      "SelectedSourceFact": {
+        "additionalProperties": false,
+        "description": "One whole fact, with the original block target and source references.",
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fact": {
+            "$ref": "#/definitions/SourceContextFact"
+          },
+          "factIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "factIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "fact"
+        ],
+        "type": "object"
+      },
       "SharedTerm": {
         "additionalProperties": false,
         "properties": {
@@ -1452,6 +1698,507 @@
           "source",
           "target",
           "protected"
+        ],
+        "type": "object"
+      },
+      "SourceContextAdjacency": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/SourceContextDirection"
+              }
+            ],
+            "description": "The neighbor's position relative to this selected occurrence."
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "direction"
+        ],
+        "type": "object"
+      },
+      "SourceContextCapture": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "not-selected",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "selected",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/definitions/SelectedSourceContext"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextDirection": {
+        "enum": [
+          "before",
+          "after"
+        ],
+        "type": "string"
+      },
+      "SourceContextFact": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Unique only inside this block; it is not a project revision or entity ID.",
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/SourceContextFactKind"
+          },
+          "origin": {
+            "$ref": "#/definitions/SourceContextFactOrigin"
+          },
+          "text": {
+            "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "text",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "SourceContextFactKind": {
+        "description": "Classification for presentation, without interpreting a format's syntax or\nnormalizing its literal text. Other source-associated information uses Note.",
+        "enum": [
+          "speaker",
+          "role",
+          "scene",
+          "time",
+          "location",
+          "note"
+        ],
+        "type": "string"
+      },
+      "SourceContextFactOrigin": {
+        "description": "References are observations in captured source, not proof of an inference.\nHuman project decisions remain in the project's independent revision owner.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "extracted",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "sources"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "inferred",
+                "type": "string"
+              },
+              "rationale": {
+                "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "rationale",
+              "sources"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextNeighbor": {
+        "additionalProperties": false,
+        "properties": {
+          "adjacentTo": {
+            "items": {
+              "$ref": "#/definitions/SourceContextAdjacency"
+            },
+            "type": "array"
+          },
+          "occurrence": {
+            "$ref": "#/definitions/SourceContextOccurrence"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceRevisionId",
+          "occurrence",
+          "text",
+          "adjacentTo"
+        ],
+        "type": "object"
+      },
+      "SourceContextObservations": {
+        "additionalProperties": false,
+        "description": "Missing, explicitly empty and unknown schema observations are distinct.",
+        "properties": {
+          "emptyBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "knownBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "knownFacts": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "missingBlocks": {
+            "type": "boolean"
+          },
+          "neighborOccurrences": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownRequiredBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownSamples": {
+            "items": {
+              "$ref": "#/definitions/UnknownSourceBlockSample"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "missingBlocks",
+          "knownBlocks",
+          "knownFacts",
+          "emptyBlocks",
+          "unknownBlocks",
+          "unknownRequiredBlocks",
+          "neighborOccurrences",
+          "unknownSamples"
+        ],
+        "type": "object"
+      },
+      "SourceContextOccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "localOccurrenceId": {
+            "type": "string"
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "$ref": "#/definitions/SourceReference"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "localOccurrenceId",
+          "source"
+        ],
+        "type": "object"
+      },
+      "SourceContextOmissionReason": {
+        "enum": [
+          "not-selected",
+          "byte-budget",
+          "item-limit"
+        ],
+        "type": "string"
+      },
+      "SourceContextOmissionSample": {
+        "description": "A pointer only; omitted text and rationale never enter the capture.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "blockIndex": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "factIndex": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fact",
+                "type": "string"
+              },
+              "reason": {
+                "$ref": "#/definitions/SourceContextOmissionReason"
+              }
+            },
+            "required": [
+              "kind",
+              "blockIndex",
+              "factIndex",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "neighbor",
+                "type": "string"
+              },
+              "occurrenceId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "reason": {
+                "$ref": "#/definitions/SourceContextOmissionReason"
+              }
+            },
+            "required": [
+              "kind",
+              "occurrenceId",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextOmissions": {
+        "additionalProperties": false,
+        "properties": {
+          "byteBudget": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "extracted": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inferred": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "itemLimit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neighbors": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "notSelected": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/definitions/SourceContextOmissionSample"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "extracted",
+          "inferred",
+          "neighbors",
+          "notSelected",
+          "byteBudget",
+          "itemLimit",
+          "samples"
+        ],
+        "type": "object"
+      },
+      "SourceContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "unitId",
+          "sourceRevisionId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "SourceContextSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "extracted": {
+            "type": "boolean"
+          },
+          "inferred": {
+            "type": "boolean"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neighbors": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "extracted",
+          "inferred",
+          "neighbors",
+          "maxBytes",
+          "maxItems"
+        ],
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "artifactId",
+          "range"
+        ],
+        "type": "object"
+      },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
         ],
         "type": "object"
       },
@@ -1503,6 +2250,33 @@
           "revisionId",
           "actionId",
           "previousEventId"
+        ],
+        "type": "object"
+      },
+      "UnknownSourceBlockSample": {
+        "additionalProperties": false,
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "target",
+          "schema",
+          "handling"
         ],
         "type": "object"
       },

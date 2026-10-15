@@ -145,7 +145,7 @@ pub fn item_payload(input: &FixedInput, id: ExecutionId) -> Result<ArenaItem, Ex
     {
         return Err(error(ErrorCode::InvalidInput, "arena-scope"));
     }
-    request_body(&AiConfig::default(), &p.item)?;
+    validate_item_prompt(&p.item, input.envelope().project_id)?;
     Ok(p)
 }
 pub fn settings(input: &FixedInput) -> Result<ArenaSettings, ExecutionError> {
@@ -180,6 +180,11 @@ pub fn settings(input: &FixedInput) -> Result<ArenaSettings, ExecutionError> {
     let mut sources = BTreeSet::new();
     for (index, raw) in e.items.iter().enumerate() {
         let p = item_payload(input, raw.item_id)?;
+        validate_source_context(
+            &s.config.request_config(p.slot)?,
+            &p.item,
+            Some(e.project_id),
+        )?;
         if p.source_order != index / slots || p.slot != index % slots {
             return Err(error(ErrorCode::InvalidInput, "arena-order"));
         }

@@ -74,6 +74,7 @@ pub struct AiConfig {
     pub timeout_seconds: u32,
     pub share_terms: bool,
     pub share_context: bool,
+    pub source_context: crate::SourceContextSelection,
 }
 impl Default for AiConfig {
     fn default() -> Self {
@@ -91,11 +92,13 @@ impl Default for AiConfig {
             timeout_seconds: 60,
             share_terms: false,
             share_context: false,
+            source_context: crate::SourceContextSelection::default(),
         }
     }
 }
 impl AiConfig {
     pub fn validate(&self) -> Result<(), ExecutionError> {
+        self.source_context.validate()?;
         if let Some(reference) = &self.connection_profile {
             reference.validate()?;
         }
@@ -170,6 +173,7 @@ pub struct AiItem {
     pub target_locale: String,
     pub terms: Vec<SharedTerm>,
     pub context: Option<crate::ContextRevision>,
+    pub source_context: crate::SourceContextCapture,
     pub omissions: Vec<String>,
     pub resource_baseline: u64,
 }
@@ -235,7 +239,8 @@ pub fn settings(input: &FixedInput) -> Result<AiSettings, ExecutionError> {
         return Err(error(ErrorCode::InvalidInput, "ai-input"));
     }
     for item in &e.items {
-        item_payload(input, item.item_id)?;
+        let payload = item_payload(input, item.item_id)?;
+        validate_source_context(&s.config, &payload, Some(e.project_id))?;
     }
     Ok(s)
 }
@@ -256,16 +261,59 @@ pub fn item_payload(input: &FixedInput, id: ExecutionId) -> Result<AiItem, Execu
     {
         return Err(error(ErrorCode::InvalidInput, "ai-scope"));
     }
-    request_body(&AiConfig::default(), &p)?;
+    validate_item_prompt(&p, input.envelope().project_id)?;
     Ok(p)
 }
+pub(super) fn validate_item_prompt(
+    item: &AiItem,
+    project: ExecutionId,
+) -> Result<(), ExecutionError> {
+    let selection = match &item.source_context {
+        crate::SourceContextCapture::NotSelected => crate::SourceContextSelection::default(),
+        crate::SourceContextCapture::Selected { value } => value.selection.clone(),
+    };
+    let mut config = AiConfig::default();
+    config.source_context = selection;
+    validate_source_context(&config, item, Some(project))?;
+    prompt_content(&config, item)?;
+    Ok(())
+}
+
+pub(super) fn validate_source_context(
+    config: &AiConfig,
+    item: &AiItem,
+    project: Option<ExecutionId>,
+) -> Result<(), ExecutionError> {
+    match &item.source_context {
+        crate::SourceContextCapture::NotSelected => {
+            config.source_context.validate()?;
+            if config.source_context.is_enabled() {
+                return Err(error(ErrorCode::InvalidInput, "source-context-capture"));
+            }
+            Ok(())
+        }
+        crate::SourceContextCapture::Selected { value } => {
+            if value.source_locale != item.source_locale {
+                return Err(error(ErrorCode::InvalidInput, "source-context-capture"));
+            }
+            item.source_context.validate_against(
+                &config.source_context,
+                &crate::SourceContextRequest {
+                    project_id: project.unwrap_or(value.scope.project_id),
+                    source_snapshot_id: item.source_snapshot_id,
+                    unit_id: item.unit_id,
+                    source_revision_id: item.source_revision_id,
+                    locale: item.target_locale.clone(),
+                },
+            )
+        }
+    }
+}
+
 pub fn request_body(config: &AiConfig, item: &AiItem) -> Result<Value, ExecutionError> {
+    validate_source_context(config, item, None)?;
     let profile = provider::ProviderProfile::parameters(&config.token_field)?;
-    // Only explicitly shared data enters the user message; local identities and
-    // resource bookkeeping are never copied as an unrestricted project dump.
-    let shared = json!({"unitId":item.unit_id,"sourceLocale":item.source_locale,"targetLocale":item.target_locale,"nativeKey":item.native_key,"sourceText":item.source_text,"terms":item.terms.iter().map(|t|json!({"source":t.source,"target":t.target,"protected":t.protected})).collect::<Vec<_>>(),"context":item.context.as_ref().map(|c|&c.text)});
-    let content = String::from_utf8(codec::encode(&shared, profile.max_prompt_bytes)?)
-        .map_err(|_| error(ErrorCode::InvalidInput, "ai-prompt"))?;
+    let content = prompt_content(config, item)?;
     let mut body = match profile.protocol {
         provider::ProviderProtocol::ChatCompletionsJson => {
             json!({"model":config.model,"stream":false,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]})
@@ -273,6 +321,20 @@ pub fn request_body(config: &AiConfig, item: &AiItem) -> Result<Value, Execution
     };
     body[&profile.output_token_field] = config.max_output_tokens.into();
     Ok(body)
+}
+
+fn prompt_content(config: &AiConfig, item: &AiItem) -> Result<String, ExecutionError> {
+    let profile = provider::ProviderProfile::parameters(&config.token_field)?;
+    // Only explicitly shared data enters the user message; local identities and
+    // resource bookkeeping are never copied as an unrestricted project dump.
+    let mut shared = json!({"unitId":item.unit_id,"sourceLocale":item.source_locale,"targetLocale":item.target_locale,"nativeKey":item.native_key,"sourceText":item.source_text,"terms":item.terms.iter().map(|t|json!({"source":t.source,"target":t.target,"protected":t.protected})).collect::<Vec<_>>(),"context":item.context.as_ref().map(|c|&c.text)});
+    if let Some(context) = item.source_context.provider_projection() {
+        shared["sourceContext"] = serde_json::to_value(context)
+            .map_err(|_| error(ErrorCode::InvalidInput, "source-context-capture"))?;
+    }
+    let content = String::from_utf8(codec::encode(&shared, profile.max_prompt_bytes)?)
+        .map_err(|_| error(ErrorCode::InvalidInput, "ai-prompt"))?;
+    Ok(content)
 }
 pub fn validate_output(
     input: &FixedInput,

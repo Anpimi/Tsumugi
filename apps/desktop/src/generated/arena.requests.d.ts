@@ -73,6 +73,7 @@ export interface AiConfig {
   model: string;
   shareContext: boolean;
   shareTerms: boolean;
+  sourceContext: SourceContextSelection;
   timeoutSeconds: number;
   tokenField: string;
 }
@@ -84,6 +85,13 @@ export interface ModelConnectionReference {
   profileId: ExecutionId;
   revision: UnsignedDecimal;
   storeId: ExecutionId;
+}
+export interface SourceContextSelection {
+  extracted: boolean;
+  inferred: boolean;
+  maxBytes: number;
+  maxItems: number;
+  neighbors: boolean;
 }
 export interface ReadRequest {
   attemptId: ExecutionId;

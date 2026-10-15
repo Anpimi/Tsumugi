@@ -43,7 +43,7 @@ function ToggleAiWorkbench({project:current,mounted}:{project:ProjectView;mounte
   {mounted?<AiWorkbench project={current} disabled={false} onOpenTranslation={async()=>true}/>:null}
  </AiPreparationSession>;
 }
-const item:AiItem={unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302),sourceSnapshotId:fixtureIdentity(300),nativeKey:"first",sourceLocale:"en",sourceText:"Hello",targetLocale:"zh-CN",terms:[],context:null,omissions:["terms-not-shared","context-not-shared"],resourceBaseline:"0"};
+const item:AiItem={unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302),sourceSnapshotId:fixtureIdentity(300),nativeKey:"first",sourceLocale:"en",sourceText:"Hello",targetLocale:"zh-CN",terms:[],context:null,sourceContext:{kind:"not-selected"},omissions:["terms-not-shared","context-not-shared"],resourceBaseline:"0"};
 let prepared:AiPrepared;
 let originalAction:AdoptionAction;
 function actionFor(request:PrepareRequest):AdoptionAction {

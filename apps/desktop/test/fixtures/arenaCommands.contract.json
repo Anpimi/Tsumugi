@@ -61,7 +61,14 @@
             "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
             "maxOutputTokens": 2000,
             "credentialEnv": "",
-            "maxRetries": 0
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            }
           },
           {
             "maxItems": 20,
@@ -75,7 +82,14 @@
             "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
             "maxOutputTokens": 2000,
             "credentialEnv": "",
-            "maxRetries": 0
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            }
           }
         ],
         "maxRequests": 40,
@@ -135,7 +149,10 @@
                 }
               ],
               "sourceText": "Barrel {name}",
-              "sourceLocale": "en"
+              "sourceLocale": "en",
+              "sourceContext": {
+                "kind": "not-selected"
+              }
             },
             "slot": 0
           },
@@ -166,7 +183,10 @@
                 }
               ],
               "sourceText": "Barrel {name}",
-              "sourceLocale": "en"
+              "sourceLocale": "en",
+              "sourceContext": {
+                "kind": "not-selected"
+              }
             },
             "slot": 1
           }
@@ -186,7 +206,14 @@
               "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
               "maxOutputTokens": 2000,
               "credentialEnv": "",
-              "maxRetries": 0
+              "maxRetries": 0,
+              "sourceContext": {
+                "extracted": false,
+                "inferred": false,
+                "neighbors": false,
+                "maxBytes": 16384,
+                "maxItems": 128
+              }
             },
             {
               "maxItems": 20,
@@ -200,7 +227,14 @@
               "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
               "maxOutputTokens": 2000,
               "credentialEnv": "",
-              "maxRetries": 0
+              "maxRetries": 0,
+              "sourceContext": {
+                "extracted": false,
+                "inferred": false,
+                "neighbors": false,
+                "maxBytes": 16384,
+                "maxItems": 128
+              }
             }
           ],
           "maxRequests": 40,
@@ -363,7 +397,10 @@
               }
             ],
             "sourceText": "Barrel {name}",
-            "sourceLocale": "en"
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            }
           }
         },
         {
@@ -407,7 +444,10 @@
               }
             ],
             "sourceText": "Barrel {name}",
-            "sourceLocale": "en"
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            }
           }
         }
       ],

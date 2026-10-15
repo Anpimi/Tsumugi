@@ -6,12 +6,22 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- AI and Arena preparations can separately share extracted source facts,
+  inferred facts and neighboring text, all off by default. Previews retain whole
+  selected entries, their original evidence and bounded omission counts. Each
+  variant captures its own selection and budget; edits require a new preview and
+  confirmation. Provider requests contain only selected semantic text, fact
+  origins and inference rationale, excluding source coordinates and provenance
+  identifiers. Accepted requests retain their original capture during recovery.
+- These required selection and capture fields advance the current-only project
+  format to schema 36. Preserve older development directories and reimport their
+  sources into a new project; no conversion or reset is performed.
+
 - AI and Arena previews read source evidence and opted-in resources from one
   SQLite snapshot. Each preparation verifies the original source result,
   semantic proof and project mappings once for all units and variants; changed
   evidence is refused before any preview is returned. Variants keep independent
-  terminology and manual-context sharing choices. Source-fact sharing remains
-  a separate, unimplemented selection workflow.
+  terminology, manual-context and source-context sharing choices.
 
 - Source execution retains the original SDK content once, with a checked
   schema/digest projection instead of duplicating the parsed proposal. Bounded
@@ -33,7 +43,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   fact origins, unsupported/empty block distinctions and immediate neighbors
   with their original occurrence and revision evidence. Reads verify the stored
   source result, semantic proof and project mappings in one SQLite snapshot.
-  Manual context remains separate; AI sharing and desktop integration are pending.
+  Manual context remains separate from source-fact sharing.
 
 - The experimental SDK defines bounded source-context facts with explicit
   extracted or inferred origin and references to captured source ranges.
@@ -86,7 +96,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   inside the sidebar.
 
 
-The combined development build opens project schema 35 only. Earlier Unreleased
+The combined development build opens project schema 36 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 

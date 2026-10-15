@@ -1,5 +1,19 @@
 # Application versioning and changelog maintenance
 
+AI/Arena configuration and immutable item payloads now require independent
+source-context selection and capture fields. All three source categories default
+off; first authorization uses a fresh checked preview, and accepted execution
+uses the original capture without renewing authority or deadlines. Provider
+projection excludes provenance and omitted material. Rust owns these strict
+fields and the generated desktop contracts. The incompatible stored input
+shape advances the current-only project format to schema 36; older development
+directories are preserved and refused without conversion, rebuild or reset.
+Application `0.2.0-alpha.1`, SDK `0.1.0-alpha.1`, content exchange 2/1, process 2,
+connection store 1, plugin settings 2 and dependencies remain unchanged. This
+same undistributed batch needs no additional SemVer bump or distribution; both
+Unreleased changelogs and current README format statements are synchronized.
+Earlier paragraphs describe intermediate development boundaries.
+
 AI and Arena preparations share one checked source/resource read snapshot across
 all selected units and variants. Original source result, semantic proof and
 project mappings are validated once, and each variant retains its independent

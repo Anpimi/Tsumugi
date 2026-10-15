@@ -439,3 +439,16 @@ it("invalidates a new round's consent for a changed selected profile without mak
   const changed=structuredClone(view);changed.snapshot.revision="2";changed.basis.revision="2";changed.snapshot.profiles[0].revision="2";changed.references[0].revision="2";changed.references[0].digest="b".repeat(64);
   act(()=>application.setQueryData(connectionReadKey,changed));expect(owner.prepared).toBeNull();expect(owner.consent).toBe(false);expect(owner.draft).toEqual(draft);expect(owner.draft?.stale).toBe(false);
 });
+
+it.each([["extracted",true],["inferred",true],["neighbors",true],["maxBytes",2048],["maxItems",4]] as const)("revokes Arena consent for source context %s without changing another variant", async (key,value) => {
+  render(<Harness />, project); await prepare();
+  const before = owner.current();
+  expect(before.prepared).not.toBeNull(); expect(before.consent).toBe(true);
+  act(() => { owner.setConfig({...before.config,variants:before.config.variants.map((variant,index) => index === 0
+    ? {...variant,sourceContext:{...variant.sourceContext,[key]:value}} : variant)}); });
+  expect(owner.prepared).toBeNull(); expect(owner.consent).toBe(false); expect(owner.canStart()).toBe(false);
+  expect(owner.config.variants[0].sourceContext[key]).toBe(value);
+  expect(owner.config.variants[1]).toEqual(before.config.variants[1]);
+  expect(owner.config.maxRequests).toBe(before.config.maxRequests);
+  expect(calls("start_arena_translation")).toHaveLength(0);
+});

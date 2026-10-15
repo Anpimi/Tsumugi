@@ -29,7 +29,7 @@ const project: ProjectView = { sessionToken: "ai-command-session", locator: "iso
   metadata: { projectId: fixtureIdentity(500), displayName: "AI commands", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "ai" as const };
 const item: AiItem = { unitId: fixtureIdentity(301), sourceRevisionId: fixtureIdentity(302), sourceSnapshotId: fixtureIdentity(300),
-  nativeKey: "first", sourceLocale: "en", sourceText: "Hello", targetLocale: "zh-CN", terms: [], context: null,
+  nativeKey: "first", sourceLocale: "en", sourceText: "Hello", targetLocale: "zh-CN", terms: [], context: null, sourceContext: {kind:"not-selected"},
   omissions: ["terms-not-shared", "context-not-shared"], resourceBaseline: "0" };
 let owner: ReturnType<typeof useAiPreparation>, reads: ReturnType<typeof useSessionReads>, registry: ReturnType<typeof useWorkbenchCommands>;
 let tasks: ReturnType<typeof useExecutionTaskSession>, prepared: AiPrepared, view: AiView, action: AdoptionAction;

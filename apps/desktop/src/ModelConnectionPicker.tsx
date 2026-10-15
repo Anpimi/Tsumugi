@@ -1,3 +1,4 @@
+import { SourceContextSelectionSummary } from "./SourceContextPreparation";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { enUS } from "./i18n/en-US";
@@ -53,6 +54,6 @@ export function PreparationBudgetSummary({ config, perRequest = false }: { confi
   const sharing = config.shareTerms && config.shareContext ? "connections.sharingBoth" : config.shareTerms ? "connections.sharingTerms" : config.shareContext ? "connections.sharingContext" : "connections.sharingNone";
   return <section className="preparation-budget-summary" aria-label={t("connections.invocationSummaryTitle")}>
     <p>{t(`connections.${message}`, { defaultValue: enUS.connections[message], items: config.maxItems, requests: config.maxRequests, concurrency: config.concurrency, tokens: config.maxOutputTokens, retries: config.maxRetries, timeout: config.timeoutSeconds })}</p>
-    <p>{t(sharing)}</p><p>{t("ai.costUnknown")}</p>
+    <p>{t(sharing)}</p><SourceContextSelectionSummary value={config.sourceContext}/><p>{t("ai.costUnknown")}</p>
   </section>;
 }

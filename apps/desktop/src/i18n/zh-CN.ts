@@ -1,6 +1,58 @@
 import type { UiMessages } from "./types";
 
 export const zhCN = {
+sourceContext: {
+  "title": "源上下文观察",
+  "help": "为本次请求选择额外源资料。推断仍是假设；所有类别默认关闭，预览显示完整纳入项及省略原因。",
+  "choose": {
+    "extracted": "分享从源中提取的事实",
+    "inferred": "分享源推断及其理由",
+    "neighbors": "分享相邻原文"
+  },
+  "selectionSummary": "额外源资料类别：{{count}} · 每条原文最多 {{bytes}} 编码字节、{{items}} 个完整条目。",
+  "notSelected": "不分享额外源事实、推断或相邻原文。",
+  "maxBytes": "源上下文预算（编码字节）",
+  "maxItems": "源上下文最多条目数",
+  "invalidBudget": "请选择 27–16384 编码字节及 1–128 个完整条目。",
+  "included": "纳入源事实 {{facts}} 项、相邻原文 {{neighbors}} 项。",
+  "rationale": "推断理由：{{rationale}}",
+  "references": "原始源引用",
+  "referenceRange": "{{artifact}} · {{encoding}} 区间 [{{start}}, {{end}})",
+  "missing": "没有可用的源事实区块；不会臆造说话者、角色或场景。",
+  "empty": "明确为空的源事实区块：{{count}}。",
+  "unknown": "无法解释版本的源事实区块：{{count}}；未解读其内容。",
+  "excluded": "按所选类别排除的条目：{{count}}。",
+  "byteOmissions": "因字节预算省略的完整条目：{{count}}。",
+  "itemOmissions": "因条数上限省略的完整条目：{{count}}。",
+  "omittedGroups": "省略条目：提取事实 {{extracted}} · 推断 {{inferred}} · 相邻原文 {{neighbors}}。",
+  "omissionReferences": "省略项的源引用（有界样本）",
+  "omittedFact": "原区块索引 {{block}}，事实索引 {{fact}}：{{reason}}。",
+  "omittedNeighbor": "源出现位置 {{occurrence}}：{{reason}}。",
+  "unsampled": "未列出引用样本的省略项：{{count}}。",
+  "omissionReasons": {
+    "not-selected": "未选择此类别",
+    "byte-budget": "编码字节预算不足",
+    "item-limit": "达到条数上限"
+  },
+  "positions": {
+    "before": "此项之前的相邻原文",
+    "after": "此项之后的相邻原文",
+    "both": "与此项不同出现位置前后相邻的原文"
+  },
+  "origins": {
+    "extracted": "从源中提取",
+    "inferred": "推断，未经确认为事实"
+  },
+  "factKinds": {
+    "speaker": "说话者",
+    "role": "角色",
+    "scene": "场景",
+    "time": "时间",
+    "location": "位置",
+    "note": "源说明"
+  }
+},
+
 connections: {
   "requestSummary": "每次请求最多 {{tokens}} 输出 token、重试 {{retries}} 次、{{timeout}} 秒；请求数与并发共享整个比较的预算。",
   "choose": "已保存连接",
@@ -16,10 +68,10 @@ connections: {
   "invocationSummaryTitle": "本次预算与分享",
   "invocationSummary": "最多 {{items}} 项 · {{requests}} 次请求 · 并发 {{concurrency}} · 每次最多 {{tokens}} 输出 token · 重试 {{retries}} 次 · 每次 {{timeout}} 秒。",
   "incompleteBudget": "请先补全预算字段，再准备请求。",
-  "sharingBoth": "将按预览范围分享术语与上下文。",
-  "sharingTerms": "将分享术语，不分享上下文。",
-  "sharingContext": "将分享上下文，不分享术语。",
-  "sharingNone": "不分享术语或上下文。",
+  "sharingBoth": "将按预览范围分享术语与已保存的人工上下文。",
+  "sharingTerms": "将分享术语，不分享已保存的人工上下文。",
+  "sharingContext": "将分享已保存的人工上下文，不分享术语。",
+  "sharingNone": "不分享术语或已保存的人工上下文。",
   "arenaBudgetSummary": "所有方案共享：最多 {{items}} 个源条目、{{requests}} 次请求、并发 {{concurrency}}。",
   "advancedScheme": "方案 {{number}} 的连接与请求上限",
   "open": "连接设置",
@@ -609,6 +661,10 @@ ai: {
     "ai-scope": "请选择配置限额内的不同原文。",
     "ai-preview": "预览已过时，请刷新后准备新预览。",
     "ai-locale": "此语言已不可用，请刷新并选择当前目标语言。",
+    "source-context-budget": "源上下文超出编码字节或条数预算。请在显示范围内调整上限，或减少源资料类别。",
+    "source-context-capture-budget": "完整源上下文依据超过存储上限。请减少类别或降低上下文预算。",
+    "source-context-interpreter": "当前源需要尚不可用的事实解释器。工作仍保留；请关闭事实分享，或安装匹配的受支持源 profile 后重新准备。",
+    "source-context-capture": "捕获的源观察与本次请求不匹配。工作仍保留；请刷新源并准备新的预览。",
     "ai-source": "原文已改变或移除，输出仍保留；请准备新预览。",
     "ai-budget": "共享请求预算耗尽，输出保留；继续前请准备新预算。",
     "ai-auth": "认证被拒绝，请检查凭证与接口后重新尝试。",

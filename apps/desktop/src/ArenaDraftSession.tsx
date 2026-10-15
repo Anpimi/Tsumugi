@@ -10,7 +10,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import { editedAiConfig, sameAiConfig, type AiConfig, type AiItem } from "./aiCommands";
+import { editedAiConfig, sameAiConfig, validSourceContextSelection, type AiConfig, type AiItem } from "./aiCommands";
 import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
 import type { ConnectionReadView } from "./connectionCommands";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
@@ -50,7 +50,8 @@ function validConfig(config: ArenaConfig, count: number) {
     && count > 0 && count <= config.maxItems && count * config.variants.length <= 100
     && Number.isInteger(config.maxRequests) && config.maxRequests >= count * config.variants.length && config.maxRequests <= 300
     && Number.isInteger(config.concurrency) && config.concurrency >= 1 && config.concurrency <= 2
-    && config.variants.every(variant => aiLimits.every(([key,min,max]) => Number.isInteger(variant[key]) && variant[key] >= min && variant[key] <= max));
+    && config.variants.every(variant => validSourceContextSelection(variant.sourceContext)
+      && aiLimits.every(([key,min,max]) => Number.isInteger(variant[key]) && variant[key] >= min && variant[key] <= max));
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -61,7 +62,7 @@ function invalidAck(): never { throw new Error("Invalid Arena business acknowled
 function itemProof(item: AiItem) {
   return JSON.stringify([item.unitId,item.sourceRevisionId,item.sourceSnapshotId,item.nativeKey,item.sourceLocale,item.sourceText,item.targetLocale,item.resourceBaseline,
     item.terms.map(term => [term.revisionId,term.source,term.target,term.protected]),
-    item.context ? [item.context.revisionId,item.context.previousRevisionId,item.context.unitId,item.context.locale,item.context.text,item.context.reason] : null,item.omissions]);
+    item.context ? [item.context.revisionId,item.context.previousRevisionId,item.context.unitId,item.context.locale,item.context.text,item.context.reason] : null,item.sourceContext,item.omissions]);
 }
 function sourceProof(item: AiItem) {
   return JSON.stringify([item.unitId,item.sourceRevisionId,item.sourceSnapshotId,item.nativeKey,item.sourceLocale,item.sourceText,item.targetLocale]);

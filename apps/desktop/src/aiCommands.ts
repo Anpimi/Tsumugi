@@ -8,12 +8,20 @@ import { checkerIdentity, contractIdentity, providerIdentity, ruleIdentity } fro
 export type { AiConfig } from "./generated/ai.requests";
 export type { AiItemView as AiItem, AiPreviewView as AiPreview, AiPrepared, AiOutputView as AiOutput, AiView } from "./generated/ai.responses";
 export type AiStart = AiStartRequest;
-export const defaultAiConfig:AiConfig={endpoint:"",model:"",credentialEnv:"OPENAI_API_KEY",tokenField:"max_tokens",maxItems:20,concurrency:1,maxRequests:20,maxOutputTokens:2000,maxRetries:0,timeoutSeconds:60,shareTerms:false,shareContext:false};
+export const defaultAiConfig:AiConfig={endpoint:"",model:"",credentialEnv:"OPENAI_API_KEY",tokenField:"max_tokens",maxItems:20,concurrency:1,maxRequests:20,maxOutputTokens:2000,maxRetries:0,timeoutSeconds:60,shareTerms:false,shareContext:false,sourceContext:{extracted:false,inferred:false,neighbors:false,maxBytes:16384,maxItems:128}};
 export const aiTarget=(item:AiItem):EditorTarget=>({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,key:item.nativeKey,sourceText:item.sourceText});
 const configurationFields = ["endpoint", "model", "credentialEnv", "tokenField", "maxItems", "concurrency", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds", "shareTerms", "shareContext"] as const;
+const sourceContextFields = ["extracted", "inferred", "neighbors", "maxBytes", "maxItems"] as const;
+export const sourceContextMinBytes = new TextEncoder().encode(JSON.stringify({facts:[],neighbors:[]})).length;
+export function validSourceContextSelection(value: AiConfig["sourceContext"]): boolean {
+  return Number.isInteger(value.maxBytes) && value.maxBytes >= sourceContextMinBytes && value.maxBytes <= 16384
+    && Number.isInteger(value.maxItems) && value.maxItems >= 1 && value.maxItems <= 128;
+}
 /** A profile reference is part of the captured proof, even for equal defaults. */
 export function sameAiConfig(left: AiConfig, right: AiConfig): boolean {
-  return configurationFields.every(key => left[key] === right[key]) && sameConnectionReference(left.connectionProfile, right.connectionProfile);
+  return configurationFields.every(key => left[key] === right[key])
+    && sourceContextFields.every(key => left.sourceContext[key] === right.sourceContext[key])
+    && sameConnectionReference(left.connectionProfile, right.connectionProfile);
 }
 /** Manual default edits become a one-time connection. Budgets and sharing keep
  * a saved reference when its four defaults are unchanged. */

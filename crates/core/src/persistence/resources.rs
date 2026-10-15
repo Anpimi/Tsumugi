@@ -13,10 +13,18 @@ const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
 mod source_context;
+mod source_context_selection;
 pub(super) use source_context::SourceContextReader;
 pub use source_context::{
     SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
     SourceContextOccurrence, SourceContextRequest, SourceContextView,
+};
+pub use source_context_selection::{
+    SelectedSourceContext, SelectedSourceFact, SourceContextCapture, SourceContextObservations,
+    SourceContextOmissionReason, SourceContextOmissionSample, SourceContextOmissions,
+    SourceContextProviderFact, SourceContextProviderNeighbor, SourceContextProviderOrigin,
+    SourceContextProviderProjection, SourceContextSelection, UnknownSourceBlockSample,
+    select_source_context,
 };
 
 fn change_targets_source(

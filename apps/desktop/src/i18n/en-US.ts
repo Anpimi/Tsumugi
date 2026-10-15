@@ -1,4 +1,55 @@
 export const enUS = {
+sourceContext: {
+  "title": "Source observations",
+  "help": "Choose additional source data for this request. Inferred observations remain hypotheses. Every category starts off; the preview shows complete included entries and omissions.",
+  "choose": {
+    "extracted": "Share extracted source facts",
+    "inferred": "Share source inferences and their rationale",
+    "neighbors": "Share adjacent original text"
+  },
+  "selectionSummary": "Additional source groups: {{count}} · up to {{bytes}} bytes and {{items}} complete entries per original.",
+  "notSelected": "Additional source facts, inferences and neighbors are not shared.",
+  "maxBytes": "Source context budget (encoded bytes)",
+  "maxItems": "Maximum source context entries",
+  "invalidBudget": "Choose 27–16384 encoded bytes and 1–128 complete entries.",
+  "included": "Included source facts: {{facts}} · adjacent originals: {{neighbors}}",
+  "rationale": "Inference rationale: {{rationale}}",
+  "references": "Original source references",
+  "referenceRange": "{{artifact}} · {{encoding}} range [{{start}}, {{end}})",
+  "missing": "No source-fact block is available. No speaker, role or scene is invented.",
+  "empty": "Explicitly empty source-fact blocks: {{count}}.",
+  "unknown": "Unavailable source-fact block versions: {{count}}. Their contents were not interpreted.",
+  "excluded": "Entries excluded by your category choices: {{count}}.",
+  "byteOmissions": "Complete entries omitted by the byte budget: {{count}}.",
+  "itemOmissions": "Complete entries omitted by the item limit: {{count}}.",
+  "omittedGroups": "Omitted entries: extracted {{extracted}} · inferred {{inferred}} · adjacent originals {{neighbors}}.",
+  "omissionReferences": "Omitted source references (bounded sample)",
+  "omittedFact": "Original block index {{block}}, fact index {{fact}}: {{reason}}.",
+  "omittedNeighbor": "Original occurrence {{occurrence}}: {{reason}}.",
+  "unsampled": "Omitted entries without a listed reference sample: {{count}}.",
+  "omissionReasons": {
+    "not-selected": "category not selected",
+    "byte-budget": "encoded-byte budget",
+    "item-limit": "entry limit"
+  },
+  "positions": {
+    "before": "Original immediately before this entry",
+    "after": "Original immediately after this entry",
+    "both": "Original adjacent before and after occurrences of this entry"
+  },
+  "origins": {
+    "extracted": "Extracted from source",
+    "inferred": "Inference, not a confirmed fact"
+  },
+  "factKinds": {
+    "speaker": "Speaker",
+    "role": "Role",
+    "scene": "Scene",
+    "time": "Time",
+    "location": "Location",
+    "note": "Source note"
+  }
+},
 connections: {
   "requestSummary": "Each request: up to {{tokens}} output tokens, {{retries}} retries and {{timeout}} seconds. Requests and concurrency share the comparison budget.",
   "choose": "Saved connection",
@@ -14,10 +65,10 @@ connections: {
   "invocationSummaryTitle": "Preparation budget and sharing",
   "invocationSummary": "Up to {{items}} items · {{requests}} requests · concurrency {{concurrency}} · {{tokens}} output tokens per request · {{retries}} retries · {{timeout}} seconds per request.",
   "incompleteBudget": "Complete the budget fields before preparing a request.",
-  "sharingBoth": "Terms and context will be shared in the previewed scope.",
-  "sharingTerms": "Terms will be shared. Context will not be shared.",
-  "sharingContext": "Context will be shared. Terms will not be shared.",
-  "sharingNone": "Terms and context will not be shared.",
+  "sharingBoth": "Adopted terms and saved human context will be shared in the previewed scope.",
+  "sharingTerms": "Terms will be shared. Saved human context will not be shared.",
+  "sharingContext": "Saved human context will be shared. Terms will not be shared.",
+  "sharingNone": "Adopted terms and saved human context will not be shared.",
   "arenaBudgetSummary": "Shared across every scheme: up to {{items}} source items, {{requests}} requests and concurrency {{concurrency}}.",
   "advancedScheme": "Connection and request limits for scheme {{number}}",
   "open": "Connection settings",
@@ -619,6 +670,10 @@ ai: {
     "ai-scope": "Select distinct original strings within the configured limit.",
     "ai-preview": "The preview is stale. Refresh and prepare a new preview.",
     "ai-locale": "This language is no longer available. Refresh and choose a current target.",
+    "source-context-budget": "Source context exceeds its encoded-byte or item budget. Increase its limits within the shown range, or select fewer source categories.",
+    "source-context-capture-budget": "The complete source-context evidence exceeds its storage limit. Select fewer categories or lower the context budget.",
+    "source-context-interpreter": "This source requires an unavailable fact interpreter. Keep your work; disable fact sharing or install a matching supported source profile before preparing again.",
+    "source-context-capture": "Captured source observations do not match this request. Your work is retained; refresh the source and prepare a new preview.",
     "ai-source": "The source changed or was removed. Output is retained; prepare a new preview.",
     "ai-budget": "Shared request budget exhausted. Outputs are kept; prepare a new budget to continue.",
     "ai-auth": "Authentication rejected. Check the credential and endpoint before a new attempt.",

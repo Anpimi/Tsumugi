@@ -51,9 +51,14 @@ pub use resources::{
     GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind,
     ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence,
     ResourceImpactKind, ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, SaveContext,
-    SaveTerm, SourceContextAdjacency, SourceContextBlock, SourceContextDirection,
-    SourceContextNeighbor, SourceContextOccurrence, SourceContextRequest, SourceContextView,
-    TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind, TmSuggestion,
+    SaveTerm, SelectedSourceContext, SelectedSourceFact, SourceContextAdjacency,
+    SourceContextBlock, SourceContextCapture, SourceContextDirection, SourceContextNeighbor,
+    SourceContextObservations, SourceContextOccurrence, SourceContextOmissionReason,
+    SourceContextOmissionSample, SourceContextOmissions, SourceContextProviderFact,
+    SourceContextProviderNeighbor, SourceContextProviderOrigin, SourceContextProviderProjection,
+    SourceContextRequest, SourceContextSelection, SourceContextView, TermOrigin, TermResolution,
+    TermResolutionEntry, TermRevision, TmMatchKind, TmSuggestion, UnknownSourceBlockSample,
+    select_source_context,
 };
 pub(crate) use review::validate_choices;
 pub use review::{
@@ -77,7 +82,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 35;
+pub(crate) const SCHEMA_VERSION: i64 = 36;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,

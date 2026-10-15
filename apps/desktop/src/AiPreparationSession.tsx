@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type SetStateAction } from "react";
 import { matchQuery, QueryObserver } from "@tanstack/react-query";
-import { aiCommands, defaultAiConfig, editedAiConfig, sameAiConfig as sameConfig, type AiConfig, type AiItem, type AiPrepared, type AiStart, type AiView } from "./aiCommands";
+import { aiCommands, defaultAiConfig, editedAiConfig, validSourceContextSelection, sameAiConfig as sameConfig, type AiConfig, type AiItem, type AiPrepared, type AiStart, type AiView } from "./aiCommands";
 import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
 import type { ConnectionReadView } from "./connectionCommands";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt, type AttemptDetail } from "./executionCommands";
@@ -41,7 +41,7 @@ interface State {
   failure: CommandFailure | null; notice: "started" | "saved" | "newer" | null;
 }
 const limits = [["maxItems",1,100],["concurrency",1,2],["maxRequests",1,300],["maxOutputTokens",1,16384],["maxRetries",0,2],["timeoutSeconds",1,120]] as const;
-const validLimits = (config: AiConfig) => limits.every(([key,min,max]) => Number.isInteger(config[key]) && config[key] >= min && config[key] <= max);
+const validLimits = (config: AiConfig) => limits.every(([key,min,max]) => Number.isInteger(config[key]) && config[key] >= min && config[key] <= max) && validSourceContextSelection(config.sourceContext);
 function validItem(item: AiItem) {
   return [item.unitId,item.sourceRevisionId,item.sourceSnapshotId,...item.terms.map(term => term.revisionId)].every(validateResponseIdentity)
     && (!item.context || [item.context.revisionId,item.context.unitId,...(item.context.previousRevisionId ? [item.context.previousRevisionId] : [])].every(validateResponseIdentity));
@@ -49,7 +49,7 @@ function validItem(item: AiItem) {
 function itemProof(item: AiItem) {
   return JSON.stringify([item.unitId,item.sourceRevisionId,item.sourceSnapshotId,item.nativeKey,item.sourceLocale,item.sourceText,item.targetLocale,item.resourceBaseline,
     item.terms.map(term => [term.revisionId,term.source,term.target,term.protected]),
-    item.context ? [item.context.revisionId,item.context.previousRevisionId,item.context.unitId,item.context.locale,item.context.text,item.context.reason] : null,item.omissions]);
+    item.context ? [item.context.revisionId,item.context.previousRevisionId,item.context.unitId,item.context.locale,item.context.text,item.context.reason] : null,item.sourceContext,item.omissions]);
 }
 function freeze<T>(part: T): T {
   if (part && typeof part === "object" && !Object.isFrozen(part)) { Object.values(part).forEach(freeze); Object.freeze(part); }

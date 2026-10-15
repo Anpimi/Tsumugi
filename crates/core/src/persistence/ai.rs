@@ -96,6 +96,9 @@ impl ProjectStore {
                 .map_err(super::ledger::sql_error)?;
             let share_terms = configs.iter().any(|config| config.share_terms);
             let share_context = configs.iter().any(|config| config.share_context);
+            let share_source = configs
+                .iter()
+                .any(|config| config.source_context.is_enabled());
             let current_terms = if share_terms {
                 super::resources::current_terms_in(connection, project, locale)?
             } else {
@@ -139,6 +142,17 @@ impl ProjectStore {
                 } else {
                     None
                 };
+                let source_view = if share_source {
+                    Some(source.project(&crate::SourceContextRequest {
+                        project_id: project,
+                        source_snapshot_id: source.snapshot_id,
+                        unit_id: *unit,
+                        source_revision_id: revision,
+                        locale: locale.into(),
+                    })?)
+                } else {
+                    None
+                };
                 for (config, items) in &mut prepared {
                     let mut item = AiItem {
                         unit_id: *unit,
@@ -157,6 +171,11 @@ impl ProjectStore {
                             context.clone()
                         } else {
                             None
+                        },
+                        source_context: if let Some(view) = &source_view {
+                            super::resources::select_source_context(view, &config.source_context)?
+                        } else {
+                            crate::SourceContextCapture::NotSelected
                         },
                         omissions: if config.share_terms {
                             omissions.clone()

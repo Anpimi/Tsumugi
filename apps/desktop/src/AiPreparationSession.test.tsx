@@ -596,7 +596,7 @@ it.each(["item", "recovery"] as const)("refuses the old generic translation %s s
   expect(calls("create_execution_identity")).toHaveLength(0); expect(calls("prepare_execution_adoption")).toHaveLength(0); expect(calls("adopt_execution")).toHaveLength(0);
 });
 
-it.each(["duplicate-unit", "missing-unit", "extra-unit", "substituted-unit", "wrong-full-proof", "legacy-item-scope"] as const)("retains the original unknown start when a shape-valid whole scope has %s", async mismatch => {
+it.each(["duplicate-unit", "missing-unit", "extra-unit", "substituted-unit", "wrong-full-proof", "source-context", "legacy-item-scope"] as const)("retains the original unknown start when a shape-valid whole scope has %s", async mismatch => {
   render(<Harness />, project); addSecondSelectedItem(); await prepare();
   const capture = owner.prepared!, selection = [...owner.selected], original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => command === "start_ai_translation" ? Promise.reject(new Error("Lost start ACK")) : original(command,payload));
@@ -619,6 +619,16 @@ it.each(["duplicate-unit", "missing-unit", "extra-unit", "substituted-unit", "wr
     wrong.detail.recovery.units[1].scopes = [{...wrong.detail.items[1].scope}];
   }
   if (mismatch === "wrong-full-proof") wrong.rows[1].item.sourceText = "Changed immutable source";
+  if (mismatch === "source-context") {
+    const item = wrong.rows[1].item;
+    item.sourceContext = {kind:"selected",value:{
+      scope:{projectId:project.metadata.projectId,sourceSnapshotId:item.sourceSnapshotId,unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,locale:item.targetLocale},
+      contentRevision:"9007199254740993",sourceAttemptId:fixtureIdentity(1110),sourceResultId:fixtureIdentity(1111),sourceResultDigest:"a".repeat(64),sourceLocale:item.sourceLocale,localUnitId:"local",
+      selection:{extracted:true,inferred:false,neighbors:false,maxBytes:16384,maxItems:128},facts:[],neighbors:[],
+      observations:{missingBlocks:true,knownBlocks:0,knownFacts:0,emptyBlocks:0,unknownBlocks:0,unknownRequiredBlocks:0,neighborOccurrences:0,unknownSamples:[]},
+      omissions:{extracted:0,inferred:0,neighbors:0,notSelected:0,byteBudget:0,itemLimit:0,samples:[]}
+    }};
+  }
   if (mismatch === "legacy-item-scope") wrong.detail.items[1].scope.kind = "translation";
   expect(validateResponseView(wrong)).toBe(true);
   expect(wrong.rows).toHaveLength(wrong.detail.items.length); expect(wrong.rows).toHaveLength(wrong.detail.progress.total);
@@ -668,4 +678,15 @@ it("retains an original unknown start through saved-profile changes without rene
   let start!:Promise<void>;act(()=>{start=owner.start();});const request=structuredClone(owner.pendingStart!.request),capture=owner.pendingStart!.prepared;
   const changed=structuredClone(view);changed.snapshot.profiles[0].archived=true;changed.references=[];act(()=>application.setQueryData(connectionReadKey,changed));
   await act(async()=>{response.reject(new Error("Lost original ACK"));await start;});expect(owner.pendingStart?.request).toEqual(request);expect(owner.pendingStart?.prepared).toEqual(capture);expect(owner.pendingStart?.uncertain).toBe(true);expect(calls("start_ai_translation")).toHaveLength(1);
+});
+
+it.each([["extracted",true],["inferred",true],["neighbors",true],["maxBytes",2048],["maxItems",4]] as const)("revokes preparation and consent when source context %s changes", async (key,value) => {
+  render(<Harness />, project); await prepare();
+  const before = owner.current();
+  expect(before.prepared).not.toBeNull(); expect(before.consent).toBe(true);
+  act(() => { owner.setConfig({...before.config, sourceContext:{...before.config.sourceContext,[key]:value}}); });
+  expect(owner.prepared).toBeNull(); expect(owner.consent).toBe(false); expect(owner.canStart()).toBe(false);
+  expect(owner.config.sourceContext[key]).toBe(value);
+  expect(owner.config.maxRequests).toBe(before.config.maxRequests);
+  expect(calls("start_ai_translation")).toHaveLength(0);
 });
