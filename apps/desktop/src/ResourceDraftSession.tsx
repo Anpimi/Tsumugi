@@ -59,6 +59,7 @@ interface ResourceSession {
   editTerm: (draft: ResourceTermDraft, aliases?: string) => void;
   discardTerm: () => void;
   beginContext: (row: ContentRow, revision: ContextRevision | null) => boolean;
+  adoptContext: (revision: ContextRevision | null, expectedRevisionId: string | null, editSeq: number) => boolean;
   editContext: (text: string) => void;
   editContextReason: (reason: string) => void;
   discardContext: () => void;
@@ -134,6 +135,18 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     update(before => ({ ...before, selectedUnit: row, contextRevision: revision, contextDraft: revision?.text ?? "", contextReason: revision?.reason ?? "", contextSeq: before.contextSeq + 1, newerContext: false, fixedContext: null })); return true;
   }
   function editContext(contextDraft: string) { update(before => ({ ...before, contextDraft, contextSeq: before.contextSeq + 1, newerContext: false })); }
+  function adoptContext(revision: ContextRevision | null, expectedRevisionId: string | null, editSeq: number) {
+    const value = current(), row = value.selectedUnit;
+    if (reserved() || !localeAvailable(value.locale) || !row?.unitId || !row.sourceRevisionId
+      || nullable(value.contextRevision?.revisionId) !== expectedRevisionId || value.contextSeq !== editSeq
+      || (revision && (revision.unitId !== row.unitId || revision.locale !== value.locale))) return false;
+    const keepEdits = contextDirty();
+    update(before => ({ ...before, contextRevision: revision,
+      contextDraft: keepEdits ? before.contextDraft : revision?.text ?? "",
+      contextReason: keepEdits ? before.contextReason : revision?.reason ?? "",
+      contextSeq: before.contextSeq + 1, newerContext: keepEdits, fixedContext: null, notice: null, failure: null }));
+    return true;
+  }
   function editContextReason(contextReason: string) { update(before => ({ ...before, contextReason, contextSeq: before.contextSeq + 1, newerContext: false })); }
   function discardContext() { if (!reserved()) update(before => ({ ...before, contextDraft: before.contextRevision?.text ?? "", contextReason: before.contextRevision?.reason ?? "", contextSeq: before.contextSeq + 1, newerContext: false })); }
   function discard() { discardTerm(); discardContext(); }
@@ -277,7 +290,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     finally { release(); }
   }
   return <ResourceContext.Provider value={{ tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
-    setLocale, beginTerm, editTerm, discardTerm, beginContext, editContext, editContextReason, discardContext, discard,
+    setLocale, beginTerm, editTerm, discardTerm, beginContext, adoptContext, editContext, editContextReason, discardContext, discard,
     saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
     decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;
 }
