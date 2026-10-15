@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Saved AI translation candidates support explicit rejection and restoration with
+  an actor, reason and fixed source/selection basis. Decisions and original
+  receipts survive reopening. Rejected candidates keep their text and provenance
+  but cannot be selected or automatically applied until explicitly restored.
+- Candidate decision history advances the current-only project format to schema
+  37. Preserve older development directories and reimport into a new project;
+  no automatic conversion, reset or additional application/SDK version bump is
+  performed in this same undistributed alpha batch.
+
 - Returning from a failed source preparation to current content clears the old
   failure while keeping unrelated preparation text. Explicit discard reports
   its own cancellation failure. Source comparison labels also cover changed
@@ -126,7 +135,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   inside the sidebar.
 
 
-The combined development build opens project schema 36 only. Earlier Unreleased
+The combined development build opens project schema 37 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 

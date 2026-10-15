@@ -65,7 +65,7 @@ During a save you can continue editing. A successful older save does not discard
 
 The internal Rust and desktop IPC interfaces remain experimental. Producer callers now obtain `DispatchRequest` from the execution runtime or store dispatch boundary rather than constructing its fields directly; the runtime supplies the private durable-budget channel. `ExecutionRuntime::register` and `ProjectStore::enqueue_execution` conservatively record `external-unknown` effects. A trusted host must explicitly use `register_read_only` / `enqueue_read_only_execution`, or `register_with_policy` for another reviewed effect contract. A producer's own claim or operation name cannot authorize replay. Persisted policies cannot be changed by resubmitting the same identity.
 
-Current development projects use schema 36 only. Durable budgets, reservations,
+Current development projects use schema 37 only. Durable budgets, reservations,
 ancestry, effect policies and exact continuation identities retain their original
 owners. Other development schemas are refused without an application upgrade,
 rebuild or reset; SQLite may complete its own hot-journal recovery. Preserve those
@@ -78,3 +78,26 @@ cancellation basis after a lost acknowledgement. Exact lookup or the same reques
 returns the stored continuation without another enqueue or model reservation;
 changed requests conflict. Generic recovery does not replace work-plan Continue
 authorization or restore a closed component scope.
+
+## Rejecting and restoring a saved candidate
+
+Open the entry in the translation workspace and review its saved revision history.
+For an unselected AI candidate with the current source basis, enter the human
+actor and reason, then choose **Reject AI candidate**. The candidate's immutable
+text and producer evidence remain available. This decision does not approve a
+translation, change a selected revision, remove mechanical checks or create a
+project-wide style or training rule.
+
+The decision records its exact revision, source revision, observed selection and
+previous candidate decision. A changed basis or selection conflicts instead of
+overwriting newer work. Rejected revisions cannot be selected through manual or
+automatic selection. **Restore AI candidate** records a new human decision before
+that same candidate can be selected or suggested again; prior rejection receipts
+remain readable. Source changes never restore a rejected revision automatically.
+
+If a response is lost, the original candidate decision stays pending with its
+captured actor and reason. Check that action before continuing. An explicit retry
+reuses exactly the same identity and payload; editing the next reason does not
+change the original request. Project close and other translation mutations stay
+blocked while the original decision is unresolved. Unsaved translation text is
+kept when the decision settles.

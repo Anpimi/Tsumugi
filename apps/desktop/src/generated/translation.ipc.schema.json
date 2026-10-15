@@ -2,6 +2,97 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "CandidateDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/CandidateDecisionWrite"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "CandidateDecisionWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/CandidateDisposition"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "revisionId",
+          "sourceRevisionId",
+          "disposition",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "CandidateDisposition": {
+        "enum": [
+          "rejected",
+          "restored"
+        ],
+        "type": "string"
+      },
       "ContractRef": {
         "additionalProperties": false,
         "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
@@ -657,6 +748,9 @@
       "adopt": {
         "$ref": "#/definitions/TranslationAdoptRequest"
       },
+      "candidateDecision": {
+        "$ref": "#/definitions/CandidateDecisionRequest"
+      },
       "checkFinish": {
         "$ref": "#/definitions/TranslationCheckFinishRequest"
       },
@@ -712,7 +806,8 @@
       "history",
       "save",
       "action",
-      "select"
+      "select",
+      "candidateDecision"
     ],
     "title": "Requests",
     "type": "object",
@@ -762,6 +857,95 @@
           "parameters"
         ],
         "type": "object"
+      },
+      "CandidateDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/CandidateDecisionWrite"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "request",
+          "sourceSnapshotId"
+        ],
+        "type": "object"
+      },
+      "CandidateDecisionWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/CandidateDisposition"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "revisionId",
+          "sourceRevisionId",
+          "expectedSelectionId",
+          "expectedDecisionId",
+          "disposition",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "CandidateDisposition": {
+        "enum": [
+          "rejected",
+          "restored"
+        ],
+        "type": "string"
       },
       "CapabilityBinding": {
         "additionalProperties": false,
@@ -1915,6 +2099,16 @@
               }
             ]
           },
+          "candidateDecision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CandidateDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "contributors": {
             "items": {
               "$ref": "#/definitions/ExecutionId"
@@ -2135,6 +2329,19 @@
       "attempt": {
         "$ref": "#/definitions/ExecutionId"
       },
+      "candidateAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/CandidateDecision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "candidateDecision": {
+        "$ref": "#/definitions/CandidateDecision"
+      },
       "checkReview": {
         "$ref": "#/definitions/TranslationCheckReview"
       },
@@ -2196,7 +2403,9 @@
       "history",
       "action",
       "saved",
-      "selected"
+      "selected",
+      "candidateDecision",
+      "candidateAction"
     ],
     "title": "Responses",
     "type": "object",

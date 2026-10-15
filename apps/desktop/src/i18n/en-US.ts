@@ -1319,6 +1319,14 @@ ai: {
       stay: "Stay and keep edits",
       discardAndLeave: "Discard edits and leave",
     },
+    candidateDecisions: {
+      leaveTitle: "Discard unsaved candidate decision details?", leaveHelp: "Your translation draft and unrecorded candidate decision details will be discarded. Stay to record the intended decision or keep editing.",
+      title: "Human candidate decisions", help: "Reject only this saved AI candidate for its source basis. Its text and history remain available. Restore it explicitly before selecting or suggesting it again; this does not create a style or training rule.",
+      actor: "Decision made by", reason: "Reason for this candidate decision", reject: "Reject AI candidate", restore: "Restore AI candidate",
+      rejected: "Rejected for this source basis", restored: "Explicitly restored", rejectedRecorded: "The candidate rejection was recorded. Your edits are kept.", restoredRecorded: "The candidate was restored by a new decision. It is available for selection again.",
+      failed: "The decision could not be confirmed. Your text and original request are kept; refresh history or check the original decision before trying again.",
+      unknown: "The original candidate decision for {{locale}} is unconfirmed. Check it before making another translation change.", check: "Check original candidate decision", retry: "Retry the same candidate decision",
+    },
     translation: {
       title: "Translations",
       description: "Import translated strings, review matches, and edit revisions for the current source.",

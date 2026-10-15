@@ -328,6 +328,7 @@ export type CheckOutcome =
     };
 export type FindingSeverity = "warning" | "error";
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
+export type CandidateDisposition = "rejected" | "restored";
 export type WorkPlanCheckerView =
   | {
       checker: ReviewCheckerKey;
@@ -635,6 +636,7 @@ export interface RecoveryUnit {
 }
 export interface AiRow {
   automation: EffectView | null;
+  candidateDecision?: CandidateDecision | null;
   item: AiItemView;
   itemId: ExecutionId;
   output: AiOutputView | null;
@@ -980,6 +982,23 @@ export interface TranslationSelection {
   previousEventId: ExecutionId | null;
   revisionId: ExecutionId;
   sequence: Revision;
+  unitId: ExecutionId;
+}
+export interface CandidateDecision {
+  request: CandidateDecisionWrite;
+  sourceSnapshotId: ExecutionId;
+}
+export interface CandidateDecisionWrite {
+  actionId: ExecutionId;
+  actor: string;
+  disposition: CandidateDisposition;
+  expectedDecisionId: ExecutionId | null;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface AiOutputView {

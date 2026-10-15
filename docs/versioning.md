@@ -1,5 +1,16 @@
 # Application versioning and changelog maintenance
 
+Saved AI candidate rejection and explicit restoration append human decisions with
+exact candidate/source/selection bases and original action receipts. Shared
+selection writes and automatic selection preparations refuse rejected revisions.
+This adds a current-only decision-history table and advances project schema 36
+to 37; older development directories are refused and preserved without migration
+or reset. The strict Desktop contract is generated from Rust. No SDK/process,
+dependency or lockfile changes are required. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain in the same undistributed batch without another SemVer bump.
+Both Unreleased changelogs and current README format statements are synchronized;
+earlier paragraphs describe their historical development boundaries.
+
 Source recovery clears obsolete preparation failures when returning to current
 content or explicitly discarding preparation. Unrelated input and saved history
 remain intact; a failed cancellation reports its own failure. Comparison labels

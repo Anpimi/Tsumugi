@@ -98,6 +98,7 @@ export type ReviewCheckOutcome = "completed" | "failed" | "cancelled" | "unknown
 export type ReviewDecisionKind = "approve" | "request-changes";
 export type TermOrigin = "manual" | "external";
 export type Revision = string;
+export type CandidateDisposition = "rejected" | "restored";
 export type TranslationOrigin = "import" | "manual" | "ai";
 export type ReviewCheckPreparation =
   | {
@@ -563,6 +564,7 @@ export interface TranslationRevision {
   actionId: ExecutionId;
   artifactId: ExecutionId | null;
   attemptId: ExecutionId | null;
+  candidateDecision?: CandidateDecision | null;
   contributors: ExecutionId[];
   declaredLocale: string | null;
   fileDigest: string | null;
@@ -577,6 +579,23 @@ export interface TranslationRevision {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   text: string;
+  unitId: ExecutionId;
+}
+export interface CandidateDecision {
+  request: CandidateDecisionWrite;
+  sourceSnapshotId: ExecutionId;
+}
+export interface CandidateDecisionWrite {
+  actionId: ExecutionId;
+  actor: string;
+  disposition: CandidateDisposition;
+  expectedDecisionId: ExecutionId | null;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface Eligibility {

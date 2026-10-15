@@ -155,8 +155,8 @@ async function readyEditor(){const user=userEvent.setup(),view=render(<Harness/>
 it("registers import and content row commands and confirms an ordered complete multi-page import batch through the UI",async()=>{
   preview=translationPreviewFixture([translationRowFixture(0),translationRowFixture(1),translationRowFixture(2)]);const {user}=await readyImport(),dispatch=vi.spyOn(registry,"dispatch");
   expect(registry.list(scope).filter(value=>value.payloadKind?.startsWith("translation-")).map(value=>value.id).sort()).toEqual([
-    "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-import-receipt","translation.check-selection",
-    "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.inspect-import","translation.retry-import-action",
+    "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-candidate-decision","translation.check-import-receipt","translation.check-selection",
+    "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.decide-candidate","translation.inspect-import","translation.retry-candidate-decision","translation.retry-import-action",
     "translation.retry-import-start","translation.retry-selection","translation.select-revision","translation.start-import","translation.toggle-content-selection",
     "translation.prepare-import-check","translation.start-import-check","translation.finish-import-check","translation.prepare-import-projection","translation.start-import-projection","translation.retry-import-plugin",
   ].sort());
@@ -290,4 +290,63 @@ it("checks and retries only the original unknown history selection after consume
 it("refuses an original captured row dispatch after the real session is retired",async()=>{
   await readyRow();const payload=rowPayload();act(()=>reads.retire());
   expect(registry.dispatch("translation.apply-import-row",scope,payload)).toBe(false);expect(calls("prepare_translation_adoption")).toHaveLength(0);
+});
+
+it("records and restores an AI candidate while preserving manual text and the immutable original result", async()=>{
+  candidate.originKind="ai";candidate.attemptId=fixture.start.attemptId;candidate.resultId=preview.rows[0].resultId;candidate.itemId=preview.rows[0].itemId;
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args)=>{
+    if(command==="decide_translation_candidate"){
+      const value={request:args.request.decision,sourceSnapshotId:preview.currentSourceSnapshotId};
+      candidate={...candidate,candidateDecision:value};history={...history,rows:[candidate]};return Promise.resolve(value);
+    }
+    return original(command,args);
+  });
+  const {user}=await readyEditor();
+  act(()=>drafts.edit("Manual B 👩🏽‍💻"));
+  expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")})).toBeDisabled();
+  await user.type(screen.getByRole("textbox",{name:i18n.t("candidateDecisions.actor")}),"Synthetic reviewer");
+  await user.type(screen.getByRole("textbox",{name:i18n.t("candidateDecisions.reason")}),"Wrong meaning");
+  expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")})).toBeEnabled();
+  await user.click(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")}));
+  await waitFor(()=>expect(calls("decide_translation_candidate")).toHaveLength(1));
+  await screen.findByText(i18n.t("candidateDecisions.rejectedRecorded"));
+  expect(drafts.candidates.hasDraft()).toBe(false);
+  expect(drafts.current()?.text).toBe("Manual B 👩🏽‍💻");
+  expect(originalRequests("decide_translation_candidate")[0].decision).toMatchObject({revisionId:candidate.revisionId,actor:"Synthetic reviewer",reason:"Wrong meaning",disposition:"rejected",expectedDecisionId:null});
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.restore")})).toBeEnabled());
+  expect(screen.getByRole("button",{name:i18n.t("translation.selectRevision")})).toBeDisabled();
+  expect(calls("select_translation_revision")).toHaveLength(0);expect(calls("save_translation_revision")).toHaveLength(0);
+  await user.click(screen.getByRole("button",{name:i18n.t("candidateDecisions.restore")}));
+  await screen.findByText(i18n.t("candidateDecisions.restoredRecorded"));
+  const requests=originalRequests("decide_translation_candidate");expect(requests).toHaveLength(2);
+  expect(requests[1].decision.expectedDecisionId).toBe(requests[0].decision.actionId);expect(requests[1].decision.disposition).toBe("restored");
+  expect(candidate.text).toBe("Historical candidate");expect(drafts.current()?.text).toBe("Manual B 👩🏽‍💻");
+});
+
+it("checks the original lost candidate-decision receipt after consumer removal without losing newer inputs",async()=>{
+  candidate.originKind="ai";candidate.attemptId=fixture.start.attemptId;candidate.resultId=preview.rows[0].resultId;candidate.itemId=preview.rows[0].itemId;
+  const original=invoke.getMockImplementation()!;let recorded:unknown;
+  invoke.mockImplementation((command:string,args)=>{
+    if(command==="decide_translation_candidate"){recorded={request:args.request.decision,sourceSnapshotId:preview.currentSourceSnapshotId};return Promise.reject(new Error("Reply lost"));}
+    if(command==="read_translation_candidate_action")return Promise.resolve(recorded);
+    return original(command,args);
+  });
+  const {user,view}=await readyEditor();
+  await user.type(screen.getByRole("textbox",{name:i18n.t("candidateDecisions.actor")}),"Reviewer A");
+  await user.type(screen.getByRole("textbox",{name:i18n.t("candidateDecisions.reason")}),"Reason A");
+  expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")})).toBeEnabled();
+  await user.click(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")}));
+  await waitFor(()=>expect(calls("decide_translation_candidate")).toHaveLength(1));
+  await screen.findByRole("button",{name:i18n.t("candidateDecisions.check")});
+  expect(drafts.candidates.current().pending?.decision.reason).toBe("Reason A");
+  act(()=>{drafts.edit("Text B");drafts.candidates.edit("reason","Reason B");});
+  expect(drafts.mutationReserved).toBe(true);
+  view.rerender(<Harness consumer={false}/>,project);expect(registry.describe("translation.decide-candidate",scope)).toBeUndefined();
+  await act(async()=>{await drafts.candidates.check();});
+  expect(drafts.candidates.current().pending).toBeNull();expect(drafts.candidates.current().reason).toBe("Reason B");
+  expect(drafts.candidates.hasDraft()).toBe(true);
+  expect(drafts.current()?.text).toBe("Text B");expect(drafts.mutationReserved).toBe(false);
+  expect(calls("decide_translation_candidate")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(originalRequests("read_translation_candidate_action")[0]).toMatchObject({actionId:originalRequests("decide_translation_candidate")[0].decision.actionId,unitId:candidate.unitId,locale:"zh-CN"});
 });

@@ -2,6 +2,7 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+export type CandidateDisposition = "rejected" | "restored";
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
  * Network/process effects still require their own host authorization.
@@ -67,6 +68,8 @@ export type TranslationMatch =
 export interface Responses {
   action: TranslationSelection | null;
   attempt: ExecutionId;
+  candidateAction: CandidateDecision | null;
+  candidateDecision: CandidateDecision;
   checkReview: TranslationCheckReview;
   checked: null;
   files: string[];
@@ -87,6 +90,23 @@ export interface TranslationSelection {
   previousEventId: ExecutionId | null;
   revisionId: ExecutionId;
   sequence: Revision;
+  unitId: ExecutionId;
+}
+export interface CandidateDecision {
+  request: CandidateDecisionWrite;
+  sourceSnapshotId: ExecutionId;
+}
+export interface CandidateDecisionWrite {
+  actionId: ExecutionId;
+  actor: string;
+  disposition: CandidateDisposition;
+  expectedDecisionId: ExecutionId | null;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface TranslationCheckReview {
@@ -261,6 +281,7 @@ export interface TranslationRevision {
   actionId: ExecutionId;
   artifactId: ExecutionId | null;
   attemptId: ExecutionId | null;
+  candidateDecision?: CandidateDecision | null;
   contributors: ExecutionId[];
   declaredLocale: string | null;
   fileDigest: string | null;

@@ -1,5 +1,6 @@
 use super::*;
 use tsumugi_core::{
+    CandidateDecision, CandidateDecisionWrite,
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
     TranslationHistory, TranslationPreview, TranslationSaveReceipt, TranslationSelection,
 };
@@ -65,6 +66,27 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Tran
     expected_selection_id: Option<ExecutionId>,
     revision_id: ExecutionId,
 });
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] CandidateDecisionRequest {
+    decision: CandidateDecisionWrite,
+});
+
+#[tauri::command]
+pub async fn decide_translation_candidate(state: State<'_, AppState>, request: CandidateDecisionRequest) -> Result<CandidateDecision, CommandError> {
+    state.sessions.run("decide_translation_candidate", CommandStage::ExecutionAdopt, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionAdopt)?;
+        if request.decision.project_id != request.project_id { return Err(stale()); }
+        let (host, store) = active.execution_parts()?;
+        host.allow_mutation()?;
+        store.decide_translation_candidate(&request.decision).map_err(map_adopt)
+    }).await
+}
+#[tauri::command]
+pub async fn read_translation_candidate_action(state: State<'_, AppState>, request: TranslationActionRequest) -> Result<Option<CandidateDecision>, CommandError> {
+    state.sessions.run("read_translation_candidate_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?.store
+            .translation_candidate_action(request.project_id, request.unit_id, &request.locale, request.action_id).map_err(map_source)
+    }).await
+}
 
 #[tauri::command]
 pub async fn read_translation_preview(
