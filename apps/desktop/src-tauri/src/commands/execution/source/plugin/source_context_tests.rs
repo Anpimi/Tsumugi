@@ -1,4 +1,4 @@
-//! Installed WebVTT worker facts through source checking, adoption and read IPC.
+//! Installed domain worker facts through source checking, adoption and read IPC.
 use super::*;
 use crate::commands::execution::test_fixtures::{
     OwnedDirectory, approved_runtime, provision_packages, selected_package,
@@ -470,6 +470,325 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
     });
     let reopened_scope = call(&window, "read_content_scope", reopened_context.clone()).unwrap();
     assert_eq!(reopened_scope, next_scope);
+    let mut reopened_request = next_request;
+    reopened_request["sessionToken"] = reopened_context["sessionToken"].clone();
+    assert_eq!(
+        call(&window, "read_source_context", reopened_request).unwrap(),
+        next_page
+    );
+    state.plugins.close();
+    drop(state);
+    drop(app);
+}
+
+fn assert_manifest_name_fact(page: &Value, manifest: &str, name: &str, artifact_id: &Value) {
+    let blocks: Vec<_> = page["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["kind"] == "block")
+        .collect();
+    assert_eq!(blocks.len(), 1);
+    let block = &blocks[0]["value"];
+    assert_eq!(block["schema"]["id"], "tsumugi.source-context-facts");
+    assert_eq!(block["target"]["kind"], "snapshot");
+    assert_eq!(block["handling"], "required");
+    assert_eq!(block["inRevisionBasis"], false);
+    assert_eq!(block["facts"]["facts"].as_array().unwrap().len(), 1);
+    let fact = &block["facts"]["facts"][0];
+    assert_eq!(fact["id"], "manifest-name");
+    assert_eq!(fact["kind"], "note");
+    assert_eq!(fact["text"], name);
+    assert_eq!(fact["origin"]["kind"], "extracted");
+    assert_eq!(fact["origin"]["sources"].as_array().unwrap().len(), 1);
+    let reference = &fact["origin"]["sources"][0];
+    let quoted = format!("\"{name}\"");
+    let start = manifest.find(&quoted).unwrap();
+    assert_eq!(reference["artifactId"], *artifact_id);
+    assert_eq!(reference["range"]["encoding"], "utf8-byte");
+    assert_eq!(reference["range"]["start"], json!(start));
+    assert_eq!(reference["range"]["end"], json!(start + quoted.len()));
+    assert_eq!(&manifest[start..start + quoted.len()], quoted);
+    assert_eq!(page["observations"]["knownFacts"], 1);
+    assert_eq!(page["observations"]["unknownRequiredBlocks"], 0);
+}
+
+#[test]
+fn installed_smapi_manifest_name_context_tracks_snapshot_basis_and_reopen() {
+    let temporary = OwnedDirectory(tempfile::tempdir().unwrap());
+    let root = temporary.0.path();
+    let (package, approval) = selected_package(
+        "TSUMUGI_TEST_SMAPI_PACKAGE",
+        "TSUMUGI_TEST_SMAPI_DIGEST",
+        "stardew-smapi",
+    );
+    let runtime = approved_runtime();
+    let runtime_approval = RuntimeApproval {
+        environment: runtime.descriptor().clone().into(),
+        origin: crate::runtime_bundle::bundled_origin(),
+    };
+    let environment_digest = runtime_approval.environment.digest().unwrap();
+    provision_packages(
+        root,
+        &[(package, approval.clone())],
+        &runtime,
+        &runtime_approval,
+    );
+    drop(runtime);
+
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .invoke_handler(crate::commands::execution::production_handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let state = app.state::<AppState>();
+    state.plugins.configure(root.join("application")).unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(
+        &window,
+        "create_project",
+        json!({
+            "destination": root.join("project"),
+            "displayName": "Installed manifest context",
+            "sourceLocale": "en-US",
+            "targetLocales": ["zh-CN"]
+        }),
+    )
+    .unwrap();
+    let context = json!({
+        "sessionToken": project["sessionToken"],
+        "projectId": project["metadata"]["projectId"]
+    });
+    let source_choice = PluginSourceRequest {
+        package: crate::commands::plugins::PluginPackageRequest {
+            plugin: approval.plugin.clone(),
+            package_digest: approval.package_digest.clone(),
+        },
+        resource_id: "source-profile".into(),
+        environment_digest,
+    };
+    let source_directory = root.join("mod");
+    std::fs::create_dir_all(source_directory.join("i18n")).unwrap();
+    let first_name = "Moon 👩🏽‍💻";
+    let manifest = format!(
+        "{{\"UniqueID\":\"Example.Context\",\"Description\":\"雪\",\"Name\":\"{first_name}\",\"Version\":\"1.0.0\",\"EntryDll\":\"Context.dll\"}}"
+    );
+    let source_text = "{\"greeting\":\"Hello 👩🏽‍💻\",\"farewell\":\"Next café\"}";
+    std::fs::write(source_directory.join("manifest.json"), &manifest).unwrap();
+    std::fs::write(source_directory.join("i18n/default.json"), source_text).unwrap();
+
+    let (first_attempt, first_result, first_preview) =
+        checked_proposal(&app, &window, &context, &source_choice, &source_directory);
+    assert_eq!(first_preview["rows"].as_array().unwrap().len(), 2);
+    adopt(
+        &window,
+        &context,
+        &first_attempt,
+        &first_result,
+        first_preview["confirmation"].clone(),
+    );
+    let (first_scope, first_content) = content(&window, &context);
+    let rows = first_content["rows"].as_array().unwrap();
+    assert_eq!(rows[0]["occurrence"]["text"], "Hello 👩🏽‍💻");
+    assert_eq!(rows[1]["occurrence"]["text"], "Next café");
+    let manifest_coverage = first_content["coverage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["logicalPath"] == "manifest.json")
+        .unwrap();
+    let source_coverage = first_content["coverage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["logicalPath"] == "i18n/default.json")
+        .unwrap();
+    assert_eq!(manifest_coverage["role"], "companion");
+    assert_eq!(source_coverage["role"], "source");
+    let first_request = context_request(&context, &first_scope, &rows[0]);
+    let first_page = call(&window, "read_source_context", first_request.clone()).unwrap();
+    assert_eq!(
+        first_page["scope"]["sourceSnapshotId"],
+        first_scope["currentSnapshot"]
+    );
+    assert_eq!(first_page["scope"]["unitId"], rows[0]["unitId"]);
+    assert_eq!(
+        first_page["scope"]["sourceRevisionId"],
+        rows[0]["sourceRevisionId"]
+    );
+    assert_eq!(first_page["contentRevision"], first_scope["revision"]);
+    assert_eq!(first_page["sourceAttemptId"], first_attempt);
+    assert_eq!(first_page["sourceResultId"], first_result);
+    assert_eq!(
+        first_page["sourceResultDigest"],
+        first_preview["confirmation"]["resultDigest"]
+    );
+    assert_eq!(first_page["localUnitId"], "entry-0");
+    assert_eq!(first_page["occurrenceCount"], 1);
+    assert_manifest_name_fact(
+        &first_page,
+        &manifest,
+        first_name,
+        &manifest_coverage["artifactId"],
+    );
+    assert!(
+        manifest[..manifest.find(&format!("\"{first_name}\"")).unwrap()]
+            .chars()
+            .count()
+            < manifest.find(&format!("\"{first_name}\"")).unwrap()
+    );
+    assert_eq!(first_page["totalEntries"], 2);
+    assert_eq!(first_page["nextAfter"], Value::Null);
+    let first_neighbor = &first_page["entries"][1]["value"];
+    assert_eq!(first_page["entries"][1]["kind"], "neighbor");
+    assert_eq!(first_neighbor["unitId"], rows[1]["unitId"]);
+    assert_eq!(
+        first_neighbor["sourceRevisionId"],
+        rows[1]["sourceRevisionId"]
+    );
+    assert_eq!(first_neighbor["text"], "Next café");
+    assert_eq!(
+        first_neighbor["adjacentTo"][0]["occurrenceId"],
+        rows[0]["occurrenceId"]
+    );
+    assert_eq!(first_neighbor["adjacentTo"][0]["direction"], "after");
+    let neighbor_source = &first_neighbor["occurrence"]["source"];
+    let neighbor_literal = "\"Next café\"";
+    let neighbor_start = source_text.find(neighbor_literal).unwrap();
+    assert_eq!(neighbor_source["artifactId"], source_coverage["artifactId"]);
+    assert_eq!(neighbor_source["range"]["encoding"], "utf8-byte");
+    assert_eq!(neighbor_source["range"]["start"], json!(neighbor_start));
+    assert_eq!(
+        neighbor_source["range"]["end"],
+        json!(neighbor_start + neighbor_literal.len())
+    );
+
+    let second_request = context_request(&context, &first_scope, &rows[1]);
+    let second_page = call(&window, "read_source_context", second_request).unwrap();
+    assert_eq!(second_page["localUnitId"], "entry-1");
+    assert_manifest_name_fact(
+        &second_page,
+        &manifest,
+        first_name,
+        &manifest_coverage["artifactId"],
+    );
+    let second_neighbor = &second_page["entries"][1]["value"];
+    assert_eq!(second_neighbor["text"], "Hello 👩🏽‍💻");
+    assert_eq!(
+        second_neighbor["adjacentTo"][0]["occurrenceId"],
+        rows[1]["occurrenceId"]
+    );
+    assert_eq!(second_neighbor["adjacentTo"][0]["direction"], "before");
+
+    // The selected revision basis is the decoded snapshot Name, so a change
+    // affects both units. Explicit lineage retains their reviewed identities.
+    let next_name = "Forest 👩🏽‍💻";
+    let updated = manifest.replace(&format!("\"{first_name}\""), &format!("\"{next_name}\""));
+    std::fs::write(source_directory.join("manifest.json"), &updated).unwrap();
+    let (next_attempt, next_result, _) =
+        checked_proposal(&app, &window, &context, &source_choice, &source_directory);
+    let comparison = call(
+        &window,
+        "read_source_comparison",
+        scoped(
+            &context,
+            json!({
+                "attemptId": next_attempt,
+                "resultId": next_result,
+                "base": first_scope["currentSnapshot"],
+                "filter": "",
+                "after": 0,
+                "limit": 10
+            }),
+        ),
+    )
+    .unwrap();
+    assert_eq!(comparison["changed"], 2);
+    assert_eq!(comparison["unchanged"], 0);
+    let changes = comparison["rows"].as_array().unwrap();
+    assert_eq!(changes.len(), 2);
+    let lineage: Vec<Value> = changes
+        .iter()
+        .map(|change| {
+            assert_eq!(change["kind"], "changed");
+            json!({
+                "newOrdinal": change["new"]["ordinal"],
+                "oldOccurrenceId": change["old"]["occurrenceId"],
+                "decision": "continue",
+                "reason": "Same native key with updated manifest context"
+            })
+        })
+        .collect();
+    let mut confirmation = comparison["confirmation"].clone();
+    confirmation["actor"] = json!("Manifest reviewer");
+    confirmation["lineage"] = json!(lineage);
+    adopt(&window, &context, &next_attempt, &next_result, confirmation);
+    let stale = call(&window, "read_source_context", first_request).unwrap_err();
+    assert_eq!(stale["reason"], "source-context-snapshot");
+
+    let (next_scope, next_content) = content(&window, &context);
+    let next_rows = next_content["rows"].as_array().unwrap();
+    assert_ne!(
+        next_scope["currentSnapshot"],
+        first_scope["currentSnapshot"]
+    );
+    assert_ne!(next_scope["revision"], first_scope["revision"]);
+    for index in 0..2 {
+        assert_eq!(next_rows[index]["unitId"], rows[index]["unitId"]);
+        assert_ne!(
+            next_rows[index]["sourceRevisionId"],
+            rows[index]["sourceRevisionId"]
+        );
+        assert_eq!(
+            next_rows[index]["occurrence"]["text"],
+            rows[index]["occurrence"]["text"]
+        );
+    }
+    let next_coverage = next_content["coverage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["logicalPath"] == "manifest.json")
+        .unwrap();
+    let next_request = context_request(&context, &next_scope, &next_rows[0]);
+    let next_page = call(&window, "read_source_context", next_request.clone()).unwrap();
+    assert_eq!(next_page["sourceAttemptId"], next_attempt);
+    assert_eq!(next_page["sourceResultId"], next_result);
+    assert_eq!(next_page["contentRevision"], next_scope["revision"]);
+    assert_manifest_name_fact(
+        &next_page,
+        &updated,
+        next_name,
+        &next_coverage["artifactId"],
+    );
+    assert_eq!(next_page["entries"][1]["value"]["text"], "Next café");
+    assert_eq!(
+        next_page["entries"][1]["value"]["sourceRevisionId"],
+        next_rows[1]["sourceRevisionId"]
+    );
+
+    call(
+        &window,
+        "close_project",
+        json!({ "sessionToken": context["sessionToken"] }),
+    )
+    .unwrap();
+    let reopened = call(
+        &window,
+        "open_project",
+        json!({ "locator": root.join("project") }),
+    )
+    .unwrap();
+    let reopened_context = json!({
+        "sessionToken": reopened["sessionToken"],
+        "projectId": context["projectId"]
+    });
+    assert_eq!(
+        call(&window, "read_content_scope", reopened_context.clone()).unwrap(),
+        next_scope
+    );
     let mut reopened_request = next_request;
     reopened_request["sessionToken"] = reopened_context["sessionToken"].clone();
     assert_eq!(
