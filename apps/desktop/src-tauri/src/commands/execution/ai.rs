@@ -109,6 +109,8 @@ pub struct AiRow {
     result_id: Option<ExecutionId>,
     output: Option<AiOutputView>,
     saved_revision_id: Option<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    candidate_decision: Option<tsumugi_core::CandidateDecision>,
     automation: Option<EffectView>,
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -336,6 +338,7 @@ pub async fn read_ai_translation(
                         };
                         let saved_revision_id =
                             store.saved_ai_candidate(request.attempt_id, row.status.item_id)?;
+                        let candidate_decision = saved_revision_id.map(|revision| store.translation_candidate_decision(request.project_id,revision)).transpose()?.flatten();
                         let receipt = match (input.envelope().automation, saved_revision_id) {
                             (Some(lease), Some(revision)) => {
                                 store.automatic_selection_for_candidate(lease, revision)?
@@ -380,6 +383,7 @@ pub async fn read_ai_translation(
                             result_id: row.result_id,
                             output: output.map(Into::into),
                             saved_revision_id,
+                            candidate_decision,
                             automation,
                         })
                     })

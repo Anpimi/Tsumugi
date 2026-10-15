@@ -3,6 +3,7 @@ import type { Requests } from "./translation.requests";
 import type { Responses } from "./translation.responses";
 export declare function validateRequestAction(value: unknown): value is Requests["action"];
 export declare function validateRequestAdopt(value: unknown): value is Requests["adopt"];
+export declare function validateRequestCandidateDecision(value: unknown): value is Requests["candidateDecision"];
 export declare function validateRequestCheckFinish(value: unknown): value is Requests["checkFinish"];
 export declare function validateRequestCheckPrepare(value: unknown): value is Requests["checkPrepare"];
 export declare function validateRequestFiles(value: unknown): value is Requests["files"];
@@ -18,6 +19,8 @@ export declare function validateRequestSelect(value: unknown): value is Requests
 export declare function validateRequestSource(value: unknown): value is Requests["source"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
+export declare function validateResponseCandidateAction(value: unknown): value is Responses["candidateAction"];
+export declare function validateResponseCandidateDecision(value: unknown): value is Responses["candidateDecision"];
 export declare function validateResponseCheckReview(value: unknown): value is Responses["checkReview"];
 export declare function validateResponseChecked(value: unknown): value is Responses["checked"];
 export declare function validateResponseFiles(value: unknown): value is Responses["files"];

@@ -1,4 +1,5 @@
 import { useWorkProtectionSession, type WorkProtectionSession } from "./WorkProtectionSession";
+import { useCandidateDecisionSession } from "./CandidateDecisionSession";
 import { useSessionAlive } from "./SessionReadProvider";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
@@ -29,6 +30,7 @@ export interface TranslationDraft extends DraftIdentity {
 
 interface SaveResult { saved: boolean; savedCurrent: boolean; submittedSeq: number; submittedText: string }
 interface DraftSession {
+  candidates: ReturnType<typeof useCandidateDecisionSession>;
   protection: WorkProtectionSession;
   draft: TranslationDraft | null;
   current: () => TranslationDraft | null;
@@ -76,6 +78,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   useLayoutEffect(() => () => { selectionReadCleanup.current?.(); selectionReadCleanup.current = null; }, []);
 
   const protection = useWorkProtectionSession(project, { reserve: reserveMutation, release: releaseMutation });
+  const candidates = useCandidateDecisionSession(project, { current, reserve: reserveMutation, release: releaseMutation });
 
   function reserveMutation() {
     if (!mounted.current || protection.blocked() || mutation.current || inFlight.current || currentDraft.current?.pending || currentDraft.current?.pendingSelection || currentDraft.current?.saving) return null;
@@ -226,7 +229,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   }
   async function selectRevision(revision: TranslationRevision, proof: () => boolean = () => true, dispose?: () => void) {
     const before = currentDraft.current;
-    if (!before || !proof() || before.text !== (before.baseText ?? "") || before.newerDraftSaved
+    if (!before || !proof() || revision.candidateDecision?.request.disposition === "rejected" || before.text !== (before.baseText ?? "") || before.newerDraftSaved
       || !projectRef.current.metadata.targetLocales.includes(before.locale) || revision.unitId !== before.unitId || revision.locale !== before.locale) { dispose?.(); return false; }
     const token = reserveMutation(); if (!token) { dispose?.(); return false; }
     let disposed = false;
@@ -287,7 +290,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     return dispatchSelection(pending, true);
   }
 
-  return <DraftContext.Provider value={{ protection, draft, current, begin, edit, revert, clear, save, checkSavedAction, selected, unchanged,
+  return <DraftContext.Provider value={{ candidates, protection, draft, current, begin, edit, revert, clear, save, checkSavedAction, selected, unchanged,
     mutationReserved, reserveMutation, releaseMutation, selectRevision, checkSelection, retrySelection }}>
     {children}
   </DraftContext.Provider>;

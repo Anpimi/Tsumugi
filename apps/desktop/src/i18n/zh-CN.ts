@@ -1325,6 +1325,14 @@ ai: {
       stay: "留在此处并保留编辑",
       discardAndLeave: "放弃编辑并离开",
     },
+    candidateDecisions: {
+      leaveTitle: "放弃尚未记录的候选处置信息？", leaveHelp: "您的译文草稿与尚未记录的候选处置信息将被放弃。请留在此处记录决定或继续编辑。",
+      title: "候选的人工处置", help: "仅拒绝此已保存 AI 候选及其源依据，全文与历史仍可查看。再次选择或推荐前须明确恢复；此操作不会创建风格或训练规则。",
+      actor: "决定执行者", reason: "本次候选处置的理由", reject: "拒绝 AI 候选", restore: "恢复 AI 候选",
+      rejected: "已针对该源依据拒绝", restored: "已明确恢复", rejectedRecorded: "已记录候选拒绝决定，您的编辑仍已保留。", restoredRecorded: "已追加恢复决定，此候选可重新选择。",
+      failed: "尚未确认本次决定。您的文本和原请求仍已保留，请刷新历史或核对原决定后再继续。",
+      unknown: "{{locale}} 的原候选决定尚未确认，请先核对，再进行其他译文写入。", check: "核对原候选决定", retry: "重试同一候选决定",
+    },
     translation: {
       title: "译文",
       description: "导入译文、核对匹配，并为当前原文编辑修订。",

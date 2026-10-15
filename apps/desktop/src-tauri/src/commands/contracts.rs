@@ -189,6 +189,7 @@ struct TranslationRequests {
     save: execution::source::translation::TranslationSaveRequest,
     action: execution::source::translation::TranslationActionRequest,
     select: execution::source::translation::TranslationSelectRequest,
+    candidate_decision: execution::source::translation::CandidateDecisionRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -208,6 +209,8 @@ struct TranslationResponses {
     action: Option<tsumugi_core::TranslationSelection>,
     saved: tsumugi_core::TranslationSaveReceipt,
     selected: tsumugi_core::TranslationSelection,
+    candidate_decision: tsumugi_core::CandidateDecision,
+    candidate_action: Option<tsumugi_core::CandidateDecision>,
 }
 
 #[derive(JsonSchema)]

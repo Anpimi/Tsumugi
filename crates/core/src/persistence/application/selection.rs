@@ -314,6 +314,7 @@ fn capture(
     ).optional().map_err(ledger::sql_error)?;
     let (text, attempt, result, item_id) =
         row.ok_or_else(|| error(ErrorCode::Unauthorized, "work-selection-candidate"))?;
+    translation::candidate_selectable(c, request.revision_id)?;
     let attempt = ExecutionId::parse(&attempt)?;
     let input = ledger::load_input(c, attempt)?;
     control::check_input(c, &input)?;
@@ -925,6 +926,90 @@ mod tests {
         .unwrap();
         apply(&mut store, &request);
         panic!("owned helper did not reach the requested crash boundary");
+    }
+
+    fn candidate_decision(store: &ProjectStore, project: ExecutionId, unit: ExecutionId, revision: ExecutionId) -> crate::CandidateDecisionWrite {
+        let target = store.review_target(project, unit, "zh-CN").unwrap();
+        crate::CandidateDecisionWrite { project_id: project, action_id: ExecutionId::new(), unit_id: unit, locale: "zh-CN".into(),
+            revision_id: revision, source_revision_id: target.source_revision_id, expected_selection_id: target.selection_id,
+            expected_decision_id: None, disposition: crate::CandidateDisposition::Rejected, actor: "Synthetic reviewer".into(), reason: "Does not fit this entry".into() }
+    }
+    #[test]
+    fn candidate_decision_rejection_restore_and_exact_receipts_survive_reopen() {
+        let (_directory, mut store, project, units) = fixture();
+        let (_plan, input) = grant(&mut store, &[units[0]], SelectionPolicy::MissingOnly);
+        let revision = candidate(&mut store, &input, units[0], "你好 {{name}}");
+        let reject = candidate_decision(&store, project, units[0], revision);
+        let original = store.decide_translation_candidate(&reject).unwrap();
+        let plan: Vec<String> = store.connection().unwrap().prepare(
+            "EXPLAIN QUERY PLAN SELECT action_id FROM translation_candidate_decisions WHERE revision_id=?1 ORDER BY rowid DESC LIMIT 1"
+        ).unwrap().query_map([revision.to_string()], |row| row.get(3)).unwrap().collect::<Result<_,_>>().unwrap();
+        assert!(plan.iter().any(|step| step.contains("USING INDEX translation_candidate_revision")), "{plan:?}");
+        assert!(!plan.iter().any(|step| step.contains("TEMP B-TREE")), "{plan:?}");
+        assert_eq!(store.decide_translation_candidate(&reject).unwrap(), original);
+        assert_eq!(store.translation_candidate_action(project, units[0], "zh-CN", reject.action_id).unwrap(), Some(original.clone()));
+        assert!(!store.tm_suggestions(project,units[0],"zh-CN",0,20).unwrap().iter().any(|item|item.translation_revision_id == revision));
+        assert_eq!(store.prepare_automatic_selection(&request(&input,units[0],revision)).err().unwrap().stage,"candidate-rejected");
+        let choose = crate::SelectTranslationRevision { project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(), source_revision_id: reject.source_revision_id,
+            expected_selection_id: None, revision_id: revision };
+        assert_eq!(store.select_translation_revision(&choose).unwrap_err().stage,"candidate-rejected");
+        let path = store.directory().to_path_buf(); store.close().unwrap(); store = ProjectStore::open(&path).unwrap();
+        let history = store.translation_history(project,units[0],"zh-CN",0,100).unwrap();
+        assert_eq!(history.rows.len(),1); assert_eq!(history.rows[0].text,"你好 {{name}}");
+        assert_eq!(history.rows[0].candidate_decision,Some(original.clone())); assert!(history.current.is_none());
+        let restore = crate::CandidateDecisionWrite { action_id: ExecutionId::new(), expected_decision_id: Some(reject.action_id), disposition: crate::CandidateDisposition::Restored,
+            reason: "Explicitly reconsidered".into(), ..reject.clone() };
+        let restored = store.decide_translation_candidate(&restore).unwrap();
+        assert!(store.tm_suggestions(project,units[0],"zh-CN",0,20).unwrap().iter().any(|item|item.translation_revision_id == revision));
+        assert_eq!(store.translation_candidate_action(project, units[0], "zh-CN", reject.action_id).unwrap(),Some(original));
+        assert_eq!(store.translation_history(project,units[0],"zh-CN",0,100).unwrap().rows[0].candidate_decision,Some(restored));
+        store.select_translation_revision(&choose).unwrap();
+        assert_eq!(store.decide_translation_candidate(&crate::CandidateDecisionWrite { action_id: ExecutionId::new(), expected_decision_id: Some(restore.action_id),
+            expected_selection_id: store.translation_history(project,units[0],"zh-CN",0,100).unwrap().current.map(|v|v.event_id), ..reject }).unwrap_err().stage,"candidate-selected");
+        store.close().unwrap(); store = ProjectStore::open(&path).unwrap();
+        store.connection().unwrap().execute_batch("DROP INDEX translation_candidate_revision").unwrap();
+        store.close().unwrap();
+        let before = fs::read(path.join("project.sqlite3")).unwrap();
+        assert!(ProjectStore::open(&path).is_err());
+        assert_eq!(fs::read(path.join("project.sqlite3")).unwrap(), before);
+    }
+    #[test]
+    fn candidate_decision_rejects_wrong_scope_stale_basis_and_reused_or_changed_actions() {
+        let (_directory, mut store, project, units) = fixture();
+        let (_plan, input) = grant(&mut store, &[units[0]], SelectionPolicy::MissingOnly);
+        let revision = candidate(&mut store, &input, units[0], "你好 {{name}}");
+        let request = candidate_decision(&store, project, units[0], revision);
+        for invalid in [crate::CandidateDecisionWrite { project_id: ExecutionId::new(),..request.clone() },
+            crate::CandidateDecisionWrite { unit_id: units[1],..request.clone() }, crate::CandidateDecisionWrite { locale:"ja".into(),..request.clone() },
+            crate::CandidateDecisionWrite { source_revision_id: ExecutionId::new(),..request.clone() },
+            crate::CandidateDecisionWrite { expected_selection_id:Some(ExecutionId::new()),..request.clone() },
+            crate::CandidateDecisionWrite { expected_decision_id:Some(ExecutionId::new()),..request.clone() },
+            crate::CandidateDecisionWrite { actor:" ".into(),..request.clone() }, crate::CandidateDecisionWrite { reason:" ".into(),..request.clone() },
+            crate::CandidateDecisionWrite { disposition:crate::CandidateDisposition::Restored,..request.clone() }] {
+            assert!(store.decide_translation_candidate(&invalid).is_err());
+        }
+        let original = store.decide_translation_candidate(&request).unwrap();
+        assert_eq!(store.decide_translation_candidate(&crate::CandidateDecisionWrite {reason:"Changed payload".into(),..request.clone()}).unwrap_err().code,ErrorCode::ResultMismatch);
+        assert!(store.decide_translation_candidate(&crate::CandidateDecisionWrite {action_id:ExecutionId::new(),..request.clone()}).is_err());
+        assert!(store.translation_candidate_action(project,units[1],"zh-CN",request.action_id).is_err());
+        assert!(store.translation_candidate_action(ExecutionId::new(),units[0],"zh-CN",request.action_id).is_err());
+        assert_eq!(store.translation_candidate_action(project,units[0],"zh-CN",request.action_id).unwrap(),Some(original));
+        assert!(store.translation_history(project,units[0],"zh-CN",0,100).unwrap().current.is_none());
+    }
+    #[test]
+    fn candidate_decision_rechecks_rejection_when_committing_prepared_automatic_selection() {
+        let (_directory, mut store, project, units) = fixture();
+        let (_plan, input) = grant(&mut store, &[units[0]], SelectionPolicy::MissingOnly);
+        let revision = candidate(&mut store, &input, units[0], "你好 {{name}}");
+        let automatic = request(&input,units[0],revision);
+        let cancellation = Cancellation::default();
+        let computed = store.prepare_automatic_selection(&automatic).unwrap().compute(&cancellation).unwrap();
+        let rejection = candidate_decision(&store, project, units[0], revision);
+        store.decide_translation_candidate(&rejection).unwrap();
+        assert_eq!(store.commit_automatic_selection(computed,&cancellation).unwrap_err().stage,"candidate-rejected");
+        assert!(store.automatic_selection_receipt(automatic.action_id).unwrap().is_none());
+        assert!(store.translation_history(project,units[0],"zh-CN",0,100).unwrap().current.is_none());
+        assert!(store.saved_ai_candidate(input.envelope().attempt_id,input.envelope().items[0].item_id).unwrap().is_some());
     }
 
     #[test]

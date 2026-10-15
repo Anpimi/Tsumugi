@@ -495,3 +495,17 @@ describe("Release command payloads",()=>{
     remove();expect(dispatch(payload)).toBe(false);
   });
 });
+
+describe("Human candidate decision commands",()=>{
+  it("validates the fixed revision, human input and exact pending request before dispatch",()=>{
+    const candidateScope={...scope,area:"translation" as const},commands=new WorkbenchCommands(),handler=vi.fn();
+    const input={kind:"translation-candidate" as const,unitId:"unit",locale:"zh-CN",sourceRevisionId:"source",expectedSelectionId:null,editSeq:0,
+      revisionId:"revision",revisionActionId:"original",revisionOrdinal:"1",revisionSourceRevisionId:"source",revisionSourceSnapshotId:"snapshot",
+      disposition:"rejected" as const,expectedDecisionId:null,actor:"Reviewer",reason:"Wrong meaning",decisionEditSeq:2};
+    const remove=commands.register({id:"translation.decide-candidate",scope:candidateScope,nameKey:"candidateDecisions.title",category:"translation",binding:null,risk:"writes-translation",confirmation:"none",
+      payloadKind:"translation-candidate",availability:()=>({enabled:true}),handler});
+    const dispatch=(value:unknown)=>Reflect.apply(commands.dispatch,commands,["translation.decide-candidate",candidateScope,value]);
+    for(const change of [{disposition:"approve"},{expectedDecisionId:undefined},{decisionEditSeq:-1},{reason:" "},{actor:null},{revisionId:""}])expect(dispatch({...input,...change})).toBe(false);
+    expect(dispatch(input)).toBe(true);expect(handler).toHaveBeenCalledExactlyOnceWith(input);remove();expect(dispatch(input)).toBe(false);
+  });
+});
