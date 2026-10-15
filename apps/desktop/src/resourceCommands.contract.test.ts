@@ -10,6 +10,8 @@ beforeEach(() => invoke.mockReset());
 
 it("validates both directions of every shared resource contract", async () => {
   for (const [validate, value] of [
+    [validators.validateRequestTmxPreview, fixture.requests.tmxPreview],
+    [validators.validateResponseTmxPreview, fixture.responses.tmxPreview], [validators.validateResponseTmxPreview, null],
     [validators.validateRequestSession, fixture.requests.session], [validators.validateRequestCaptures, fixture.requests.captures],
     [validators.validateRequestCapture, fixture.requests.capture], [validators.validateRequestTerm, fixture.requests.term],
     [validators.validateRequestDecision, fixture.requests.decision], [validators.validateRequestTerms, fixture.requests.terms],
@@ -27,6 +29,7 @@ it("validates both directions of every shared resource contract", async () => {
   const decision = fixture.requests.decision;
   if (!validators.validateRequestDecision(decision)) throw new Error("Invalid resource fixture");
   for (const [command, request, response, run] of [
+    ["preview_tmx_exchange", fixture.requests.tmxPreview, fixture.responses.tmxPreview, () => resourceCommands.previewTmx(fixture.requests.tmxPreview)],
     ["list_resource_captures", fixture.requests.captures, fixture.responses.captures, () => resourceCommands.captures(fixture.requests.captures)],
     ["choose_resource_file", fixture.requests.session, null, () => resourceCommands.chooseFile(fixture.requests.session)],
     ["read_resource_preview", fixture.requests.capture, fixture.responses.preview, () => resourceCommands.preview(fixture.requests.capture)],
@@ -46,6 +49,25 @@ it("validates both directions of every shared resource contract", async () => {
     expect(await run()).toEqual(response);
     expect(invoke).toHaveBeenLastCalledWith(command, { request });
   }
+});
+
+it("checks TMX report scope and treats picker cancellation as a read without granting file authority", async () => {
+  expect(validators.validateRequestTmxPreview({ ...fixture.requests.tmxPreview, path: "/forged.tmx" })).toBe(false);
+  expect(validators.validateResponseTmxPreview({ ...fixture.responses.tmxPreview,
+    preview: { ...fixture.responses.tmxPreview.preview, license: "approved" } })).toBe(false);
+  expect(validators.validateResponseTmxPreview({ ...fixture.responses.tmxPreview,
+    preview: { ...fixture.responses.tmxPreview.preview, rows: [{ ...fixture.responses.tmxPreview.preview.rows[0], status: "imported" }] } })).toBe(false);
+  invoke.mockResolvedValueOnce(null);
+  await expect(resourceCommands.previewTmx(fixture.requests.tmxPreview)).resolves.toBeNull();
+  for (const value of [
+    { ...fixture.responses.tmxPreview, projectId: "30000000-0000-4000-8000-000000000099" },
+    { ...fixture.responses.tmxPreview, preview: { ...fixture.responses.tmxPreview.preview, targetLocale: "de" } },
+  ]) {
+    invoke.mockResolvedValueOnce(value);
+    await expect(resourceCommands.previewTmx(fixture.requests.tmxPreview)).rejects.toThrow("Invalid TMX preview association");
+  }
+  expect(invoke).toHaveBeenCalledTimes(3);
+  expect(invoke).toHaveBeenLastCalledWith("preview_tmx_exchange", { request: fixture.requests.tmxPreview });
 });
 
 it("preserves external term keys and Unicode without treating them as generated identities", () => {

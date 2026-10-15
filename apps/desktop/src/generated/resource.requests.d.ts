@@ -15,6 +15,7 @@ export interface Requests {
   term: TermRequest;
   termHistory: TermHistoryRequest;
   terms: TermListRequest;
+  tmxPreview: TmxPreviewRequest;
   unitLocale: UnitLocaleRequest;
 }
 export interface CaptureRequest {
@@ -115,6 +116,11 @@ export interface TermHistoryRequest {
 export interface TermListRequest {
   afterTermId?: string | null;
   limit: number;
+  locale: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface TmxPreviewRequest {
   locale: string;
   projectId: ExecutionId;
   sessionToken: string;

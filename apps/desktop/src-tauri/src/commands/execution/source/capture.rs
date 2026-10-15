@@ -742,8 +742,22 @@ fn read(
 
 #[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
+    read_resource_input(path, "json", 128 * 1024)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) fn read_tmx_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
+    read_resource_input(path, "tmx", tsumugi_core::MAX_TMX_INPUT_BYTES)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn read_resource_input(
+    path: &Path,
+    extension: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, ExecutionError> {
     if !path.is_absolute()
-        || path.extension().is_none_or(|extension| extension != "json")
+        || path.extension().is_none_or(|actual| actual != extension)
         || path
             .components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
@@ -767,7 +781,7 @@ pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError>
     }
     #[cfg(target_os = "macos")]
     let stamp = platform::stamp(&file)?;
-    let bytes = read(&mut file, 128 * 1024, &|| Ok(()))?;
+    let bytes = read(&mut file, max_bytes, &|| Ok(()))?;
     #[cfg(target_os = "macos")]
     platform::verify_file(&file, path, stamp)?;
     if file.metadata().map_err(io)?.len() != bytes.len() as u64 {
@@ -778,6 +792,11 @@ pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError>
 
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn read_resource_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
+    Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub(crate) fn read_tmx_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
     Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
 }
 

@@ -44,6 +44,11 @@ pub use persistence::{
     ComparisonView, MergeBasis,
 };
 pub use persistence::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
+pub use persistence::{
+    MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES, TmxExchangePreview, TmxExchangeRow,
+    TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
+    TmxRowStatus, preview_tmx_exchange,
+};
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub use persistence::{
     SavedBuildArtifact, SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,

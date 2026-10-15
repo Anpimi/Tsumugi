@@ -213,6 +213,7 @@ struct TranslationResponses {
 #[allow(dead_code)]
 struct ResourceRequests {
     session: execution::SessionRequest,
+    tmx_preview: execution::resource::TmxPreviewRequest,
     captures: execution::resource::CaptureListRequest,
     capture: execution::resource::CaptureRequest,
     term: execution::resource::TermRequest,
@@ -229,6 +230,7 @@ struct ResourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceResponses {
+    tmx_preview: Option<execution::resource::TmxFilePreview>,
     captures: Vec<tsumugi_core::GlossaryCapture>,
     capture: Option<tsumugi_core::GlossaryCapture>,
     preview: tsumugi_core::ResourcePreview,

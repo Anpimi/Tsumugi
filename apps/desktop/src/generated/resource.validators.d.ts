@@ -12,6 +12,7 @@ export declare function validateRequestSuggestions(value: unknown): value is Req
 export declare function validateRequestTerm(value: unknown): value is Requests["term"];
 export declare function validateRequestTermHistory(value: unknown): value is Requests["termHistory"];
 export declare function validateRequestTerms(value: unknown): value is Requests["terms"];
+export declare function validateRequestTmxPreview(value: unknown): value is Requests["tmxPreview"];
 export declare function validateRequestUnitLocale(value: unknown): value is Requests["unitLocale"];
 export declare function validateResponseCapture(value: unknown): value is Responses["capture"];
 export declare function validateResponseCaptures(value: unknown): value is Responses["captures"];
@@ -25,3 +26,4 @@ export declare function validateResponseSavedContext(value: unknown): value is R
 export declare function validateResponseSuggestions(value: unknown): value is Responses["suggestions"];
 export declare function validateResponseTerm(value: unknown): value is Responses["term"];
 export declare function validateResponseTerms(value: unknown): value is Responses["terms"];
+export declare function validateResponseTmxPreview(value: unknown): value is Responses["tmxPreview"];

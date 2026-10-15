@@ -106,6 +106,11 @@
       "locale": "zh-CN",
       "offset": 0,
       "limit": 100
+    },
+    "tmxPreview": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN"
     }
   },
   "responses": {
@@ -388,6 +393,106 @@
       "totalAffected": 1,
       "nextOffset": null,
       "coverage": "current-snapshot; explicit unit and literal possible matches"
+    },
+    "tmxPreview": {
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "fileName": "memory.tmx",
+      "preview": {
+        "profile": "tmx-1.4b-plain-text-preview",
+        "digest": "f23c0536f7b46a227d774093729d518062360a1278bd560eab3dae5ba60a34cb",
+        "byteLen": 379,
+        "sourceLocale": "en",
+        "targetLocale": "zh-CN",
+        "license": "unknown",
+        "header": {
+          "creationTool": "Synthetic export",
+          "creationToolVersion": "1",
+          "originalTmFormat": "synthetic",
+          "creationId": null,
+          "creationDate": null,
+          "changeId": null,
+          "changeDate": null
+        },
+        "rows": [
+          {
+            "ordinal": 1,
+            "tuid": "first",
+            "sourceText": "Hello 👩🏽‍💻 é",
+            "targetText": "你好 👩🏽‍💻 é",
+            "status": "eligible",
+            "reasons": [],
+            "effectiveSourceLocale": "en",
+            "tuProvenance": {
+              "creationTool": null,
+              "creationToolVersion": null,
+              "originalTmFormat": null,
+              "creationId": null,
+              "creationDate": null,
+              "changeId": null,
+              "changeDate": null
+            },
+            "sourceProvenance": {
+              "creationTool": null,
+              "creationToolVersion": null,
+              "originalTmFormat": null,
+              "creationId": null,
+              "creationDate": null,
+              "changeId": null,
+              "changeDate": null
+            },
+            "targetProvenance": {
+              "creationTool": null,
+              "creationToolVersion": null,
+              "originalTmFormat": null,
+              "creationId": null,
+              "creationDate": null,
+              "changeId": null,
+              "changeDate": null
+            }
+          }
+        ],
+        "losses": [
+          {
+            "kind": "unmapped-metadata",
+            "field": "adminlang",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 58,
+                "ordinal": null,
+                "path": "/tmx/header"
+              }
+            ],
+            "unlisted": 0
+          },
+          {
+            "kind": "unmapped-metadata",
+            "field": "datatype",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 58,
+                "ordinal": null,
+                "path": "/tmx/header"
+              }
+            ],
+            "unlisted": 0
+          },
+          {
+            "kind": "unmapped-metadata",
+            "field": "segtype",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 58,
+                "ordinal": null,
+                "path": "/tmx/header"
+              }
+            ],
+            "unlisted": 0
+          }
+        ]
+      }
     }
   }
 }

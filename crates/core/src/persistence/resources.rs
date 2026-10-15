@@ -15,6 +15,7 @@ const MAX_FIELD_BYTES: usize = 16 * 1024;
 mod source_context;
 mod source_context_page;
 mod source_context_selection;
+mod tmx_exchange;
 pub(super) use source_context::SourceContextReader;
 pub use source_context::{
     SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
@@ -29,6 +30,11 @@ pub use source_context_selection::{
     SourceContextProviderFact, SourceContextProviderNeighbor, SourceContextProviderOrigin,
     SourceContextProviderProjection, SourceContextSelection, UnknownSourceBlockSample,
     select_source_context,
+};
+pub use tmx_exchange::{
+    MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES, TmxExchangePreview, TmxExchangeRow,
+    TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
+    TmxRowStatus, preview_tmx_exchange,
 };
 
 fn change_targets_source(

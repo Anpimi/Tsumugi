@@ -32,6 +32,44 @@ Example:
 
 `nativeKey` is optional. When present, it must name a unit in the current source snapshot to adopt that entry and limits it to that unit; omit it for project scope. All other shown fields are required. `resourceId`, `revision`, and each entry `id` use ASCII letters, digits, `.`, `_`, or `-` and are at most 128 bytes. Each nonempty text field is at most 16 KiB; an entry has at most 16 aliases. The file must contain 1–512 entries and be at most 128 KiB. Duplicate IDs, invalid source or target language, malformed JSON, unsupported format, and oversized files are rejected as a whole. An unknown `nativeKey` prevents adoption of its entry. The original file is only read; after capture, its bytes remain available in the project even if the external file moves or disappears. Use files only when you have permission to do so.
 
+## TMX exchange preview
+
+In **Resource updates**, choose **Choose TMX file to preview** to inspect a local
+`.tmx` file against the project's source language and the selected target language.
+This separate read does not capture the file in the project, import a memory,
+adopt terms or translations, grant human approval, or share content with a model.
+Cancelling or retrying the preview keeps your existing resource drafts.
+
+The restricted `tmx-1.4b-plain-text-preview` profile accepts UTF-8 (optionally
+with a BOM), `tmx version="1.4"`, and plain-text segments. It is not a complete
+TMX Level 1 or Level 2 implementation. XML must have one header followed by one
+body and the required header attributes. Elements use no namespace or the
+`http://www.lisa.org/tmx14` default namespace. Prefixed namespace declarations,
+processing instructions, DTDs, custom or external entities and XInclude are
+refused; no external resource is resolved. UTF-16, malformed XML,
+an unsupported root or encoding, and exceeded limits reject the whole file.
+
+Rows retain decoded segment whitespace and line breaks. Each row needs exactly
+one matching source and target variant and an applicable source direction;
+`*all*` never guesses a direction. Missing, blank, ambiguous, inline-coded or
+structurally unsupported rows are excluded, with reasons. Additional languages,
+duplicate identifiers, notes, properties and unmapped metadata have classified
+counts. At most 16 original-location samples are retained across the complete
+loss report; unlisted counts remain visible. Duplicate `tuid` values remain
+separate rows and never establish project identity.
+
+The preview shows its file name, exact input digest and language basis, complete
+mapped text, and available tool and creation/change metadata as unverified
+provenance. Content license and quality remain unknown. **Possible mapping**
+does not mean approved, imported or safe to reuse. Translation units and loss
+categories each have local 20-item pages. A project, language or relevant source
+change hides the old report; choose the file again explicitly.
+
+Limits are 128 KiB input, 512 translation units, 1,024 language variants, 8,192
+elements, depth 16, 32 attributes per element, 16 KiB decoded text per segment,
+and 1 MiB for the complete desktop response. Exceeded limits never return a
+silently truncated successful report. Use files only when you have permission.
+
 ## Context, suggestions, and affected work
 
 Choose a source unit in Context and memory to save a manual context note and reason. **Fix current input** records the current source facts, manual note, and applicable adopted terms within a 16 KiB budget; it lists included and omitted items. No context is sent to a model by this action. Translation memory suggestions come from this project's saved translation revisions. Exact source-text matches rank before similar text; each suggestion shows its source and whether it is current. **Use as draft** opens the translation editor with the suggested text for review and saving. A suggestion does not establish content identity, select a translation, or grant human approval. Older translations did not record context usage, so suggestions and project-wide impact are based on source-text matches alone.

@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Resource updates adds an explicitly selected read-only restricted TMX 1.4
+plain-text preview, with exact language association and bounded loss reporting.
+Core uses pinned `roxmltree` 0.21.1 for XML document validation; the manifest and
+Cargo lockfile record that runtime dependency. Rust owns the additive desktop
+request/response contract. No project capture, stored field, execution grant,
+SDK/process format or version source changes. Current-only project schema 36,
+application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same
+undistributed batch without an additional bump or release. Both Unreleased
+changelogs and the resource guide describe the restricted preview boundary.
+
 The current editor adds an authorized read-only source-observation page and an
 on-demand References consumer. Whole blocks and neighboring entries use a
 separate 20-entry / 128 KiB read limit, independent of AI selection budgets.

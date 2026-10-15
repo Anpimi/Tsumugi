@@ -9,6 +9,34 @@ export type ResourceImpactStatus = "needs-revalidation" | "unresolved";
 export type ResourceChangeKind = "added" | "edited" | "removed" | "unchanged" | "override";
 export type TmMatchKind = "exact" | "fuzzy";
 export type TranslationOrigin = "import" | "manual" | "ai";
+export type TmxLicenseStatus = "unknown";
+export type TmxLossKind =
+  | "unmapped-metadata"
+  | "unknown-attribute"
+  | "unknown-element"
+  | "extra-language"
+  | "duplicate-tuid"
+  | "duplicate-language"
+  | "direction-mismatch"
+  | "wildcard-direction"
+  | "invalid-language"
+  | "missing-segment"
+  | "empty-segment"
+  | "inline-markup"
+  | "unknown-structure";
+export type TmxRowReason =
+  | "source-direction-mismatch"
+  | "wildcard-source-direction"
+  | "missing-source"
+  | "missing-target"
+  | "ambiguous-source"
+  | "ambiguous-target"
+  | "invalid-language"
+  | "empty-source"
+  | "empty-target"
+  | "inline-markup"
+  | "unknown-structure";
+export type TmxRowStatus = "eligible" | "excluded";
 
 export interface Responses {
   capture: GlossaryCapture | null;
@@ -23,6 +51,7 @@ export interface Responses {
   suggestions: TmSuggestion[];
   term: TermRevision;
   terms: TermRevision[];
+  tmxPreview: TmxFilePreview | null;
 }
 export interface GlossaryCapture {
   captureId: ExecutionId;
@@ -153,4 +182,53 @@ export interface TmSuggestion {
   translationRevisionId: ExecutionId;
   translationText: string;
   unitId: ExecutionId;
+}
+export interface TmxFilePreview {
+  fileName: string;
+  preview: TmxExchangePreview;
+  projectId: ExecutionId;
+}
+export interface TmxExchangePreview {
+  byteLen: number;
+  digest: string;
+  header: TmxProvenance;
+  license: TmxLicenseStatus;
+  losses: TmxLossEntry[];
+  profile: string;
+  rows: TmxExchangeRow[];
+  sourceLocale: string;
+  targetLocale: string;
+}
+export interface TmxProvenance {
+  changeDate: string | null;
+  changeId: string | null;
+  creationDate: string | null;
+  creationId: string | null;
+  creationTool: string | null;
+  creationToolVersion: string | null;
+  originalTmFormat: string | null;
+}
+export interface TmxLossEntry {
+  count: number;
+  field: string;
+  kind: TmxLossKind;
+  samples: TmxLossSample[];
+  unlisted: number;
+}
+export interface TmxLossSample {
+  byteOffset: number;
+  ordinal: number | null;
+  path: string;
+}
+export interface TmxExchangeRow {
+  effectiveSourceLocale: string | null;
+  ordinal: number;
+  reasons: TmxRowReason[];
+  sourceProvenance: TmxProvenance | null;
+  sourceText: string | null;
+  status: TmxRowStatus;
+  targetProvenance: TmxProvenance | null;
+  targetText: string | null;
+  tuProvenance: TmxProvenance;
+  tuid: string | null;
 }
