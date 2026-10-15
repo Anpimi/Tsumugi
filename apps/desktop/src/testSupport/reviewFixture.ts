@@ -1,4 +1,4 @@
-import type { ReviewTarget, ReviewBasis, ReviewSummary, ReviewSummaryPage, ReviewDecision, CheckRun, ReviewCheckOutcome, ReviewWrite } from "../reviewCommands";
+import type { ReviewTarget, ReviewBasis, ReviewSummary, ReviewSummaryPage, ReviewDecision, CheckRun, ReviewCheckOutcome, ReviewWrite, ReviewFindingView } from "../reviewCommands";
 import { fixtureIdentity } from "./executionFixture";
 
 export function reviewBasisFor(target: Pick<ReviewTarget, "sourceSnapshotId" | "sourceRevisionId" | "selectionId" | "revisionId">): ReviewBasis {
@@ -32,4 +32,10 @@ export function reviewDecisionFixture(request: ReviewWrite, target: ReviewTarget
 export function reviewCheckFixture(target: ReviewTarget, actionId: string, outcome: ReviewCheckOutcome = "completed", overrides: Partial<CheckRun> = {}): CheckRun {
   return { runId: fixtureIdentity(620), actionId, unitId: target.unitId, locale: target.locale, basis: target.basis, basisEvidence: target.basisEvidence,
     validatorVersion: "smapi-prebuild-2", outcome, rules: [], evidence: null, createdAt: "2026-10-03T00:00:00Z", ...overrides };
+}
+
+/** Empty advisory projection for this exact current Review target. */
+export function reviewFindingViewFixture(target: ReviewTarget): ReviewFindingView {
+  return { unitId: target.unitId, locale: target.locale, basis: target.basis, runId: target.currentCheck?.runId ?? null,
+    findings: [], repairs: [], history: [], nextOffset: null };
 }

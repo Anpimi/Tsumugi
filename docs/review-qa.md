@@ -13,3 +13,39 @@ The current balanced policy permits a source text fallback for one entry with no
 **Work queue** derives current work from selected revisions, decisions, checks, findings, waivers, and changed resource guidance. It can show several reasons for one entry; opening an entry returns to its current review. **Build readiness** evaluates an explicit set of target languages, initially all project targets. It reports each language's blockers and allowed exceptions over the complete current source scope. A ready result permits build preparation under this policy. It does not build a translated Mod, check output bytes, publish, or remain valid after relevant project changes. **Build and export** re-evaluates the current basis, validates actual output bytes, and saves a local language-file release.
 
 Review history and check evidence live in the project's SQLite database. See the [README](../README.md#development) for the current schema and development compatibility. Readiness and queue reads do not alter project content. Updating the complete SMAPI flat source keeps applicable approvals and checks for entries with the same unit and source revision; changed or unresolved entries require current work before a new build.
+
+In **Advisory findings**, use the same reviewer and reason to **Reject as false
+positive**, **Restore finding**, or **Record repair request and open editor**.
+Only an advisory requirement proven by the saved check's fixed requirement set
+and matching result is eligible. Required format checks, Core checks and
+mechanical waivers remain under their existing policies. A disposition cannot
+change check coverage, remove a mandatory failure, supply approval or make a
+build ready.
+
+Each action appends an immutable decision bound to the exact check run, finding,
+review basis, actor and reason. The original finding and provider/input/scope
+provenance remain inspectable, including after rejection. A later run with exactly
+the same rule, input, scope, finding and rich
+diagnostics associates the existing decision while preserving both run origins.
+Changed input, scope, provider/rule identity, suggestion, location or other
+finding evidence starts a new finding and is not rejected by an earlier human
+decision. Optional diagnostic absence is recorded as such; it is distinct from
+a later diagnostic. Current findings and their disposition history share bounded
+pages; repair
+status accompanies the page containing its request. Older requests remain
+reachable through **More finding history**. Restoring a rejected finding requires an
+explicit new reason and the current preceding decision.
+
+A manual repair request is recorded before opening the existing editor. Opening
+the editor, saving a translation, or completing another task does not resolve
+it. Review continues to show **awaiting a current recheck** until a later check
+has completed the same exact rule on the current content. A rule with new
+findings is shown separately from a rule with no findings. Missing, unavailable,
+failed, cancelled, outdated or differently versioned rule evidence cannot close
+this loop. Current mandatory checks and human approval still apply.
+
+Uncertain writes retain the original request. Recovery first reads that action's
+receipt and only retries the unchanged action when no receipt was found. A late
+receipt clears only the submitted reason, so newer reason edits survive. Review
+keeps uncertain actions visible and blocks leaving until their outcome is
+confirmed; the manual editor continues to protect its own drafts independently.

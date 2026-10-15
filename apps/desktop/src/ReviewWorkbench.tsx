@@ -1,3 +1,4 @@
+import { ReviewFindings } from "./ReviewFindings";
 import { ReviewCheckerDetails, ReviewDiagnosticDetails, checkerIdentity, capturedRuleLabel, ruleIdentity } from "./ReviewCheckers";
 import { TextReviewSelections } from "./TextReviewSelections";
 import { reviewFindingLabel } from "./reviewLabels";
@@ -465,7 +466,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
       setOpen(true); setLeavePrompt(true);
       return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
     },
-    allowNavigate() { generation.current++; selecting.current = false; setSelectionBusy(false); setCaptureBusy(false); return Promise.resolve(true); },
+    allowNavigate() { if (owner.current().pending?.kind === "finding") { setOpen(true); setNotice("unknown"); return Promise.resolve(false); } generation.current++; selecting.current = false; setSelectionBusy(false); setCaptureBusy(false); return Promise.resolve(true); },
   }));
 
   async function captureSummary(after = 0) {
@@ -626,6 +627,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
           {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "checkUnknown" ? t("review.checkUnknownHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
           {pending && !owner.inFlight() && notice !== "unknown" ? <p role="status">{t("review.unknown")}</p> : null}
           {notice ? <CommandFailureDetails failure={reasonValue} /> : null}
+          {pending?.kind === "finding" ? <section aria-label={t("review.advisoryFindings.originalAction")}>
+            <h4>{t("review.advisoryFindings.originalAction")}</h4><p>{t("review.advisoryFindings.originalHelp")}</p>
+            <p>{pending.request.actor}: {pending.request.reason}</p>
+            <p>{t(pending.request.disposition === "rejected" ? "review.advisoryFindings.reject" : pending.request.disposition === "restored" ? "review.advisoryFindings.restore" : "review.advisoryFindings.repairRecorded")}</p>
+            <details><summary>{t("review.advisoryFindings.basis")}</summary><p>{pending.request.actionId}</p><p>{pending.request.runId}</p><p>{pending.request.issueId}</p><p>{pending.basisEvidence.sourceRevisionId}</p></details>
+          </section> : null}
           {pending ? <button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button> : null}
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
           {batchStatus?.notStarted ? <p role="status">{t("review.batchRemaining", { count: batchStatus.notStarted })}</p> : null}
@@ -694,10 +701,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
                   {rule.findings.map(finding => {
                     const waiver = checkTarget.currentWaivers.find(value => value.issueId === finding.issueId);
                     const payload = waiverPayload(selected, finding.issueId, waiver?.waiverId ?? null);
-                    return <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.detail ? `: ${finding.detail}` : ""}<ReviewDiagnosticDetails run={displayedCheck} rule={rule} code={finding.code} /></p>
+                    return <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.detail ? `: ${finding.detail}` : ""}</p><ReviewDiagnosticDetails run={displayedCheck} rule={rule} code={finding.code} />
                       {waiver ? <><p>{t("review.waived")}</p><button className="text-button" disabled={!waiverAvailability(payload, false).enabled} onClick={() => commandRegistry.dispatch("review.revoke-waiver", commandScope, payload)}>{t("review.revokeWaiver")}</button></> : finding.waivable ? <button className="text-button" disabled={!waiverAvailability(payload, true).enabled} onClick={() => commandRegistry.dispatch("review.grant-waiver", commandScope, payload)}>{t("review.waive")}</button> : null}</div>;
                   })}
                 </div>)}
+                <ReviewFindings project={project} target={displayTarget} active={open && tab === "review" && targetAvailable}
+                  available={() => reviewActionAvailability(false)} currentTarget={currentTarget} freshReadProof={freshReadProof} onOpenTranslation={onOpenTranslation} />
                 <details><summary>{t("review.history")}</summary>
                   {historyLoading ? <p role="status">{t("review.historyLoading")}</p> : null}
                   {historyFailure && !historyRead.isFetching ? <div role="alert">{t("review.historyUnavailable")}

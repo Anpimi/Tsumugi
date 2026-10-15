@@ -73,22 +73,23 @@ pub use resources::{
 };
 pub(crate) use review::validate_choices;
 pub use review::{
-    AdvisoryReviewCheck, CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun,
-    ComputedReviewEvidence, Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision,
-    FallbackWrite, PreparedReviewCheck, ReviewBasis, ReviewCheckEvidence, ReviewCheckOrigin,
-    ReviewCheckOriginEvidence, ReviewCheckOutcome, ReviewCheckPlan, ReviewChecker,
-    ReviewCheckerKey, ReviewCheckerKind, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
-    ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewScopeCapture,
+    AdvisoryFinding, AdvisoryReviewCheck, CapturedReviewCheckExecution, CheckFinding,
+    CheckRuleResult, CheckRun, ComputedReviewEvidence, Eligibility, EligibilityLocale,
+    EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
+    ReviewCheckEvidence, ReviewCheckOrigin, ReviewCheckOriginEvidence, ReviewCheckOutcome,
+    ReviewCheckPlan, ReviewChecker, ReviewCheckerKey, ReviewCheckerKind, ReviewDecision,
+    ReviewDecisionKind, ReviewEditorSnapshot, ReviewFindingDecision, ReviewFindingDisposition,
+    ReviewFindingRepair, ReviewFindingView, ReviewFindingWrite, ReviewHistoryPage,
+    ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewRepairStatus, ReviewScopeCapture,
     ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
     ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use translation::{
-    CandidateDecision, CandidateDecisionWrite, CandidateDisposition,
-    SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
-    TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
-    TranslationOrigin, TranslationPreview, TranslationPreviewRow, TranslationRevision,
-    TranslationSaveReceipt, TranslationSelection, TranslationSelectionDecision,
-    TranslationSourceContext,
+    CandidateDecision, CandidateDecisionWrite, CandidateDisposition, SaveTranslationRevision,
+    SelectTranslationRevision, TranslationAdoptionConfirmation, TranslationAdoptionHandler,
+    TranslationEditBasis, TranslationHistory, TranslationMatch, TranslationOrigin,
+    TranslationPreview, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
+    TranslationSelection, TranslationSelectionDecision, TranslationSourceContext,
 };
 
 const DATABASE_FILENAME: &str = "project.sqlite3";

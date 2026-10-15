@@ -24,6 +24,19 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   current-only project format is schema 38; preserve older development projects
   and reimport into a new project. There is no implicit Project default, migration
   or additional application/SDK version bump in this undistributed alpha batch.
+
+- Advisory Review findings support explicit false-positive rejection and
+  restoration with original check, finding, actor, reason and basis history.
+  Identical complete evidence associates its earlier decision across check runs;
+  changed diagnostic suggestions or locations retain a separate finding.
+  Required checks and build qualification cannot be bypassed by these decisions.
+  Manual repair requests use the existing editor and remain pending until the
+  same rule is rechecked on current content; new findings retain their own
+  evidence. Uncertain actions recover their original receipts and preserve newer
+  reason edits and independent manual drafts.
+- Review finding facts advance the current-only project format to schema 38.
+  Older development directories are preserved and refused without conversion or
+  reset. The same undistributed application/SDK alpha batch needs no extra bump.
 - Saved AI translation candidates support explicit rejection and restoration with
   an actor, reason and fixed source/selection basis. Decisions and original
   receipts survive reopening. Rejected candidates keep their text and provenance
@@ -175,7 +188,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   inside the sidebar.
 
 
-The combined development build opens project schema 37 only. Earlier Unreleased
+The combined development build opens project schema 38 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 

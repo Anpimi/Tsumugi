@@ -1,12 +1,12 @@
 import type { SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
-import type { ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
+import type { ReviewFindingWrite, ReviewFindingActionRequest, ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
 import * as validators from "./generated/review.validators";
-import { checkerIdentity, contractIdentity } from "./reviewIdentity";
-import type { ReviewSummaryPage, ReviewScopeCapture } from "./generated/review.responses";
+import { checkerIdentity, contractIdentity, ruleIdentity } from "./reviewIdentity";
+import type { AdvisoryFinding, ReviewBasis, ReviewFindingDecision, ReviewFindingView, ReviewSummaryPage, ReviewScopeCapture } from "./generated/review.responses";
 
-export type { ReviewWrite, WaiverWrite, FallbackWrite, ReviewCheckRequest, ReviewCheckStartRequest } from "./generated/review.requests";
-export type { ReviewCheckPreparation, ReviewPluginCheckView, ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
+export type { ReviewFindingWrite, ReviewWrite, WaiverWrite, FallbackWrite, ReviewCheckRequest, ReviewCheckStartRequest } from "./generated/review.requests";
+export type { ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingView, ReviewFindingRepair, ReviewRepairStatus, AdvisoryFinding, ReviewCheckPreparation, ReviewPluginCheckView, ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
 
 function requireConfirmation(condition: boolean) {
   if (!condition) throw new Error("Invalid IPC acknowledgement: review action");
@@ -15,7 +15,52 @@ function sameAction(actual: { actionId: string; unitId: string; locale: string }
   return actual.actionId === expected.actionId && actual.unitId === expected.unitId && actual.locale === expected.locale;
 }
 
+export function confirmReviewFinding(receipt: ReviewFindingDecision, request: ReviewFindingWrite) {
+  const actual = receipt.request;
+  if (actual.projectId !== request.projectId || !sameAction(actual, request)
+    || actual.expectedBasis !== request.expectedBasis || actual.runId !== request.runId || actual.issueId !== request.issueId
+    || actual.expectedDecisionId !== request.expectedDecisionId || actual.disposition !== request.disposition
+    || actual.actor !== request.actor || actual.reason !== request.reason || receipt.finding.issueId !== request.issueId
+    || receipt.requirement.mandatory || receipt.requirement.waivable) {
+    throw invalidFindingReceipt();
+  }
+  return receipt;
+}
+
+function invalidFindingReceipt() {
+  return Object.assign(new Error("Invalid review finding acknowledgement"), { outcome: "unknown", reason: "invalid-review-finding-receipt" });
+}
+export function confirmReviewFindingBasis(receipt: ReviewFindingDecision, expected: ReviewBasis) {
+  const actual = receipt.basisEvidence;
+  if (actual.sourceSnapshotId !== expected.sourceSnapshotId || actual.sourceRevisionId !== expected.sourceRevisionId
+    || actual.selectionId !== expected.selectionId || actual.revisionId !== expected.revisionId
+    || actual.contextRevisionId !== expected.contextRevisionId || actual.termRevisionIds.length !== expected.termRevisionIds.length
+    || actual.termRevisionIds.some((id, index) => id !== expected.termRevisionIds[index])) throw invalidFindingReceipt();
+}
+
+export function confirmReviewFindingEvidence(receipt: ReviewFindingDecision, expected: Pick<AdvisoryFinding, "requirement" | "finding">) {
+  const requirement = receipt.requirement, finding = receipt.finding;
+  if (ruleIdentity(requirement.key) !== ruleIdentity(expected.requirement.key)
+    || requirement.inputDigest !== expected.requirement.inputDigest || requirement.scopeDigest !== expected.requirement.scopeDigest
+    || requirement.mandatory || requirement.waivable || requirement.notApplicable !== null
+    || requirement.targets.length !== expected.requirement.targets.length
+    || requirement.targets.some((target, index) => target !== expected.requirement.targets[index])
+    || finding.issueId !== expected.finding.issueId || finding.rule !== expected.finding.rule || finding.code !== expected.finding.code
+    || finding.detail !== expected.finding.detail || finding.severity !== expected.finding.severity || finding.waivable !== expected.finding.waivable) throw invalidFindingReceipt();
+}
+
 export const reviewCommands = {
+  findings: (request: ReviewHistoryRequest) => checkedInvoke("read_review_findings", request,
+    (value): value is ReviewFindingView => validators.validateResponseFindings(value)
+      && value.unitId === request.unitId && value.locale === request.locale
+      && (value.runId !== null || value.findings.length === 0)
+      && value.findings.every(item => !item.requirement.mandatory && !item.requirement.waivable && item.requirement.notApplicable === null)
+      && value.history.every(item => item.request.projectId === request.projectId && item.request.unitId === request.unitId && item.request.locale === request.locale)),
+  findingAction: (request: ReviewFindingActionRequest) => checkedInvoke("read_review_finding_action", request,
+    (value): value is ReviewFindingDecision | null => validators.validateResponseFindingAction(value)
+      && (value === null || (value.request.projectId === request.projectId && value.request.actionId === request.actionId))),
+  finding: async (session: SessionRequest, finding: ReviewFindingWrite) => confirmReviewFinding(
+    await checkedInvoke("write_review_finding", { ...session, finding }, validators.validateResponseFinding), finding),
   // A captured list is one source snapshot. Keep response correlation at the
   // transport boundary alongside the generated shape validator.
   summaryPage: (request: ReviewSummaryPageRequest) => checkedInvoke("read_review_summary_page", request,

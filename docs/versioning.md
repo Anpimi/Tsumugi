@@ -31,13 +31,25 @@ and Store layout remain unchanged. Application `0.2.0-alpha.1` and SDK
 `0.1.0-alpha.1` remain the existing version sources; both Unreleased changelogs
 are synchronized and no additional version bump or publication is performed.
 
+Advisory Review finding disposition and manual repair requests now append exact
+check/finding/basis facts through the existing Review mutation boundary. These
+facts do not change mandatory check policy, waiver authority, or build readiness.
+Advisory finding identities include their exact report diagnostics and share
+disposition across equivalent runs; mandatory identities remain unchanged.
+This advances the current-only development project format to schema 38. Older
+directories are refused and preserved; there is no migration or reset. Rust
+remains the Desktop contract source. No SDK/process, dependency or lockfile
+change is introduced. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` stay
+in the same undistributed alpha batch without another SemVer bump. The bilingual
+Unreleased entries and current README format statements are synchronized.
+
 AI cards now reuse the translation decision owner for in-place rejection and
 restoration of a verified saved revision. Explicit snapshot/history bases do not
 replace a manual editor draft; pending decisions keep their original action and
 newer reason edits. Recovery remains reachable without an editor entry, and
 discarding decision details preserves manual drafts for their own confirmation.
-This frontend integration uses the generated schema 37
-contract below and adds no further stored format, dependency or version bump.
+This earlier frontend integration uses the generated schema 37
+contract described below and adds no further stored format, dependency or version bump.
 
 Saved AI candidate rejection and explicit restoration append human decisions with
 exact candidate/source/selection bases and original action receipts. Shared

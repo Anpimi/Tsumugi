@@ -6,6 +6,9 @@ export declare function validateRequestCheck(value: unknown): value is Requests[
 export declare function validateRequestDecision(value: unknown): value is Requests["decision"];
 export declare function validateRequestEligibility(value: unknown): value is Requests["eligibility"];
 export declare function validateRequestFallback(value: unknown): value is Requests["fallback"];
+export declare function validateRequestFinding(value: unknown): value is Requests["finding"];
+export declare function validateRequestFindingAction(value: unknown): value is Requests["findingAction"];
+export declare function validateRequestFindings(value: unknown): value is Requests["findings"];
 export declare function validateRequestHistory(value: unknown): value is Requests["history"];
 export declare function validateRequestNeighbor(value: unknown): value is Requests["neighbor"];
 export declare function validateRequestPage(value: unknown): value is Requests["page"];
@@ -21,6 +24,9 @@ export declare function validateResponseDecision(value: unknown): value is Respo
 export declare function validateResponseEditor(value: unknown): value is Responses["editor"];
 export declare function validateResponseEligibility(value: unknown): value is Responses["eligibility"];
 export declare function validateResponseFallback(value: unknown): value is Responses["fallback"];
+export declare function validateResponseFinding(value: unknown): value is Responses["finding"];
+export declare function validateResponseFindingAction(value: unknown): value is Responses["findingAction"];
+export declare function validateResponseFindings(value: unknown): value is Responses["findings"];
 export declare function validateResponseHistory(value: unknown): value is Responses["history"];
 export declare function validateResponseNeighbor(value: unknown): value is Responses["neighbor"];
 export declare function validateResponsePage(value: unknown): value is Responses["page"];

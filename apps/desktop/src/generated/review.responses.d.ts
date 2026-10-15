@@ -101,6 +101,9 @@ export type TermOrigin = "manual" | "external";
 export type Revision = string;
 export type CandidateDisposition = "rejected" | "restored";
 export type TranslationOrigin = "import" | "manual" | "ai";
+export type ReviewFindingDisposition = "rejected" | "restored" | "repair-requested";
+export type ReviewRepairStatus =
+  "awaiting-current-recheck" | "current-rule-clear" | "current-rule-findings" | "superseded";
 export type ReviewCheckPreparation =
   | {
       kind: "recorded";
@@ -128,6 +131,9 @@ export interface Responses {
   editor: ReviewEditorSnapshot;
   eligibility: Eligibility;
   fallback: FallbackDecision;
+  finding: ReviewFindingDecision;
+  findingAction: ReviewFindingDecision | null;
+  findings: ReviewFindingView;
   history: ReviewHistoryPage;
   neighbor: ReviewNeighbor;
   page: ReviewPage;
@@ -624,6 +630,47 @@ export interface EligibilityReason {
   nativeKey: string;
   reference: string | null;
   unitId: ExecutionId;
+}
+export interface ReviewFindingDecision {
+  basisEvidence: ReviewBasis;
+  createdAt: string;
+  decisionId: ExecutionId;
+  finding: CheckFinding;
+  request: ReviewFindingWrite;
+  requirement: CheckRequirement;
+}
+export interface ReviewFindingWrite {
+  actionId: ExecutionId;
+  actor: string;
+  disposition: ReviewFindingDisposition;
+  expectedBasis: string;
+  expectedDecisionId: ExecutionId | null;
+  issueId: string;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  runId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ReviewFindingView {
+  basis: string;
+  findings: AdvisoryFinding[];
+  history: ReviewFindingDecision[];
+  locale: string;
+  nextOffset: number | null;
+  repairs: ReviewFindingRepair[];
+  runId: ExecutionId | null;
+  unitId: ExecutionId;
+}
+export interface AdvisoryFinding {
+  decision: ReviewFindingDecision | null;
+  finding: CheckFinding;
+  requirement: CheckRequirement;
+}
+export interface ReviewFindingRepair {
+  decision: ReviewFindingDecision;
+  recheckRunId: ExecutionId | null;
+  status: ReviewRepairStatus;
 }
 export interface ReviewHistoryPage {
   checks: CheckRun[];

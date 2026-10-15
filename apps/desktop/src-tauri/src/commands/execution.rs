@@ -58,6 +58,7 @@ macro_rules! handlers {
         resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
         resource::read_context_revision,resource::save_context,resource::capture_context,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
+        review::read_review_findings,review::read_review_finding_action,review::write_review_finding,
         review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
         review::plugin::prepare_review_checks,review::plugin::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,

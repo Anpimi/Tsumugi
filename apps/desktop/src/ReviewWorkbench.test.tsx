@@ -12,7 +12,7 @@ import type { ReviewTarget } from "./reviewCommands";
 import type { ReviewWrite, WaiverWrite, Waiver, FallbackWrite, FallbackDecision } from "./reviewCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
+import { reviewFindingViewFixture, reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
 import { useWorkbenchCommands, type WorkbenchCommands, type ReviewWaiverCommandPayload, type ReviewFallbackCommandPayload } from "./workbenchCommands";
 import { useReviewDraftSession } from "./ReviewDraftSession";
 import type { ChangeScope } from "./sessionReads";
@@ -95,6 +95,7 @@ beforeEach(async () => {
     if (command === "prepare_review_checks") return { kind: "plugin", view: { ...reviewWire.responses.prepareCheck.view,
       actionId: args.request.actionId, unitId: args.request.unitId, locale: args.request.locale, basis: args.request.expectedBasis } };
     if (command === "read_review_target") return Object.values(targets).find(target => target.unitId === args.request.unitId);
+    if (command === "read_review_findings") return reviewFindingViewFixture(Object.values(targets).find(target => target.unitId === args.request.unitId)!);
     if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
     if (command === "create_execution_identity") return fixtureIdentity(++nextIdentity);
     if (command === "write_review_decision") {

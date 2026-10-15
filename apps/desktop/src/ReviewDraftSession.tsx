@@ -3,13 +3,14 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext } from "./executionCommands";
 import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCommands";
-import { reviewCommands, type CheckRun, type FallbackDecision, type FallbackWrite, type ReviewDecision,
+import { confirmReviewFindingEvidence, confirmReviewFindingBasis, confirmReviewFinding, reviewCommands, type ReviewFindingWrite, type ReviewFindingDecision, type ReviewBasis, type AdvisoryFinding, type CheckRun, type FallbackDecision, type FallbackWrite, type ReviewDecision,
   type ReviewSummary, type ReviewTarget, type ReviewWrite, type Waiver, type WaiverWrite } from "./reviewCommands";
 
 import type { ReviewCheckRequest, ReviewCheckStartRequest, ReviewPluginCheckView } from "./reviewCommands";
 import type { PluginTextReviewSelection } from "./pluginCommands";
 type ReviewCheckPreparation = { request: ReviewCheckRequest; view: ReviewPluginCheckView };
 export type ReviewPending =
+  | { kind: "finding"; request: ReviewFindingWrite; basisEvidence: ReviewBasis; evidence: Pick<AdvisoryFinding, "requirement" | "finding">; submittedSeq: number }
   | { kind: "decision"; request: ReviewWrite; submittedSeq: number }
   | { kind: "prepare-check"; request: ReviewCheckRequest; submittedSeq: null }
   | { kind: "check"; request: ReviewCheckRequest; executions: ReviewCheckStartRequest["executions"]; submittedSeq: null }
@@ -67,6 +68,7 @@ interface ReviewSession {
   prepareCheck: (currentRead: () => boolean) => Promise<void>;
   check: (currentRead: () => boolean) => Promise<void>;
   waive: (issueId: string, grant: boolean, expectedWaiverId: string | null, currentRead: () => boolean) => Promise<void>;
+  finding: (capture: Pick<ReviewFindingWrite, "runId" | "issueId" | "expectedDecisionId" | "disposition"> & { evidence: Pick<AdvisoryFinding, "requirement" | "finding"> }, currentRead: () => boolean) => Promise<ReviewFindingDecision | null>;
   fallback: (allow: boolean, currentRead: () => boolean) => Promise<void>;
   retryPending: () => Promise<void>;
   cancelCheck: () => Promise<void>;
@@ -186,10 +188,11 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     return !!before.selected && before.selected.unitId === action.request.unitId
       && before.selected.locale === action.request.locale && before.selected.basis === action.request.expectedBasis;
   }
-  function confirmed(action: Exclude<ReviewPending, { kind: "prepare-check" }>, receipt: ReviewDecision | CheckRun | Waiver | FallbackDecision, pending: ReviewPending = action) {
+  function confirmed(action: Exclude<ReviewPending, { kind: "prepare-check" }>, receipt: ReviewDecision | CheckRun | Waiver | FallbackDecision | ReviewFindingDecision, pending: ReviewPending = action) {
     update(before => {
       if (before.pending !== pending) return before;
       function withReceipt(target: ReviewTarget): ReviewTarget {
+        if (action.kind === "finding") return target;
         if (action.kind === "decision") return { ...target, currentDecision: receipt as ReviewDecision };
         if (action.kind === "check") return { ...target, currentCheck: receipt as CheckRun };
         if (action.kind === "waiver") {
@@ -225,6 +228,13 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       activeCheckId: action.kind === "check" ? action.request.actionId : null }));
     try {
       const session = executionContext(projectRef.current);
+      if (action.kind === "finding") {
+        const receipt = await reviewCommands.finding(session, action.request);
+        confirmReviewFindingBasis(receipt, action.basisEvidence);
+        confirmReviewFindingEvidence(receipt, action.evidence);
+        confirmed(action, receipt);
+        return receipt;
+      }
       if (action.kind === "decision") confirmed(action, await reviewCommands.decide(session, action.request));
       if (action.kind === "prepare-check") {
         const preparation = await reviewCommands.prepareCheck(action.request);
@@ -267,7 +277,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         || latest.selected.basis !== target.basis
         || (latest.projection?.unitId === target.unitId && latest.projection.locale === target.locale
           && latest.projection.basis !== target.basis)) return;
-      await dispatch(makeAction(actionId, before));
+      return await dispatch(makeAction(actionId, before));
     } catch (error) { fail(error); }
     finally {
       running.current = false;
@@ -343,6 +353,18 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       request: { projectId: projectRef.current.metadata.projectId, actionId, unitId: target.unitId, locale: target.locale,
         expectedBasis: target.basis, issueId, grant, expectedWaiverId, actor: before.actor.trim(), reason } }));
   }
+  async function finding(capture: Pick<ReviewFindingWrite, "runId" | "issueId" | "expectedDecisionId" | "disposition"> & { evidence: Pick<AdvisoryFinding, "requirement" | "finding"> }, currentRead: () => boolean) {
+    const before = current(), target = before.selected;
+    if (!target || !before.actor.trim() || !(before.drafts[reviewDraftKey(target)] ?? "").trim()) {
+      update(value => ({ ...value, notice: "error", reasonValue: "reason-required" })); return null;
+    }
+    const key = reviewDraftKey(target), reason = before.drafts[key];
+    const { evidence, ...requestCapture } = capture;
+    const receipt = await fresh(target, currentRead, actionId => ({ kind: "finding", evidence: structuredClone(evidence), basisEvidence: structuredClone(target.basisEvidence), submittedSeq: before.editSeq[key] ?? 0,
+      request: { ...requestCapture, projectId: projectRef.current.metadata.projectId, actionId, unitId: target.unitId, locale: target.locale,
+        expectedBasis: target.basis, actor: before.actor.trim(), reason } }));
+    return receipt ?? null;
+  }
   async function fallback(allow: boolean, currentRead: () => boolean) {
     const before = current(), target = before.selected;
     if (!target || !before.actor.trim() || !(before.drafts[reviewDraftKey(target)] ?? "").trim()) {
@@ -359,7 +381,23 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     if (!mounted.current || !action || running.current) return;
     running.current = true;
     update(before => ({ ...before, busyMutation: true, notice: null }));
-    try { if (current().pending === action) await dispatch(action); }
+    try {
+      if (current().pending !== action) return;
+      if (action.kind === "finding") {
+        // Check the original action before retrying it. A changed current basis
+        // cannot turn an unknown commit into a fresh request.
+        try {
+          const receipt = await reviewCommands.findingAction({ ...executionContext(projectRef.current), actionId: action.request.actionId });
+          if (current().pending !== action || !mounted.current) return;
+          if (receipt) { confirmReviewFindingEvidence(receipt, action.evidence); confirmReviewFindingBasis(receipt, action.basisEvidence); confirmed(action, confirmReviewFinding(receipt, action.request)); return; }
+          update(before => before.pending !== action ? before : { ...before, pendingUncertain: false });
+        } catch (error) {
+          update(before => before.pending !== action ? before : { ...before, pendingUncertain: true, notice: "unknown", reasonValue: commandFailure(error) });
+          return;
+        }
+      }
+      if (current().pending === action) await dispatch(action);
+    }
     finally { running.current = false; update(before => ({ ...before, busyMutation: false, activeCheckId: null })); }
   }
   async function cancelCheck() {
@@ -429,6 +467,6 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
 
   const owner: ReviewSession = { state, current, inFlight: () => running.current,
     setLocale, setActor, setSelected, observeProjection, editReason, adoptCurrent, toggleChosen, clear, setNotice, setReason,
-    decide, prepareCheck, check, setAdvisoryChecks, observeSettingsRevision, slotConsentKey, setCheckerConsent, checkersConfirmed, waive, fallback, retryPending, cancelCheck, approveBatch, stopBatch };
+    decide, prepareCheck, check, setAdvisoryChecks, observeSettingsRevision, slotConsentKey, setCheckerConsent, checkersConfirmed, waive, finding, fallback, retryPending, cancelCheck, approveBatch, stopBatch };
   return <ReviewContext.Provider value={owner}>{children}</ReviewContext.Provider>;
 }
