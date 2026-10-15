@@ -207,7 +207,8 @@
     "runtimeOrigin": {
       "sourceId": "captured-runtime",
       "publisherId": "user-approved"
-    }
+    },
+    "componentScope": "project"
   },
   "spec": {
     "handle": "60000000-0000-4000-8000-000000000019",
@@ -421,7 +422,8 @@
     "target": "zh-CN",
     "selections": [
       "term"
-    ]
+    ],
+    "componentScope": "project"
   },
   "requests": {
     "prepare": {

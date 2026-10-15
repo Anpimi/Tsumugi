@@ -73,6 +73,9 @@ fn main() {
                     hang();
                 }
                 if mode == "late-result" {
+                    if let Ok(observer) = std::fs::read_to_string("observer.txt") {
+                        std::fs::write(observer, b"invoked").unwrap();
+                    }
                     std::thread::sleep(Duration::from_millis(500));
                 }
                 if mode == "oversized-header" {
@@ -102,7 +105,11 @@ fn main() {
                 let result_frame_limit = request.max_result_bytes as usize;
                 let output = EncodedPayload::capture(
                     request.output_schema.clone(),
-                    format!("answer:{}", request.input.utf8),
+                    if mode == "core-echo" {
+                        request.input.utf8.clone()
+                    } else {
+                        format!("answer:{}", request.input.utf8)
+                    },
                 )
                 .unwrap();
                 let result_id = format!("result-{}", request.context.dispatch_id);

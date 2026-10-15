@@ -667,6 +667,7 @@ export interface PluginPackageRequest {
 }
 export interface PluginToolView {
   binding: CapabilityToolBinding;
+  componentScope: ComponentScope;
   environment: ExecutionEnvironmentDescriptor;
   environmentDigest: string;
   packageOrigin: PluginOriginView;

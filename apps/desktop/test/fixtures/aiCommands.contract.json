@@ -738,7 +738,8 @@
                       "id": "example.plain-text",
                       "schemaVersion": 1,
                       "behaviorVersion": 1
-                    }
+                    },
+                    "componentScope": "project"
                   }
                 },
                 "advisoryChecks": [],

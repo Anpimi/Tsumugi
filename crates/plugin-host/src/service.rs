@@ -75,6 +75,18 @@ pub(crate) fn select_service_bindings(
     broker: Option<&dyn ProjectServiceBroker>,
 ) -> HostResult<Vec<ServiceBinding>> {
     let bindings = broker.map_or(&[][..], |broker| broker.bindings());
+    // Project brokers are not implicitly rescaled to attempt authority. Empty
+    // optional dependencies need no broker; required or offered services must
+    // wait for an explicitly scoped service contract/adapter.
+    if component.scope == ComponentScope::Attempt
+        && (!bindings.is_empty()
+            || component
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.required))
+    {
+        return Err(HostError::DependencyUnavailable);
+    }
     validate_service_bindings(bindings).map_err(|_| HostError::InvalidContract)?;
     for binding in bindings {
         if binding.project_id != scope.project_id

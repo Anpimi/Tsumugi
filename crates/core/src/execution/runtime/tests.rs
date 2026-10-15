@@ -1092,6 +1092,7 @@ fn plugin_binding(host_digest: &str) -> PluginExecutionBinding {
         behavior_version: 1,
     };
     PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: sdk::CapabilityBinding {
             provider: sdk::ProviderSelectionBinding {
                 plugin: sdk::PluginIdentity {

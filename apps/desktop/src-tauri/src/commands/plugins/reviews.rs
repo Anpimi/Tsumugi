@@ -116,6 +116,7 @@ impl ApplicationPlugins {
                 .checker
                 .environment_digest()
                 .map_err(|_| invalid())?,
+            &[sdk::ComponentScope::Project],
             |image| {
                 // The immutable source receipt owns this declaration; bind it
                 // against the installed manifest rather than guessing a Resource.

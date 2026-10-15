@@ -114,6 +114,7 @@ impl ApplicationPlugins {
         requested: &PluginPackageRequest,
         resource_id: &str,
         environment_digest: &str,
+        supported_scopes: &[sdk::ComponentScope],
         resolve: impl FnOnce(&PackageImage, &str) -> Result<(B, [sdk::CapabilityBinding; N]), HostError>,
     ) -> Result<DeclaredEnvironment<B>, CommandError> {
         requested.plugin.validate().map_err(|_| invalid())?;
@@ -126,6 +127,7 @@ impl ApplicationPlugins {
             requested,
             Some(resource_id),
             environment_digest,
+            supported_scopes,
             |image| resolve(image, resource_id),
         )
     }
@@ -135,6 +137,7 @@ impl ApplicationPlugins {
         requested: &PluginPackageRequest,
         resource_id: Option<&str>,
         environment_digest: &str,
+        supported_scopes: &[sdk::ComponentScope],
         resolve: impl FnOnce(&PackageImage) -> Result<(B, [sdk::CapabilityBinding; N]), HostError>,
     ) -> Result<DeclaredEnvironment<B>, CommandError> {
         requested.plugin.validate().map_err(|_| invalid())?;
@@ -163,6 +166,9 @@ impl ApplicationPlugins {
                     .iter()
                     .find(|component| component.id == capability.provider.component_id)
                     .ok_or_else(invalid)?;
+                if !supported_scopes.contains(&component.scope) {
+                    return Err(invalid());
+                }
                 if !matches!(
                     component.runtime,
                     sdk::RuntimeKind::JavaScript | sdk::RuntimeKind::NativeWorker

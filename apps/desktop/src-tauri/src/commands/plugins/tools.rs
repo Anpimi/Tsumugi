@@ -19,6 +19,7 @@ pub struct PluginToolView {
     pub settings_revision: UnsignedDecimal,
     pub resource_id: String,
     pub binding: sdk::CapabilityToolBinding,
+    pub component_scope: sdk::ComponentScope,
     pub package_origin: PluginOriginView,
     pub environment: sdk::ExecutionEnvironmentDescriptor,
     pub environment_digest: String,
@@ -28,12 +29,24 @@ pub struct PluginToolView {
 pub(in crate::commands) type ToolEnvironment = DeclaredEnvironment<sdk::CapabilityToolBinding>;
 
 impl ToolEnvironment {
+    pub(in crate::commands) fn component_scope(&self) -> Result<sdk::ComponentScope, CommandError> {
+        self.package
+            .image()
+            .manifest()
+            .manifest()
+            .components
+            .iter()
+            .find(|component| component.id == self.binding.capability.provider.component_id)
+            .map(|component| component.scope)
+            .ok_or_else(invalid)
+    }
     pub(in crate::commands) fn view(&self) -> Result<PluginToolView, CommandError> {
         let environment = self.runtime.environment();
         Ok(PluginToolView {
             settings_revision: self.settings_revision,
             resource_id: self.resource_id.clone().ok_or_else(invalid)?,
             binding: self.binding.clone(),
+            component_scope: self.component_scope()?,
             package_origin: self.package.origin().into(),
             environment_digest: environment.digest().map_err(|_| invalid())?,
             environment,
@@ -51,6 +64,7 @@ impl ApplicationPlugins {
             &request.package,
             &request.resource_id,
             &request.environment_digest,
+            &[sdk::ComponentScope::Project, sdk::ComponentScope::Attempt],
             |image, resource| {
                 let binding = image.capability_tool(resource)?;
                 let providers = [binding.capability.clone()];

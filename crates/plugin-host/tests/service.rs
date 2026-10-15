@@ -55,6 +55,25 @@ fn image_with_observer(
     effect: EffectKind,
     observer: Option<&std::path::Path>,
 ) -> PackageImage {
+    scoped_image(
+        mode,
+        required,
+        selection,
+        permission,
+        effect,
+        observer,
+        ComponentScope::Project,
+    )
+}
+fn scoped_image(
+    mode: &str,
+    required: bool,
+    selection: ProviderSelection,
+    permission: bool,
+    effect: EffectKind,
+    observer: Option<&std::path::Path>,
+    scope: ComponentScope,
+) -> PackageImage {
     let mut permissions = vec![PermissionRequest::CapturedInput];
     if permission {
         permissions.push(PermissionRequest::ProjectService {
@@ -71,7 +90,7 @@ fn image_with_observer(
         permissions: permissions.clone(),
         components: vec![ComponentDeclaration {
             id: "client".into(),
-            scope: ComponentScope::Project,
+            scope,
             runtime: RuntimeKind::JavaScript,
             entrypoint: Some("component.mjs".into()),
             dependencies: vec![CapabilityDependency {
@@ -243,6 +262,41 @@ impl ProjectServiceBroker for Broker {
     fn release_channel(&self, _channel: &ChannelReceipt) {
         self.released.fetch_add(1, Ordering::AcqRel);
     }
+}
+
+#[test]
+fn attempt_channels_do_not_borrow_even_a_matching_optional_project_service() {
+    runtime().block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let image = scoped_image(
+            "normal",
+            false,
+            ProviderSelection::Single,
+            true,
+            EffectKind::ReadOnly,
+            None,
+            ComponentScope::Attempt,
+        );
+        let mut offered = binding("provider-a", "handle-a");
+        offered.scope_id = "attempt-a".into();
+        let broker = Broker::new(vec![offered], 0, "normal");
+        let mut configured = options();
+        configured.scope.scope_id = "attempt-a".into();
+        let result = ProcessSession::launch_with_services(
+            &image,
+            "client.call",
+            directory.path(),
+            &RuntimeLauncher::Native,
+            configured,
+            broker.clone(),
+            || true,
+        )
+        .await;
+        assert!(matches!(result, Err(HostError::DependencyUnavailable)));
+        assert!(broker.seen.lock().unwrap().is_empty());
+        assert_eq!(broker.released.load(Ordering::Acquire), 0);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    });
 }
 
 #[test]

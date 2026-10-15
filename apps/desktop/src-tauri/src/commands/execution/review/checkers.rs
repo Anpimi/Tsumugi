@@ -71,6 +71,7 @@ impl CheckerEnvironment {
             Self::Format { binding, .. } => Ok(binding.checker.clone()),
             Self::AdvisoryText { binding, .. } => {
                 Ok(tsumugi_core::execution::PluginExecutionBinding {
+                    component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
                     capability: binding.binding.checker.clone(),
                     profile: Some(binding.binding.declaration.profile.clone()),
                     environment: binding.environment.clone(),

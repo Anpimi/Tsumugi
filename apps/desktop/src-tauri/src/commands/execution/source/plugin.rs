@@ -147,6 +147,7 @@ fn proxies(environment: &SourceEnvironment) -> Result<[Arc<RunnerProxy>; 2], Com
 }
 fn binding(environment: &SourceEnvironment, checker: bool) -> PluginExecutionBinding {
     PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: if checker {
             environment.binding.checker.clone()
         } else {

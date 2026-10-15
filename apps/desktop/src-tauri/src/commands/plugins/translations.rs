@@ -55,6 +55,7 @@ impl ApplicationPlugins {
             &request.package,
             &request.resource_id,
             &request.environment_digest,
+            &[sdk::ComponentScope::Project],
             |image, resource| {
                 let binding = image.translation_import(resource)?;
                 let providers = [binding.extractor.clone(), binding.checker.clone()];

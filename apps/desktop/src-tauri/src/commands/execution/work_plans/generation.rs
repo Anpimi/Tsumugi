@@ -200,6 +200,7 @@ fn generation_request(
 }
 fn component_binding(environment: &GenerationComponentEnvironment) -> PluginExecutionBinding {
     PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: environment.captured.binding.clone(),
         profile: environment.profile.clone(),
         environment: environment.captured.runtime.environment(),

@@ -6,6 +6,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Generic plugin execution and manual reference tools support captured Attempt
+  components with exact project/attempt scope and their original execution grant.
+  Revocation, cancellation, late results and cleanup use the existing owned
+  channel lifecycle. Project-service dependencies and domain/Agent compositions
+  remain explicitly restricted to their supported Project scope.
+- Plugin execution inputs now require the captured component scope. The
+  current-only project format is schema 38; preserve older development projects
+  and reimport into a new project. There is no implicit Project default, migration
+  or additional application/SDK version bump in this undistributed alpha batch.
+
 - Saved AI translation candidates support explicit rejection and restoration with
   an actor, reason and fixed source/selection basis. Decisions and original
   receipts survive reopening. Rejected candidates keep their text and provenance

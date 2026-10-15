@@ -98,6 +98,7 @@ pub(super) fn declared_fixture(
         .execution_binding(Some(source.binding.declaration.profile.clone()))
         .unwrap();
     let checker = PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: source.binding.checker.clone(),
         profile: Some(source.binding.declaration.profile.clone()),
         environment: source.runtime.environment(),

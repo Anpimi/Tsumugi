@@ -31,11 +31,23 @@ fn tool_wire_keeps_selection_fixed_queries_and_consent_separate() {
         forged[property] = json!(true);
         assert!(serde_json::from_value::<PluginToolPrepareRequest>(forged).is_err());
     }
-    for property in ["provider", "grantId", "origin", "environment"] {
+    for property in [
+        "provider",
+        "grantId",
+        "origin",
+        "environment",
+        "componentScope",
+    ] {
         let mut forged = fixture["request"].clone();
         forged[property] = json!(true);
         assert!(serde_json::from_value::<PluginToolRequest>(forged).is_err());
     }
+    let mut missing_scope = fixture["view"].clone();
+    missing_scope
+        .as_object_mut()
+        .unwrap()
+        .remove("componentScope");
+    assert!(serde_json::from_value::<PluginToolView>(missing_scope).is_err());
 }
 
 #[test]
@@ -67,6 +79,25 @@ fn tool_pending_preparation_is_exclusive_and_stop_revokes_its_ticket() {
 ))]
 #[test]
 fn real_tool_ipc_captures_single_and_batch_inputs_and_reuses_original_authority() {
+    real_scoped_tool_ipc(false);
+}
+
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+#[test]
+fn real_attempt_tool_ipc_captures_scope_and_reuses_only_original_authority() {
+    real_scoped_tool_ipc(true);
+}
+
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+fn real_scoped_tool_ipc(attempt_scope: bool) {
     use crate::commands::plugins::InstalledPluginFixture;
     use std::{
         fs,
@@ -157,12 +188,66 @@ fn real_tool_ipc_captures_single_and_batch_inputs_and_reuses_original_authority(
         std::env::var_os("TSUMUGI_TEST_KNOWLEDGE_PACKAGE")
             .expect("explicit captured package required"),
     );
-    let digest =
-        std::env::var("TSUMUGI_TEST_KNOWLEDGE_DIGEST").expect("independent package digest required");
+    let digest = std::env::var("TSUMUGI_TEST_KNOWLEDGE_DIGEST")
+        .expect("independent package digest required");
     let image = PackageImage::capture_directory(&path, &digest, || true).unwrap();
+    let image = if attempt_scope {
+        fn files(
+            root: &std::path::Path,
+            directory: &std::path::Path,
+            collected: &mut std::collections::BTreeMap<String, tsumugi_plugin_host::PackageFile>,
+        ) {
+            for entry in fs::read_dir(directory).unwrap() {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                assert!(!kind.is_symlink());
+                if kind.is_dir() {
+                    files(root, &entry.path(), collected);
+                } else {
+                    assert!(kind.is_file());
+                    let relative = entry
+                        .path()
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_owned();
+                    if relative == "manifest.json" {
+                        continue;
+                    }
+                    use std::os::unix::fs::PermissionsExt;
+                    collected.insert(
+                        relative,
+                        tsumugi_plugin_host::PackageFile {
+                            bytes: fs::read(entry.path()).unwrap(),
+                            executable: entry.metadata().unwrap().permissions().mode() & 0o111 != 0,
+                        },
+                    );
+                }
+            }
+        }
+        let mut captured = std::collections::BTreeMap::new();
+        files(&path, &path, &mut captured);
+        assert_eq!(
+            PackageImage::digest(&fs::read(path.join("manifest.json")).unwrap(), &captured)
+                .unwrap(),
+            digest
+        );
+        let mut manifest = image.manifest().manifest().clone();
+        for component in &mut manifest.components {
+            if component.runtime != tsumugi_plugin_sdk::RuntimeKind::Data {
+                component.scope = tsumugi_plugin_sdk::ComponentScope::Attempt;
+            }
+        }
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let digest = PackageImage::digest(&bytes, &captured).unwrap();
+        PackageImage::capture(bytes, captured, &digest).unwrap()
+    } else {
+        image
+    };
     let approval = PackageApproval {
         plugin: image.manifest().manifest().plugin.clone(),
-        package_digest: digest,
+        package_digest: image.package_digest().into(),
         origin: PackageOrigin {
             source_id: "synthetic-manual-source".into(),
             publisher_id: "synthetic-manual-publisher".into(),
@@ -236,6 +321,10 @@ fn real_tool_ipc_captures_single_and_batch_inputs_and_reuses_original_authority(
         environment_digest: runtime_approval.environment.digest().unwrap(),
     };
     let view = call(&window, "read_plugin_tool", json!(tool)).unwrap();
+    assert_eq!(
+        view["componentScope"],
+        if attempt_scope { "attempt" } else { "project" }
+    );
     assert_eq!(
         view["binding"],
         json!(image.capability_tool("agent-query-tool").unwrap())
@@ -341,6 +430,14 @@ fn real_tool_ipc_captures_single_and_batch_inputs_and_reuses_original_authority(
     let single = results(&window, &context, &attempt, 1);
     assert_eq!(single[0]["outcome"], "succeeded");
     assert_eq!(single[0]["plugin"]["authorizationId"], start["grantId"]);
+    assert_eq!(
+        single[0]["plugin"]["result"]["context"]["scopeId"],
+        if attempt_scope {
+            attempt.clone()
+        } else {
+            context["projectId"].clone()
+        }
+    );
     let output: Value = serde_json::from_str(
         single[0]["plugin"]["result"]["outcome"]["output"]["utf8"]
             .as_str()
