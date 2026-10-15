@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The experimental SDK defines bounded source-context facts with explicit
+  extracted or inferred origin and references to captured source ranges.
+  The existing content receiver checks supported blocks without rewriting their
+  bytes or interpreting unknown domains. Rust and generated JavaScript contracts
+  share limits; these data helpers grant no sharing or execution authority.
+  Domain collection and the desktop context workflow still require integration.
+
 - AI and Arena preparations can choose named saved connections and open their
   application settings without losing the preparation. Choosing defaults keeps
   scope, sharing and budgets; editing a copied default makes it a one-time

@@ -255,6 +255,9 @@ impl ContentExchange {
                     "content.domainBlocks.target",
                 ));
             }
+            if block.schema == source_context_facts_contract() {
+                parse_source_context_block(block, &self.artifacts)?;
+            }
         }
         encoded_limit(self, MAX_EXCHANGE_BYTES, "contentExchange")
     }

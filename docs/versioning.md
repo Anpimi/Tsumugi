@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+The experimental SDK adds source-context facts at schema/behavior 1/1 inside
+existing content-exchange domain blocks. Supported blocks require explicit
+extracted/inferred origin, bounded source references and exact text coordinates;
+unknown versions retain the existing preservation/required-interpreter boundary.
+Rust owns the data receiver, generated JavaScript schema/types and frozen limits.
+There is no new stored field, project migration, execution permission or sharing
+grant. Domain collection, application capture and desktop presentation remain
+unimplemented consumers of this data unit. Application `0.2.0-alpha.1`, SDK
+`0.1.0-alpha.1`, project schema 34, content exchange 2/1, process 2 and connection
+store 1/plugin settings 2/dependencies are unchanged. This is the same
+undistributed batch and requires no additional SemVer bump or distribution;
+both Unreleased changelogs are synchronized.
+
 AI and Arena preparation now select named application connection defaults through
 current application reads and their existing project-session draft owners. Only
 four defaults and the exact profile reference are copied; scope, sharing and

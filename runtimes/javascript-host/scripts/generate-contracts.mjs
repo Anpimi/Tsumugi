@@ -60,6 +60,10 @@ for (const kind of ['generation-service-input', 'generation-service-receipt', 'g
   cargo(`check-${kind}-schema`, fileURLToPath(url));
   generationSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
+const sourceContextURL = new URL('crates/plugin-sdk/schemas/source-context-facts.schema.json', root);
+cargo('check-source-context-facts-schema', fileURLToPath(sourceContextURL));
+const sourceContextSchema = JSON.parse(await readFile(sourceContextURL, 'utf8'));
+const sourceContextProfile = JSON.parse(cargo('profile-source-context'));
 const schema = JSON.parse(await readFile(schemaURL, 'utf8'));
 const contentTypes = JSON.parse(await readFile(contentTypesURL, 'utf8'));
 const sourceInput = JSON.parse(await readFile(sourceInputURL, 'utf8'));
@@ -150,6 +154,15 @@ for (const kind of ['generation-service-input', 'generation-service-receipt', 'g
   }
   outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
 }
+outputs.push([new URL('crates/plugin-sdk/javascript/source-context.d.ts', root), await compile(sourceContextSchema, 'SourceContextFacts', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+const sourceContextValidator = standaloneCode(ajv, ajv.compile(sourceContextSchema));
+if (/^\s*import\s/m.test(sourceContextValidator) || /\brequire\s*\(/.test(sourceContextValidator)) {
+  throw new Error('The generated context validator requires a runtime dependency.');
+}
+outputs.push([new URL('crates/plugin-sdk/javascript/validate-source-context-facts.mjs', root), banner + sourceValidatorAttribution + sourceContextValidator]);
+outputs.push([new URL('crates/plugin-sdk/javascript/source-context-profile.mjs', root), `${banner}const profile = ${JSON.stringify(sourceContextProfile, null, 2)};\nObject.freeze(profile.contract);\nexport const SOURCE_CONTEXT_FACTS_PROFILE = Object.freeze(profile);\n`]);
 for (const [url, source] of outputs) {
   if (process.argv.includes('--check')) {
     if (await readFile(url, 'utf8') !== source) throw new Error(`Stale generated contract: ${url.pathname.split('/').at(-1)}`);
