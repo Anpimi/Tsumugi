@@ -9,6 +9,36 @@ export type ResourceImpactStatus = "needs-revalidation" | "unresolved";
 export type ResourceChangeKind = "added" | "edited" | "removed" | "unchanged" | "override";
 export type TmMatchKind = "exact" | "fuzzy";
 export type TranslationOrigin = "import" | "manual" | "ai";
+export type TbxLicenseStatus = "unknown";
+export type TbxLossKind =
+  | "unmapped-metadata"
+  | "unknown-attribute"
+  | "unknown-element"
+  | "unknown-data-category"
+  | "extra-language"
+  | "duplicate-concept-id"
+  | "duplicate-term-id"
+  | "duplicate-language"
+  | "duplicate-term-text"
+  | "invalid-language"
+  | "missing-term"
+  | "empty-term"
+  | "inline-markup"
+  | "unknown-structure"
+  | "unknown-usage-status"
+  | "duplicate-usage-status"
+  | "schema-hint";
+export type TbxRowReason =
+  | "missing-source"
+  | "missing-target"
+  | "ambiguous-source"
+  | "ambiguous-target"
+  | "invalid-language"
+  | "unknown-structure"
+  | "invalid-source-term"
+  | "invalid-target-term";
+export type TbxTermReason = "missing-term" | "ambiguous-term" | "empty-term" | "inline-markup" | "unknown-structure";
+export type TbxRowStatus = "possible-mapping" | "excluded";
 export type TmxLicenseStatus = "unknown";
 export type TmxLossKind =
   | "unmapped-metadata"
@@ -49,6 +79,7 @@ export interface Responses {
   resolution: TermResolution;
   savedContext: ContextRevision;
   suggestions: TmSuggestion[];
+  tbxPreview: TbxFilePreview | null;
   term: TermRevision;
   terms: TermRevision[];
   tmxPreview: TmxFilePreview | null;
@@ -182,6 +213,53 @@ export interface TmSuggestion {
   translationRevisionId: ExecutionId;
   translationText: string;
   unitId: ExecutionId;
+}
+export interface TbxFilePreview {
+  fileName: string;
+  preview: TbxExchangePreview;
+  projectId: ExecutionId;
+}
+export interface TbxExchangePreview {
+  byteLen: number;
+  digest: string;
+  documentLocale: string;
+  license: TbxLicenseStatus;
+  losses: TbxLossEntry[];
+  profile: string;
+  rows: TbxExchangeRow[];
+  sourceDescriptions: string[];
+  sourceLocale: string;
+  targetLocale: string;
+  titles: string[];
+}
+export interface TbxLossEntry {
+  count: number;
+  field: string;
+  kind: TbxLossKind;
+  samples: TbxLossSample[];
+  unlisted: number;
+}
+export interface TbxLossSample {
+  byteOffset: number;
+  ordinal: number | null;
+  path: string;
+}
+export interface TbxExchangeRow {
+  conceptId: string | null;
+  ordinal: number;
+  reasons: TbxRowReason[];
+  sourceTerms: TbxTermPreview[];
+  status: TbxRowStatus;
+  targetTerms: TbxTermPreview[];
+}
+export interface TbxTermPreview {
+  languageOrdinal: number;
+  ordinal: number;
+  reasons: TbxTermReason[];
+  sources: string[];
+  termSecId: string | null;
+  text: string | null;
+  usageStatuses: string[];
 }
 export interface TmxFilePreview {
   fileName: string;

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-model href="synthetic-core-not-read.xsd" type="application/xml" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<?xml-model href="synthetic-basic-not-read.sch" type="application/xml" schematypens="http://purl.oclc.org/dsdl/schematron"?>
+<tbx xmlns="urn:iso:std:iso:30042:ed-2" type="TBX-Basic" style="dca" xml:lang="en">
+  <tbxHeader><fileDesc><titleStmt><title>Synthetic terminology</title></titleStmt><sourceDesc><p>Synthetic exchange fixture</p></sourceDesc></fileDesc></tbxHeader>
+  <text><body><conceptEntry id="synthetic-1">
+    <langSec xml:lang="en"><termSec id="source-1"><term>Hello 👩🏽‍💻 é</term><termNote type="partOfSpeech">noun</termNote><termNote type="usageStatus">preferred</termNote><admin type="source">Synthetic term source</admin><descripGrp><descrip type="context">Synthetic context</descrip><admin type="source">Context source only</admin></descripGrp></termSec></langSec>
+    <langSec xml:lang="zh-CN"><termSec id="target-1"><term>你好 👩🏽‍💻 é</term><termNote type="partOfSpeech">noun</termNote><termNote type="usageStatus">admitted</termNote><admin type="source">Synthetic target source</admin></termSec></langSec>
+  </conceptEntry></body></text>
+</tbx>

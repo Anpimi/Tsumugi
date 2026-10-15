@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Resource updates also include a bounded read-only TBX-Basic DCA subset preview.
+It retains multiple terminology candidates and mapping losses without asserting
+complete standard compliance or adopting a termbase. TMX and TBX share the
+existing XML safety, loss accounting, native file-read and on-demand Query
+lifecycle owners. Rust generates the additive TBX desktop contract. No stored
+field, schema 36, grant, SDK/process format, dependency, lockfile or version
+source changes in this increment. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` stay in the same undistributed batch without another bump or
+release; the resource guide and both Unreleased changelogs are synchronized.
+
 Resource updates adds an explicitly selected read-only restricted TMX 1.4
 plain-text preview, with exact language association and bounded loss reporting.
 Core uses pinned `roxmltree` 0.21.1 for XML document validation; the manifest and

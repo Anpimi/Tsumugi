@@ -45,9 +45,11 @@ pub use persistence::{
 };
 pub use persistence::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
 pub use persistence::{
-    MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES, TmxExchangePreview, TmxExchangeRow,
+    MAX_TBX_INPUT_BYTES, MAX_TBX_REPORT_BYTES, MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES,
+    TbxExchangePreview, TbxExchangeRow, TbxLicenseStatus, TbxLossEntry, TbxLossKind, TbxLossSample,
+    TbxRowReason, TbxRowStatus, TbxTermPreview, TbxTermReason, TmxExchangePreview, TmxExchangeRow,
     TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
-    TmxRowStatus, preview_tmx_exchange,
+    TmxRowStatus, preview_tbx_exchange, preview_tmx_exchange,
 };
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub use persistence::{

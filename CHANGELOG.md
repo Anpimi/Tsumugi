@@ -7,11 +7,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 ## [Unreleased]
 
 - Resource updates can preview explicitly selected UTF-8 plain-text TMX 1.4
-  files against the project languages. Separate local pages show complete mapped
-  text, excluded rows, unverified provenance and classified mapping losses with
-  bounded location samples. Content license remains unknown. Previewing saves or
-  adopts nothing and grants no model sharing; unsupported structure and exceeded
-  limits are reported explicitly.
+  files and a recognized TBX-Basic DCA subset against the project languages.
+  Separate local pages show complete mapped text, all selected-language term
+  candidates, excluded rows, unverified provenance and classified mapping losses
+  with bounded location samples. Ambiguous terminology is never chosen
+  automatically; ignored schema hints do not run standard validation. Content
+  license remains unknown. Previewing saves or adopts nothing and grants no
+  model sharing; unsupported structure and exceeded limits are reported explicitly.
 
 - The translation editor can read source observations from its References panel.
   Separate on-demand pages retain complete blocks, fact origins, inference

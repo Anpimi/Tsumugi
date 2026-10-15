@@ -1,69 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useQuery, type QueryKey } from "@tanstack/react-query";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure } from "./CommandFailure";
 import type { SessionRequest } from "./executionCommands";
 import { resourceCommands, type TmxExchangeRow, type TmxFilePreview, type TmxProvenance } from "./resourceCommands";
-import { useSessionReads } from "./SessionReadProvider";
-import type { SessionReads } from "./sessionReads";
+import { useExchangePreview } from "./useExchangePreview";
 
 const PAGE_SIZE = 20;
-let nextAttemptId = 0;
-
-interface Attempt { id: number; scope: string }
-
-function useInvalidated(reads: SessionReads, queryKey: QueryKey) {
-  const identity = JSON.stringify(queryKey);
-  const subscribe = useCallback((notify: () => void) => reads.client.getQueryCache().subscribe(event => {
-    if (JSON.stringify(event.query.queryKey) === identity) notify();
-  }), [reads, identity]);
-  const snapshot = useCallback(() => reads.client.getQueryState(queryKey)?.isInvalidated ?? true, [reads, queryKey]);
-  return useSyncExternalStore(subscribe, snapshot, snapshot);
-}
 
 /** A read-only, explicitly selected TMX report. No file path or report copy is kept in component state. */
 export function TmxExchangePreviewPanel({ context, sourceLocale, locale, enabled }: {
   context: SessionRequest; sourceLocale: string; locale: string; enabled: boolean;
 }) {
-  const { t } = useTranslation(), reads = useSessionReads();
-  const scope = JSON.stringify([context.projectId, context.sessionToken, sourceLocale, locale]);
-  const current = useRef({ scope, enabled });
-  const mounted = useRef(false);
-  const currentAttempt = useRef<Attempt | null>(null);
-  const [attempt, setAttempt] = useState<Attempt | null>(null);
+  const { t } = useTranslation();
   const [pageIndex, setPageIndex] = useState(0);
   const [lossPageIndex, setLossPageIndex] = useState(0);
-  const [pickerBusy, setPickerBusy] = useState(false);
-  const attemptKey = (value: Attempt) => reads.key(["tmx-exchange-preview", value.scope, value.id]);
-  const queryKey = useMemo(() => reads.key(attempt
-    ? ["tmx-exchange-preview", attempt.scope, attempt.id]
-    : ["tmx-exchange-preview", "idle"]), [reads, attempt]);
-
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useLayoutEffect(() => {
-    current.current = { scope, enabled };
-    setAttempt(null);
-    setPageIndex(0);
-    setLossPageIndex(0);
-    return () => {
-      const last = currentAttempt.current;
-      if (last) void reads.client.cancelQueries({ queryKey: attemptKey(last), exact: true });
-    };
-  }, [reads, scope, enabled]);
-  useEffect(() => reads.subscribeChanges(scopes => {
-    if (!scopes.some(value => value === "project" || value === "source" || value === "resources")) return;
-    const last = currentAttempt.current;
-    if (last) void reads.client.cancelQueries({ queryKey: attemptKey(last), exact: true });
-    setAttempt(null);
-  }), [reads]);
-  const query = useQuery<TmxFilePreview | null>({ queryKey, enabled: false, retry: false,
-    refetchOnMount: false, refetchOnWindowFocus: false, refetchOnReconnect: false,
-    meta: { scopes: ["source", "resources"] },
-    queryFn: () => { throw new Error("TMX preview requires an explicit file selection"); },
-  });
-  const visible = enabled && attempt?.scope === scope && !reads.retired;
-  const invalidated = useInvalidated(reads, queryKey);
-  const result = visible && query.isSuccess && !query.isFetching && !invalidated ? query.data : undefined;
+  const selection = useExchangePreview<TmxFilePreview>({ format: "tmx", context, sourceLocale, locale, enabled,
+    preview: resourceCommands.previewTmx });
+  const { choose: chooseFile, cancelWait, pickerBusy, canChoose, visible, invalidated, result, isFetching, isSuccess, error } = selection;
   const report = result?.preview;
   const pageCount = report ? Math.max(1, Math.ceil(report.rows.length / PAGE_SIZE)) : 1;
   const page = Math.min(pageIndex, pageCount - 1);
@@ -75,37 +28,9 @@ export function TmxExchangePreviewPanel({ context, sourceLocale, locale, enabled
   const losses = report?.losses.slice(lossFirst, lossFirst + PAGE_SIZE) ?? [];
 
   function choose() {
-    if (!enabled || !sourceLocale || !locale || reads.retired || pickerBusy) return;
-    const next = { id: ++nextAttemptId, scope };
-    const request = { ...context, locale };
-    let commandStarted = false;
-    currentAttempt.current = next;
-    setAttempt(next); setPageIndex(0); setLossPageIndex(0); setPickerBusy(true);
-    void reads.client.fetchQuery<TmxFilePreview | null>({
-      queryKey: attemptKey(next), meta: { scopes: ["source", "resources"] }, retry: false, staleTime: Infinity,
-      queryFn: async ({ signal }) => {
-        commandStarted = true;
-        try {
-          if (signal.aborted || reads.retired || current.current.scope !== next.scope || !current.current.enabled) throw new Error("TMX preview cancelled");
-          const selected = await resourceCommands.previewTmx(request);
-          if (signal.aborted || reads.retired || current.current.scope !== next.scope || !current.current.enabled) throw new Error("TMX preview cancelled");
-          if (selected && (selected.projectId !== request.projectId || selected.preview.sourceLocale !== sourceLocale
-            || selected.preview.targetLocale !== locale || !selected.preview.digest || !selected.preview.profile)) {
-            throw new Error("TMX preview does not match the current project and languages");
-          }
-          return selected;
-        } finally {
-          if (mounted.current && currentAttempt.current === next) setPickerBusy(false);
-        }
-      },
-    }).catch(() => { /* The Query owns the visible error; cancellation only hides the old wait. */ })
-      .finally(() => { if (!commandStarted && mounted.current && currentAttempt.current === next) setPickerBusy(false); });
-  }
-
-  function cancelWait() {
-    if (!attempt) return;
-    void reads.client.cancelQueries({ queryKey: attemptKey(attempt), exact: true });
-    setAttempt(null);
+    setPageIndex(0);
+    setLossPageIndex(0);
+    chooseFile();
   }
 
   return <section aria-labelledby="tmx-exchange-title">
@@ -113,15 +38,15 @@ export function TmxExchangePreviewPanel({ context, sourceLocale, locale, enabled
     <p>{t("tmxExchange.help")}</p>
     <p>{t("tmxExchange.limits")}</p>
     <div className="execution-actions">
-      <button className="secondary-button" disabled={!enabled || !sourceLocale || !locale || pickerBusy || reads.retired} onClick={choose}>{t("tmxExchange.choose")}</button>
-      {visible && query.isFetching ? <button className="text-button" onClick={cancelWait}>{t("tmxExchange.cancelWait")}</button> : null}
+      <button className="secondary-button" disabled={!canChoose} onClick={choose}>{t("tmxExchange.choose")}</button>
+      {isFetching ? <button className="text-button" onClick={cancelWait}>{t("tmxExchange.cancelWait")}</button> : null}
     </div>
     {!enabled ? <p role="status">{t("tmxExchange.unavailable")}</p> : null}
     {enabled && pickerBusy && !visible ? <p role="status">{t("tmxExchange.waitingForPicker")}</p> : null}
-    {visible && query.isFetching ? <p role="status">{t("tmxExchange.loading")}</p> : null}
-    {visible && query.isSuccess && invalidated ? <p role="status">{t("tmxExchange.stale")}</p> : null}
-    {visible && query.isError ? <div role="alert"><p>{t("tmxExchange.readFailed")}</p><CommandFailureDetails failure={commandFailure(query.error)} /></div> : null}
-    {visible && query.isSuccess && result === null ? <p role="status">{t("tmxExchange.cancelled")}</p> : null}
+    {isFetching ? <p role="status">{t("tmxExchange.loading")}</p> : null}
+    {isSuccess && invalidated ? <p role="status">{t("tmxExchange.stale")}</p> : null}
+    {error ? <div role="alert"><p>{t("tmxExchange.readFailed")}</p><CommandFailureDetails failure={commandFailure(error)} /></div> : null}
+    {isSuccess && !invalidated && result === null ? <p role="status">{t("tmxExchange.cancelled")}</p> : null}
     {report && result ? <>
       <p role="status">{t("tmxExchange.readOnly")}</p>
       <dl>

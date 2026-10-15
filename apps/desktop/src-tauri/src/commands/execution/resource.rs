@@ -4,13 +4,13 @@ use super::*;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::{
     CaptureContext, ContextCapture, ContextRevision, GlossaryCapture, ImpactPage, ResourceDecision,
-    ResourceDecisionResult, ResourcePreview, SaveContext, SaveTerm, TermResolution, TermRevision,
-    TmSuggestion, TmxExchangePreview,
+    ResourceDecisionResult, ResourcePreview, SaveContext, SaveTerm, TbxExchangePreview,
+    TermResolution, TermRevision, TmSuggestion, TmxExchangePreview,
 };
 
 #[cfg(test)]
-#[path = "resource_tmx_tests.rs"]
-mod tmx_tests;
+#[path = "resource_exchange_tests.rs"]
+mod exchange_tests;
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -24,6 +24,20 @@ pub struct TmxFilePreview {
     pub project_id: ExecutionId,
     pub file_name: String,
     pub preview: TmxExchangePreview,
+}
+
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TbxPreviewRequest { locale: String }
+);
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TbxFilePreview {
+    pub project_id: ExecutionId,
+    pub file_name: String,
+    pub preview: TbxExchangePreview,
 }
 
 request!(
@@ -102,14 +116,17 @@ fn resource_error(error: ExecutionError, stage: CommandStage) -> CommandError {
     mapped
 }
 
-fn tmx_scope(
+fn exchange_scope(
     sessions: &mut SessionManager,
-    request: &TmxPreviewRequest,
+    session_token: &str,
+    project_id: ExecutionId,
+    locale: &str,
+    scope_reason: &'static str,
 ) -> Result<(String, String), CommandError> {
     let active = authorized(
         sessions,
-        &request.session_token,
-        request.project_id,
+        session_token,
+        project_id,
         CommandStage::ExecutionRead,
     )?;
     let metadata = active
@@ -119,25 +136,51 @@ fn tmx_scope(
     if !metadata
         .target_locales()
         .iter()
-        .any(|locale| locale.as_str() == request.locale)
+        .any(|target| target.as_str() == locale)
     {
         return Err(resource_error(
-            ExecutionError::new(ErrorCode::DependencyConflict, "tmx-project-scope"),
+            ExecutionError::new(ErrorCode::DependencyConflict, scope_reason),
             CommandStage::ExecutionRead,
         ));
     }
     Ok((
         metadata.source_locale().as_str().to_owned(),
-        request.locale.clone(),
+        locale.to_owned(),
     ))
 }
 
-fn read_tmx_preview(
+fn tmx_scope(
+    sessions: &mut SessionManager,
+    request: &TmxPreviewRequest,
+) -> Result<(String, String), CommandError> {
+    exchange_scope(
+        sessions,
+        &request.session_token,
+        request.project_id,
+        &request.locale,
+        "tmx-project-scope",
+    )
+}
+fn tbx_scope(
+    sessions: &mut SessionManager,
+    request: &TbxPreviewRequest,
+) -> Result<(String, String), CommandError> {
+    exchange_scope(
+        sessions,
+        &request.session_token,
+        request.project_id,
+        &request.locale,
+        "tbx-project-scope",
+    )
+}
+
+fn read_exchange_preview<T>(
     path: &std::path::Path,
     scope: &(String, String),
-) -> Result<(String, TmxExchangePreview), CommandError> {
-    let bytes = source::capture::read_tmx_file(path)
-        .map_err(|error| resource_error(error, CommandStage::ExecutionRead))?;
+    read: fn(&std::path::Path) -> Result<Vec<u8>, ExecutionError>,
+    preview: fn(&[u8], &str, &str) -> Result<T, ExecutionError>,
+) -> Result<(String, T), CommandError> {
+    let bytes = read(path).map_err(|error| resource_error(error, CommandStage::ExecutionRead))?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -147,44 +190,143 @@ fn read_tmx_preview(
                 CommandStage::ExecutionRead,
             )
         })?;
-    let preview = tsumugi_core::preview_tmx_exchange(&bytes, &scope.0, &scope.1)
+    let report = preview(&bytes, &scope.0, &scope.1)
         .map_err(|error| resource_error(error, CommandStage::ExecutionRead))?;
-    Ok((name.to_owned(), preview))
+    Ok((name.to_owned(), report))
+}
+fn read_tmx_preview(
+    path: &std::path::Path,
+    scope: &(String, String),
+) -> Result<(String, TmxExchangePreview), CommandError> {
+    read_exchange_preview(
+        path,
+        scope,
+        source::capture::read_tmx_file,
+        tsumugi_core::preview_tmx_exchange,
+    )
+}
+fn read_tbx_preview(
+    path: &std::path::Path,
+    scope: &(String, String),
+) -> Result<(String, TbxExchangePreview), CommandError> {
+    read_exchange_preview(
+        path,
+        scope,
+        source::capture::read_tbx_file,
+        tsumugi_core::preview_tbx_exchange,
+    )
 }
 
-fn finish_tmx_preview(
-    sessions: &mut SessionManager,
-    request: TmxPreviewRequest,
+fn finish_exchange_preview<T: serde::Serialize>(
+    current_scope: (String, String),
     initial_scope: (String, String),
-    result: Result<Option<(String, TmxExchangePreview)>, CommandError>,
-) -> Result<Option<TmxFilePreview>, CommandError> {
-    if tmx_scope(sessions, &request)? != initial_scope {
+    result: Result<Option<T>, CommandError>,
+    max_bytes: usize,
+    scope_reason: &'static str,
+    report_reason: &'static str,
+) -> Result<Option<T>, CommandError> {
+    if current_scope != initial_scope {
         return Err(resource_error(
-            ExecutionError::new(ErrorCode::DependencyConflict, "tmx-project-scope"),
+            ExecutionError::new(ErrorCode::DependencyConflict, scope_reason),
             CommandStage::ExecutionRead,
         ));
     }
     result?
-        .map(|(file_name, preview)| {
-            let view = TmxFilePreview {
-                project_id: request.project_id,
-                file_name,
-                preview,
-            };
-            // Core bounds the report first; include the desktop envelope in the
-            // final wire budget rather than assuming a fixed filename overhead.
+        .map(|view| {
+            // The final wire bound includes the original selected filename and project envelope.
             let encoded = serde_json::to_vec(&view).map_err(|_| {
                 CommandError::simple(CommandErrorCode::OutputInvalid, CommandStage::ExecutionRead)
             })?;
-            if encoded.len() > tsumugi_core::MAX_TMX_REPORT_BYTES {
+            if encoded.len() > max_bytes {
                 return Err(resource_error(
-                    ExecutionError::new(ErrorCode::LimitExceeded, "tmx-report-budget"),
+                    ExecutionError::new(ErrorCode::LimitExceeded, report_reason),
                     CommandStage::ExecutionRead,
                 ));
             }
             Ok(view)
         })
         .transpose()
+}
+fn finish_tmx_preview(
+    sessions: &mut SessionManager,
+    request: TmxPreviewRequest,
+    initial_scope: (String, String),
+    result: Result<Option<(String, TmxExchangePreview)>, CommandError>,
+) -> Result<Option<TmxFilePreview>, CommandError> {
+    let current_scope = tmx_scope(sessions, &request)?;
+    let result = result.map(|value| {
+        value.map(|(file_name, preview)| TmxFilePreview {
+            project_id: request.project_id,
+            file_name,
+            preview,
+        })
+    });
+    finish_exchange_preview(
+        current_scope,
+        initial_scope,
+        result,
+        tsumugi_core::MAX_TMX_REPORT_BYTES,
+        "tmx-project-scope",
+        "tmx-report-budget",
+    )
+}
+fn finish_tbx_preview(
+    sessions: &mut SessionManager,
+    request: TbxPreviewRequest,
+    initial_scope: (String, String),
+    result: Result<Option<(String, TbxExchangePreview)>, CommandError>,
+) -> Result<Option<TbxFilePreview>, CommandError> {
+    let current_scope = tbx_scope(sessions, &request)?;
+    let result = result.map(|value| {
+        value.map(|(file_name, preview)| TbxFilePreview {
+            project_id: request.project_id,
+            file_name,
+            preview,
+        })
+    });
+    finish_exchange_preview(
+        current_scope,
+        initial_scope,
+        result,
+        tsumugi_core::MAX_TBX_REPORT_BYTES,
+        "tbx-project-scope",
+        "tbx-report-budget",
+    )
+}
+
+async fn pick_exchange_file<R: tauri::Runtime, T: Send + 'static>(
+    app: tauri::AppHandle<R>,
+    state: &AppState,
+    filter: &'static str,
+    extension: &'static str,
+    scope: (String, String),
+    read: fn(&std::path::Path, &(String, String)) -> Result<(String, T), CommandError>,
+) -> Result<Option<(String, T)>, CommandError> {
+    let selected = state
+        .dialogs
+        .run(CommandStage::ExecutionRead, move || {
+            Ok(app
+                .dialog()
+                .file()
+                .add_filter(filter, &[extension])
+                .blocking_pick_file())
+        })
+        .await?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            let path = selected.into_path().map_err(|_| {
+                CommandError::simple(
+                    CommandErrorCode::PermissionDenied,
+                    CommandStage::ExecutionRead,
+                )
+            })?;
+            read(&path, &scope).map(Some)
+        })
+        .await
 }
 
 /// A file-selection read only. No capture, adoption, execution host or grant is created.
@@ -203,40 +345,40 @@ pub async fn preview_tmx_exchange<R: tauri::Runtime>(
             move |sessions| tmx_scope(sessions, &initial),
         )
         .await?;
-    let captured_scope = scope.clone();
-    let result = async {
-        let selected = state
-            .dialogs
-            .run(CommandStage::ExecutionRead, move || {
-                Ok(app
-                    .dialog()
-                    .file()
-                    .add_filter("TMX", &["tmx"])
-                    .blocking_pick_file())
-            })
-            .await?;
-        let Some(selected) = selected else {
-            return Ok(None);
-        };
-        state
-            .io
-            .run(CommandStage::ExecutionRead, move || {
-                let path = selected.into_path().map_err(|_| {
-                    CommandError::simple(
-                        CommandErrorCode::PermissionDenied,
-                        CommandStage::ExecutionRead,
-                    )
-                })?;
-                read_tmx_preview(&path, &captured_scope).map(Some)
-            })
-            .await
-    }
-    .await;
+    let result =
+        pick_exchange_file(app, &state, "TMX", "tmx", scope.clone(), read_tmx_preview).await;
     lease
         .run(
             "preview_tmx_exchange.finish",
             CommandStage::ExecutionRead,
             move |sessions| finish_tmx_preview(sessions, request, scope, result),
+        )
+        .await
+}
+
+/// Read a selected terminology exchange without modifying project resource facts.
+#[tauri::command]
+pub async fn preview_tbx_exchange<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    request: TbxPreviewRequest,
+) -> Result<Option<TbxFilePreview>, CommandError> {
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let scope = lease
+        .run(
+            "preview_tbx_exchange.begin",
+            CommandStage::ExecutionRead,
+            move |sessions| tbx_scope(sessions, &initial),
+        )
+        .await?;
+    let result =
+        pick_exchange_file(app, &state, "TBX", "tbx", scope.clone(), read_tbx_preview).await;
+    lease
+        .run(
+            "preview_tbx_exchange.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| finish_tbx_preview(sessions, request, scope, result),
         )
         .await
 }
@@ -694,6 +836,7 @@ mod contracts {
         }
         round_trip!("requests", "session", SessionRequest);
         round_trip!("requests", "tmxPreview", TmxPreviewRequest);
+        round_trip!("requests", "tbxPreview", TbxPreviewRequest);
         round_trip!("requests", "captures", CaptureListRequest);
         round_trip!("requests", "capture", CaptureRequest);
         round_trip!("requests", "term", TermRequest);
@@ -707,6 +850,7 @@ mod contracts {
         round_trip!("requests", "impacts", ImpactRequest);
         round_trip!("responses", "captures", Vec<GlossaryCapture>);
         round_trip!("responses", "tmxPreview", Option<TmxFilePreview>);
+        round_trip!("responses", "tbxPreview", Option<TbxFilePreview>);
         round_trip!("responses", "capture", Option<GlossaryCapture>);
         round_trip!("responses", "preview", ResourcePreview);
         round_trip!("responses", "decision", ResourceDecisionResult);
@@ -729,6 +873,17 @@ mod contracts {
         let mut unknown = fixture["responses"]["tmxPreview"].clone();
         unknown["preview"]["license"] = serde_json::json!("approved");
         assert!(serde_json::from_value::<Option<TmxFilePreview>>(unknown).is_err());
+        assert!(
+            serde_json::from_value::<Option<TbxFilePreview>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        let mut unknown = fixture["requests"]["tbxPreview"].clone();
+        unknown["schemaHref"] = serde_json::json!("untrusted-schema.xsd");
+        assert!(serde_json::from_value::<TbxPreviewRequest>(unknown).is_err());
+        let mut unknown = fixture["responses"]["tbxPreview"].clone();
+        unknown["preview"]["rows"][0]["status"] = serde_json::json!("adopted");
+        assert!(serde_json::from_value::<Option<TbxFilePreview>>(unknown).is_err());
         assert!(
             serde_json::from_value::<Option<GlossaryCapture>>(serde_json::Value::Null)
                 .unwrap()

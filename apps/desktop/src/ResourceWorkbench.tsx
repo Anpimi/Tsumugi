@@ -8,6 +8,7 @@ import { executionContext } from "./executionCommands";
 import { sourceCommands, type ContentPage, type ContentRow, type ContentScope } from "./sourceCommands";
 import { resourceCommands as commands, type GlossaryCapture, type ImpactPage, type ResourcePreview, type TermResolution, type TermRevision, type TmSuggestion } from "./resourceCommands";
 import { useResourceDraftSession } from "./ResourceDraftSession";
+import { TbxExchangePreviewPanel } from "./TbxExchangePreviewPanel";
 import { TmxExchangePreviewPanel } from "./TmxExchangePreviewPanel";
 import { useSessionInfiniteQuery, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useWorkbenchCommands, type ResourceTermCommandPayload, type ResourceContextCommandPayload,
@@ -361,6 +362,8 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
             </> : <p>{t("resource.noPreview")}</p>}
             {pendingDecision ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button></div> : null}
             <TmxExchangePreviewPanel context={session} sourceLocale={project.metadata.sourceLocale} locale={locale}
+              enabled={open && tab === "updates" && targetAvailable && !disabled} />
+            <TbxExchangePreviewPanel context={session} sourceLocale={project.metadata.sourceLocale} locale={locale}
               enabled={open && tab === "updates" && targetAvailable && !disabled} />
           </section> : null}
           {tab === "context" && locale ? <section><h3>{t("resource.contextAndMemory")}</h3><p>{t("resource.chooseUnit")}</p>{sourcePage ? <><div className="source-table-scroll"><ul>{sourceRows.map(row => <li key={row.occurrence.ordinal}><button className="text-button" disabled={busy || !!pending || !targetAvailable || !row.unitId || !sourceReady()} onClick={() => void run(current => selectUnit(row, current))}>{row.occurrence.key}</button></li>)}</ul></div><button className="secondary-button" disabled={busy || !targetAvailable || sourcePage.nextOrdinal === null} onClick={() => sourcePageAt(sourcePage.nextOrdinal!)}>{t("execution.nextPage")}</button></> : null}

@@ -751,6 +751,11 @@ pub(crate) fn read_tmx_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
 }
 
 #[cfg(any(windows, target_os = "macos"))]
+pub(crate) fn read_tbx_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
+    read_resource_input(path, "tbx", tsumugi_core::MAX_TBX_INPUT_BYTES)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
 fn read_resource_input(
     path: &Path,
     extension: &str,
@@ -797,6 +802,11 @@ pub(crate) fn read_resource_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
 
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn read_tmx_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
+    Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub(crate) fn read_tbx_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
     Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
 }
 

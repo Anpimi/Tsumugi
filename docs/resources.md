@@ -70,6 +70,59 @@ elements, depth 16, 32 attributes per element, 16 KiB decoded text per segment,
 and 1 MiB for the complete desktop response. Exceeded limits never return a
 silently truncated successful report. Use files only when you have permission.
 
+## TBX terminology preview
+
+In **Resource updates**, choose **Choose TBX file to preview** for a separate
+read-only terminology report. The `tbx-basic-dca-subset-preview` profile recognizes
+a subset of the fields described by [TBX-Basic V4](https://www.terminorgs.net/downloads/TBX-Basic-V4.pdf).
+It does not establish the file's dialect version or validate complete TBX Core,
+language or Schematron compliance. Other dialects and older `martif` documents
+are unavailable.
+
+Select UTF-8 `.tbx` data with the exact default namespace
+`urn:iso:std:iso:30042:ed-2`, `type="TBX-Basic"`, `style="dca"`, and an explicit
+document language. The supported hierarchy is a header with file description,
+then a text/body containing concepts, language sections and term sections. A
+single trailing `back` section is retained only as unmapped metadata. The
+document language describes the file; it never supplies a missing language for
+a term. Only leading `xml-model` processing instructions are accepted as ignored
+schema hints. No hinted file or network address is opened, and no schema is
+executed. DTDs, custom/external entities, XInclude, other processing instructions
+and unsupported namespaces are refused.
+
+For each concept, inspect all candidates in the exact project source and selected
+target languages. Multiple language sections or terms remain ambiguous; the
+preview does not choose a preferred term, combine all possible pairs, create
+aliases or set protected forms. A term's reported usage status and direct source
+annotation remain unverified file content. Recognized usage values are
+`preferred`, `admitted`, and `deprecated`; all readable raw values remain visible,
+and every second or later usage field is reported as a duplicate. A context or definition source is not
+presented as the term's source. Repeated concept/term identifiers and repeated
+text retain independent file positions and cannot merge project identities.
+
+Whole decoded plain-text terms remain available for inspection, including empty
+or XML-whitespace-only terms that are excluded from mapping. Inline markup is
+not flattened. Markup in a mapped usage/source field and unknown nested term
+structure also exclude the selected term. Missing, ambiguous or structurally
+unsupported terms have explicit reasons. Extra languages, unmapped/unknown data categories, duplicate or unknown
+usage statuses, inline content and ignored schema hints have complete classified
+counts, with at most 16 original-position samples across the report. Unlisted
+locations remain counted. Source permission, quality and content license remain
+unknown; a possible mapping is not an adopted or human-approved project term.
+
+Concepts and loss categories each use local 20-item pages. Candidate terms are
+inspected on demand in bounded pages. Limits are 128 KiB input, 512 concepts,
+1,024 language sections, 1,024 term sections, 8,192 elements, depth 16,
+32 attributes per element, 16 KiB decoded text per term and 1 MiB for the complete
+desktop response. Exceeded limits reject the whole file. Cancellation, failure
+and relevant project/language/source changes follow the TMX preview's local
+recovery behavior and preserve existing resource drafts.
+
+Previewing does not save a capture, import a termbase, adopt terms, create
+translations, grant approval or share anything with a model. The existing local
+JSON glossary adoption and project translation memory retain their separate
+documented behavior.
+
 ## Context, suggestions, and affected work
 
 Choose a source unit in Context and memory to save a manual context note and reason. **Fix current input** records the current source facts, manual note, and applicable adopted terms within a 16 KiB budget; it lists included and omitted items. No context is sent to a model by this action. Translation memory suggestions come from this project's saved translation revisions. Exact source-text matches rank before similar text; each suggestion shows its source and whether it is current. **Use as draft** opens the translation editor with the suggested text for review and saving. A suggestion does not establish content identity, select a translation, or grant human approval. Older translations did not record context usage, so suggestions and project-wide impact are based on source-text matches alone.

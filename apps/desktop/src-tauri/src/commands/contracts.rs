@@ -214,6 +214,7 @@ struct TranslationResponses {
 struct ResourceRequests {
     session: execution::SessionRequest,
     tmx_preview: execution::resource::TmxPreviewRequest,
+    tbx_preview: execution::resource::TbxPreviewRequest,
     captures: execution::resource::CaptureListRequest,
     capture: execution::resource::CaptureRequest,
     term: execution::resource::TermRequest,
@@ -231,6 +232,7 @@ struct ResourceRequests {
 #[allow(dead_code)]
 struct ResourceResponses {
     tmx_preview: Option<execution::resource::TmxFilePreview>,
+    tbx_preview: Option<execution::resource::TbxFilePreview>,
     captures: Vec<tsumugi_core::GlossaryCapture>,
     capture: Option<tsumugi_core::GlossaryCapture>,
     preview: tsumugi_core::ResourcePreview,

@@ -15,7 +15,7 @@ const row = (ordinal: number) => ({ ordinal, tuid: `origin-${ordinal}`, sourceTe
   status: "eligible" as const, reasons: [], effectiveSourceLocale: "en", tuProvenance: provenance,
   sourceProvenance: provenance, targetProvenance: provenance });
 const report = (rows = [row(1)]): TmxFilePreview => ({ projectId: context.projectId, fileName: "memory.tmx",
-  preview: { profile: "TMX 1.4 restricted plain text", digest: "a".repeat(64), byteLen: 123,
+  preview: { profile: "tmx-1.4b-plain-text-preview", digest: "a".repeat(64), byteLen: 123,
     sourceLocale: "en", targetLocale: "zh-CN", license: "unknown", header: provenance, rows,
     losses: [{ kind: "extra-language", field: "fr", count: 18,
       samples: [{ byteOffset: 24, ordinal: 1, path: "/tmx/body/tu[1]/tuv[3]" }], unlisted: 17 }] } });
@@ -151,4 +151,18 @@ it("hides an exact Query record invalidated without a semantic bridge event", as
   expect(preview).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Choose TMX file to preview" }));
   await waitFor(() => expect(preview).toHaveBeenCalledTimes(2));
+});
+
+it("rejects an unexpected TMX profile without reopening the file chooser", async () => {
+  const incompatible = report();
+  preview.mockResolvedValueOnce({ ...incompatible, preview: { ...incompatible.preview, profile: "other-format" } });
+  const user = userEvent.setup();
+  render(<Shell />);
+  await user.click(screen.getByRole("button", { name: "Choose TMX file to preview" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("The TMX file could not be previewed");
+  expect(screen.queryByText("memory.tmx")).not.toBeInTheDocument();
+  expect(preview).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Choose TMX file to preview" }));
+  expect(await screen.findByText("memory.tmx")).toBeInTheDocument();
+  expect(preview).toHaveBeenCalledTimes(2);
 });

@@ -1,27 +1,31 @@
 //! Bounded, read-only preview of a selected plain-text subset of TMX 1.4b.
 //! A mapped row is evidence for comparison, never a saved translation or approval.
 
-use crate::{
-    Locale,
-    execution::{ErrorCode, ExecutionError, codec},
+use super::exchange_xml::{
+    self, LossBook, TagBudget, XmlPolicy, attributes, canonical_locale, node_offset, node_path,
+    text_is_whitespace, xml_s_only,
 };
-use roxmltree::{Document, Error as XmlError, Node, ParsingOptions};
+use crate::execution::{ErrorCode, ExecutionError, codec};
+use roxmltree::{Document, Node};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MAX_TMX_INPUT_BYTES: usize = 128 * 1024;
-pub const MAX_TMX_REPORT_BYTES: usize = 1024 * 1024;
+pub const MAX_TMX_INPUT_BYTES: usize = exchange_xml::MAX_INPUT_BYTES;
+pub const MAX_TMX_REPORT_BYTES: usize = exchange_xml::MAX_REPORT_BYTES;
 const MAX_TUS: usize = 512;
-const MAX_XML_NODES: u32 = 65_536;
 const TMX_NS: &str = "http://www.lisa.org/tmx14";
-const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 const MAX_TUVS: usize = 1024;
-const MAX_DEPTH: usize = 16;
-const MAX_ELEMENTS: usize = 8192;
-const MAX_ATTRIBUTES: usize = 32;
-const MAX_SEG_BYTES: usize = 16 * 1024;
-const MAX_PATH_BYTES: usize = 512;
-const MAX_LOSS_SAMPLES: usize = 16;
+const MAX_SEG_BYTES: usize = exchange_xml::MAX_SEGMENT_BYTES;
+#[cfg(test)]
+const MAX_LOSS_SAMPLES: usize = exchange_xml::MAX_LOSS_SAMPLES;
+#[cfg(test)]
+const MAX_PATH_BYTES: usize = exchange_xml::MAX_PATH_BYTES;
+#[cfg(test)]
+const MAX_ELEMENTS: usize = exchange_xml::MAX_ELEMENTS;
+#[cfg(test)]
+const MAX_DEPTH: usize = exchange_xml::MAX_DEPTH;
+#[cfg(test)]
+const MAX_ATTRIBUTES: usize = exchange_xml::MAX_ATTRIBUTES;
 const PROFILE: &str = "tmx-1.4b-plain-text-preview";
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -145,188 +149,6 @@ fn invalid(stage: &'static str) -> ExecutionError {
 fn limit(stage: &'static str) -> ExecutionError {
     ExecutionError::new(ErrorCode::LimitExceeded, stage)
 }
-fn canonical_locale(value: &str) -> Option<String> {
-    Locale::parse(value).ok().map(Locale::into_string)
-}
-fn attributes(node: Node<'_, '_>) -> Result<BTreeMap<String, String>, ExecutionError> {
-    let mut values = BTreeMap::new();
-    for attr in node.attributes() {
-        let key = match attr.namespace() {
-            None => attr.name().to_owned(),
-            Some(namespace) if namespace == XML_NS && attr.name() == "lang" => {
-                "xml:lang".to_owned()
-            }
-            _ => return Err(invalid("tmx-namespace")),
-        };
-        if values.insert(key, attr.value().to_owned()).is_some() {
-            return Err(invalid("tmx-duplicate-attribute"));
-        }
-    }
-    Ok(values)
-}
-fn node_offset(node: Node<'_, '_>, bom_bytes: u32) -> Result<u32, ExecutionError> {
-    u32::try_from(node.range().start)
-        .ok()
-        .and_then(|offset| offset.checked_add(bom_bytes))
-        .ok_or_else(|| limit("tmx-offset"))
-}
-fn node_path(node: Node<'_, '_>) -> String {
-    let ancestors: Vec<_> = node.ancestors().filter(|n| n.is_element()).collect();
-    let mut path = String::new();
-    for ancestor in ancestors.iter().rev() {
-        path.push('/');
-        path.push_str(ancestor.tag_name().name());
-    }
-    if path.len() <= MAX_PATH_BYTES {
-        return path;
-    }
-    // A long legal XML name must not make an otherwise bounded preview fail.
-    // The positional form still identifies the exact element in the document.
-    let mut positional = String::new();
-    for ancestor in ancestors.iter().rev() {
-        let sibling_index = ancestor
-            .prev_siblings()
-            .filter(|sibling| sibling.is_element())
-            .count();
-        positional.push_str(&format!("/*[{sibling_index}]"));
-    }
-    positional
-}
-fn valid_xml_declaration(xml: &str) -> Result<(), ExecutionError> {
-    if !xml.starts_with("<?xml") {
-        return Ok(());
-    }
-    if !xml.starts_with("<?xml ") {
-        return Err(invalid("tmx-declaration"));
-    }
-    let end = xml.find("?>").ok_or_else(|| invalid("tmx-declaration"))?;
-    let body = &xml[5..end];
-    // XML declaration pseudo-attributes have literal ASCII values. A reference
-    // is not part of VersionNum, EncName or the yes/no standalone production.
-    if body.contains('&') {
-        return Err(invalid("tmx-declaration"));
-    }
-    let wrapper = format!("<declaration{body}/>");
-    let options = ParsingOptions {
-        allow_dtd: false,
-        nodes_limit: 64,
-        entity_resolver: None,
-    };
-    let parsed =
-        Document::parse_with_options(&wrapper, options).map_err(|_| invalid("tmx-declaration"))?;
-    let element = parsed.root_element();
-    if element.namespaces().len() != 0 {
-        return Err(invalid("tmx-declaration"));
-    }
-    let attrs: Vec<_> = element.attributes().collect();
-    if attrs.is_empty() || attrs.len() > 3 || attrs.iter().any(|attr| attr.namespace().is_some()) {
-        return Err(invalid("tmx-declaration"));
-    }
-    if attrs[0].name() != "version" || attrs[0].value() != "1.0" {
-        return Err(invalid("tmx-xml-version"));
-    }
-    let mut index = 1;
-    if attrs
-        .get(index)
-        .is_some_and(|attr| attr.name() == "encoding")
-    {
-        if !attrs[index].value().eq_ignore_ascii_case("utf-8") {
-            return Err(invalid("tmx-encoding"));
-        }
-        index += 1;
-    }
-    if attrs
-        .get(index)
-        .is_some_and(|attr| attr.name() == "standalone")
-    {
-        if !matches!(attrs[index].value(), "yes" | "no") {
-            return Err(invalid("tmx-standalone"));
-        }
-        index += 1;
-    }
-    if index != attrs.len() {
-        return Err(invalid("tmx-declaration"));
-    }
-    Ok(())
-}
-fn validate_xml_document(doc: &Document<'_>, xml: &str) -> Result<(), ExecutionError> {
-    let root = doc.root_element();
-    let namespace = root.tag_name().namespace();
-    if namespace.is_some() && namespace != Some(TMX_NS) {
-        return Err(invalid("tmx-namespace"));
-    }
-    // roxmltree rejects nonempty DTDs when allow_dtd=false, but accepts an
-    // empty declaration. Use its source ranges to distinguish a real prolog
-    // DOCTYPE from the same literal text inside a preserved comment.
-    for (offset, _) in xml[..root.range().start].match_indices("<!DOCTYPE") {
-        let in_comment = doc
-            .root()
-            .children()
-            .any(|node| node.is_comment() && node.range().contains(&offset));
-        if !in_comment {
-            return Err(invalid("tmx-doctype"));
-        }
-    }
-    let mut element_count = 0;
-    let mut tu_count = 0;
-    let mut tuv_count = 0;
-    for node in doc.descendants() {
-        if node.is_pi() {
-            return Err(invalid("tmx-processing-instruction"));
-        }
-        if !node.is_element() {
-            continue;
-        }
-        element_count += 1;
-        if element_count > MAX_ELEMENTS {
-            return Err(limit("tmx-elements"));
-        }
-        let tag = node.tag_name();
-        if tag.namespace() != namespace || node.namespaces().any(|ns| ns.name().is_some()) {
-            return Err(invalid("tmx-namespace"));
-        }
-        let depth = node
-            .ancestors()
-            .filter(|ancestor| ancestor.is_element())
-            .count();
-        if depth > MAX_DEPTH {
-            return Err(limit("tmx-depth"));
-        }
-        if node.attributes().len() > MAX_ATTRIBUTES {
-            return Err(limit("tmx-attributes"));
-        }
-        for attr in node.attributes() {
-            if attr.namespace().is_some()
-                && !(attr.namespace() == Some(XML_NS) && attr.name() == "lang")
-            {
-                return Err(invalid("tmx-namespace"));
-            }
-        }
-        match tag.name() {
-            "tu" => {
-                tu_count += 1;
-                if tu_count > MAX_TUS {
-                    return Err(limit("tmx-tu"));
-                }
-            }
-            "tuv" => {
-                tuv_count += 1;
-                if tuv_count > MAX_TUVS {
-                    return Err(limit("tmx-tuv"));
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-fn text_is_whitespace(node: Node<'_, '_>) -> bool {
-    !node.is_text() || node.text().is_none_or(xml_s_only)
-}
-fn xml_s_only(text: &str) -> bool {
-    text.chars()
-        .all(|ch| matches!(ch, ' ' | '\t' | '\r' | '\n'))
-}
 fn provenance(values: &BTreeMap<String, String>) -> TmxProvenance {
     let get = |key: &str| values.get(key).cloned();
     TmxProvenance {
@@ -337,55 +159,6 @@ fn provenance(values: &BTreeMap<String, String>) -> TmxProvenance {
         creation_date: get("creationdate"),
         change_id: get("changeid"),
         change_date: get("changedate"),
-    }
-}
-
-#[derive(Default)]
-struct LossBook {
-    entries: BTreeMap<(TmxLossKind, String), TmxLossEntry>,
-    samples: usize,
-}
-impl LossBook {
-    fn add(
-        &mut self,
-        kind: TmxLossKind,
-        field: &str,
-        offset: u32,
-        ordinal: Option<u32>,
-        path: &str,
-    ) -> Result<(), ExecutionError> {
-        let entry = self
-            .entries
-            .entry((kind, field.to_owned()))
-            .or_insert_with(|| TmxLossEntry {
-                kind,
-                field: field.to_owned(),
-                count: 0,
-                samples: Vec::new(),
-                unlisted: 0,
-            });
-        entry.count = entry
-            .count
-            .checked_add(1)
-            .ok_or_else(|| limit("tmx-loss-count"))?;
-        if self.samples < MAX_LOSS_SAMPLES {
-            entry.samples.push(TmxLossSample {
-                byte_offset: offset,
-                ordinal,
-                path: path.to_owned(),
-            });
-            self.samples += 1;
-        }
-        Ok(())
-    }
-    fn finish(self) -> Vec<TmxLossEntry> {
-        self.entries
-            .into_values()
-            .map(|mut entry| {
-                entry.unlisted = entry.count - entry.samples.len() as u32;
-                entry
-            })
-            .collect()
     }
 }
 
@@ -419,7 +192,7 @@ struct Parser {
     seen_tuids: BTreeSet<String>,
     unit: Option<Unit>,
     rows: Vec<TmxExchangeRow>,
-    losses: LossBook,
+    losses: LossBook<TmxLossKind>,
 }
 impl Parser {
     fn new(bom_bytes: u32, source_locale: String, target_locale: String) -> Self {
@@ -1002,7 +775,26 @@ impl Parser {
             license: TmxLicenseStatus::Unknown,
             header: self.header,
             rows: self.rows,
-            losses: self.losses.finish(),
+            losses: self
+                .losses
+                .finish()
+                .into_iter()
+                .map(|entry| TmxLossEntry {
+                    kind: entry.kind,
+                    field: entry.field,
+                    count: entry.count,
+                    unlisted: entry.unlisted,
+                    samples: entry
+                        .samples
+                        .into_iter()
+                        .map(|sample| TmxLossSample {
+                            byte_offset: sample.byte_offset,
+                            ordinal: sample.ordinal,
+                            path: sample.path,
+                        })
+                        .collect(),
+                })
+                .collect(),
         };
         codec::encode(&preview, MAX_TMX_REPORT_BYTES)?;
         Ok(preview)
@@ -1025,26 +817,29 @@ pub fn preview_tmx_exchange(
     if source_locale == target_locale {
         return Err(invalid("tmx-locale-pair"));
     }
-    let (xml_bytes, bom_bytes) = if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
-        (&bytes[3..], 3)
-    } else {
-        (bytes, 0)
-    };
-    let xml = std::str::from_utf8(xml_bytes).map_err(|_| invalid("tmx-encoding"))?;
-    let options = ParsingOptions {
-        allow_dtd: false,
-        nodes_limit: MAX_XML_NODES,
-        entity_resolver: None,
-    };
-    let doc = Document::parse_with_options(xml, options).map_err(|error| match error {
-        XmlError::NodesLimitReached
-        | XmlError::AttributesLimitReached
-        | XmlError::NamespacesLimitReached => limit("tmx-xml-capacity"),
-        _ => invalid("tmx-xml"),
-    })?;
-    valid_xml_declaration(xml)?;
-    validate_xml_document(&doc, xml)?;
-    Parser::new(bom_bytes, source_locale, target_locale).parse(&doc, bytes)
+    static BUDGETS: &[TagBudget] = &[
+        TagBudget {
+            name: "tu",
+            max: MAX_TUS,
+            stage: "tmx-tu",
+        },
+        TagBudget {
+            name: "tuv",
+            max: MAX_TUVS,
+            stage: "tmx-tuv",
+        },
+    ];
+    let parsed = exchange_xml::parse_xml(
+        bytes,
+        &XmlPolicy {
+            prefix: "tmx",
+            namespace: TMX_NS,
+            require_namespace: false,
+            allow_xml_model_hint: false,
+            tag_budgets: BUDGETS,
+        },
+    )?;
+    Parser::new(parsed.bom_bytes, source_locale, target_locale).parse(&parsed.doc, bytes)
 }
 
 #[cfg(test)]
