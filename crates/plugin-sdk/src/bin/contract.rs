@@ -251,7 +251,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return print(parse_manifest(&read(&args[1], MAX_MANIFEST_BYTES)?)?.manifest());
     }
     if args.len() == 2 && args[0] == "validate-exchange" {
-        return print(parse_exchange(&read(&args[1], MAX_EXCHANGE_BYTES)?)?.document());
+        return print(parse_exchange(&read(&args[1], MAX_CONTENT_EXCHANGE_BYTES)?)?.document());
     }
     if args.len() == 2 && args[0] == "validate-source-extraction-input" {
         return print(&parse_source_extraction_input(&read(
@@ -294,7 +294,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.len() == 3 && args[0] == "match-source-extraction" {
         let input = parse_source_extraction_input(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
-        let exchange = parse_exchange(&read(&args[2], MAX_EXCHANGE_BYTES)?)?;
+        let exchange = parse_exchange(&read(&args[2], MAX_CONTENT_EXCHANGE_BYTES)?)?;
         let ExchangeBody::Content(content) = &exchange.document().body else {
             return Err("expected content exchange fixture".into());
         };

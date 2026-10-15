@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+SDK content has independent 4,000-block and 4 MiB encoded ceilings for coexisting
+identity and context extensions across the existing 2,000-item scope. Typed
+content receivers and Review source checks use the same bound. Unit, occurrence,
+order and relation counts, 2 MiB material/artifact/non-content-frame ceilings and
+the 4 MiB combined invocation budget are unchanged; process framing does not
+expand. This receiver capacity extension adds no field or wire version, stored
+data, dependency or migration. Content exchange remains 2/1 and project schema
+34. It stays in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch without an additional SemVer bump or distribution; both
+Unreleased changelogs are synchronized. Actual domain coverage is tested by
+each producing package and its independent checker.
+
 Core adds a read-only source-context projection using the original adopted
 source result, semantic proof and Core/operation mappings in one SQLite read
 snapshot. It preserves explicit fact origins, unsupported/empty observations

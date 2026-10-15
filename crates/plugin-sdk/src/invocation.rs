@@ -253,7 +253,16 @@ impl ValidatedExchange {
     }
 }
 pub fn parse_exchange(bytes: &[u8]) -> Result<ValidatedExchange, ContractError> {
-    parse_exchange_with_limit(bytes, MAX_EXCHANGE_BYTES)
+    let received = parse_exchange_with_limit(bytes, MAX_CONTENT_EXCHANGE_BYTES)?;
+    if bytes.len() > MAX_EXCHANGE_BYTES
+        && !matches!(&received.document().body, ExchangeBody::Content(_))
+    {
+        return Err(ContractError::at(
+            ContractErrorCode::LimitExceeded,
+            "exchange",
+        ));
+    }
+    Ok(received)
 }
 fn parse_exchange_with_limit(
     bytes: &[u8],

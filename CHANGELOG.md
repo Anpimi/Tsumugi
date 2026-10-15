@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- SDK content exchanges allow up to 4,000 domain blocks and 4 MiB encoded content,
+  so separate identity and context extensions can cover the existing 2,000-item
+  scope. Other content counts,
+  2 MiB material/artifact limits and the 4 MiB combined invocation budget remain
+  unchanged; process framing and permissions do not expand.
+
 - Core exposes a read-only source-context observation for an exact current
   project, snapshot, unit, source revision and target locale. It retains domain
   fact origins, unsupported/empty block distinctions and immediate neighbors

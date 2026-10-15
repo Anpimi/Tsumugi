@@ -320,3 +320,98 @@ fn block_applicability_and_source_reference_count_are_bounded() {
     assert!(value.get("projectId").is_none());
     assert!(value.get("confirmed").is_none());
 }
+
+#[test]
+fn full_content_capacity_keeps_identity_and_context_blocks_with_independent_limits() {
+    let mut source = exchange();
+    let template = source.units.remove(0);
+    source.order.clear();
+    source.domain_blocks.clear();
+    source.relations.clear();
+    for index in 0..2000 {
+        let mut unit = template.clone();
+        unit.id = format!("unit-{index}");
+        unit.source_revision_id = format!("revision-{index}");
+        unit.occurrences[0].id = format!("occurrence-{index}");
+        unit.occurrences[0].native_identity = None;
+        let target = ContentTarget::Occurrence {
+            id: unit.occurrences[0].id.clone(),
+        };
+        source.domain_blocks.push(DomainBlock {
+            target: target.clone(),
+            schema: ContractRef {
+                id: "example.structure".into(),
+                schema_version: 1,
+                behavior_version: 1,
+            },
+            handling: ExtensionHandling::Preserve,
+            payload_utf8: "{}".into(),
+        });
+        source.domain_blocks.push(DomainBlock {
+            target,
+            schema: source_context_facts_contract(),
+            handling: ExtensionHandling::Preserve,
+            payload_utf8: serde_json::to_string(&SourceContextFacts {
+                facts: vec![SourceContextFact {
+                    id: "context".into(),
+                    kind: SourceContextFactKind::Note,
+                    text: "literal".into(),
+                    origin: SourceContextFactOrigin::Extracted {
+                        sources: vec![unit.occurrences[0].source.clone()],
+                    },
+                }],
+            })
+            .unwrap(),
+        });
+        source.order.push(unit.occurrences[0].id.clone());
+        source.units.push(unit);
+    }
+    assert_eq!(source.units.len(), 2000);
+    assert_eq!(source.domain_blocks.len(), 4000);
+    source.validate().unwrap();
+    assert!(serde_json::to_vec(&source).unwrap().len() < 2 * 1024 * 1024);
+
+    source.domain_blocks.push(source.domain_blocks[0].clone());
+    let error = source.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "content.domainBlocks");
+    source.domain_blocks.pop();
+    source.units.push(source.units[0].clone());
+    let error = source.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "content.units");
+    source.units.pop();
+    source.order.push(source.order[0].clone());
+    assert_eq!(source.validate().unwrap_err().field, "content.order");
+    source.order.pop();
+    source.domain_blocks[0].payload_utf8 = "x".repeat(2 * 1024 * 1024);
+    source.validate().unwrap();
+    parse_content_exchange(&serde_json::to_vec(&source).unwrap()).unwrap();
+    let frame = serde_json::to_vec(&ExchangeDocument {
+        protocol_version: EXCHANGE_PROTOCOL,
+        body: ExchangeBody::Content(source.clone()),
+    })
+    .unwrap();
+    assert!(frame.len() > 2 * 1024 * 1024);
+    assert!(frame.len() < 4 * 1024 * 1024);
+    parse_exchange(&frame).unwrap();
+    source.domain_blocks[2].payload_utf8 = "x".repeat(2 * 1024 * 1024);
+    assert_eq!(
+        source.validate().unwrap_err().code,
+        ContractErrorCode::LimitExceeded
+    );
+}
+
+#[test]
+fn larger_content_frames_do_not_expand_material_or_non_content_budgets() {
+    assert_eq!(MAX_EXCHANGE_BYTES, 2 * 1024 * 1024);
+    assert_eq!(MAX_CONTENT_EXCHANGE_BYTES, 4 * 1024 * 1024);
+    assert_eq!(MAX_INVOCATION_PAYLOAD_BYTES, 4 * 1024 * 1024);
+    let mut request = include_bytes!("fixtures/invocation.request.json").to_vec();
+    parse_exchange(&request).unwrap();
+    request.resize(2 * 1024 * 1024 + 1, b' ');
+    assert_eq!(
+        parse_exchange(&request).unwrap_err().code,
+        ContractErrorCode::LimitExceeded
+    );
+}
