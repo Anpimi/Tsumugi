@@ -332,6 +332,7 @@ function App() {
   const locale: Locale = isLocale(resolvedLanguage) ? resolvedLanguage : "en-US";
   const [project, setProject] = useState<ProjectView | null>(null);
   const [area, setArea] = useState<WorkspaceArea>("overview");
+  const [aiReturn, setAiReturn] = useState(false);
   const [sourceState, setSourceState] = useState<"loading" | "empty" | "ready" | "failed">("loading");
   const areaNavigation = useRef(false);
   const currentSession = useRef<string | null>(null);
@@ -1095,7 +1096,7 @@ function App() {
     };
   }, [busy, createDraftDirty, dirty, project, resolvedLanguage]);
 
-  useEffect(() => { setArea("overview"); }, [project?.sessionToken]);
+  useEffect(() => { setArea("overview"); setAiReturn(false); }, [project?.sessionToken]);
   useEffect(() => {
     if (!project || area !== "overview") return;
     let stale = false;
@@ -1114,6 +1115,7 @@ function App() {
     try {
       if (area === "source") { if (sourceWorkbench.current && !await sourceWorkbench.current.allowNavigate()) return; }
       else if (area === "release") { if (releaseWorkbench.current && !await releaseWorkbench.current.allowNavigate()) return; }
+      else if (area === "ai") { if (aiWorkbench.current && !aiWorkbench.current.allowNavigate()) return; }
       else if (area !== "overview" && handles[area].current && !await handles[area].current!.allowLeave()) return;
       if (currentSession.current === session) setArea(next);
     } finally { areaNavigation.current = false; }
@@ -1435,8 +1437,8 @@ function App() {
                 <section className="project-next-step" aria-label={t("workbench.nextStep")}>
                   <div><h2>{t(sourceState === "ready" ? "workbench.continueTitle" : "workbench.importTitle")}</h2>
                   <p>{t(sourceState === "ready" ? "workbench.continueHelp" : sourceState === "failed" ? "workbench.sourceFailed" : "workbench.importHelp")}</p></div>
-                  <button type="button" className="primary-button" disabled={busy || sourceState === "loading"} onClick={() => void navigateArea(sourceState === "ready" ? "translation" : "source")}>{t(sourceState === "ready" ? "workbench.continue" : "workbench.import")}</button>
-                  {sourceState === "ready" ? <div className="execution-actions"><button type="button" className="secondary-button" onClick={() => void navigateArea("review")}>{t("review.title")}</button><button type="button" className="secondary-button" onClick={() => void navigateArea("release")}>{t("release.title")}</button></div> : null}
+                  <button type="button" className="primary-button" disabled={busy || sourceState === "loading"} onClick={() => void navigateArea(sourceState === "ready" ? "ai" : "source")}>{t(sourceState === "ready" ? "ai.workspace.prepare" : "workbench.import")}</button>
+                  {sourceState === "ready" ? <div className="execution-actions"><button type="button" className="secondary-button" onClick={() => void navigateArea("translation")}>{t("ai.workspace.manual.translation")}</button><button type="button" className="secondary-button" onClick={() => void navigateArea("review")}>{t("review.title")}</button><button type="button" className="secondary-button" onClick={() => void navigateArea("release")}>{t("release.title")}</button></div> : null}
                 </section>
                 <dl className="metadata-grid" aria-label={t("accessibility.metadata")}>
                   <div className="metadata-item">
@@ -1577,7 +1579,7 @@ function App() {
               </section>
             )}
           </div>
-          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} onQueryText={text => resourceWorkbench.current?.addQueryText(text) ?? false} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench onOpenExtensions={() => pluginManager.current?.open()} key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench onOpenExtensions={() => pluginManager.current?.open()} key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></SessionReadProvider> : null}
+          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} onQueryText={text => resourceWorkbench.current?.addQueryText(text) ?? false} onReturnToAi={aiReturn ? () => void navigateArea("ai") : undefined} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench onOpenExtensions={() => pluginManager.current?.open()} key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench onOpenExtensions={() => pluginManager.current?.open()} onOpenManual={next => void navigateArea(next)} key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => { setAiReturn(true); return translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false; }} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></SessionReadProvider> : null}
         </div>
 
         <DialogRoot

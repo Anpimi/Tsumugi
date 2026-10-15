@@ -73,6 +73,25 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("makes AI preparation the source-ready action and retains settings through the direct editor route", async () => {
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args: unknown) => {
+      if (command === "read_content_scope") return Promise.resolve({ revision: "2", currentSnapshot: fixtureIdentity(500) });
+      if (command === "read_source_content") return Promise.resolve(sourcePageFixture({ snapshotId: fixtureIdentity(500), scope: { revision: "2", currentSnapshot: fixtureIdentity(500) } }));
+      if (command === "read_plugin_text_reviews") return Promise.resolve({ settingsRevision: "1", entries: [] });
+      return original(command, args);
+    });
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    await user.click(await screen.findByRole("button", { name: "Prepare AI localization" }));
+    expect(await screen.findByRole("heading", { name: "AI work" })).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Model" }), "Unsent model choice");
+    await user.click(screen.getByRole("button", { name: "Edit directly" }));
+    expect(await screen.findByRole("heading", { name: "Translations" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "AI work" }));
+    expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("Unsent model choice");
+    expect(mocks.invoke.mock.calls.some(([command]) => ["start_work_plan", "authorize_work_plan", "start_ai_translation"].includes(command))).toBe(false);
+  });
+
   it.each([["/", "/synthetic/projects/", "/synthetic/projects/demo"], ["/", "/", "/demo"], ["\\", "C:\\Projects\\", "C:\\Projects\\demo"]])("previews a new project with the native separator %s under %s", async (separator, parent, destination) => {
     mocks.sep.mockReturnValue(separator);
     const user = userEvent.setup();

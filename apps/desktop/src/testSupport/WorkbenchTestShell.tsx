@@ -1,3 +1,4 @@
+import type { ChangeScope } from "../sessionReads";
 import { SessionReadProvider, useSessionReads } from "../SessionReadProvider";
 import { executionContext } from "../executionCommands";
 import type { ProjectView } from "../projectCommands";
@@ -12,7 +13,7 @@ function ReadControl() {
   return null;
 }
 /** Synthetic invalidation, independent of native registration and heartbeat timing. */
-export async function refreshWorkbenchReads() { await act(async () => { currentReads?.invalidate(["execution"]); }); }
+export async function refreshWorkbenchReads(scopes: ChangeScope[] = ["execution"]) { await act(async () => { currentReads?.invalidate(scopes); }); }
 
 function WorkbenchTestShell({ children }: { children: ReactNode }) {
   const [area, setArea] = useState<WorkspaceArea>("overview");

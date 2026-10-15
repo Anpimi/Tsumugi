@@ -173,7 +173,7 @@ workbench: {
   overview: "Project overview", backOverview: "Back to overview", nextStep: "Next step",
   importTitle: "Bring in your source", importHelp: "Import a supported source to start translating. Your originals stay unchanged.",
   sourceFailed: "Could not read the source state. Open Sources to inspect or retry.", import: "Import source",
-  continueTitle: "Continue translating", continueHelp: "Edit translations, review their current evidence, then build and export a release.", continue: "Open translations",
+  continueTitle: "Continue localizing", continueHelp: "Prepare or continue AI work, correct its results in the editor, then review and deliver. Direct editing is always available.", continue: "Open translations",
   search: "Find by key, source or translation", searchAction: "Find", searchLimit: "Use a query of at most 256 UTF-8 bytes.",
   results: "{{count}} matching entries", chooseEntry: "Choose an entry to translate", chooseEntryHelp: "The source and editor stay beside the list. Reference material is available when you need it.",
   previousEntry: "Previous entry", nextEntry: "Next entry", saveAndNext: "Save and next",
@@ -274,6 +274,17 @@ protection: {
   "retry": "Retry same protection action"
 },
 ai: {
+  workspace: {
+    prepare: "Prepare AI localization", manualTitle: "Work with AI or by hand",
+    manualHelp: "Choose the stages AI may assist below. Every stage also has a manual workspace. Model setup is required only for AI generation; your settings and selected scope stay here when you switch workspaces.",
+    manual: { translation: "Edit directly", resources: "Edit terms and context", review: "Review all entries", source: "Inspect source changes", release: "Build and export" },
+    scopeTitle: "Original entries for this plan", scopeHelp: "Select entries on any page. Select page adds only the entries displayed here; it does not select the entire project.",
+    scopeLoading: "Reading the current source…", scopeFailed: "Could not read the current source. Your selection and settings are retained. Refresh to retry.",
+    scopeChanged: "The current source changed. Your old selection is retained, but cannot prepare a new plan. Review the current source and explicitly clear or choose a new scope.",
+    resetScope: "Clear old selection and use current source", clearScope: "Clear selected scope", selectPage: "Select this page",
+    page: "{{first}}–{{last}} of {{total}} original entries", editEntry: "Edit {{key}} manually",
+    rewrite: "Rewrite this candidate", returnToWork: "Return to AI work", noTargets: "Add a target language in Project overview before preparing a plan.",
+  },
   effects: {
     title: "Automatic selection", policy: "Policy: {{policy}}. This receipt records past work; review the editor for the current translation. Human approval remains separate.",
     checks: "Mechanical check evidence", failed: "Automatic work could not finish. The candidate and earlier saved work are retained. Refresh to check the result.", retry: "Check saved result and retry original action",
@@ -328,9 +339,9 @@ ai: {
     "taken-over": "Manual control"
   }
 },
-  "open": "AI translation",
-  "title": "AI translation",
-  "description": "Generate candidates from selected original strings. Preview before sending.",
+  "open": "AI work",
+  "title": "AI work",
+  "description": "Prepare a localization plan, inspect its sharing and budget, and correct results in the same project.",
   "connection": "Connection",
   "preset": "Connection preset",
   "custom": "Custom endpoint",

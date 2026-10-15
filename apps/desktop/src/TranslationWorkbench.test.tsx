@@ -793,6 +793,23 @@ it("refreshes a conflicting entry basis before protecting it and never saves a b
   expect(writes[1][1].request.selectionId).toBe(history.current!.eventId);
 });
 
+it("refuses a candidate draft captured from a different source revision without replacing editor text", async () => {
+  const ref = createRef<TranslationHandle>();
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+  const originalText = (draft as HTMLTextAreaElement).value;
+  await act(async () => {
+    ref.current!.openUnit({ unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(999), key: "first", sourceText: "Older source" }, "zh-CN", "Older candidate");
+  });
+  expect(await screen.findByText(i18n.t("translation.errors.changed"))).toBeVisible();
+  expect(draft).toHaveValue(originalText);
+  expect(invoke.mock.calls.some(([command]) => command === "save_translation_revision")).toBe(false);
+});
+
 it("does not save or leave during composition and preserves the draft for the next ordinary save", async () => {
   const ref = createRef<TranslationHandle>();
   render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);

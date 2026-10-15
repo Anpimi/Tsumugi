@@ -1,4 +1,4 @@
-import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import {act,cleanup,screen,waitFor,within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
@@ -68,7 +68,7 @@ afterEach(cleanup);
 
 it("reveals invalid connection fields when preview fails after settings were collapsed",async()=>{
  const user=userEvent.setup();render(<AiWorkbench project={project} disabled={false} onOpenTranslation={()=>true}/>);
- await user.click(screen.getByRole("button",{name:"AI translation"}));
+ await user.click(screen.getByRole("button",{name:"AI work"}));
  await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
  const connection=screen.getByText("Connection",{selector:"summary"});
  await user.click(connection);expect(connection.closest("details")).not.toHaveAttribute("open");
@@ -80,14 +80,36 @@ it("reveals invalid connection fields when preview fails after settings were col
  expect(invoke.mock.calls.some(([command])=>command==="start_work_plan")).toBe(false);
 });
 
-it("keeps a draft on stay and clears it only after explicit discard",async()=>{
- const user=await preview();await user.click(screen.getByRole("button",{name:"Back to overview"}));await user.click(await screen.findByRole("button",{name:"Stay and keep draft"}));expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model");await user.click(screen.getByRole("button",{name:"Back to overview"}));await user.click(await screen.findByRole("button",{name:"Discard draft and leave"}));await user.click(screen.getByRole("button",{name:"AI translation"}));expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+it("retains unsent settings, the selected scope and preview across workspace navigation",async()=>{
+ const user=await preview();
+ await user.click(screen.getByRole("button",{name:"Back to overview"}));
+ expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+ await user.click(screen.getByRole("button",{name:"AI work"}));
+ expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model");
+ expect(await screen.findByRole("checkbox",{name:"first: Hello"})).toBeChecked();
+ expect(screen.getByRole("heading",{name:"Data sharing preview"})).toBeInTheDocument();
+ expect(invoke.mock.calls.some(([command])=>command==="start_work_plan")).toBe(false);
+});
+
+it("keeps the project-exit guard and clears settings only after explicit discard",async()=>{
+ const ref=createRef<AiHandle>(),user=await preview(ref);
+ let leaving!:Promise<boolean>;
+ act(()=>{leaving=ref.current!.allowLeave();});
+ await user.click(await screen.findByRole("button",{name:"Stay and keep draft"}));
+ expect(await leaving).toBe(false);
+ expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model");
+ act(()=>{leaving=ref.current!.allowLeave();});
+ await user.click(await screen.findByRole("button",{name:"Discard draft and leave"}));
+ expect(await leaving).toBe(true);
+ await user.click(screen.getByRole("button",{name:"AI work"}));
+ expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("");
+ expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
 });
 
 it("ignores a preview from a project that was replaced while the request was pending",async()=>{
- const user=userEvent.setup();const rendered=render(<AiWorkbench key="session" project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"AI translation"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));let resolve:(value:WorkPlanView)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="prepare_work_plan"?new Promise<WorkPlanView>(done=>{resolve=done;}):original(command,args));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<AiWorkbench key="replacement" project={{...project,sessionToken:"replacement"}} disabled={false} onOpenTranslation={()=>true}/>);resolve({...plan,checkers:[],planId,digest:"plan-digest",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false,advisoryChecks:[]},attemptId:aiAttempt,preview:prepared.preview,scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:"first",selectionId:null}]});await user.click(screen.getByRole("button",{name:"AI translation"}));await screen.findByRole("checkbox",{name:"first: Hello"});expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);
+ const user=userEvent.setup();const rendered=render(<AiWorkbench key="session" project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"AI work"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));let resolve:(value:WorkPlanView)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="prepare_work_plan"?new Promise<WorkPlanView>(done=>{resolve=done;}):original(command,args));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<AiWorkbench key="replacement" project={{...project,sessionToken:"replacement"}} disabled={false} onOpenTranslation={()=>true}/>);resolve({...plan,checkers:[],planId,digest:"plan-digest",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false,advisoryChecks:[]},attemptId:aiAttempt,preview:prepared.preview,scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:"first",selectionId:null}]});await user.click(screen.getByRole("button",{name:"AI work"}));await screen.findByRole("checkbox",{name:"first: Hello"});expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);
 });
-async function preview(){const user=userEvent.setup();render(<AiWorkbench project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"AI translation"}));await user.type(screen.getByRole("textbox",{name:"Chat Completions URL"}),"http://127.0.0.1:4000/v1/chat/completions");await user.type(screen.getByRole("textbox",{name:"Model"}),"test-model");await user.clear(screen.getByRole("textbox",{name:"API key environment variable name"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await screen.findByRole("heading",{name:"Data sharing preview"});return user;}
+async function preview(ref?:{current:AiHandle|null},onOpenTranslation:Parameters<typeof AiWorkbench>[0]["onOpenTranslation"]=()=>true){const user=userEvent.setup();render(<AiWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={onOpenTranslation}/>);await user.click(screen.getByRole("button",{name:"AI work"}));await user.type(screen.getByRole("textbox",{name:"Chat Completions URL"}),"http://127.0.0.1:4000/v1/chat/completions");await user.type(screen.getByRole("textbox",{name:"Model"}),"test-model");await user.clear(screen.getByRole("textbox",{name:"API key environment variable name"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await screen.findByRole("heading",{name:"Data sharing preview"});return user;}
 it("requires exact sharing confirmation and invalidates it on configuration edits",async()=>{const user=await preview();expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).not.toBeChecked();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it("keeps empty limits editable and rejects them before preview serialization",async()=>{const user=await preview();await user.click(screen.getByText("Budget and limits"));await user.clear(screen.getByRole("spinbutton",{name:"Maximum requests including retries"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));expect(await screen.findByRole("alert")).toHaveFocus();expect(screen.getByRole("spinbutton",{name:"Maximum requests including retries"})).toHaveAttribute("aria-invalid","true");expect(invoke.mock.calls.filter(([c])=>c==="prepare_work_plan")).toHaveLength(1);expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it("saves a normal candidate without issuing a translation selection",async()=>{const user=await preview();await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));await waitFor(()=>expect(invoke.mock.calls.some(([c])=>c==="adopt_execution")).toBe(true));expect(invoke.mock.calls.some(([c])=>c==="select_translation_revision")).toBe(false);expect(screen.getAllByText(/Total usage/).length).toBeGreaterThan(0);});
@@ -135,7 +157,7 @@ it("explains queue rejection and preserves preview without sending another task"
 it("prepares a model-free manual plan and opens its captured entry without authorization",async()=>{
  const user=userEvent.setup(),openEditor=vi.fn(()=>true);
  render(<AiWorkbench project={project} disabled={false} onOpenTranslation={openEditor}/>);
- await user.click(screen.getByRole("button",{name:"AI translation"}));
+ await user.click(screen.getByRole("button",{name:"AI work"}));
  await user.selectOptions(screen.getByRole("combobox",{name:"Translate"}),"manual");
  expect(screen.queryByRole("textbox",{name:"Model"})).not.toBeInTheDocument();
  await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
@@ -144,6 +166,89 @@ it("prepares a model-free manual plan and opens its captured entry without autho
  expect(openEditor).toHaveBeenCalledWith(expect.objectContaining({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,key:"first"}),"zh-CN");
  expect(invoke.mock.calls.find(([c])=>c==="prepare_work_plan")?.[1].request.config).toBeNull();
  expect(invoke.mock.calls.some(([c])=>["authorize_work_plan","start_work_plan","preview_ai_translation"].includes(c))).toBe(false);
+});
+
+it("keeps an explicit cross-page selection and distinguishes page selection from the whole project",async()=>{
+ const original=invoke.getMockImplementation()!;
+ invoke.mockImplementation((command:string,args:{request:Record<string,unknown>})=>{
+  if(command==="read_source_content")return Promise.resolve(sourcePageFixture({snapshotId:item.sourceSnapshotId,
+   scope:{revision:"2",currentSnapshot:item.sourceSnapshotId},total:2,nextOrdinal:args.request.after===0?1:null,
+   rows:[sourceRowFixture({unitId:args.request.after===0?item.unitId:fixtureIdentity(305),sourceRevisionId:item.sourceRevisionId},
+    {key:args.request.after===0?"first":"second",text:item.sourceText})]}));
+  return original(command,args);
+ });
+ const user=userEvent.setup();render(<AiWorkbench project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ await user.click(screen.getByRole("button",{name:"AI work"}));
+ await user.click(await screen.findByRole("button",{name:"Select this page"}));
+ expect(screen.getByRole("checkbox",{name:"first: Hello"})).toBeChecked();
+ await user.click(screen.getByRole("button",{name:"Next page"}));
+ expect(await screen.findByRole("checkbox",{name:"second: Hello"})).not.toBeChecked();
+ await user.click(screen.getByRole("button",{name:"Select this page"}));
+ expect(screen.getByRole("heading",{name:"Selected original strings: 2"})).toBeInTheDocument();
+ await user.click(screen.getByRole("button",{name:"First page"}));
+ expect(await screen.findByRole("checkbox",{name:"first: Hello"})).toBeChecked();
+ await user.click(screen.getByRole("button",{name:"Clear selected scope"}));
+ expect(screen.getByRole("button",{name:"Preview what will be sent"})).toBeDisabled();
+ expect(invoke.mock.calls.some(([command])=>command==="prepare_work_plan")).toBe(false);
+});
+
+it("retains old scope and settings after a source change and withdraws the prepared start",async()=>{
+ const user=await preview();
+ await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));
+ const original=invoke.getMockImplementation()!,snapshotId=fixtureIdentity(399);
+ invoke.mockImplementation((command:string,args:unknown)=>{
+  if(command==="read_content_scope")return Promise.resolve({revision:"3",currentSnapshot:snapshotId});
+  if(command==="read_source_content")return Promise.resolve(sourcePageFixture({snapshotId,scope:{revision:"3",currentSnapshot:snapshotId},
+   rows:[sourceRowFixture({unitId:item.unitId,sourceRevisionId:fixtureIdentity(398)},{key:"first",text:"Changed source"})]}));
+  return original(command,args);
+ });
+ await refreshWorkbenchReads(["source"]);
+ expect(await screen.findByText(/The current source changed/)).toBeVisible();
+ expect(await screen.findByRole("checkbox",{name:"first: Changed source"})).toBeChecked();
+ expect(screen.getByRole("button",{name:"Preview what will be sent"})).toBeDisabled();
+ expect(screen.queryByRole("button",{name:"Send and generate candidates"})).not.toBeInTheDocument();
+ expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model");
+ await user.click(screen.getByRole("button",{name:"Clear old selection and use current source"}));
+ expect(screen.getByRole("checkbox",{name:"first: Changed source"})).not.toBeChecked();
+ expect(invoke.mock.calls.some(([command])=>command==="authorize_work_plan")).toBe(false);
+});
+
+it("rechecks the selected source before preparation even before a change notification arrives",async()=>{
+ const user=userEvent.setup();render(<AiWorkbench project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ await user.click(screen.getByRole("button",{name:"AI work"}));
+ await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
+ const original=invoke.getMockImplementation()!;
+ invoke.mockImplementation((command:string,args:unknown)=>command==="read_content_scope"
+  ?Promise.resolve({revision:"3",currentSnapshot:fixtureIdentity(399)}):original(command,args));
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ expect(await screen.findByText(/captured source or selection changed/)).toBeVisible();
+ expect(invoke.mock.calls.some(([command])=>command==="prepare_work_plan")).toBe(false);
+});
+
+it("routes an output to the protected editor as a draft without saving or selecting it",async()=>{
+ const openEditor=vi.fn(()=>true),user=await preview(undefined,openEditor);
+ await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));
+ await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+ await user.click(await screen.findByRole("button",{name:"Rewrite this candidate"}));
+ expect(openEditor).toHaveBeenCalledWith(expect.objectContaining({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId}),"zh-CN","你好");
+ expect(invoke.mock.calls.some(([command])=>["adopt_execution","save_translation_revision","select_translation_revision"].includes(command))).toBe(false);
+});
+
+it("offers the manual editor for queued results without dispatching another request",async()=>{
+ const original=invoke.getMockImplementation()!,openEditor=vi.fn(()=>true),ref=createRef<AiHandle>();
+ invoke.mockImplementation((command:string,args:unknown)=>{
+  if(command==="read_ai_translation"){
+   const view=aiViewFixture(item,prepared.preview.config);view.rows[0].output=null;
+   view.detail.progress={...view.detail.progress,queued:1,succeeded:0};
+   return Promise.resolve(view);
+  }
+  return original(command,args);
+ });
+ render(<AiWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={openEditor}/>);
+ act(()=>ref.current!.showAttempt(aiAttempt));
+ const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Compare and select in editor"}));
+ expect(openEditor).toHaveBeenCalledWith(expect.objectContaining({unitId:item.unitId}),"zh-CN");
+ expect(invoke.mock.calls.some(([command])=>["start_work_plan","authorize_work_plan","start_ai_translation"].includes(command))).toBe(false);
 });
 
 it("records the exact plan digest, effect and expiry before starting the saved grant",async()=>{

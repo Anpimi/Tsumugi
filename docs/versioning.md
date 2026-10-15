@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The AI work area now connects the source-ready project action, explicit paged
+scope, manual stage routes and candidate-to-editor drafts through the existing
+workspace, session reads and protection owners. Unsent settings survive workspace
+navigation; project closure and unknown mutations retain their original guards.
+This frontend behavior changes no Core/Host/SDK/IPC contract, stored format or
+dependency. Bilingual Unreleased entries are synchronized, and application
+`0.2.0-alpha.1` remains the same undistributed batch without an additional bump.
+Native input, accessibility and full product acceptance remain separate.
+
 The current combined development format is project schema 33. It retains the
 original six-column application execution associations, work-plan service calls,
 captured input chunks and ancestor budgets, and adds exact continuation identities

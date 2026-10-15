@@ -54,7 +54,7 @@ const targetFromTranslation = (row: TranslationPreviewRow): EditorTarget | null 
   ? { unitId: row.unitId, sourceRevisionId: row.sourceRevisionId, key: row.entry.nativeKey, sourceText: row.sourceText ?? "" }
   : null;
 
-export function TranslationWorkbench({ project, disabled, onQueryText, ref }: { project: ProjectView; disabled: boolean; onQueryText?: (text: string) => boolean; ref?: Ref<TranslationHandle> }) {
+export function TranslationWorkbench({ project, disabled, onQueryText, onReturnToAi, ref }: { project: ProjectView; disabled: boolean; onQueryText?: (text: string) => boolean; onReturnToAi?: () => void; ref?: Ref<TranslationHandle> }) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const [open, setOpen] = useWorkbenchView("translation");
@@ -334,6 +334,9 @@ export function TranslationWorkbench({ project, disabled, onQueryText, ref }: { 
     const retainedDraft = draftRef.current;
     const snapshot = await reviewCommands.editorSnapshot({ ...context, unitId: target.unitId, locale });
     const next = snapshot.translations;
+    if (suggestedText !== undefined && snapshot.target.sourceRevisionId !== target.sourceRevisionId) {
+      throw { reason: "source-changed", outcome: "rejected" };
+    }
     if (current() && (composingRef.current || draftRef.current !== retainedDraft)) { setFailure("navigation-edited"); return; }
     if (current()) {
       setEditorTarget(listTarget(snapshot.target)); setHistory(next); setPendingSave(null); setNewerDraftSaved(false); setNavigationEnd(false);
@@ -457,6 +460,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, ref }: { 
   return <>
     <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || busy || protectionBlocked}>
         <div className="execution-content" aria-busy={busy}>
+          {onReturnToAi ? <button type="button" className="secondary-button" disabled={disabled || busy || protectionBlocked || !!pendingSave || uncertain.length > 0}
+            onClick={onReturnToAi}>{t("ai.workspace.returnToWork")}</button> : null}
           {failure ? <div role="alert"><p>{t(`translation.errors.${errorKey(failure)}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           {sourceMissing ? <p role="status">{t("translation.noSource")}</p> : null}

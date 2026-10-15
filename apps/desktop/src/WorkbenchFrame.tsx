@@ -19,12 +19,12 @@ export function useWorkbenchView(area: WorkspaceArea): [boolean, (open: boolean)
 
 const entries = [
   { area: "overview", label: "workbench.overview", icon: Folder },
+  { area: "ai", label: "ai.open", icon: Sparkles },
   { area: "source", label: "source.title", icon: FileInput },
   { area: "translation", label: "translation.title", icon: Languages },
   { area: "resources", label: "resource.title", icon: BookOpen },
   { area: "review", label: "review.title", icon: CheckCheck },
   { area: "release", label: "release.title", icon: PackageCheck },
-  { area: "ai", label: "ai.open", icon: Sparkles },
   { area: "arena", label: "arena.open", icon: Columns3 },
   { area: "tasks", label: "execution.title", icon: ListTodo },
 ] as const;

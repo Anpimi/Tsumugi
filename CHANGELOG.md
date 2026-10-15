@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Source-ready projects offer AI localization alongside direct editing. The AI
+  workspace retains unsent settings and explicit cross-page scope while users
+  work elsewhere; a changed source blocks the old selection until it is reviewed.
+  Every result can open the manual editor, including queued or failed entries.
+  Generated text can become a protected editor draft without selecting or saving
+  it, with a return path to the original AI work. A candidate from an older source
+  revision cannot replace the current draft. Uncertain actions still require
+  reconciliation before leaving.
+
 The combined development build opens project schema 33 only. Earlier entries
 retain the format boundaries introduced during this undistributed batch; they
 do not define alternate current project formats.
