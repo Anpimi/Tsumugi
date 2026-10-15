@@ -549,7 +549,7 @@ workbench: {
   overview: "项目概览", backOverview: "返回概览", nextStep: "下一步",
   importTitle: "导入需要翻译的原文", importHelp: "导入支持的源内容后开始翻译，原始文件保持不变。",
   sourceFailed: "未能读取源内容状态，请进入源内容检查或重试。", import: "导入源内容",
-  continueTitle: "继续翻译", continueHelp: "编辑译文、审阅当前依据，再构建并导出交付版本。", continue: "打开翻译工作台",
+  continueTitle: "继续本地化", continueHelp: "准备或继续 AI 工作，在编辑器中修正结果，再审阅与交付；也可随时直接编辑。", continue: "准备 AI 本地化",
   search: "查找键名、原文或译文", searchAction: "查找", searchLimit: "查询不能超过 256 个 UTF-8 字节。",
   contentSelection: "已选内容范围", noContentSelection: "尚未选择用于范围操作的条目。",
   selectAllMatching: "选择所有匹配项（跨页）", selectEntry: "选择 {{key}} 用于范围操作",
@@ -665,6 +665,17 @@ protection: {
   "retry": "重试原保护操作"
 },
 ai: {
+  workspace: {
+    prepare: "准备 AI 本地化", manualTitle: "使用 AI 或人工处理",
+    manualHelp: "在下方选择需要 AI 辅助的阶段，每个阶段也都有人工工作面。只有 AI 生成需要配置模型；切换工作面时，此处保留设置与已选范围。",
+    manual: { translation: "直接编辑", resources: "编辑术语与上下文", review: "审阅全部条目", source: "检查源内容变更", release: "构建与导出" },
+    scopeTitle: "本计划的原文条目", scopeHelp: "可跨页选择条目。“选择本页”只添加当前显示的条目，不会选择整个项目。",
+    scopeLoading: "正在读取当前源内容…", scopeFailed: "未能读取当前源内容。已保留选择与设置，请刷新重试。",
+    scopeChanged: "当前源内容已变化。旧选择已保留，但不能用于准备新计划。请检查当前源内容，再明确清除或重新选择范围。",
+    resetScope: "清除旧选择并使用当前源内容", clearScope: "清空已选范围", selectPage: "选择本页",
+    page: "第 {{first}}–{{last}} 条，共 {{total}} 条原文", editEntry: "人工编辑 {{key}}",
+    rewrite: "改写此候选", returnToWork: "返回 AI 工作", noTargets: "准备计划前，请先在项目概览中添加目标语言。",
+  },
   effects: {
     title: "自动选择", policy: "政策：{{policy}}。此回执记录已发生的操作，当前译文请以编辑器为准；人工批准仍需独立操作。",
     checks: "机械检查依据", failed: "自动工作未能完成。候选及此前保存的成果已保留，请刷新核对结果。", retry: "核对已存结果并重试原操作",
@@ -719,9 +730,9 @@ ai: {
     "taken-over": "人工接管中"
   }
 },
-  "open": "AI 翻译",
-  "title": "AI 翻译",
-  "description": "根据所选原文生成候选，发送前先预览。",
+  "open": "AI 工作",
+  "title": "AI 工作",
+  "description": "准备本地化计划、检查分享范围与预算，并在同一项目中修正结果。",
   "connection": "连接",
   "preset": "连接预设",
   "custom": "自定义接口",

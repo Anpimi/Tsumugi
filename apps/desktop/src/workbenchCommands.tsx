@@ -336,6 +336,7 @@ interface WorkbenchCommandPayloads {
   "ai.cancel-task": ExecutionCancellationCommandPayload;
   "ai.retry-cancellation": ExecutionCancellationRetryCommandPayload;
   "ai.open-translation": AiTranslationCommandPayload;
+  "ai.rewrite-translation": AiTranslationCommandPayload;
   "review.allow-fallback": ReviewFallbackCommandPayload;
   "review.withdraw-fallback": ReviewFallbackCommandPayload;
   "review.grant-waiver": ReviewWaiverCommandPayload;
@@ -490,7 +491,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
   | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task" | "release.cancel-task" | "resource.cancel-tool">
   | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "release.retry-cancellation" | "resource.retry-tool-cancellation">
-  | ResourceCommand<"ai-translation-target", "ai.open-translation">
+  | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation">
   | ResourceCommand<"resource-tool-preparation", "resource.prepare-tool">
   | ResourceCommand<"resource-tool-capture", "resource.start-tool" | "resource.discard-tool">
   | ResourceCommand<"resource-tool-pending", "resource.retry-tool">

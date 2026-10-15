@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The AI work area now connects the source-ready project action, explicit paged
+scope, manual stage routes and candidate-to-editor drafts through the existing
+project session, AI preparation, typed navigation, session reads and protection
+owners. Unsent settings survive workspace navigation; project closure and unknown mutations retain their original guards.
+This frontend behavior changes no Core/Host/SDK/IPC contract, stored format or
+dependency. Bilingual Unreleased entries are synchronized, and application
+`0.2.0-alpha.1` remains the same undistributed batch without an additional bump.
+Native input, accessibility and full product acceptance remain separate.
+
 Source recovery clears obsolete preparation failures when returning to current
 content or explicitly discarding preparation. Unrelated input and saved history
 remain intact; a failed cancellation reports its own failure. Comparison labels

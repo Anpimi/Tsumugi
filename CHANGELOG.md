@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Source-ready projects offer AI localization alongside direct editing. The AI
+  workspace retains unsent settings and explicit cross-page scope while users
+  work elsewhere; a changed source blocks the old selection until it is reviewed.
+  Every result can open the manual editor, including queued or failed entries.
+  Generated text can become a protected editor draft without selecting or saving
+  it, with a return path to the original AI work. A candidate from an older source
+  revision cannot replace the current draft. Uncertain actions still require
+  reconciliation before leaving.
+
 - Returning from a failed source preparation to current content clears the old
   failure while keeping unrelated preparation text. Explicit discard reports
   its own cancellation failure. Source comparison labels also cover changed

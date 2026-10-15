@@ -4,7 +4,7 @@ import type { ContentSelection } from "./contentSelection";
 
 export type WorkspaceDestination =
   | { kind: "area"; area: WorkspaceArea }
-  | { kind: "translation"; target: EditorTarget; locale: string; suggestedText?: string }
+  | { kind: "translation"; target: EditorTarget; locale: string; suggestedText?: string; returnTo?: "ai" }
   | { kind: "review-work" }
   | { kind: "ai-selection"; selection: ContentSelection; expectedEditSeq: number }
   | { kind: "saved-build"; attemptId: string }

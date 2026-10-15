@@ -68,10 +68,10 @@ const targetFromTranslation = (row: TranslationPreviewRow): EditorTarget | null 
   ? { unitId: row.unitId, sourceRevisionId: row.sourceRevisionId, key: row.entry.nativeKey, sourceText: row.sourceText ?? "" }
   : null;
 
-export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, ref }: {
+export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, ref }: {
   project: ProjectView; disabled: boolean; onOpenExtensions?: () => void; onQueryText?: (text: string) => boolean | Promise<boolean>;
   aiSelection?: { count: number; locale: string; editSeq: number; available: boolean };
-  onPrepareSelection?: (selection: ContentSelection, expectedEditSeq: number) => Promise<boolean>; ref?: Ref<TranslationHandle>
+  onPrepareSelection?: (selection: ContentSelection, expectedEditSeq: number) => Promise<boolean>; onReturnToAi?: () => void; ref?: Ref<TranslationHandle>
 }) {
   const { t } = useTranslation();
   const context = executionContext(project);
@@ -813,6 +813,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     if (draftSession.current()?.editSeq !== retained?.editSeq || draftSession.current()?.text !== retained?.text) {
       if (current() && !preserveEdited) setFailure("navigation-edited"); return;
     }
+    if (suggestedText !== undefined && snapshot.target.sourceRevisionId !== target.sourceRevisionId) { setFailure("source-changed"); return; }
     const nextTarget = listTarget(snapshot.target), next = snapshot.translations;
     if (!draftSession.begin({ ...nextTarget, locale }, next.current, next.currentText, suggestedText)) { setFailure("navigation-edited"); return; }
     draftSourceBasis.current = { ...context, unitId: nextTarget.unitId, locale,
@@ -976,6 +977,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     </Dialog.Content></Dialog.Portal></Dialog.Root>
     {open ? <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || composing || protectionBlocked || (localBusy && !editorDraft?.saving)}>
         <div className="execution-content" aria-busy={busy}>
+          {onReturnToAi ? <button type="button" className="secondary-button" disabled={disabled || composing || draftSession.protection.blocked()}
+            onClick={onReturnToAi}>{t("ai.workspace.returnToWork")}</button> : null}
           {failure ? <div role="alert"><p>{t(`translation.errors.${errorKey(failure)}`)}</p><CommandFailureDetails failure={effectiveFailureValue} />{typeof effectiveFailureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {saveReceiptCheck ? <p role="status">{t(editorDraft?.receiptKind === "selection" ? saveReceiptCheck === "found" ? "translation.selectionActionFound" : "translation.selectionActionMissing" : saveReceiptCheck === "found" ? "translation.savedActionFound" : "translation.savedActionMissing")}</p> : null}
           {targetUnavailable ? <div role="alert"><p>{t(editorDraft ? "translation.removedTargetDraft" : "translation.removedTargetImport", { locale: targetLocale })}</p><button className="secondary-button" type="button" disabled={localBusy && !editorDraft?.saving} onClick={() => setOpen(false)}>{t("translation.returnToSettings")}</button></div> : null}

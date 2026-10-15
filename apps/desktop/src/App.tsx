@@ -1619,8 +1619,8 @@ function AppWorkbench() {
                 <section className="project-next-step" aria-label={t("workbench.nextStep")}>
                   <div><h2>{t(sourceState === "ready" ? "workbench.continueTitle" : "workbench.importTitle")}</h2>
                   <p>{t(sourceState === "ready" ? "workbench.continueHelp" : sourceState === "failed" ? "workbench.sourceFailed" : "workbench.importHelp")}</p></div>
-                  <button type="button" className="primary-button" disabled={busy || sourceState === "loading"} onClick={() => void navigateArea(sourceState === "ready" ? "translation" : "source")}>{t(sourceState === "ready" ? "workbench.continue" : "workbench.import")}</button>
-                  {sourceState === "ready" ? <div className="execution-actions"><button type="button" className="secondary-button" onClick={() => void navigateArea("review")}>{t("review.title")}</button><button type="button" className="secondary-button" onClick={() => void navigateArea("release")}>{t("release.title")}</button></div> : null}
+                  <button type="button" className="primary-button" disabled={busy || sourceState === "loading"} onClick={() => void navigateArea(sourceState === "ready" ? "ai" : "source")}>{t(sourceState === "ready" ? "workbench.continue" : "workbench.import")}</button>
+                  {sourceState === "ready" ? <div className="execution-actions"><button type="button" className="secondary-button" onClick={() => void navigateArea("translation")}>{t("ai.workspace.manual.translation")}</button><button type="button" className="secondary-button" onClick={() => void navigateArea("review")}>{t("review.title")}</button><button type="button" className="secondary-button" onClick={() => void navigateArea("release")}>{t("release.title")}</button></div> : null}
                 </section>
                 <dl className="metadata-grid" aria-label={t("accessibility.metadata")}>
                   <div className="metadata-item">

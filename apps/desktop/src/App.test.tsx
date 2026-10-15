@@ -148,7 +148,7 @@ async function prepareUnknownMetadata({ directory = false, navigation = false, s
 }
 
 async function prepareAiInApp(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "AI translation" }));
+  await user.click(screen.getByRole("button", { name: "AI work" }));
   await user.type(screen.getByRole("textbox", { name: "Chat Completions URL" }), "http://127.0.0.1:4000/v1/chat/completions");
   await user.type(screen.getByRole("textbox", { name: "Model" }), "test-model");
   await user.clear(screen.getByRole("textbox", { name: "API key environment variable name" }));
@@ -321,6 +321,38 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("uses the AI preparation action by default and retains its owner through the manual editor route", async () => {
+    installTranslationEditor(); installAiPreparation();
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    await user.click(await screen.findByRole("button", { name: "Prepare AI localization" }));
+    expect(await screen.findByRole("heading", { name: "AI work" })).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Model" }), "Unsent model choice");
+    await user.click(screen.getByRole("button", { name: "Edit directly" }));
+    expect(await screen.findByRole("heading", { name: "Translations" })).toBeVisible();
+    expect(document.querySelector("section.ai-dialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "AI work" }));
+    expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("Unsent model choice");
+    expect(mocks.invoke.mock.calls.some(([command]) => ["start_work_plan", "authorize_work_plan", "start_ai_translation"].includes(command))).toBe(false);
+  });
+
+  it("rewrites an AI candidate through session navigation and returns without losing either owner", async () => {
+    installTranslationEditor(); installAiPreparation();
+    const user = userEvent.setup(); await renderApp(); await createProject(user); await prepareAiInApp(user);
+    await user.click(screen.getByRole("button", { name: "Send and generate candidates" }));
+    await user.click(await screen.findByRole("button", { name: "Rewrite this candidate" }));
+    const draft = await screen.findByRole("textbox", { name: "Your draft" });
+    await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+    expect(draft).toHaveValue("你好");
+    await user.type(draft, "改写");
+    await user.click(screen.getByRole("button", { name: "Return to AI work" }));
+    expect(await screen.findByRole("heading", { name: "Generated results" })).toBeVisible();
+    expect(mocks.drafts.get("session-1")?.current()?.text).toBe("你好改写");
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("你好改写");
+    expect(mocks.invoke.mock.calls.some(([command]) => ["adopt_execution", "save_translation_revision", "select_translation_revision"].includes(command))).toBe(false);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_work_plan")).toHaveLength(1);
+  });
+
   it.each(["AI","Arena"] as const)("opens application connection settings from %s preparation and keeps its captured input through a changed current read",async area=>{
     const user=userEvent.setup();await renderApp();await createProject(user);
     if(area==="AI")installAiPreparation();else installArenaPreparation();
@@ -329,7 +361,7 @@ describe("project lifecycle workbench", () => {
     let connections=connectionFixture(configs);
     const original=mocks.invoke.getMockImplementation()!;
     mocks.invoke.mockImplementation((command:string,args:unknown)=>command==="read_model_connections"?Promise.resolve(structuredClone(connections)):original(command,args));
-    await user.click(screen.getByRole("button",{name:area==="AI"?"AI translation":"Arena comparison"}));
+    await user.click(screen.getByRole("button",{name:area==="AI"?"AI work":"Arena comparison"}));
     const label=area==="AI"?"Saved connection":"Saved connection for scheme 1";
     await waitFor(()=>expect(within(screen.getByRole("combobox",{name:label})).getByRole("option",{name:"Synthetic Saved 1 · Saved 1"})).toBeEnabled());
     await user.selectOptions(screen.getByRole("combobox",{name:label}),configs[0].connectionProfile.profileId);
@@ -1160,7 +1192,7 @@ describe("project lifecycle workbench", () => {
     await screen.findByRole("region", { name: "Glossary and context" });
     expect(document.querySelector("section.ai-dialog")).toBeNull();
     expect(screen.queryByRole("dialog", { name: /unsaved/i })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "AI translation" }));
+    await user.click(screen.getByRole("button", { name: "AI work" }));
     expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("test-model");
     expect(screen.getByRole("checkbox", { name: "first: Hello" })).toBeChecked();
     expect(screen.getByRole("heading", { name: "Data sharing preview" })).toBeInTheDocument();
@@ -1181,13 +1213,18 @@ describe("project lifecycle workbench", () => {
         if (change === "source") facts.changeSource(); else facts.changeResources();
         await act(async () => { mocks.reads!.invalidate([change]); });
       }
-      await user.click(screen.getByRole("button", { name: "AI translation" }));
+      await user.click(screen.getByRole("button", { name: "AI work" }));
       if (change === "sharing") await user.click(screen.getByRole("checkbox", { name: "Share applicable adopted terms" }));
       expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("test-model");
       expect(await screen.findByRole("checkbox", { name: change === "source" ? "first: Updated source" : "first: Hello" })).toBeChecked();
       expect(screen.queryByRole("heading", { name: "Data sharing preview" })).not.toBeInTheDocument();
       expect(screen.queryByRole("checkbox", { name: /I confirm sending/ })).not.toBeInTheDocument();
       expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_work_plan")).toHaveLength(0);
+      if (change === "source") {
+        expect(screen.getByRole("button", { name: "Preview what will be sent" })).toBeDisabled();
+        await user.click(screen.getByRole("button", { name: "Clear old selection and use current source" }));
+        await user.click(screen.getByRole("checkbox", { name: "first: Updated source" }));
+      }
       await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
       await screen.findByRole("heading", { name: "Data sharing preview" });
       expect(screen.getByRole("checkbox", { name: /I confirm sending/ })).not.toBeChecked();
@@ -1210,7 +1247,7 @@ describe("project lifecycle workbench", () => {
       }
       return original(command, args);
     });
-    await user.click(screen.getByRole("button", { name: "AI translation" }));
+    await user.click(screen.getByRole("button", { name: "AI work" }));
     await user.type(screen.getByRole("textbox", { name: "Chat Completions URL" }), "http://127.0.0.1:4000/v1/chat/completions");
     await user.type(screen.getByRole("textbox", { name: "Model" }), "test-model");
     await user.click(await screen.findByRole("checkbox", { name: "first: Hello" }));
@@ -1257,7 +1294,7 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Open project" }));
     await screen.findByRole("heading", { name: "Other" });
     await act(async () => finishOldRead(facts.view()));
-    await user.click(screen.getByRole("button", { name: "AI translation" }));
+    await user.click(screen.getByRole("button", { name: "AI work" }));
     expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("");
     expect(screen.queryByRole("heading", { name: "Data sharing preview" })).not.toBeInTheDocument();
     expect(screen.queryByText("test-model")).not.toBeInTheDocument();

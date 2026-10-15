@@ -20,6 +20,7 @@ import type { PluginTextReviewSelection } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import type { WorkPlanToolSelection } from "./generated/ai.requests";
 import type { ChangeScope } from "./sessionReads";
+import { sourceReads } from "./sourceQueries";
 import { contentSelectionIds, validContentSelection, type ContentSelection } from "./contentSelection";
 
 export const defaultPlanOptions: PlanOptions = { stages: (["understanding", "resources", "generation", "checks", "delivery"] as const).map(stage => ({ stage, mode: stage === "generation" ? "assisted" : "manual" })), selectionPolicy: "candidates-only", adoptResources: false, deliver: false, advisoryChecks: [] };
@@ -31,7 +32,7 @@ type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; u
 type Candidate = { taskId: string; item: AiItem; resultId: string; unitId: string; text: string };
 type AdoptCapture = { request: PrepareRequest; candidate: Candidate; editSeq: number; action: AdoptionAction | null; receipt: Receipt | null; uncertain: boolean; retryAllowed: boolean };
 interface State {
-  presetName: string; config: AiConfig; locale: string; selected: string[]; capture: PreparationCapture | null; consent: boolean;
+  presetName: string; config: AiConfig; locale: string; selected: string[]; selectedSnapshotId: string | null; capture: PreparationCapture | null; consent: boolean;
   options: PlanOptions; toolDraft: PlanToolDraft | null; advisoryChecks: PluginTextReviewSelection[]; planId: string | null;
   startedPlan: { prepared: WorkPlanView; attemptId: string; taskId: string | null; generation: string; unitIds: string[] } | null;
   staleReason: "source" | "preview" | "connection" | null; dirty: boolean; editSeq: number; sourceGeneration: number; busy: boolean;
@@ -99,7 +100,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   const reads = useSessionReads(), tasks = useExecutionTaskSession();
   const connections = useConnectionFacts();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
-  const [state,setState] = useState<PreparationState>(() => preparationState({ presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],capture:null,consent:false,
+  const [state,setState] = useState<PreparationState>(() => preparationState({ presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,
     options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
     staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,checkedTask:null,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null }));
   const stateRef = useRef(state), mounted = useSessionAlive(), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
@@ -159,7 +160,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     // Transfer only a user range. Existing preparation, consent and execution
     // authority cannot accompany it; the next explicit preview reads Core facts.
     basis.current++;
-    update(before => ({ ...before,locale:selection.capture.locale,selected:fixed(selected),capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,locale:selection.capture.locale,selected:fixed(selected),selectedSnapshotId:selection.capture.sourceSnapshotId,capture:null,consent:false,staleReason:null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
     return true;
   }
@@ -250,6 +251,10 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       if (!sourceCurrent() || !toolsCurrent() || [sourceWitness,contentWitness,...toolWitnesses.map(value=>value.witness)].some(witness=> {
         const query=witness.current();return !query || query.state.fetchStatus!=="idle" || query.state.isInvalidated;
       })) return;
+      const scopeOptions = sourceReads.scope(session);
+      const latestScope = await reads.client.fetchQuery({ queryKey: reads.key(scopeOptions.key), meta: { scopes: scopeOptions.scopes }, staleTime: 0, queryFn: scopeOptions.read });
+      if (!live() || version !== basis.current) return;
+      if (before.selectedSnapshotId !== null && latestScope.currentSnapshot !== before.selectedSnapshotId) throw { reason: "work-plan-basis", outcome: "rejected" };
       let toolSelection: WorkPlanToolSelection | null = null;
       if (selectedTools) {
         const entries = await Promise.all(selectedTools.entries.map(async tool => ({
@@ -580,7 +585,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   function reset() {
     if (!live() || reserved()) return false;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
-    update(before => ({ ...before,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,
       dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],failure:null,notice:null })); return true;
   }
   const contentToolAttempt = agent.current().toolRun?.prepared.attemptId ?? null;
@@ -598,8 +603,14 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     setPresetName:(value:SetStateAction<string>) => edit("presetName",typeof value === "function" ? value(current().presetName) : value),
     setConfig:(value:SetStateAction<AiConfig>) => edit("config",editedAiConfig(current().config, typeof value === "function" ? value(current().config) : value)),
     setLocale:(value:SetStateAction<string>) => edit("locale",typeof value === "function" ? value(current().locale) : value),
-    setSelected:(value:SetStateAction<string[]>) => edit("selected",typeof value === "function" ? value(current().selected) : value),
-    clearSelectedRange:() => { if (!reserved()) edit("selected",[]); },
+    setSelected:(value:SetStateAction<string[]>, snapshotId?: string | null) => {
+      if (!live()) return;
+      const selected = typeof value === "function" ? value(current().selected) : value;
+      const scope = reads.client.getQueryData(reads.key(["source-scope"]));
+      const selectedSnapshotId = selected.length ? snapshotId ?? (validateResponseScope(scope) ? scope.currentSnapshot : null) : null;
+      edit("selected",selected); update(before => ({ ...before,selectedSnapshotId }));
+    },
+    clearSelectedRange:() => { if (!reserved()) { edit("selected",[]); update(before => ({ ...before,selectedSnapshotId:null })); } },
     setConsent:(consent:boolean) => { if (!reserved() && (current().prepared || current().preparedPlan?.preview) && available() && (!consent || connectionCurrent())) update(before => ({ ...before,consent })); }
   };
 }

@@ -145,7 +145,7 @@ function definiteRejection(){expect(isCommandError(rejected)).toBe(true);return 
 afterEach(cleanup);
 async function open() {
   const user = userEvent.setup(), rendered = render(<Harness />, project);
-  await user.click(screen.getByRole("button", { name: "AI translation" }));
+  await user.click(screen.getByRole("button", { name: "AI work" }));
   await screen.findByRole("checkbox", { name: "first: Hello" });
   act(() => { owner.setConfig(prepared.preview.config); owner.setSelected([item.unitId]); });
   await waitFor(() => expect(registry.describe("ai.preview", scope, previewPayload())?.availability.enabled).toBe(true));
@@ -168,7 +168,7 @@ it("registers the complete scoped AI command families and routes preview, confir
     "ai.adopt-result", "ai.cancel-task", "ai.open-translation", "ai.preview", "ai.reconcile-adoption", "ai.reconcile-start",
     "ai.retry-adoption", "ai.retry-cancellation", "ai.retry-start", "ai.start", "ai.effect.retry",
     "ai.plan.pause", "ai.plan.stop", "ai.plan.take-over", "ai.plan.continue", "ai.plan.start-authorized",
-    "ai.plan.reconcile-action", "ai.plan.retry-action", "ai.plan.open-translation",
+    "ai.plan.reconcile-action", "ai.plan.retry-action", "ai.plan.open-translation", "ai.rewrite-translation",
   ].sort());
   expect(registry.list(scope).filter(command => command.category === "ai").every(command => command.binding === null)).toBe(true);
   await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
@@ -188,7 +188,7 @@ it("registers the complete scoped AI command families and routes preview, confir
   expect(payloads("start_work_plan")).toEqual([{...reads.context,planId:plan.planId,actionId:authorized.actionId,expectedGeneration:"1"}]);
   expect(registry.list(scope).filter(command=>command.category==="ai").map(command=>command.id)).toEqual(expect.arrayContaining([
     "ai.agent.generate","ai.agent.query-tool","ai.agent.reconcile","ai.component.prepare","ai.component.start","ai.component.discard"]));
-  expect(registry.list(scope).filter(command=>command.category==="ai")).toHaveLength(25);
+  expect(registry.list(scope).filter(command=>command.category==="ai")).toHaveLength(26);
 });
 
 it("rejects stale preparation and start captures without hiding the owner's configuration validation feedback", async () => {

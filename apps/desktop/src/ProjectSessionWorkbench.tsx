@@ -215,10 +215,14 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (snapshot.target.unitId !== destination.target.unitId || snapshot.target.locale !== destination.locale
       || snapshot.translations.unitId !== destination.target.unitId || snapshot.translations.locale !== destination.locale) throw new Error("Invalid editor destination");
     const target = snapshot.target;
+    if (destination.suggestedText !== undefined && target.sourceRevisionId !== destination.target.sourceRevisionId) {
+      setFailure("source-changed"); return false;
+    }
     if (!translation.begin({ unitId: target.unitId, locale: destination.locale, sourceRevisionId: target.sourceRevisionId,
       key: target.nativeKey, sourceText: target.sourceText }, snapshot.translations.current, snapshot.translations.currentText, destination.suggestedText)) return false;
     committed.current.view.memory.write("translation", "tab", "edit");
     committed.current.view.memory.write("translation", "targetLocale", destination.locale);
+    committed.current.view.memory.write("translation", "returnToAi", destination.returnTo === "ai");
     return true;
   }
   function blocked(area: WorkspaceArea) {
@@ -255,6 +259,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     prepareExit: () => navigation.prepareExit(), retire: () => { reads.retire(); navigation.dispose(); } }), [navigation, disabled, reads]);
   const openTranslation = (target: import("./TranslationWorkbench").EditorTarget, locale: string, suggestedText?: string) =>
     navigation.navigate({ kind: "translation", target, locale, ...(suggestedText === undefined ? {} : { suggestedText }) });
+  const openAiTranslation = (target: import("./TranslationWorkbench").EditorTarget, locale: string, suggestedText?: string) =>
+    navigation.navigate({ kind: "translation", target, locale, returnTo: "ai", ...(suggestedText === undefined ? {} : { suggestedText }) });
   const attempt = (area: "source" | "translation" | "ai" | "arena", attemptId: string) => { void navigation.navigate({ kind: "attempt", area, attemptId }); };
   const locked = disabled || navigating;
   if (retired) return <section className="workbench-panel" aria-label={t("workbench.retiredDraftTitle")}>
@@ -270,12 +276,13 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} onOpenExtensions={onOpenExtensions}
       onQueryText={text => navigation.navigate({ kind: "tool-query", text })}
+      onReturnToAi={view.memory.read<boolean>("translation", "returnToAi") ? () => { void navigation.navigate({ kind: "area", area: "ai" }); } : undefined}
       aiSelection={{ count: ai.selected.length, locale: ai.locale, editSeq: ai.editSeq, available: ai.contentRangeAvailable }}
       onPrepareSelection={(selection, expectedEditSeq) => navigation.navigate({ kind: "ai-selection", selection, expectedEditSeq })} /> : null}
     {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} /> : null}
     {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
-    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
+    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenTranslation={openAiTranslation} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
     {view.area === "arena" ? <ArenaWorkbench ref={handle => register("arena", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenConnections={onOpenConnections} /> : null}
     {view.area === "tasks" ? <ExecutionTasks ref={handle => register("tasks", handle)} project={project} disabled={locked}
       onSavedBuild={attemptId => navigation.navigate({ kind: "saved-build", attemptId })}

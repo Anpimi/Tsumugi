@@ -2,7 +2,7 @@ import { SourceContextChoice, SourceContextPreview } from "./SourceContextPrepar
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
 import { commandFailure, failureReason, CommandFailureDetails } from "./CommandFailure";
-import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef, type AttemptWorkbenchHandle } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef, type AttemptWorkbenchHandle, type WorkspaceArea } from "./WorkbenchFrame";
 import {enUS} from "./i18n/en-US";
 import {useEffect,useImperativeHandle,useLayoutEffect,useRef,useState,type Ref} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -16,6 +16,7 @@ import { WorkPlanControls } from "./WorkPlanControls";
 import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnectionPicker";
 import { WorkPlanAgentControls } from "./WorkPlanAgentControls";
 import { WorkPlanToolChoice, type PlanToolChoiceHandle } from "./WorkPlanToolChoice";
+import { AiScopePicker } from "./AiScopePicker";
 import { AiEffectStatus } from "./AiEffectStatus";
 import { TextReviewSelections } from "./TextReviewSelections";
 import type { WorkPlanStatusView } from "./workPlanCommands";
@@ -25,11 +26,11 @@ import {useWorkbenchCommands,type CommandAvailability,type AiPreparationCommandP
   type ExecutionCancellationCommandPayload,type ExecutionCancellationRetryCommandPayload} from "./workbenchCommands";
 export interface AiHandle extends AttemptWorkbenchHandle {allowNavigate:()=>Promise<boolean>}
 const stage=(e:unknown)=>commandFailure(e,"outcome-unknown");
-export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtensions,onOpenConnections}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>Promise<boolean>;onOpenExtensions?:()=>void;onOpenConnections?:()=>void}) {
+export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtensions,onOpenConnections,onOpenManual}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string,suggestedText?:string)=>Promise<boolean>;onOpenExtensions?:()=>void;onOpenConnections?:()=>void;onOpenManual?:(area:WorkspaceArea)=>Promise<boolean>}) {
   const {t}=useTranslation();const context=executionContext(project),reads=useSessionReads(),registry=useWorkbenchCommands();
   const [connectionOpen,setConnectionOpen]=useWorkbenchState("ai", "connectionOpen", false);
   const preparation=useAiPreparation(), tasks=useExecutionTaskSession();
-  const {presetName,setPresetName,config,setConfig,locale,setLocale,selected,setSelected,preparedPlan:prepared,options,setOptions,toolDraft,setToolDraft,advisoryChecks,setAdvisoryChecks,
+  const {presetName,setPresetName,config,setConfig,locale,setLocale,selected,selectedSnapshotId,setSelected,preparedPlan:prepared,options,setOptions,toolDraft,setToolDraft,advisoryChecks,setAdvisoryChecks,
     consent,setConsent,staleReason,pendingStart,pendingAdopt,dirty,sourceGeneration,clearSelectedRange,reset,targetAvailable,attempt,busy}=preparation;
   const toolChoice = useRef<PlanToolChoiceHandle>(null);
   const lastSourceGeneration = useWorkbenchRef("ai", "sourceGeneration", sourceGeneration);
@@ -132,6 +133,14 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     const scope=currentRead<NonNullable<typeof scopeRead.data>>(scopeOptions.key);
     return !!scope?.currentSnapshot&&!!currentRead(sourceReads.content(context,scope.currentSnapshot,after,scope).key);
   }
+  function selectionCurrent(){
+    const source=currentRead<NonNullable<typeof scopeRead.data>>(scopeOptions.key);
+    return !selected.length || selectedSnapshotId===null || selectedSnapshotId===source?.currentSnapshot;
+  }
+  function preparedSourceCurrent(){
+    const source=currentRead<NonNullable<typeof scopeRead.data>>(scopeOptions.key);
+    return !prepared || prepared.scope.every(unit=>unit.sourceSnapshotId===source?.currentSnapshot);
+  }
   function generationActive(){const current=preparation.current(),value=currentView();return !!current.attempt&&(!value||value.detail.progress.queued>0||value.detail.progress.running>0);}
   function preparationPayload():AiPreparationCommandPayload {
     const current=preparation.current();return{kind:"ai-preparation",editSeq:current.editSeq,locale:current.locale,unitIds:[...current.selected]};
@@ -141,7 +150,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     const current=preparation.current();
     return payload&&payload.editSeq===current.editSeq&&payload.locale===current.locale
       &&payload.unitIds.length===current.selected.length&&payload.unitIds.every((id,index)=>id===current.selected[index])
-      &&preparation.canPreview(preparation.current().options.stages.some(choice=>choice.stage==="generation"&&choice.mode==="assisted"))&&!generationActive()&&!cancelUnresolved&&sourceReady()?{enabled:true}:unavailable;
+      &&preparation.canPreview(preparation.current().options.stages.some(choice=>choice.stage==="generation"&&choice.mode==="assisted"))&&!generationActive()&&!cancelUnresolved&&sourceReady()&&selectionCurrent()?{enabled:true}:unavailable;
   }
   function translationPayload(value:AiView,row:AiView["rows"][number]):AiTranslationCommandPayload {
     return{kind:"ai-translation-target",attemptId:value.detail.attemptId,taskId:value.detail.taskId,itemId:row.itemId,
@@ -205,17 +214,25 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     return original?.phase==="unknown"&&payload&&original.target.attemptId===payload.attemptId&&original.target.origin===payload.origin
       &&original.request.requestId===payload.requestId?{enabled:true}:unavailable;
   }
-  function translationAvailability(payload?:AiTranslationCommandPayload):CommandAvailability {
+  function translationAvailability(payload?:AiTranslationCommandPayload,rewrite=false):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;
-    return payload&&project.metadata.targetLocales.includes(payload.locale)&&targetRow(payload)?{enabled:true}:unavailable;
+    const target=payload&&targetRow(payload);
+    return payload&&project.metadata.targetLocales.includes(payload.locale)&&target&&(!rewrite||target.row.output)?{enabled:true}:unavailable;
   }
-  async function openTranslation(payload:AiTranslationCommandPayload){
+  async function openTranslation(payload:AiTranslationCommandPayload,rewrite=false){
     const target=targetRow(payload),ticket=navigationGeneration.current;
     const query=reads.client.getQueryCache().find({queryKey:reads.key(["aiCommands",payload.attemptId]),exact:true}),version=query?.state.dataUpdateCount;
-    if(!target||!translationAvailability(payload).enabled||!await allowNavigate())return;
-    if(!mounted.current||navigationGeneration.current!==ticket||!translationAvailability(payload).enabled
+    if(!target||!translationAvailability(payload,rewrite).enabled||!await allowNavigate())return;
+    if(!mounted.current||navigationGeneration.current!==ticket||!translationAvailability(payload,rewrite).enabled
       ||!query||query.state.data!==target.value||query.state.dataUpdateCount!==version)return;
-    await onOpenTranslation(aiTarget(target.row.item),payload.locale);
+    if(rewrite&&target.row.output)await onOpenTranslation(aiTarget(target.row.item),payload.locale,target.row.output.text);
+    else await onOpenTranslation(aiTarget(target.row.item),payload.locale);
+  }
+  async function openSourceEditor(target:EditorTarget){
+    const page=currentRead<NonNullable<typeof visiblePage>>(contentOptions.key),ticket=navigationGeneration.current;
+    if(!page||!sourceReady()||!page.rows.some(row=>row.unitId===target.unitId&&row.sourceRevisionId===target.sourceRevisionId)||!await allowNavigate())return;
+    if(!mounted.current||navigationGeneration.current!==ticket||!sourceReady()||currentRead(contentOptions.key)!==page)return;
+    await onOpenTranslation(target,locale);
   }
   useLayoutEffect(()=>{
     const metadata={category:"ai" as const,scope:commandScope,binding:null,confirmation:"none" as const};
@@ -230,10 +247,15 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
         handler:({taskId,attemptId,origin})=>{void tasks.cancel({taskId,attemptId,origin});}}),
       registry.register({...metadata,id:"ai.retry-cancellation",nameKey:"execution.retryCancellation",risk:"retries-execution-action",payloadKind:"execution-cancellation-retry",availability:cancellationRetryAvailability,handler:payload=>{void tasks.retry(payload.taskId);}}),
       registry.register({...metadata,id:"ai.open-translation",nameKey:"ai.openEditor",risk:"opens-translation",payloadKind:"ai-translation-target",availability:translationAvailability,handler:payload=>{void openTranslation(payload);}}),
+      registry.register({...metadata,id:"ai.rewrite-translation",nameKey:"ai.workspace.rewrite",risk:"opens-translation",payloadKind:"ai-translation-target",availability:payload=>translationAvailability(payload,true),handler:payload=>{void openTranslation(payload,true);}}),
     ];
     return()=>remove.forEach(cleanup=>cleanup());
   });
   return <>{open?<WorkbenchPanel open={open} title={t("ai.title")} description={t("ai.description")} className="ai-dialog" onBack={()=>void allowNavigate().then(ok=>{if(ok)setOpen(false);})} backDisabled={disabled||preparation.reserved()}>
+    <section aria-label={t("ai.workspace.manualTitle")}><h2>{t("ai.workspace.manualTitle")}</h2><p>{t("ai.workspace.manualHelp")}</p>
+      {onOpenManual?<div className="execution-actions">{(["translation","resources","review","source","release"] as const).map(area=><button key={area} type="button" className="secondary-button" disabled={disabled||preparation.reserved()||cancelUnresolved} onClick={()=>{void onOpenManual(area);}}>{t(`ai.workspace.manual.${area}`)}</button>)}</div>:null}
+    </section>
+    {!project.metadata.targetLocales.length?<p role="status">{t("ai.workspace.noTargets")}</p>:null}
     <TaskCancellationFeedback origin="ai" taskId={view?.detail.taskId} disabled={busy} retryCommand={{
       available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,
       dispatch:intent=>{registry.dispatch("ai.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});},
@@ -266,21 +288,23 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     <label className="field">{t("ai.locale")}<select value={locale} onChange={e=>{setLocale(e.target.value);}}>{!targetAvailable&&locale?<option value={locale} disabled>{locale}</option>:null}{project.metadata.targetLocales.map(l=><option key={l}>{l}</option>)}</select></label>
     {assisted?<><label className="source-check"><input type="checkbox" checked={config.shareTerms} onChange={e=>change("shareTerms",e.target.checked)}/>{t("ai.shareTerms")}</label><label className="source-check"><input type="checkbox" checked={config.shareContext} onChange={e=>change("shareContext",e.target.checked)}/>{t("ai.shareContext")}</label></>:null}
     {assisted?<SourceContextChoice value={config.sourceContext} onChange={value=>change("sourceContext",value)}/>:null}
-    <h3>{t("ai.scope",{count:selected.length})}</h3>{visiblePage?<><ul>{visiblePage.rows.map(row=>row.unitId?<li key={row.unitId}><label className="source-check"><input type="checkbox" checked={selected.includes(row.unitId)} onChange={e=>{setSelected(ids=>e.target.checked?[...ids,row.unitId!]:ids.filter(id=>id!==row.unitId));}}/>{row.occurrence.key}: {row.occurrence.text}</label></li>:null)}</ul><button className="secondary-button" disabled={locked} onClick={()=>void loadPage(0)}>{t("ai.first")}</button>{visiblePage.nextOrdinal!==null?<button className="secondary-button" onClick={()=>void loadPage(visiblePage.nextOrdinal!)}>{t("ai.next")}</button>:null}</>:!scopeRead.isPending&&(!scopeRead.data?.currentSnapshot||!contentRead.isPending)?<p>{t("ai.noSource")}</p>:null}
+    <AiScopePicker page={visiblePage} snapshotId={scopeRead.data?.currentSnapshot??null} selectedSnapshotId={selectedSnapshotId} selected={selected} after={after}
+      ready={sourceReady()} loading={scopeRead.isFetching||contentRead.isFetching} failed={!!scopeRead.error||!!contentRead.error} disabled={locked}
+      onChange={setSelected} onRefresh={refreshReads} onPage={loadPage} onOpenEditor={target=>{void openSourceEditor(target);}}/>
     <button className="secondary-button" type="button" disabled={locked||!selected.length} onClick={()=>{if(locked)return;clearSelectedRange();}}>{t("ai.clearSelectedRange")}</button>
     {options.stages.some(choice=>choice.stage==="checks"&&choice.mode==="assisted")?<><p>{t("review.formatChecksRequired")}</p><TextReviewSelections value={advisoryChecks} active={open} scopeKey={JSON.stringify([context,locale])} disabled={locked} onOpenExtensions={onOpenExtensions} onSnapshotRevision={revision=>{if(prepared?.checkers.some(checker=>checker.kind==="ready"&&checker.plugin.plugin.settingsRevision!==revision))preparation.invalidatePreview();}} onChange={setAdvisoryChecks}/></>:null}
     <button className="primary-button" disabled={!previewAvailability(preparationPayload()).enabled} onClick={()=>{registry.dispatch("ai.preview",commandScope,preparationPayload());}}>{t(assisted?"ai.preview":"ai.plan.prepareManual")}</button></fieldset>
     {sharing&&targetAvailable?<section><h3>{t("ai.previewTitle")}</h3><p>{sharing.config.endpoint} · {sharing.config.model}</p><p>{t("ai.limits",{defaultValue:enUS.ai.limits,requests:config.maxRequests,concurrency:config.concurrency,tokens:config.maxOutputTokens,retries:config.maxRetries})}</p><p>{t("ai.costUnknown")}</p><p>{t("ai.rateLimit")}</p>{sharing.items.map(item=><article key={item.unitId}><h4>{item.nativeKey} → {item.targetLocale}</h4><pre className="ai-text">{item.sourceText}</pre>{item.terms.map(term=><p key={term.revisionId}>{term.source} → {term.target}</p>)}{item.context?<pre className="ai-text">{item.context.text}</pre>:null}<SourceContextPreview capture={item.sourceContext}/>{item.omissions.map(reason=><p key={reason}>{reason.startsWith("term-conflict:")?t("ai.termConflict",{term:reason.slice(14)}):t(`ai.${reason}`,{defaultValue:reason})}</p>)}</article>)}{prepared?.preview&&!status?<label className="source-check"><input type="checkbox" checked={consent} disabled={locked||!preparation.connectionCurrent()} onChange={e=>setConsent(e.target.checked)}/>{t("ai.consent")}</label>:null}</section>:null}
     <WorkPlanControls context={context} prepared={prepared} status={status} busy={busy} disabled={disabled||!!pendingAdopt} consent={consent}
       session={preparation.planControl} editSeq={preparation.editSeq} run={perform} refresh={refreshPlan} onPlan={preparation.recordPlan}
-      open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}
+      open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}
       onStarted={(id,idPlan)=>{const original=preparation.planControl.current().pending;if(original?.kind==="start")preparation.recordPlanStart(id,idPlan,original.prepared,original.request.expectedGeneration,original.editSeq);}}
       onBlockedChange={()=>{}} onOpenExtensions={onOpenExtensions} onOpenTranslation={onOpenTranslation}/>
     {status?.plan.preview?<WorkPlanAgentControls context={context} status={status} open={open} disabled={disabled||planBlocked||!!pendingAdopt||active} busy={busy}
       session={preparation.agent} component={preparation.component} ownerBusy={()=>preparation.current().busy} run={perform} onBlockedChange={()=>{}} onGenerated={preparation.recordGenerated}/>:null}
     {pendingAdopt?<section><p>{t(pendingAdopt.uncertain?"ai.adoptUnknown":"ai.adoptPending")}</p><p>{pendingAdopt.candidate.item.nativeKey} → {pendingAdopt.candidate.item.targetLocale}</p><pre className="ai-text">{pendingAdopt.candidate.text}</pre>{pendingAdopt.uncertain?<><button className="secondary-button" disabled={!adoptionRecoveryAvailability(adoptionPendingPayload()).enabled} onClick={()=>{const payload=adoptionPendingPayload();if(payload)registry.dispatch("ai.reconcile-adoption",commandScope,payload);}}>{t("ai.reconcile")}</button>{pendingAdopt.retryAllowed?<button className="secondary-button" disabled={!adoptionRecoveryAvailability(adoptionPendingPayload(),true).enabled} onClick={()=>{const payload=adoptionPendingPayload();if(payload)registry.dispatch("ai.retry-adoption",commandScope,payload);}}>{t("ai.retrySame")}</button>:null}</>:null}</section>:null}
     {view?<section><h3>{t("ai.results")}</h3><p>{view.config.model} · {view.recipe}</p><p>{t("ai.progress",{...view.detail.progress,defaultValue:enUS.ai.progress})}</p>{view.budget?<><p>{t("ai.budgetSummary",{...view.budget,defaultValue:enUS.ai.budgetSummary})}</p><p>{t("ai.budgetUsage",{...view.budget,defaultValue:enUS.ai.budgetUsage})}</p>{view.budget.legacyHeld>0?<p>{t("ai.legacyBudget",{count:view.budget.legacyHeld,defaultValue:enUS.ai.legacyBudget})}</p>:null}</>:null}{active?<button className="secondary-button" disabled={!cancellationAvailability(cancellationPayload(view)).enabled} onClick={()=>{registry.dispatch("ai.cancel-task",commandScope,cancellationPayload(view));}}>{t("ai.cancel")}</button>:null}<button className="secondary-button" disabled={busy} onClick={()=>void viewRead.refetch()}>{t("ai.refresh")}</button>
-    {view.rows.map(row=>{const item=view.detail.items.find(i=>i.status.itemId===row.itemId),adoptPayload=candidatePayload(view,row),editorPayload=translationPayload(view,row);const effect=effectPayload(view,row);return <article key={row.itemId}><h4>{row.item.nativeKey}</h4><p>{t(`ai.states.${item?.status.execution}`,{defaultValue:item?.status.execution??""})}</p>{item?.status.diagnostic?<p>{t(`ai.errors.${item.status.diagnostic}`,{defaultValue:t("ai.errors.failed")})}</p>:null}{row.automation?<AiEffectStatus effect={row.automation} disabled={!effectAvailability(effect).enabled} onRetry={()=>{if(effect)registry.dispatch("ai.effect.retry",commandScope,effect);}}/>:null}{row.output?<><pre className="ai-text">{row.output.text}</pre><p>{row.output.usage?t("ai.usage",{...row.output.usage,defaultValue:enUS.ai.usage}):t("ai.usageUnknown")}{row.output.usage&&row.output.usageIncomplete?` · ${t("ai.usageUnknown")}`:""}</p><button className="secondary-button" disabled={!adoptionAvailability(adoptPayload).enabled} onClick={()=>{if(adoptPayload)registry.dispatch("ai.adopt-result",commandScope,adoptPayload);}}>{row.savedRevisionId||item?.status.adoption==="committed"||(row.resultId&&preparation.saved[row.resultId])?t("ai.saved"):t("ai.saveCandidate")}</button><button className="secondary-button" disabled={!translationAvailability(editorPayload).enabled} onClick={()=>{registry.dispatch("ai.open-translation",commandScope,editorPayload);}}>{t("ai.openEditor")}</button></>:null}</article>;})}<p>{t("ai.noAutomaticRetry")}</p></section>:null}
+    {view.rows.map(row=>{const item=view.detail.items.find(i=>i.status.itemId===row.itemId),adoptPayload=candidatePayload(view,row),editorPayload=translationPayload(view,row);const effect=effectPayload(view,row);return <article key={row.itemId}><h4>{row.item.nativeKey}</h4><p>{t(`ai.states.${item?.status.execution}`,{defaultValue:item?.status.execution??""})}</p>{item?.status.diagnostic?<p>{t(`ai.errors.${item.status.diagnostic}`,{defaultValue:t("ai.errors.failed")})}</p>:null}{row.automation?<AiEffectStatus effect={row.automation} disabled={!effectAvailability(effect).enabled} onRetry={()=>{if(effect)registry.dispatch("ai.effect.retry",commandScope,effect);}}/>:null}{row.output?<><pre className="ai-text">{row.output.text}</pre><p>{row.output.usage?t("ai.usage",{...row.output.usage,defaultValue:enUS.ai.usage}):t("ai.usageUnknown")}{row.output.usage&&row.output.usageIncomplete?` · ${t("ai.usageUnknown")}`:""}</p><button className="secondary-button" disabled={!adoptionAvailability(adoptPayload).enabled} onClick={()=>{if(adoptPayload)registry.dispatch("ai.adopt-result",commandScope,adoptPayload);}}>{row.savedRevisionId||item?.status.adoption==="committed"||(row.resultId&&preparation.saved[row.resultId])?t("ai.saved"):t("ai.saveCandidate")}</button></>:null}<div className="execution-actions"><button className="secondary-button" disabled={!translationAvailability(editorPayload).enabled} onClick={()=>{registry.dispatch("ai.open-translation",commandScope,editorPayload);}}>{t("ai.openEditor")}</button>{row.output?<button type="button" className="secondary-button" disabled={!translationAvailability(editorPayload,true).enabled} onClick={()=>{registry.dispatch("ai.rewrite-translation",commandScope,editorPayload);}}>{t("ai.workspace.rewrite")}</button>:null}</div></article>;})}<p>{t("ai.noAutomaticRetry")}</p></section>:null}
 
   </WorkbenchPanel>:null}<Dialog.Root open={leaving} onOpenChange={next=>{if(!next)settleLeave(false);}}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop"/><Dialog.Content className="confirm-dialog execution-confirm-dialog"><Dialog.Title>{t("ai.unsaved")}</Dialog.Title><Dialog.Description>{t("ai.unsavedDescription")}</Dialog.Description><button className="secondary-button" onClick={()=>settleLeave(false)}>{t("ai.stay")}</button><button className="secondary-button" onClick={()=>settleLeave(true)}>{t("ai.discard")}</button></Dialog.Content></Dialog.Portal></Dialog.Root></>;
 }
