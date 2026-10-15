@@ -77,3 +77,12 @@ export function SourceContextPreview({ capture }: { capture: AiItem["sourceConte
     {omittedTotal > omitted.samples.length ? <p>{t("sourceContext.unsampled", { count: omittedTotal - omitted.samples.length })}</p> : null}
   </section>;
 }
+
+/** Local decision evidence is displayed independently of the raw source categories. */
+export function ProjectFactPreview({capture}:{capture:AiItem["projectContext"]}) {
+  const {t}=useTranslation();if(capture.kind==="not-selected")return null;
+  return <section aria-label={t("contextFacts.preview")}><h5>{t("contextFacts.preview")}</h5>
+    <p>{t("contextFacts.applied",{count:capture.decisions.length})}</p>
+    {capture.manual?capture.decisions.map(v=>v.request.disposition.kind==="replace"?<article key={v.request.actionId}><p>{t(`sourceContext.factKinds.${v.request.basis.fact.fact.kind}`)} · {t("contextFacts.manual")}</p><pre>{v.request.disposition.text}</pre></article>:null):capture.decisions.some(v=>v.request.disposition.kind==="replace")?<p>{t("contextFacts.manualNotShared")}</p>:null}
+  </section>;
+}

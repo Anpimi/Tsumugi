@@ -26,7 +26,7 @@ const project: ProjectView = { sessionToken: "arena-command-session", locator: "
   metadata: { projectId: fixtureIdentity(500), displayName: "Arena commands", sourceLocale: "en", targetLocales: ["zh-CN", "ja"], metadataRevision: "1" } };
 const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "arena" as const };
 const item: AiItem = { unitId: fixtureIdentity(301), sourceRevisionId: fixtureIdentity(302), sourceSnapshotId: fixtureIdentity(300),
-  nativeKey: "first", sourceLocale: "en", sourceText: "Hello {name}", targetLocale: "zh-CN", terms: [], context: null, sourceContext: {kind:"not-selected"},
+  nativeKey: "first", sourceLocale: "en", sourceText: "Hello {name}", targetLocale: "zh-CN", terms: [], context: null, sourceContext: {kind:"not-selected"}, projectContext: {kind:"not-selected" as const},
   omissions: ["terms-not-shared", "context-not-shared"], resourceBaseline: "0" };
 let owner: ReturnType<typeof useArenaDraftSession>, reads: ReturnType<typeof useSessionReads>, registry: ReturnType<typeof useWorkbenchCommands>;
 let tasks: ReturnType<typeof useExecutionTaskSession>, prepared: ArenaPrepared, view: ArenaView, comparison: ComparisonView, action: AdoptionAction;

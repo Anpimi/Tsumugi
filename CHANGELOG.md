@@ -6,13 +6,20 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Correct individual source facts for an exact entry and target language, reject
+  inferences, and explicitly restore their originals. Decisions preserve original
+  observations and history, use checked actions, and retain newer resource and
+  translation drafts during recovery. AI and Arena exclude replaced/rejected
+  originals; human replacement values require saved-context sharing. No global
+  rule, training permission, or source reinterpretation is created.
+
 - Open the current entry's human context directly from the translation editor
   and return to the retained translation draft. Navigation rechecks source and
   context evidence, preserves newer resource edits and unconfirmed actions, and
   saves only through the existing explicit context revision flow. Extracted
   facts and AI inferences are unchanged.
 
-- Current development projects use current-only schema 40 and internal immutable
+- Current development projects use current-only schema 42 and internal immutable
   WorkPlan format 3. Captured component scope and maintenance fields have no
   implicit defaults. Other development project formats are refused before
   application schema changes, with directories preserved without conversion,

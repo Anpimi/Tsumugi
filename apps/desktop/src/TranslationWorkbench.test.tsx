@@ -76,6 +76,8 @@ beforeEach(async () => {
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
     if (command === "read_source_content") return content;
+    if (command === "read_context_fact_decisions") return [];
+    if (command === "read_context_fact_history") return {rows:[],nextOffset:null};
     if (command === "read_source_context") {
       expect(args.request.after).toBe(0);
       return {scope:{projectId:String(args.request.projectId),sourceSnapshotId:String(args.request.sourceSnapshotId),

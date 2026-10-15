@@ -23,6 +23,7 @@ pub struct AiItemView {
     pub terms: Vec<SharedTerm>,
     pub context: Option<ContextRevision>,
     pub source_context: SourceContextCapture,
+    pub project_context: tsumugi_core::ProjectFactCapture,
     pub omissions: Vec<String>,
     pub resource_baseline: UnsignedDecimal,
 }
@@ -39,6 +40,7 @@ impl From<AiItem> for AiItemView {
             terms,
             context,
             source_context,
+            project_context,
             omissions,
             resource_baseline,
         } = item;
@@ -53,6 +55,7 @@ impl From<AiItem> for AiItemView {
             terms,
             context,
             source_context,
+            project_context,
             omissions,
             resource_baseline: resource_baseline.into(),
         }
@@ -279,8 +282,15 @@ mod tests {
         numeric["sourceContext"]["value"]["contentRevision"] = serde_json::json!(u64::MAX);
         assert!(serde_json::from_value::<AiItemView>(numeric).is_err());
         let mut overflow = wire.clone();
-        overflow["sourceContext"]["value"]["contentRevision"] = serde_json::json!("9223372036854775808");
+        overflow["sourceContext"]["value"]["contentRevision"] =
+            serde_json::json!("9223372036854775808");
         assert!(serde_json::from_value::<AiItemView>(overflow).is_err());
+        let mut missing_project = wire.clone();
+        missing_project
+            .as_object_mut()
+            .unwrap()
+            .remove("projectContext");
+        assert!(serde_json::from_value::<AiItemView>(missing_project).is_err());
         wire.as_object_mut().unwrap().remove("sourceContext");
         assert!(serde_json::from_value::<AiItemView>(wire).is_err());
         let mut config = fixture["requests"]["preview"]["config"].clone();

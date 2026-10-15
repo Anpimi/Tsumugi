@@ -1,5 +1,51 @@
 # Glossary and context
 
+## Correct a source fact for the current entry
+
+Expand the translation editor's references to inspect original source facts and
+their provenance. **Change this fact** creates a human replacement with the same
+typed kind; **Reject this inference** excludes that particular inferred fact.
+Supply a decision author and reason, then explicitly save. Each decision applies
+only to this entry, target language and exact observed source. It preserves the
+original block target, extracted/inferred classification, original value and
+source references. It creates no entity-wide rule, global memory or training
+permission. Free-text context remains a separate supplement.
+
+The fact decision history remains readable after source changes. Decisions are
+never silently carried to a new source snapshot. Inspect the current facts and
+explicitly create a new decision against their new evidence. **Restore the
+original fact** appends another decision; it does not erase a prior rejection.
+An existing resource or translation draft is kept independently. If an action's
+result is uncertain, check its original receipt before retrying; retry uses the
+same request. An acknowledgement for an earlier edit does not clear newer input.
+
+AI and Arena apply these decisions at the shared Core preparation boundary.
+Replaced and rejected original facts are excluded even when their original
+extracted/inferred category is selected. Human replacement values are included
+only when **Share saved context** is selected, including when the original fact
+category is not selected. The new preview distinguishes human values and pins
+the relevant decisions, including an initially empty decision query. Restoration
+makes the original eligible under its original category selection again. The
+provider receives only authorized effective values and their semantic origin;
+local decision identities, reasons, original excluded values and coordinates
+remain local. Decision authors are at most 512 UTF-8 bytes; reasons and human
+replacement values are each at most 4,096 bytes. History is paged (at most 100
+records per read). The editor reads exact fact positions from one loaded source
+page (at most 128 positions) and keeps single-fact editing and restoration
+available even when other facts exceed an AI capture budget. AI preparation
+requires the complete scope's latest decision set, bounded at 128 decisions and
+32 KiB; exceeding a bound fails explicitly without returning a silently truncated
+successful capture. Turning off both saved-context sharing and original fact
+categories allows preparation without that capture. Restoration retains its
+history and does not reduce the number of captured latest decisions. Budgets
+still apply to whole items and complete requests.
+
+New related decisions require a fresh, unaccepted preparation. Unrelated entries
+and languages do not invalidate all work. Already accepted fixed inputs and
+historical results retain their original capture; reading history grants no
+new execution authority. Source facts use the existing SDK contract; human
+project decisions belong to Core's existing project resource authority.
+
 Open a project with a source snapshot and at least one target language, then choose **Glossary and context**. The Terms tab creates or edits project terms with a target language, source phrase, optional aliases, preferred target form, project or source-unit scope, protected-form flag, and reason. Each save creates a revision; the earlier value remains in History. A unit-scoped term takes precedence over a project-wide term. Conflicting terms at the same scope are shown as a conflict, not silently chosen. Terms are guidance; saving one does not rewrite translations.
 
 In a translation editor, expand **Terms, context and history** and choose

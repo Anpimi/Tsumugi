@@ -590,6 +590,14 @@ pub fn select_source_context(
     view: &SourceContextView,
     selection: &SourceContextSelection,
 ) -> Result<SourceContextCapture, ExecutionError> {
+    select_source_context_excluding(view, selection, &BTreeSet::new())
+}
+
+pub(super) fn select_source_context_excluding(
+    view: &SourceContextView,
+    selection: &SourceContextSelection,
+    excluded: &BTreeSet<(u32, u32)>,
+) -> Result<SourceContextCapture, ExecutionError> {
     selection.validate()?;
     if !selection.is_enabled() {
         return Ok(SourceContextCapture::NotSelected);
@@ -623,7 +631,10 @@ pub fn select_source_context(
         let Some(facts) = &block.facts else { continue };
         for (fact_index, fact) in facts.facts.iter().enumerate() {
             let inferred = matches!(&fact.origin, sdk::SourceContextFactOrigin::Inferred { .. });
-            if (inferred && !selection.inferred) || (!inferred && !selection.extracted) {
+            if excluded.contains(&(block.block_index, fact_index as u32))
+                || (inferred && !selection.inferred)
+                || (!inferred && !selection.extracted)
+            {
                 selected.omissions.fact(
                     block.block_index,
                     fact_index as u32,

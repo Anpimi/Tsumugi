@@ -77,3 +77,8 @@ pub const PRODUCT_NAME: &str = "Tsumugi";
 
 #[cfg(any(test, feature = "execution-test-host"))]
 pub use persistence::ComputedReviewCheck;
+
+pub use persistence::{
+    ContextFactDecision, ContextFactDisposition, ContextFactHistory, ContextFactPosition,
+    ContextFactWrite, ManualContextFact, ProjectFactCapture, SourceFactBasis,
+};

@@ -111,6 +111,153 @@ request!(
     }
 );
 
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextFactRequest {
+        decision: tsumugi_core::ContextFactWrite
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextFactsRequest {
+        scope: tsumugi_core::SourceContextRequest,
+        facts: Vec<tsumugi_core::ContextFactPosition>
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextFactActionRequest {
+        action_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextFactHistoryRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        offset: u32,
+        limit: u32
+    }
+);
+
+#[tauri::command]
+pub async fn decide_context_fact(
+    state: State<'_, AppState>,
+    request: ContextFactRequest,
+) -> Result<tsumugi_core::ContextFactDecision, CommandError> {
+    state
+        .sessions
+        .run(
+            "decide_context_fact",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                if request.project_id != request.decision.basis.scope.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "context-fact-project"),
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .decide_context_fact(&request.decision)
+                    .map_err(|e| resource_error(e, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_context_fact_decisions(
+    state: State<'_, AppState>,
+    request: ContextFactsRequest,
+) -> Result<Vec<tsumugi_core::ContextFactDecision>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_context_fact_decisions",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                if request.project_id != request.scope.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "context-fact-project"),
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                active
+                    .store
+                    .context_fact_decisions(&request.scope, &request.facts)
+                    .map_err(|e| resource_error(e, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_context_fact_action(
+    state: State<'_, AppState>,
+    request: ContextFactActionRequest,
+) -> Result<Option<tsumugi_core::ContextFactDecision>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_context_fact_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .context_fact_action(request.project_id, request.action_id)
+                .map_err(|e| resource_error(e, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_context_fact_history(
+    state: State<'_, AppState>,
+    request: ContextFactHistoryRequest,
+) -> Result<tsumugi_core::ContextFactHistory, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_context_fact_history",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .context_fact_history(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.offset,
+                    request.limit,
+                )
+                .map_err(|e| resource_error(e, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
 fn resource_error(error: ExecutionError, stage: CommandStage) -> CommandError {
     let mapped = map_execution(error, stage);
     mapped

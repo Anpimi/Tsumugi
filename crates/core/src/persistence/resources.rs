@@ -12,7 +12,15 @@ const MAX_RESOURCE_BYTES: usize = 128 * 1024;
 const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
+mod context_facts;
 mod exchange_xml;
+pub use context_facts::{
+    ContextFactDecision, ContextFactDisposition, ContextFactHistory, ContextFactPosition,
+    ContextFactWrite, ManualContextFact, ProjectFactCapture, SourceFactBasis,
+};
+pub(super) use context_facts::{
+    current_in as current_fact_decisions_in, verify_input_records as verify_input_fact_decisions,
+};
 mod source_context;
 mod source_context_page;
 mod source_context_selection;
@@ -174,6 +182,7 @@ pub enum TmMatchKind {
 pub enum ResourceImpactKind {
     Term,
     Context,
+    ContextFact,
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -534,6 +543,7 @@ fn validate_identifier(value: &str) -> Result<(), ExecutionError> {
 }
 
 const TABLES: &[(&str, &str)] = &[
+    context_facts::TABLE,
     ("resource_captures", "CREATE TABLE resource_captures (
         capture_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
@@ -608,7 +618,7 @@ const TABLES: &[(&str, &str)] = &[
     ("resource_changes", "CREATE TABLE resource_changes (
         change_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('term','context')),
+        kind TEXT NOT NULL CHECK(kind IN ('term','context','context-fact')),
         locale TEXT NOT NULL,
         scope_unit_id TEXT REFERENCES source_units(unit_id),
         old_scope_unit_id TEXT REFERENCES source_units(unit_id),
@@ -630,10 +640,12 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (_, sql) in TABLES {
         connection.execute_batch(sql)?;
     }
+    context_facts::initialize(connection)?;
     Ok(())
 }
 
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+    context_facts::validate(connection)?;
     for (name, _) in TABLES {
         let columns: i64 = connection.query_row(
             "SELECT COUNT(*) FROM pragma_table_info(?1)",
@@ -671,6 +683,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             WHERE (x.kind='term' AND NOT EXISTS(
                 SELECT 1 FROM term_revisions r WHERE r.revision_id=x.new_revision_id
                   AND r.project_id=x.project_id AND r.locale=x.locale))
+               OR (x.kind='context-fact' AND NOT EXISTS(SELECT 1 FROM context_fact_decisions d WHERE d.action_id=x.new_revision_id AND d.project_id=x.project_id AND d.locale=x.locale))
                OR (x.kind='context' AND NOT EXISTS(
                 SELECT 1 FROM context_revisions r WHERE r.revision_id=x.new_revision_id
                   AND r.project_id=x.project_id AND r.locale=x.locale))
@@ -1160,12 +1173,15 @@ impl ProjectStore {
                         old_revision_id,new_revision_id,
                         CASE kind WHEN 'term' THEN
                             (SELECT target FROM term_revisions WHERE revision_id=old_revision_id)
+                          WHEN 'context-fact' THEN (SELECT CASE json_extract(CAST(request AS TEXT),'$.disposition.kind') WHEN 'replace' THEN json_extract(CAST(request AS TEXT),'$.disposition.text') WHEN 'restore' THEN json_extract(CAST(request AS TEXT),'$.basis.fact.fact.text') ELSE NULL END FROM context_fact_decisions WHERE action_id=old_revision_id)
                           ELSE (SELECT text FROM context_revisions WHERE revision_id=old_revision_id) END,
                         CASE kind WHEN 'term' THEN
                             (SELECT target FROM term_revisions WHERE revision_id=new_revision_id)
+                          WHEN 'context-fact' THEN (SELECT CASE json_extract(CAST(request AS TEXT),'$.disposition.kind') WHEN 'replace' THEN json_extract(CAST(request AS TEXT),'$.disposition.text') ELSE json_extract(CAST(request AS TEXT),'$.basis.fact.fact.text') END FROM context_fact_decisions WHERE action_id=new_revision_id)
                           ELSE (SELECT text FROM context_revisions WHERE revision_id=new_revision_id) END,
                         CASE kind WHEN 'term' THEN
                             (SELECT removed FROM term_revisions WHERE revision_id=new_revision_id)
+                          WHEN 'context-fact' THEN (SELECT json_extract(CAST(request AS TEXT),'$.disposition.kind')='reject-inference' FROM context_fact_decisions WHERE action_id=new_revision_id)
                           ELSE 0 END
                  FROM resource_changes WHERE project_id=?1 AND locale=?2
                  ORDER BY rowid LIMIT 10001",
@@ -1278,6 +1294,7 @@ impl ProjectStore {
                     kind: match kind.as_str() {
                         "term" => ResourceImpactKind::Term,
                         "context" => ResourceImpactKind::Context,
+                        "context-fact" => ResourceImpactKind::ContextFact,
                         _ => return Err(failure(ErrorCode::CorruptLedger, "resource-change-kind")),
                     },
                     old_revision_id: old_revision.clone().map(id).transpose()?,

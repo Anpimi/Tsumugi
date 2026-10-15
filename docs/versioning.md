@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Current-entry source-fact decisions append immutable scoped resource actions and
+pin them in a required `projectContext` field in AI/Arena items. There is no
+implicit `not-selected` value for a missing capture field. This unit advances the
+current-only project format to schema 42; other development directories are
+refused before application schema changes and preserved without migration,
+conversion or reset. The original SDK source-facts contract stays at 1/1 and
+retains only extracted/inferred observations. Core owns the separate human
+projection. WorkPlan format 3 retains its existing fields/control semantics;
+its fixed input now carries the schema-42 item contract. SDK/process protocols,
+dependencies and lockfile do not change. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain in the same undistributed batch without another SemVer
+bump. Earlier paragraphs record their individual development boundaries.
+
 Context editing navigation transfers an exact checked entry and language to the
 existing resource draft owner, then returns to the retained translation editor.
 Opening and returning have no business write or AI sharing effect; explicit

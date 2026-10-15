@@ -96,9 +96,14 @@ impl ProjectStore {
                 .map_err(super::ledger::sql_error)?;
             let share_terms = configs.iter().any(|config| config.share_terms);
             let share_context = configs.iter().any(|config| config.share_context);
+            let share_decisions = configs.iter().any(|config| {
+                config.share_context
+                    || config.source_context.extracted
+                    || config.source_context.inferred
+            });
             let share_source = configs
                 .iter()
-                .any(|config| config.source_context.is_enabled());
+                .any(|config| config.source_context.is_enabled() || config.share_context);
             let current_terms = if share_terms {
                 super::resources::current_terms_in(connection, project, locale)?
             } else {
@@ -153,7 +158,25 @@ impl ProjectStore {
                 } else {
                     None
                 };
+                let decisions = if share_decisions {
+                    super::resources::current_fact_decisions_in(
+                        connection,
+                        source_view
+                            .as_ref()
+                            .ok_or_else(|| error(ErrorCode::CorruptLedger, "context-fact-view"))?,
+                    )?
+                } else {
+                    Vec::new()
+                };
                 for (config, items) in &mut prepared {
+                    let (project_context, source_context) = if let Some(view) = &source_view {
+                        crate::ProjectFactCapture::capture(view, &decisions, config)?
+                    } else {
+                        (
+                            crate::ProjectFactCapture::NotSelected,
+                            crate::SourceContextCapture::NotSelected,
+                        )
+                    };
                     let mut item = AiItem {
                         unit_id: *unit,
                         source_revision_id: revision,
@@ -172,11 +195,8 @@ impl ProjectStore {
                         } else {
                             None
                         },
-                        source_context: if let Some(view) = &source_view {
-                            super::resources::select_source_context(view, &config.source_context)?
-                        } else {
-                            crate::SourceContextCapture::NotSelected
-                        },
+                        source_context,
+                        project_context,
                         omissions: if config.share_terms {
                             omissions.clone()
                         } else {

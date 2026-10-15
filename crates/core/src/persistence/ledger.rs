@@ -232,6 +232,7 @@ fn enqueue_input(
     fresh_delegation: bool,
 ) -> Result<bool, ExecutionError> {
     let envelope = input.envelope();
+    super::resources::verify_input_fact_decisions(tx, input)?;
     let existing: Option<String> = tx
         .query_row(
             "SELECT digest FROM execution_attempts WHERE attempt_id=?1",
@@ -542,7 +543,9 @@ pub(super) fn load_input(
     connection: &Connection,
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
-    read_stored_input(connection, attempt)?.restore(attempt)
+    let input = read_stored_input(connection, attempt)?.restore(attempt)?;
+    super::resources::verify_input_fact_decisions(connection, &input)?;
+    Ok(input)
 }
 
 pub(super) fn register_input_reader(connection: &Connection) -> rusqlite::Result<()> {
@@ -690,6 +693,7 @@ pub(super) fn load_input_cached(
         &stored.project,
         stored.previous.as_deref(),
     )?;
+    super::resources::verify_input_fact_decisions(connection, &input)?;
     Ok(input)
 }
 /// A reused result remains bound to its original fixed input and permission.

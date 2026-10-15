@@ -152,6 +152,9 @@
               "sourceLocale": "en",
               "sourceContext": {
                 "kind": "not-selected"
+              },
+              "projectContext": {
+                "kind": "not-selected"
               }
             },
             "slot": 0
@@ -185,6 +188,9 @@
               "sourceText": "Barrel {name}",
               "sourceLocale": "en",
               "sourceContext": {
+                "kind": "not-selected"
+              },
+              "projectContext": {
                 "kind": "not-selected"
               }
             },
@@ -400,6 +406,9 @@
             "sourceLocale": "en",
             "sourceContext": {
               "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "not-selected"
             }
           }
         },
@@ -446,6 +455,9 @@
             "sourceText": "Barrel {name}",
             "sourceLocale": "en",
             "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
               "kind": "not-selected"
             }
           }

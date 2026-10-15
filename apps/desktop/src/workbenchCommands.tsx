@@ -57,6 +57,7 @@ export interface ReviewWaiverCommandPayload {
   expectedWaiverId: string | null;
 }
 export interface ResourceTermCommandPayload { kind: "resource-term"; locale: string; termId: string | null; expectedRevisionId: string | null; editSeq: number }
+export interface ResourceFactCommandPayload { kind:"resource-fact";unitId:string;locale:string;sourceRevisionId:string;sourceSnapshotId:string;blockIndex:number;factId:string;expectedDecisionId:string|null;editSeq:number }
 export interface ResourceContextCommandPayload { kind: "resource-context"; unitId: string; locale: string; sourceRevisionId: string; expectedRevisionId: string | null; editSeq: number }
 export interface ResourceContextBasisCommandPayload extends Omit<ResourceContextCommandPayload, "kind"> { kind: "resource-context-basis"; currentRevisionId: string | null }
 export interface ResourceLocaleCommandPayload { kind: "resource-locale"; locale: string }
@@ -370,6 +371,10 @@ interface WorkbenchCommandPayloads {
   "review.revoke-waiver": ReviewWaiverCommandPayload;
   "resource.save-term": ResourceTermCommandPayload;
   "resource.save-context": ResourceContextCommandPayload;
+  "resource.save-fact": ResourceFactCommandPayload;
+  "resource.check-fact": ResourceFactCommandPayload;
+  "resource.retry-fact": ResourceFactCommandPayload;
+  "resource.discard-fact": ResourceFactCommandPayload;
   "resource.capture-context": ResourceContextCommandPayload;
   "resource.adopt-context-basis": ResourceContextBasisCommandPayload;
   "resource.choose-file": ResourceLocaleCommandPayload;
@@ -527,6 +532,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"resource-tool-capture", "resource.start-tool" | "resource.discard-tool">
   | ResourceCommand<"resource-tool-pending", "resource.retry-tool">
   | ResourceCommand<"resource-term", "resource.save-term">
+  | ResourceCommand<"resource-fact", "resource.save-fact" | "resource.check-fact" | "resource.retry-fact" | "resource.discard-fact">
   | ResourceCommand<"resource-context", "resource.save-context" | "resource.capture-context">
   | ResourceCommand<"resource-context-basis", "resource.adopt-context-basis">
   | ResourceCommand<"resource-locale", "resource.choose-file">
@@ -685,6 +691,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "resource-tool-capture": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-tool-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-term": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "resource-fact": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-context": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-context-basis": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-locale": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
@@ -939,6 +946,7 @@ function validResourcePayload(payload: CommandPayload | undefined): payload is E
       }
     }
     case "resource-term": return validIdentity(payload.locale) && nullableIdentity(payload.termId) && nullableIdentity(payload.expectedRevisionId) && editSequence(payload.editSeq);
+    case "resource-fact": return validIdentity(payload.unitId) && validIdentity(payload.locale) && validIdentity(payload.sourceRevisionId) && validIdentity(payload.sourceSnapshotId) && validIdentity(payload.factId) && Number.isInteger(payload.blockIndex) && payload.blockIndex>=0 && nullableIdentity(payload.expectedDecisionId) && editSequence(payload.editSeq);
     case "resource-context": return validIdentity(payload.unitId) && validIdentity(payload.locale) && validIdentity(payload.sourceRevisionId) && nullableIdentity(payload.expectedRevisionId) && editSequence(payload.editSeq);
     case "resource-context-basis": return validIdentity(payload.unitId) && validIdentity(payload.locale) && validIdentity(payload.sourceRevisionId)
       && nullableIdentity(payload.expectedRevisionId) && nullableIdentity(payload.currentRevisionId) && editSequence(payload.editSeq);
@@ -1106,6 +1114,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "resource-tool-capture" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-tool-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-term" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "resource-fact" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-context" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-context-basis" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-locale" && payload?.kind === command.payloadKind) command.handler(payload);

@@ -228,6 +228,10 @@ struct ResourceRequests {
     term_history: execution::resource::TermHistoryRequest,
     unit_locale: execution::resource::UnitLocaleRequest,
     context: execution::resource::ContextWriteRequest,
+    context_fact: execution::resource::ContextFactRequest,
+    context_facts: execution::resource::ContextFactsRequest,
+    context_fact_action: execution::resource::ContextFactActionRequest,
+    context_fact_history: execution::resource::ContextFactHistoryRequest,
     context_capture: execution::resource::ContextCaptureRequest,
     suggestions: execution::resource::SuggestionRequest,
     impacts: execution::resource::ImpactRequest,
@@ -247,6 +251,10 @@ struct ResourceResponses {
     resolution: tsumugi_core::TermResolution,
     context: Option<tsumugi_core::ContextRevision>,
     saved_context: tsumugi_core::ContextRevision,
+    context_fact: tsumugi_core::ContextFactDecision,
+    context_facts: Vec<tsumugi_core::ContextFactDecision>,
+    context_fact_action: Option<tsumugi_core::ContextFactDecision>,
+    context_fact_history: tsumugi_core::ContextFactHistory,
     context_capture: tsumugi_core::ContextCapture,
     suggestions: Vec<tsumugi_core::TmSuggestion>,
     impacts: tsumugi_core::ImpactPage,
@@ -505,6 +513,25 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ai_items_require_an_explicit_project_fact_capture_on_both_wire_sides() {
+        let schema = schemas::<execution::ai_wire::AiItemView, execution::ai_wire::AiItemView>();
+        for group in ["requests", "responses"] {
+            assert!(
+                schema[group]["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v == "projectContext")
+            );
+            assert!(
+                schema[group]["properties"]["projectContext"]
+                    .get("default")
+                    .is_none()
+            );
+        }
+    }
+
     #[test]
     fn maintenance_schema_requires_the_nullable_capture_and_response_field() {
         let schema = schemas::<
