@@ -53,7 +53,8 @@ function editor() {
   translations: structuredClone(history), terms: { unitId: item.unitId, locale: "zh-CN", sourceRevisionId: item.sourceRevisionId, entries: [] }, context: null, readVersion: "1" };
 }
 function record(request: CandidateDecisionRequest): CandidateDecision {
-  const receipt = { request: structuredClone(request.decision), sourceSnapshotId: sourceSnapshot };
+  const receipt: CandidateDecision = { request: { ...structuredClone(request.decision),
+    expectedDecisionId: request.decision.expectedDecisionId ?? null, expectedSelectionId: request.decision.expectedSelectionId ?? null }, sourceSnapshotId: sourceSnapshot };
   revision = { ...revision, candidateDecision: receipt }; history = { ...history, rows: [revision] };
   view = { ...view, rows: [{ ...view.rows[0], candidateDecision: receipt }] }; return receipt;
 }
