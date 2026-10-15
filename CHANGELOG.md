@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Opening saved model connection choices no longer triggers render-time owner
+  updates. A window focus check replaces an unfinished earlier read, so its late
+  response cannot restore obsolete connection choices as current. Existing
+  preparation drafts and uncertain actions retain their original inputs.
 - Open an exact saved translation from its editor history or AI candidate review
   in the offline comparison work area. Existing editor drafts, model settings and
   unfinished comparisons are preserved. Rejected candidates stay readable in
