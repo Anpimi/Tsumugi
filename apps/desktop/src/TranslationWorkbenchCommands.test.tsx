@@ -342,7 +342,7 @@ it("checks the original lost candidate-decision receipt after consumer removal w
   expect(drafts.candidates.current().pending?.decision.reason).toBe("Reason A");
   act(()=>{drafts.edit("Text B");drafts.candidates.edit("reason","Reason B");});
   expect(drafts.mutationReserved).toBe(true);
-  view.rerender(<Harness consumer={false}/>,project);expect(registry.describe("translation.decide-candidate",scope)).toBeUndefined();
+  view.rerender(<Harness consumer={false}/>,project);expect(registry.list(scope).find(command=>command.id === "translation.decide-candidate")).toBeUndefined();
   await act(async()=>{await drafts.candidates.check();});
   expect(drafts.candidates.current().pending).toBeNull();expect(drafts.candidates.current().reason).toBe("Reason B");
   expect(drafts.candidates.hasDraft()).toBe(true);

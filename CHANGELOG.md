@@ -9,7 +9,8 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 - Saved AI translation candidates support explicit rejection and restoration with
   an actor, reason and fixed source/selection basis. Decisions and original
   receipts survive reopening. Rejected candidates keep their text and provenance
-  but cannot be selected or automatically applied until explicitly restored.
+  but cannot be selected, automatically applied or recommended through translation
+  memory until explicitly restored.
 - Candidate decision history advances the current-only project format to schema
   37. Preserve older development directories and reimport into a new project;
   no automatic conversion, reset or additional application/SDK version bump is
