@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Returning from a failed source preparation to current content clears the old
+  failure while keeping unrelated preparation text. Explicit discard reports
+  its own cancellation failure. Source comparison labels also cover changed
+  interpretation, including source descriptions with unchanged original text.
+
 - Failed source extraction and source checks retain the plugin's bounded reason
   in local technical details in both the source workbench and task results.
   The Host validates the original error contract and captured input association;

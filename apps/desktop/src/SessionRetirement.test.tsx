@@ -9,6 +9,7 @@ import { useAiPreparation } from "./AiPreparationSession";
 import type { ProjectView } from "./projectCommands";
 import fixture from "../test/fixtures/translation-commands.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { ApplicationReadProvider } from "./ApplicationReadProvider";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -30,7 +31,7 @@ beforeEach(() => { invoke.mockReset(); });
 afterEach(cleanup);
 
 it("keeps the original owners for copying while retired handlers cannot edit or dispatch", async () => {
-  render(<ProjectSessionOwners project={project} bridge={false}><Probe /></ProjectSessionOwners>);
+  render(<ApplicationReadProvider><ProjectSessionOwners project={project} bridge={false}><Probe /></ProjectSessionOwners></ApplicationReadProvider>);
   act(() => { begin(); review.setActor("Original author"); ai.setSelected([fixture.receipt.revision.unitId]); ai.setPresetName("Original settings"); });
   const originalDraft = drafts.current(), originalReview = review.current(), originalAi = ai.current();
   act(() => reads.retire());
@@ -45,7 +46,7 @@ it("keeps the original owners for copying while retired handlers cannot edit or 
 it("ends the original continuation before identity acknowledgement without unmounting its draft", async () => {
   let finish!: (identity: string) => void;
   invoke.mockImplementation(() => new Promise<string>(resolve => { finish = resolve; }));
-  render(<ProjectSessionOwners project={project} bridge={false}><Probe /></ProjectSessionOwners>);
+  render(<ApplicationReadProvider><ProjectSessionOwners project={project} bridge={false}><Probe /></ProjectSessionOwners></ApplicationReadProvider>);
   act(begin);
   let pending!: ReturnType<typeof drafts.save>; act(() => { pending = drafts.save(); });
   await waitFor(() => expect(finish).toBeTypeOf("function"));

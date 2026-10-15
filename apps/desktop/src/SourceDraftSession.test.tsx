@@ -11,6 +11,7 @@ import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/
 import { sourceActionFixture, sourceAttemptFixture, sourcePageFixture, sourceRowFixture, sourceReceiptFixture } from "./testSupport/sourceFixture";
 import { pluginSourceRequest, pluginSourceWorkflow } from "./testSupport/pluginSourceFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { failureReason } from "./CommandFailure";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -250,6 +251,48 @@ it("rejects discard during a reserved fresh identity instead of dispatching capt
   expect(invoke.mock.calls.filter(([name]) => name === "cancel_source_capture")).toHaveLength(0);
   await act(async () => { finish(sourceFixture.prepare.actionId); await pending; });
   expect(screen.getByLabelText("Source outcome")).toHaveTextContent("Applied");
+});
+
+it("clears a preparation failure when viewing current content while preserving unrelated input", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "select_plugin_source"
+    ? Promise.reject({ code: "plugin-failed", outcome: "rejected" }) : original(command, payload));
+  render(<Probe/>, project);
+  await act(async () => { owner.setSource(pluginSourceRequest); await owner.select(); });
+  expect(owner.current().failure).not.toBeNull();
+  act(() => { owner.edit("actor", "Retained reviewer"); owner.edit("filter", "Retained search"); owner.showCurrent(); });
+  expect(owner.current().failure).toBeNull();
+  expect(owner.current().actor).toBe("Retained reviewer");
+  expect(owner.current().filter).toBe("Retained search");
+  expect(owner.current().source).toEqual(pluginSourceRequest);
+  expect(invoke.mock.calls.some(([name]) => ["cancel_source_capture", "start_plugin_source", "prepare_source_adoption", "adopt_execution"].includes(name))).toBe(false);
+});
+
+it("keeps identity decisions and their failure when returning to current content is blocked", async () => {
+  render(<Probe/>, project); await ready(true); editDecision(70, "Retained identity reason");
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "estimate_source_update"
+    ? Promise.reject({ code: "dependency-conflict", outcome: "rejected" }) : original(command, payload));
+  await act(async () => { await owner.estimate(() => true); });
+  const before = owner.current();
+  expect(before.failure).not.toBeNull();
+  act(() => owner.showCurrent());
+  expect(owner.current()).toBe(before);
+  expect(owner.current().lineage[70].reason).toBe("Retained identity reason");
+});
+
+it.each([false, true])("clears an earlier failure on explicit discard and retains a new cancellation failure (%s)", async fails => {
+  render(<Probe/>, project);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "select_plugin_source"
+    ? Promise.reject({ code: "plugin-failed", outcome: "rejected" })
+    : command === "cancel_source_capture" && fails ? Promise.reject({ code: "storage-failed", outcome: "rejected" }) : original(command, payload));
+  await act(async () => { owner.setSource(pluginSourceRequest); await owner.select(); });
+  expect(owner.current().failure).not.toBeNull();
+  await act(async () => { expect(await owner.discard()).toBe(!fails); });
+  if (fails) expect(failureReason(owner.current().failure)).toBe("storage-failed");
+  else expect(owner.current().failure).toBeNull();
+  expect(invoke.mock.calls.filter(([name]) => name === "cancel_source_capture")).toHaveLength(1);
 });
 
 it("allows explicit preflight capture cancellation and ignores its late result", async () => {

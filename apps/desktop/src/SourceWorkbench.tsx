@@ -260,12 +260,12 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
       registry.register({ ...meta, id: "source.find-lineage-candidates", nameKey: "source.search", payloadKind: "source-history-content", availability: historyAvailability, handler: input => {
         if (search?.after === input.after && search.query === input.query && search.newOrdinal === input.newOrdinal) void matchesRead.refetch(); else owner.historyIntent(input.query, input.after);
       } }),
-      registry.register({ ...meta, id: "source.discard", nameKey: "source.discard", availability: () => discardAvailability(), handler: () => void owner.discard() }),
+      registry.register({ ...meta, id: "source.discard", nameKey: "source.discard", availability: () => discardAvailability(), handler: () => { setCaptureFailure(null); void owner.discard(); } }),
       registry.register({ ...meta, id: "source.begin-update", nameKey: "source.update", availability: () => {
         const allowed = common(); return allowed.enabled && browsing && contentPage?.snapshotId && contentPage.snapshotId === scope?.currentSnapshot && ready(contentOptions.key) ? allowed : unavailable;
       }, handler: () => { sequence.current++; setReadIntent("auto"); owner.beginUpdate(); setCaptureFailure(null); } }),
       registry.register({ ...meta, id: "source.show-current", nameKey: "source.viewCurrent", availability: () => common().enabled && !Object.keys(owner.current().lineage).length ? common() : unavailable,
-        handler: () => { owner.showCurrent(); readCurrent("current"); } }),
+        handler: () => { sequence.current++; owner.showCurrent(); setCaptureFailure(null); readCurrent("current"); } }),
       registry.register({ ...meta, id: "source.read-current", nameKey: "source.viewCurrent", availability: common, handler: () => readCurrent("current") }),
       registry.register({ ...meta, id: "source.read-applied", nameKey: "source.readSaved", availability: () => common().enabled && owner.current().receipt ? common() : unavailable, handler: () => readCurrent("applied") }),
       registry.register({ ...meta, id: "source.refresh-attempt", nameKey: "execution.refresh", availability: () => common().enabled && !!attempt && !fixedPreview && !fixedComparison ? common() : unavailable, handler: () => { setCaptureFailure(null); void detailRead.refetch(); } }),
@@ -456,7 +456,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}>
         <Dialog.Title>{t("source.leaveTitle")}</Dialog.Title><Dialog.Description>{t("source.leaveHelp")}</Dialog.Description>
         <div className="form-actions"><button className="secondary-button" onClick={() => { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; }}>{t("source.keep")}</button>
-          <button className="primary-button" onClick={() => { if (leaveProof.current && !leaveProof.current()) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; } sequence.current++; captureRunning.current = false; setCaptureBusy(false); void owner.discard().then(ok => { setLeave(false); if (!ok) setOpen(true); leaveResolver.current?.(ok); leaveResolver.current = null; leaveProof.current = null; }); }}>{t("source.leave")}</button></div>
+          <button className="primary-button" onClick={() => { if (leaveProof.current && !leaveProof.current()) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; } sequence.current++; captureRunning.current = false; setCaptureBusy(false); setCaptureFailure(null); void owner.discard().then(ok => { setLeave(false); if (!ok) setOpen(true); leaveResolver.current?.(ok); leaveResolver.current = null; leaveProof.current = null; }); }}>{t("source.leave")}</button></div>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>
   </>;

@@ -15,6 +15,7 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewSummaryFor, reviewSummaryPageFixture, reviewTargetFixture } from "./testSupport/reviewFixture";
 import { sourcePageFixture } from "./testSupport/sourceFixture";
 import { i18n } from "./i18n";
+import { ApplicationReadProvider } from "./ApplicationReadProvider";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -40,9 +41,9 @@ function Harness({ consumer = true, aiSequence = 7 }: { consumer?: boolean; aiSe
 function ProductionHarness() {
   const [area, setArea] = useState<WorkspaceArea>("translation"), [viewMemory] = useState(() => new WorkspaceViewMemory());
   const [commands] = useState(() => new WorkbenchCommands());
-  return <WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, memory: viewMemory, activate: setArea,
+  return <ApplicationReadProvider><WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, memory: viewMemory, activate: setArea,
     deactivate: () => setArea("overview") }}><ProjectSessionWorkbench project={project} disabled={false} onActivate={setArea}
-      onCoordinatingChange={() => {}} /></WorkspaceViewProvider></WorkbenchCommandsProvider>;
+      onCoordinatingChange={() => {}} /></WorkspaceViewProvider></WorkbenchCommandsProvider></ApplicationReadProvider>;
 }
 function selection() { return memory.read<ContentSelection>("translation", "contentSelection"); }
 function capture(scopeId = originalScope): ReviewScopeCapture {

@@ -1450,7 +1450,7 @@ ai: {
   "mapping": "Identity decision",
   "newIdentity": "New content identity",
   "noMapping": "Removed from current source",
-  "change": { "unchanged": "Unchanged", "moved": "Reordered", "changed": "Source changed", "added": "Added", "removed": "Removed", "rename-candidate": "Possible rename", "ambiguous": "Multiple possible relationships" },
+  "change": { "unchanged": "Unchanged", "moved": "Reordered", "changed": "Source content or interpretation changed", "added": "Added", "removed": "Removed", "rename-candidate": "Possible rename", "ambiguous": "Multiple possible relationships" },
   "candidate": "{{key}} — {{text}}",
   "mappingActor": "Reviewer for identity decisions",
   "mappingReason": "Reason for this decision",

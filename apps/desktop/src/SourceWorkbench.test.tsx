@@ -121,6 +121,39 @@ it("hides a late failed-source result after selecting another attempt", async ()
   expect(screen.queryByText("Previous attempt failure", { exact: false })).not.toBeInTheDocument();
   expect(screen.queryByText("source-corrupt")).not.toBeInTheDocument();
 });
+
+it("returns from failed extraction to current content without retaining failure or losing newer preparation text", async () => {
+  const original = invoke.getMockImplementation()!, ref = createRef<SourceHandle>();
+  const failed = sourceAttemptFixture(executionFixture.detail.attemptId, preview.resultId);
+  failed.progress.succeeded = 0; failed.progress.failed = 1;
+  failed.items[0].status.execution = "failed";
+  failed.items[0].status.diagnostic = "plugin-failed";
+  let complete!: (value: unknown) => void;
+  const output = new Promise(resolve => { complete = resolve; });
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "read_content_scope") return Promise.resolve({ revision: "2", currentSnapshot: fixtureIdentity(100) });
+    if (command === "read_execution_attempt") return Promise.resolve(failed);
+    if (command === "read_execution_output") return output;
+    return original(command, args);
+  });
+  render(<><SourceProbe/><SourceWorkbench ref={ref} project={project} disabled={false}/></>, project);
+  act(() => ref.current!.showAttempt(failed.attemptId));
+  expect(await screen.findByText(i18n.t("source.errors.failed"))).toBeVisible();
+  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "read_execution_output")).toBe(true));
+  act(() => { draft.edit("actor", "Newer reviewer"); draft.edit("filter", "Retained search"); });
+  await userEvent.setup().click(screen.getByRole("button", { name: "View current source content" }));
+  await screen.findByText("Unchanged {{name}} 世界");
+  expect(screen.queryByText(i18n.t("source.errors.failed"))).not.toBeInTheDocument();
+  expect(draft.current().attempt).toBeNull();
+  expect(draft.current().actor).toBe("Newer reviewer");
+  expect(draft.current().filter).toBe("Retained search");
+  await act(async () => complete({ ...executionFixture.output, projectId: project.metadata.projectId,
+    attemptId: failed.attemptId, resultId: preview.resultId, itemId: failed.items[0].status.itemId,
+    sourceFailure: { code: "invalid-source", artifactId: null, detail: "Old extraction reason" } }));
+  expect(screen.queryByText("Old extraction reason", { exact: false })).not.toBeInTheDocument();
+  expect(screen.queryByText(i18n.t("source.errors.failed"))).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([name]) => ["cancel_source_capture", "start_plugin_source", "prepare_source_adoption", "adopt_execution"].includes(name))).toBe(false);
+});
 it("discovers multiple enabled source packages without competing for the installed Store", async () => {
   const original = invoke.getMockImplementation()!;
   const second = { ...pluginSourcePackage, packageDigest: "d".repeat(64),

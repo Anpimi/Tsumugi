@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+Source recovery clears obsolete preparation failures when returning to current
+content or explicitly discarding preparation. Unrelated input and saved history
+remain intact; a failed cancellation reports its own failure. Comparison labels
+include changes in interpretation as well as original text. These frontend
+corrections change no schema, IPC, SDK/process format, dependency or version
+source. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same
+undistributed batch without an additional bump; both Unreleased changelogs are
+synchronized.
+
 Source failure details are a read-only Desktop projection of the original SDK
 error and captured input. The additive execution-output view is generated from
 Rust; the Core result envelope, generic task status, retry policy and persisted

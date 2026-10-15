@@ -460,7 +460,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     if (!canDiscard()) return false;
     basisVersion.current++;
     const ticket = ++nextTicket.current; flight.current = ticket; captureFlight.current = 0;
-    update(before => ({ ...before, busyMutation: true }));
+    update(before => ({ ...before, busyMutation: true, failure: null }));
     try {
       await sourceCommands.cancelCapture(session);
       if (!live()) return false;
@@ -527,7 +527,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   }
   function showCurrent() {
     if (reserved() || Object.keys(current().lineage).length) return;
-    update(before => ({ ...before, preview: null, comparison: null, updating: false, confirmed: false, attempt: null, selection: null, preflight: null }));
+    update(before => ({ ...before, preview: null, comparison: null, updating: false, confirmed: false, attempt: null, selection: null, preflight: null, failure: null }));
   }
   async function cancelTask(taskId: string, proof: () => boolean = live, originalAttempt = current().attempt ?? "") {
     if (!live() || reserved() || !proof() || ![current().attempt, current().checkAttempt].includes(originalAttempt)) return;
