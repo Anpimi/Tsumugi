@@ -68,7 +68,7 @@ export class ComponentSession {
   private dispatches = new Set<string>();
   private serviceCalls = new Set<string>();
   private pendingService: PendingService | undefined;
-  private handlerKey = `tsumugi.handler.${randomUUID()}`;
+  private handlerKeys = new Map<string, string>();
   private cleanupFailed = false;
   constructor(
     private entry: string,
@@ -87,19 +87,30 @@ export class ComponentSession {
     const body = frame.body;
     if (body.kind === 'activate' && this.phase === 'waiting') {
       validateServices(body.data.services);
+      const members = body.data.capabilities;
+      if (!Array.isArray(members) || members.length === 0 || members.length > PROCESS_PROFILE.maxCapabilities
+        || members.some(member => !name(member.contributionId))
+        || new Set(members.map(member => member.contributionId)).size !== members.length) {
+        throw new Error('Invalid capability roster');
+      }
+      for (const member of members) this.handlerKeys.set(member.contributionId, `tsumugi.handler.${randomUUID()}`);
       this.phase = 'activating';
       this.activation = immutable(structuredClone(body.data));
       this.starting = this.activate();
       void this.starting.catch(this.fail);
     } else if (body.kind === 'invoke' && this.phase === 'active' && !this.invocation) {
       const request = immutable(structuredClone(body.data));
-      const declaration = this.activation!.capability;
-      if (!isDeepStrictEqual(request.provider, this.activation!.provider)
+      const member = this.activation!.capabilities.find(value => value.contributionId === request.provider.contributionId);
+      const { contributionId, ...instance } = request.provider;
+      if (!member || !isDeepStrictEqual(instance, this.activation!.instance)) throw new Error('Request provider mismatch');
+      const declaration = member.capability;
+      if (!this.handlerKeys.has(contributionId)
         || !isDeepStrictEqual(request.capability, declaration.contract)
         || !isDeepStrictEqual(request.input.schema, declaration.inputSchema)
         || !isDeepStrictEqual(request.outputSchema, declaration.outputSchema)
         || !isDeepStrictEqual(request.errorSchema, declaration.errorSchema)
         || (request.profile != null && !declaration.profiles.some(p => isDeepStrictEqual(p, request.profile)))
+        || (request.profile == null && declaration.profiles.length !== 0)
         || request.input.sha256 !== digest(request.input.utf8)
         || request.context.inputDigest !== request.input.sha256
         || Buffer.byteLength(request.input.utf8) > declaration.limits.maxInputBytes
@@ -112,7 +123,7 @@ export class ComponentSession {
       this.dispatches.add(request.context.dispatchId);
       const abort = new AbortController();
       // Defer execution until the token is installed, including synchronous handlers.
-      const done = Promise.resolve().then(() => this.invoke(request, abort));
+      const done = Promise.resolve().then(() => this.invoke(request, abort, declaration.limits.maxOutputBytes));
       const token = { id: request.context.dispatchId, abort, done };
       this.invocation = token;
       void done.then(() => { if (this.invocation === token) this.invocation = undefined; }, this.fail);
@@ -123,7 +134,7 @@ export class ComponentSession {
       this.rejectService(new Error('Invocation cancelled'));
       void this.emit({ kind: 'cancelled', data: body.data }).catch(this.fail);
     } else if (body.kind === 'close' && (this.phase === 'active' || this.phase === 'activating')
-      && isDeepStrictEqual(body.data.provider, this.activation!.provider)) {
+      && isDeepStrictEqual(body.data.instance, this.activation!.instance)) {
       this.phase = 'closing';
       this.scope.abort();
       this.invocation?.abort.abort();
@@ -137,22 +148,46 @@ export class ComponentSession {
     const module: { default?: ComponentModule } = await import(pathToFileURL(this.entry).href);
     if (this.phase !== 'activating') return;
     if (!module.default || typeof module.default.activate !== 'function') throw new Error('Invalid component');
-    let registered = false;
+    const registered = new Set<string>();
+    let registrationFailed = false;
+    let accepting = true;
     this.fiber = this.root.plugin({
       name: 'tsumugi-component',
       apply: async ctx => {
-        const live = () => { if (this.phase !== 'activating' || this.scope.signal.aborted) throw new Error('Inactive component'); };
+        const live = () => {
+          if (this.phase !== 'activating' || this.scope.signal.aborted || !accepting) throw new Error('Inactive component');
+        };
         const api: ComponentAPI = Object.freeze({
-          contribution: immutable({ id: this.activation!.provider.contributionId, contract: structuredClone(this.activation!.capability.contract) }),
+          instance: this.activation!.instance,
+          contributions: immutable(this.activation!.capabilities.map(member => ({
+            id: member.contributionId, contract: structuredClone(member.capability.contract),
+          }))),
           signal: this.scope.signal,
           services: this.activation!.services,
-          register: (handler: CapabilityHandler) => {
-            live();
-            if (registered || typeof handler !== 'function') throw new Error('Invalid registration');
-            registered = true;
+          register: (contributionId: string, handler: CapabilityHandler) => {
+            try { live(); } catch (error) {
+              // A caught late registration must not leave an active callable set.
+              // Cleanup of an already closed generation cannot affect another session.
+              if (this.phase === 'active') {
+                this.phase = 'closing';
+                this.scope.abort();
+                this.invocation?.abort.abort();
+                this.rejectService(new Error('Inactive component'));
+                this.handlerKeys.clear();
+                void this.fiber!.dispose().then(this.fail, this.fail);
+              }
+              registrationFailed = true;
+              throw error;
+            }
+            const key = this.handlerKeys.get(contributionId);
+            if (!key || registered.has(contributionId) || typeof handler !== 'function') {
+              registrationFailed = true;
+              throw new Error('Invalid registration');
+            }
+            registered.add(contributionId);
             // Keep plugin-owned function metadata outside Cordis reflection.
             const owned: CapabilityHandler = (input, metadata) => handler(input, metadata);
-            ctx.provide(this.handlerKey, owned);
+            ctx.provide(key, owned);
           },
           onDispose: (cleanup: () => void | Promise<void>) => {
             live();
@@ -162,29 +197,34 @@ export class ComponentSession {
             });
           },
         });
-        await module.default!.activate(api);
-        if (!registered) throw new Error('Missing capability');
+        try { await module.default!.activate(api); } finally { accepting = false; }
+        if (registrationFailed || registered.size !== this.handlerKeys.size) throw new Error('Incomplete capability roster');
       },
     });
     try {
       await this.fiber.await();
       if (this.phase !== 'activating') return;
-      if (typeof this.root.get(this.handlerKey) !== 'function') throw new Error('Missing capability');
+      if (registrationFailed || [...this.handlerKeys.values()].some(key => typeof this.root.get(key) !== 'function')) {
+        throw new Error('Incomplete capability roster');
+      }
       this.phase = 'active';
       await this.emit({ kind: 'ready', data: this.activation! });
     } catch {
+      this.phase = 'closed';
+      this.scope.abort();
+      this.handlerKeys.clear();
       await this.fiber.dispose();
       throw new Error('Activation failed');
     }
   }
-  private async invoke(request: InvocationRequest, abort: AbortController): Promise<void> {
+  private async invoke(request: InvocationRequest, abort: AbortController, maxOutputBytes: number): Promise<void> {
     if (this.phase !== 'active' || abort.signal.aborted) return;
-    const handler: CapabilityHandler = this.root.get(this.handlerKey);
+    const handler: CapabilityHandler = this.root.get(this.handlerKeys.get(request.provider.contributionId)!);
     let output: CapabilityOutput;
     try {
       output = await handler(request.input, Object.freeze({
         context: request.context,
-        provider: this.activation!.provider,
+        provider: request.provider,
         profile: request.profile ?? null,
         signal: abort.signal,
         services: Object.freeze({
@@ -206,14 +246,14 @@ export class ComponentSession {
     const { kind, utf8 } = output;
     if (!['succeeded', 'failed', 'unknown'].includes(kind) || typeof utf8 !== 'string') throw new Error('Invalid output');
     scalarString(utf8);
-    if (Buffer.byteLength(utf8) > this.activation!.capability.limits.maxOutputBytes
+    if (Buffer.byteLength(utf8) > maxOutputBytes
       || Buffer.byteLength(utf8) > PROCESS_PROFILE.maxInvocationPayloadBytes) throw new Error('Output limit');
     const payload = { schema: kind === 'succeeded' ? request.outputSchema : request.errorSchema, utf8, sha256: digest(utf8) };
     // The peer can read Result before the stdout callback runs. Release the
     // completed handler slot before writing so its next serial call is valid.
     this.invocation = undefined;
     await this.emit({ kind: 'result', data: {
-      context: request.context, provider: this.activation!.provider, capability: request.capability,
+      context: request.context, provider: request.provider, capability: request.capability,
       profile: request.profile ?? null, resultId: randomUUID(),
       outcome: kind === 'succeeded' ? { kind: 'succeeded', output: payload } : { kind, error: payload },
     } }, request.maxResultBytes);
@@ -282,7 +322,8 @@ export class ComponentSession {
     await this.fiber?.dispose();
     if (this.cleanupFailed) throw new Error('Cleanup failed');
     this.phase = 'closed';
-    await this.emit({ kind: 'closed', data: { provider: this.activation!.provider } });
+    this.handlerKeys.clear();
+    await this.emit({ kind: 'closed', data: { instance: this.activation!.instance } });
     this.finish();
   }
 }

@@ -138,7 +138,7 @@ fn request(session: &ProcessSession, dispatch: &str, text: &str) -> InvocationRe
             environment_digest: payload_digest("environment"),
             configuration_digest: payload_digest("configuration"),
         },
-        provider: session.channel().provider,
+        provider: session.channel().provider("query.call").unwrap(),
         capability: contract("example.query"),
         profile: None,
         input,
@@ -223,8 +223,8 @@ fn attempt_channels_bind_project_and_attempt_and_cleanup_only_the_owned_instance
             HostError::RequestMismatch
         );
         assert_ne!(
-            a.channel().provider.instance_id,
-            b.channel().provider.instance_id
+            a.channel().instance.instance_id,
+            b.channel().instance.instance_id
         );
         assert!(a.close().await.direct_child_reaped);
         assert!(a.close().await.direct_child_reaped);
@@ -478,8 +478,8 @@ fn separate_instances_and_old_cleanup_do_not_remove_another_process() {
         let mut a = launch("normal", dir.path()).await;
         let mut b = launch("normal", dir.path()).await;
         assert_ne!(
-            a.channel().provider.instance_id,
-            b.channel().provider.instance_id
+            a.channel().instance.instance_id,
+            b.channel().instance.instance_id
         );
         assert_ne!(a.channel().child_pid, b.channel().child_pid);
         assert!(a.close().await.direct_child_reaped);

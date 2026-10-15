@@ -2,7 +2,7 @@
   "protocolVersion": 1,
   "platform": { "operatingSystem": "macos", "architecture": "aarch64" },
   "sdkVersion": "0.1.0-alpha.1",
-  "processProtocol": 2,
+  "processProtocol": 3,
   "profile": "native-application-host-v1",
   "hostVersion": "0.2.0-alpha.1",
   "executable": {

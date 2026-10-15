@@ -41,7 +41,7 @@ class DesktopPluginPreparation(unittest.TestCase):
         self.inspector_hash = OWNER.sha256(self.inspector.read_bytes())
         self.catalog_path = self.root / "selection.json"
         self.catalog = {"formatVersion": 1, "platform": {"operatingSystem": "macos", "architecture": "aarch64"},
-                        "runtimeProfile": "node-system-libraries-v1", "processProtocol": 2, "packages": []}
+                        "runtimeProfile": "node-system-libraries-v1", "processProtocol": 3, "packages": []}
         self.files = {}
         for name in ("first", "second"):
             identity = {"publisher": "org.example", "id": name, "version": "0.1.0-alpha.1"}
@@ -335,10 +335,10 @@ class DesktopPluginPreparation(unittest.TestCase):
                 with self.assertRaises(OWNER.PreparationError):
                     OWNER.selection(json.dumps(changed))
 
-    def test_checked_in_selection_has_two_independent_process_two_artifacts(self):
+    def test_checked_in_selection_has_two_independent_process_three_artifacts(self):
         selected = OWNER.selection(OWNER.SELECTION.read_bytes())
         self.assertEqual({pin["id"] for pin in selected["packages"]}, {"webvtt", "stardew-smapi"})
-        self.assertEqual(selected["processProtocol"], 2)
+        self.assertEqual(selected["processProtocol"], 3)
         self.assertNotEqual(selected["packages"][0]["archiveSha256"], selected["packages"][1]["archiveSha256"])
 
 

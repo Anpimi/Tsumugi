@@ -3,7 +3,7 @@
 pub(crate) use super::runtime::PackageKey;
 use super::{Cancellation, ErrorCode, ExecutionError, ExecutionId, FixedInput};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
@@ -28,33 +28,82 @@ pub struct PluginConsent {
 /// It only narrows project grants and is never restored from persisted values.
 #[derive(Clone, Debug)]
 pub struct ApplicationExecutionLease {
-    binding: super::PluginExecutionBinding,
+    bindings: Arc<[super::PluginExecutionBinding]>,
     revocation: Cancellation,
     settings_revocation: Cancellation,
 }
 impl ApplicationExecutionLease {
     pub fn capture(
-        binding: super::PluginExecutionBinding,
+        bindings: Vec<super::PluginExecutionBinding>,
         allow_until_application_exit: bool,
         revocation: Cancellation,
         settings_revocation: Cancellation,
     ) -> Result<Self, ExecutionError> {
-        binding.validate()?;
         if !allow_until_application_exit
-            || binding.application_scope.is_none()
+            || bindings.is_empty()
+            || bindings.len() > 128 * 128
             || revocation.is_requested()
             || settings_revocation.is_requested()
         {
             return Err(denied());
         }
+        // A component has at most 128 capabilities, each with at most 128
+        // declared profiles. Retain exact tuples, including the null profile
+        // only when explicitly valid, within the original Core byte ceiling.
+        super::codec::encode(&bindings, super::MAX_INPUT_BYTES)?;
+        let first = &bindings[0];
+        let mut unique = BTreeSet::new();
+        let mut contributions = BTreeMap::new();
+        for binding in &bindings {
+            binding.validate()?;
+            let provider = &binding.capability.provider;
+            let original = &first.capability.provider;
+            if binding.component_scope != tsumugi_plugin_sdk::ComponentScope::Application
+                || binding.application_scope.is_none()
+                || binding.application_scope != first.application_scope
+                || binding.environment != first.environment
+                || provider.plugin != original.plugin
+                || provider.component_id != original.component_id
+                || provider.package_digest != original.package_digest
+                || binding.capability.declaration.effect != tsumugi_plugin_sdk::EffectKind::ReadOnly
+                || binding
+                    .capability
+                    .declaration
+                    .permissions
+                    .iter()
+                    .any(|permission| {
+                        matches!(
+                            permission,
+                            tsumugi_plugin_sdk::PermissionRequest::ProjectService { .. }
+                        )
+                    })
+                || !unique.insert(super::codec::encode(binding, super::MAX_INPUT_BYTES)?)
+            {
+                return Err(denied());
+            }
+            if contributions
+                .insert(&provider.contribution_id, &binding.capability)
+                .is_some_and(|prior| prior != &binding.capability)
+            {
+                return Err(denied());
+            }
+        }
+        if contributions.len() > 128 {
+            return Err(denied());
+        }
         Ok(Self {
-            binding,
+            bindings: bindings.into(),
             revocation,
             settings_revocation,
         })
     }
     pub fn matches(&self, input: &FixedInput) -> bool {
-        input.envelope().plugin.as_ref() == Some(&self.binding) && self.is_live()
+        input
+            .envelope()
+            .plugin
+            .as_ref()
+            .is_some_and(|binding| self.bindings.contains(binding))
+            && self.is_live()
     }
     pub fn revocation(&self) -> Cancellation {
         self.revocation.clone()

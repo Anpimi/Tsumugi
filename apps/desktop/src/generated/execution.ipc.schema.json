@@ -2417,6 +2417,12 @@
       "PluginToolPreflight": {
         "additionalProperties": false,
         "properties": {
+          "applicationCapabilities": {
+            "items": {
+              "$ref": "#/definitions/ProcessCapability"
+            },
+            "type": "array"
+          },
           "applicationScope": {
             "anyOf": [
               {
@@ -2448,7 +2454,8 @@
           "inputDigest",
           "tool",
           "items",
-          "applicationScope"
+          "applicationScope",
+          "applicationCapabilities"
         ],
         "type": "object"
       },
@@ -2489,6 +2496,23 @@
           "environment",
           "environmentDigest",
           "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "ProcessCapability": {
+        "additionalProperties": false,
+        "description": "One callable declaration in the Host-captured component roster.",
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "contributionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "capability"
         ],
         "type": "object"
       },

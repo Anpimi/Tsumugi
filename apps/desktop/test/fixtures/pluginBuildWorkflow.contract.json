@@ -60,7 +60,7 @@
           "architecture": "aarch64"
         },
         "sdkVersion": "0.1.0-alpha.1",
-        "processProtocol": 2,
+        "processProtocol": 3,
         "profile": "node-system-libraries-v1",
         "toolVersion": "26.10.0",
         "tool": {
@@ -303,7 +303,7 @@
           "architecture": "aarch64"
         },
         "sdkVersion": "0.1.0-alpha.1",
-        "processProtocol": 2,
+        "processProtocol": 3,
         "profile": "node-system-libraries-v1",
         "toolVersion": "26.10.0",
         "tool": {
@@ -674,7 +674,7 @@
             "architecture": "aarch64"
           },
           "sdkVersion": "0.1.0-alpha.1",
-          "processProtocol": 2,
+          "processProtocol": 3,
           "profile": "node-system-libraries-v1",
           "toolVersion": "26.10.0",
           "tool": {
@@ -755,7 +755,7 @@
             "architecture": "aarch64"
           },
           "sdkVersion": "0.1.0-alpha.1",
-          "processProtocol": 2,
+          "processProtocol": 3,
           "profile": "node-system-libraries-v1",
           "toolVersion": "26.10.0",
           "tool": {

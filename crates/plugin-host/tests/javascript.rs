@@ -29,7 +29,15 @@ fn scoped_image(
     observer: Option<&std::path::Path>,
     scope: ComponentScope,
 ) -> PackageImage {
-    let manifest = PluginManifest {
+    scoped_image_with(mode, observer, scope, |_| {})
+}
+fn scoped_image_with(
+    mode: &str,
+    observer: Option<&std::path::Path>,
+    scope: ComponentScope,
+    mutate: impl FnOnce(&mut PluginManifest),
+) -> PackageImage {
+    let mut manifest = PluginManifest {
         protocol_version: MANIFEST_PROTOCOL,
         plugin: PluginIdentity {
             publisher: "example".into(),
@@ -70,6 +78,19 @@ fn scoped_image(
             },
         }],
     };
+    if matches!(mode, "roster" | "roster-half-fail") {
+        let mut second = manifest.contributions[0].clone();
+        second.id = "check.call".into();
+        let ContributionKind::Capability { declaration } = &mut second.contribution else {
+            unreachable!()
+        };
+        declaration.contract = contract("example.check");
+        declaration.input_schema = contract("example.check-input");
+        declaration.output_schema = contract("example.check-output");
+        declaration.limits.max_output_bytes = 32768;
+        manifest.contributions.push(second);
+    }
+    mutate(&mut manifest);
     let bytes = serde_json::to_vec(&manifest).unwrap();
     let mut files = BTreeMap::from([
         (
@@ -131,7 +152,7 @@ fn request(session: &ProcessSession, dispatch: &str, text: &str) -> InvocationRe
             environment_digest: session.environment_digest().unwrap().into(),
             configuration_digest: payload_digest("configuration"),
         },
-        provider: session.channel().provider,
+        provider: session.channel().provider("query.call").unwrap(),
         capability: contract("example.query"),
         profile: None,
         input,
@@ -172,8 +193,8 @@ fn javascript_sdk_calls_keep_identity_unicode_and_independent_lifetimes() {
         let mut b = launch("normal", dir.path()).await;
         assert_ne!(a.channel().child_pid, b.channel().child_pid);
         assert_ne!(
-            a.channel().provider.instance_id,
-            b.channel().provider.instance_id
+            a.channel().instance.instance_id,
+            b.channel().instance.instance_id
         );
         a.heartbeat().await.unwrap();
         assert!(a.close().await.cooperative_acknowledgement);
@@ -437,8 +458,8 @@ fn application_channel_keeps_instance_basis_and_each_project_principal_explicit(
         )
         .await
         .unwrap();
-        assert_eq!(session.channel().provider.instance_id, basis);
-        assert_eq!(session.channel().provider.activation_generation, 7);
+        assert_eq!(session.channel().instance.instance_id, basis);
+        assert_eq!(session.channel().instance.activation_generation, 7);
         let pid = session.channel().child_pid;
         for (project, dispatch) in [("project-a", "dispatch-a"), ("project-b", "dispatch-b")] {
             let mut call = request(&session, dispatch, project);
@@ -510,5 +531,252 @@ fn application_channel_rejects_wrong_scope_and_late_revoked_calls() {
         allowed.store(true, Ordering::Release);
         assert!(session.invoke(&call, || false, || true).await.is_err());
         assert!(session.close().await.direct_child_reaped);
+    });
+}
+
+#[test]
+fn application_roster_routes_exact_members_on_one_process_with_shared_limits() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let basis = uuid::Uuid::new_v4().to_string();
+        let mut options = options();
+        options.scope = SessionScope::Application {
+            instance_id: basis.clone(),
+            activation_generation: 7,
+        };
+        options.limits.max_invocations = 2;
+        let mut session = ProcessSession::launch(
+            &scoped_image("roster", None, ComponentScope::Application),
+            "query.call",
+            temporary.path(),
+            &launcher(),
+            options,
+            || true,
+        )
+        .await
+        .unwrap();
+        let channel = session.channel();
+        assert_eq!(channel.capabilities.len(), 2);
+        assert!(channel.provider("missing.call").is_err());
+        let mut first = request(&session, "roster-first", "first input");
+        first.context.scope_id = basis;
+        let first_result = session.invoke(&first, || false, || true).await.unwrap();
+        let InvocationOutcome::Succeeded { output } = &first_result.result().outcome else {
+            panic!("first member failed")
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&output.utf8).unwrap(),
+            serde_json::json!({"member":"query.call","ordinal":1,"input":"first input"})
+        );
+        assert!(matches!(
+            session.invoke(&first, || false, || true).await,
+            Err(HostError::RequestMismatch)
+        ));
+        let mut second = first.clone();
+        second.context.project_id = "project-b".into();
+        second.context.attempt_id = "attempt-b".into();
+        second.context.dispatch_id = "roster-second".into();
+        second.provider = channel.provider("check.call").unwrap();
+        second.capability = contract("example.check");
+        second.input.schema = contract("example.check-input");
+        second.output_schema = contract("example.check-output");
+        for forged in [
+            {
+                let mut value = second.clone();
+                value.provider.contribution_id = "missing.call".into();
+                value
+            },
+            {
+                let mut value = second.clone();
+                value.provider.activation_generation += 1;
+                value
+            },
+            {
+                let mut value = second.clone();
+                value.input.schema = contract("example.input");
+                value
+            },
+            {
+                let mut value = second.clone();
+                value.provider = first.provider.clone();
+                value
+            },
+        ] {
+            assert!(matches!(
+                session.invoke(&forged, || false, || true).await,
+                Err(HostError::RequestMismatch)
+            ));
+        }
+        let second_result = session.invoke(&second, || false, || true).await.unwrap();
+        let InvocationOutcome::Succeeded { output } = &second_result.result().outcome else {
+            panic!("second member failed")
+        };
+        assert_eq!(output.schema, contract("example.check-output"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&output.utf8).unwrap(),
+            serde_json::json!({"member":"check.call","ordinal":2,"input":"first input"})
+        );
+        assert_eq!(
+            first_result.channel().child_pid,
+            second_result.channel().child_pid
+        );
+        assert_eq!(
+            first_result.channel().provider.instance(),
+            second_result.channel().provider.instance()
+        );
+        assert_ne!(
+            first_result.channel().provider.contribution_id,
+            second_result.channel().provider.contribution_id
+        );
+        assert_eq!(second_result.invocation_scope().project_id, "project-b");
+        let mut exhausted = first.clone();
+        exhausted.context.dispatch_id = "roster-exhausted".into();
+        assert!(matches!(
+            session.invoke(&exhausted, || false, || true).await,
+            Err(HostError::OutputLimit)
+        ));
+        assert_eq!(session.channel().child_pid, channel.child_pid);
+        assert!(session.close().await.direct_child_reaped);
+        assert!(matches!(
+            session.invoke(&first, || false, || true).await,
+            Err(HostError::Closed)
+        ));
+    });
+}
+
+#[test]
+fn application_roster_half_registration_never_becomes_ready_and_cleans_its_candidate() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let observer = temporary.path().join("observer");
+        let staging = temporary.path().join("staging");
+        std::fs::create_dir(&staging).unwrap();
+        let mut options = options();
+        options.scope = SessionScope::Application {
+            instance_id: uuid::Uuid::new_v4().to_string(),
+            activation_generation: 1,
+        };
+        assert!(
+            ProcessSession::launch(
+                &scoped_image(
+                    "roster-half-fail",
+                    Some(&observer),
+                    ComponentScope::Application
+                ),
+                "query.call",
+                &staging,
+                &launcher(),
+                options,
+                || true
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&observer).unwrap(), "cleaned");
+        assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
+    });
+}
+
+#[test]
+fn application_roster_uses_the_selected_members_output_ceiling() {
+    runtime().block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let basis = uuid::Uuid::new_v4().to_string();
+        let mut launch_options = options();
+        launch_options.scope = SessionScope::Application {
+            instance_id: basis.clone(),
+            activation_generation: 1,
+        };
+        let mut session = ProcessSession::launch(
+            &scoped_image("roster", None, ComponentScope::Application),
+            "query.call",
+            temporary.path(),
+            &launcher(),
+            launch_options,
+            || true,
+        )
+        .await
+        .unwrap();
+        // This output fits query.call's 64 KiB ceiling but exceeds the sibling's
+        // 32 KiB ceiling. The common frame allowance cannot replace either one.
+        let mut first = request(&session, "larger-member", &"x".repeat(40_000));
+        first.context.scope_id = basis;
+        assert!(session.invoke(&first, || false, || true).await.is_ok());
+        let mut second = first;
+        second.context.dispatch_id = "smaller-member".into();
+        second.provider = session.channel().provider("check.call").unwrap();
+        second.capability = contract("example.check");
+        second.input.schema = contract("example.check-input");
+        second.output_schema = contract("example.check-output");
+        assert!(session.invoke(&second, || false, || true).await.is_err());
+        assert!(!session.is_accepting());
+        assert!(session.close().await.direct_child_reaped);
+    });
+}
+
+#[test]
+fn application_roster_refuses_an_unsupported_sibling_before_starting_code() {
+    runtime().block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        for unsupported in ["external", "service", "required-dependency"] {
+            let captured =
+                scoped_image_with("roster", None, ComponentScope::Application, |manifest| {
+                    let ContributionKind::Capability { declaration } =
+                        &mut manifest.contributions[1].contribution
+                    else {
+                        unreachable!()
+                    };
+                    if unsupported == "service" {
+                        let permission = PermissionRequest::ProjectService {
+                            contract: contract("example.service"),
+                        };
+                        declaration.permissions.push(permission.clone());
+                        manifest.permissions.push(permission);
+                        manifest.components[0]
+                            .dependencies
+                            .push(CapabilityDependency {
+                                contract: contract("example.service"),
+                                required: false,
+                                selection: ProviderSelection::Single,
+                            });
+                    } else if unsupported == "external" {
+                        declaration.effect = EffectKind::External;
+                    } else {
+                        manifest.components[0]
+                            .dependencies
+                            .push(CapabilityDependency {
+                                contract: contract("example.service"),
+                                required: true,
+                                selection: ProviderSelection::Single,
+                            });
+                    }
+                });
+            let mut launch_options = options();
+            launch_options.scope = SessionScope::Application {
+                instance_id: uuid::Uuid::new_v4().to_string(),
+                activation_generation: 1,
+            };
+            assert!(matches!(
+                ProcessSession::launch(
+                    &captured,
+                    "query.call",
+                    temporary.path(),
+                    &launcher(),
+                    launch_options,
+                    || true
+                )
+                .await,
+                Err(HostError::UnsupportedRuntime)
+            ));
+            assert_eq!(std::fs::read_dir(temporary.path()).unwrap().count(), 0);
+        }
     });
 }

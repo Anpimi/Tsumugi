@@ -18,6 +18,8 @@ it("shares exact installed tool choices and fixed opaque query payloads with Rus
   expect(validateRequestToolDiscard(fixture.discard)).toBe(true);
   expect(validateResponseToolPreflight(fixture.preflight)).toBe(true);
   const { applicationScope: _scope, ...missingScope } = fixture.preflight;
+  const { applicationCapabilities: _roster, ...missingRoster } = fixture.preflight;
+  expect(validateResponseToolPreflight(missingRoster)).toBe(false);
   const { applicationExecution: _consent, ...missingConsent } = fixture.start;
   expect(validateResponseToolPreflight(missingScope)).toBe(false);
   expect(validateRequestToolStart(missingConsent)).toBe(false);

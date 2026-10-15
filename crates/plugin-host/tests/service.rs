@@ -492,7 +492,7 @@ mod javascript {
                 environment_digest: session.environment_digest().unwrap().into(),
                 configuration_digest: payload_digest("configuration"),
             },
-            provider: session.channel().provider,
+            provider: session.channel().provider("client.call").unwrap(),
             capability: contract("example.client"),
             profile: None,
             input,
@@ -643,7 +643,10 @@ mod javascript {
             assert_eq!(result.result().context.scope_id, "attempt-a");
             let seen = broker.seen.lock().unwrap();
             assert_eq!(seen.len(), 1);
-            assert_eq!(seen[0].0.channel().provider, session.channel().provider);
+            assert_eq!(
+                seen[0].0.channel().provider,
+                session.channel().provider("client.call").unwrap()
+            );
             assert_eq!(seen[0].0.channel().scope, session.channel().scope);
             assert_eq!(seen[0].0.context(), &invocation.context);
             drop(seen);

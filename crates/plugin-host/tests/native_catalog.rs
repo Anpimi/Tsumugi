@@ -129,7 +129,10 @@ fn request(
             environment_digest: session.environment_digest().unwrap().into(),
             configuration_digest: sdk::payload_digest("no configuration"),
         },
-        provider: session.channel().provider,
+        provider: session
+            .channel()
+            .provider(&binding.provider.contribution_id)
+            .unwrap(),
         capability: binding.declaration.contract.clone(),
         profile: Some(binding.declaration.profiles[0].clone()),
         input,
@@ -175,7 +178,13 @@ async fn call(
     let request = request(&session, binding, payload);
     let received = session.invoke(&request, || false, || true).await.unwrap();
     assert_eq!(received.result().context, request.context);
-    assert_eq!(received.result().provider, session.channel().provider);
+    assert_eq!(
+        received.result().provider,
+        session
+            .channel()
+            .provider(&binding.provider.contribution_id)
+            .unwrap()
+    );
     assert_eq!(received.channel().provider.selection(), binding.provider);
     assert!(received.channel().child_pid > 0);
     session.heartbeat().await.unwrap();

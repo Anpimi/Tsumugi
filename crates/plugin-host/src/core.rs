@@ -22,39 +22,13 @@ fn validate_application_selection(
     capability: &sdk::CapabilityBinding,
     runtime: &RunnerRuntime,
 ) -> Result<(), ExecutionError> {
-    let component = image
-        .manifest()
-        .manifest()
-        .components
-        .iter()
-        .find(|component| component.id == capability.provider.component_id)
-        .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-component-scope"))?;
-    if component.scope != sdk::ComponentScope::Application
-        || !matches!(runtime, RunnerRuntime::JavaScript(_))
-        || capability.declaration.effect != sdk::EffectKind::ReadOnly
-        || component
-            .dependencies
-            .iter()
-            .any(|dependency| dependency.required)
-        || capability
-            .declaration
-            .permissions
-            .iter()
-            .any(|permission| matches!(permission, sdk::PermissionRequest::ProjectService { .. }))
-        || image
-            .manifest()
-            .manifest()
-            .contributions
-            .iter()
-            .filter(|candidate| {
-                candidate.component_id == component.id
-                    && matches!(
-                        candidate.contribution,
-                        sdk::ContributionKind::Capability { .. }
-                    )
-            })
-            .count()
-            != 1
+    let roster = crate::session::application_roster(image, &capability.provider.component_id)
+        .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-component-scope"))?;
+    if !matches!(runtime, RunnerRuntime::JavaScript(_))
+        || !roster.iter().any(|member| {
+            member.contribution_id == capability.provider.contribution_id
+                && member.capability == capability.declaration
+        })
     {
         return Err(ExecutionError::new(
             ErrorCode::InvalidInput,
@@ -428,11 +402,15 @@ impl RunnerProxy {
     ) -> Result<ReceivedResult, ExecutionError> {
         require_live(request, permit, cancellation)?;
         let channel = session.channel();
-        let mut invocation = request.input.plugin_request(
-            request.item_id,
-            request.dispatch_token,
-            &channel.provider,
-        )?;
+        let provider = channel
+            .provider(&self.capability.provider.contribution_id)
+            .map_err(|_| {
+                ExecutionError::new(ErrorCode::ResultMismatch, "plugin-channel-binding")
+            })?;
+        let mut invocation =
+            request
+                .input
+                .plugin_request(request.item_id, request.dispatch_token, &provider)?;
         // Clamp the complete result-frame allowance to this Host's policy.
         // The captured declaration separately bounds unescaped payload bytes;
         // comparing that raw limit to this frame allowance would mix budgets.
@@ -452,7 +430,8 @@ impl RunnerProxy {
         let actual = received.channel();
         // These independent receipt fields are supplied by Host, never copied
         // from the result's claimed identity.
-        if actual.provider != channel.provider
+        if actual.provider != provider
+            || actual.provider.instance() != channel.instance
             || actual.child_pid != channel.child_pid
             || actual.scope != channel.scope
             || !actual.scope.matches_invocation(&invocation.context)

@@ -47,7 +47,7 @@ fn main() {
         panic!("expected activation")
     };
     if mode == "wrong-handshake" {
-        activation.provider.instance_id = "forged-instance".into();
+        activation.instance.instance_id = "forged-instance".into();
     }
     if mode == "wrong-protocol" {
         let mut frame = ProcessFrame::new(ProcessBody::Ready(activation));
@@ -148,12 +148,12 @@ fn main() {
             ProcessBody::Cancel { dispatch_id } => {
                 write_frame(ProcessBody::Cancelled { dispatch_id })
             }
-            ProcessBody::Close { provider } => {
+            ProcessBody::Close { instance } => {
                 if mode == "no-close" {
                     hang();
                 }
-                assert_eq!(provider, activation.provider);
-                write_frame(ProcessBody::Closed { provider });
+                assert_eq!(instance, activation.instance);
+                write_frame(ProcessBody::Closed { instance });
                 return;
             }
             _ => panic!("unexpected host direction"),

@@ -42,6 +42,12 @@ fn tool_wire_keeps_selection_fixed_queries_and_consent_separate() {
         forged[property] = json!(true);
         assert!(serde_json::from_value::<PluginToolRequest>(forged).is_err());
     }
+    let mut missing_roster = fixture["preflight"].clone();
+    missing_roster
+        .as_object_mut()
+        .unwrap()
+        .remove("applicationCapabilities");
+    assert!(serde_json::from_value::<PluginToolPreflight>(missing_roster).is_err());
     let mut missing_application = fixture["preflight"].clone();
     missing_application
         .as_object_mut()
@@ -83,14 +89,6 @@ fn tool_pending_preparation_is_exclusive_and_stop_revokes_its_ticket() {
     assert!(session.prepared.is_none() && session.last_start.is_none());
     assert_ne!(session.begin(attempt).unwrap(), ticket);
 }
-
-#[cfg(all(
-    feature = "bundled-runtime",
-    target_os = "macos",
-    target_arch = "aarch64"
-))]
-#[path = "../../../../../../../crates/plugin-host/tests/support/scoped_package.rs"]
-mod scoped_package;
 
 #[cfg(all(
     feature = "bundled-runtime",
@@ -243,7 +241,6 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
     let digest = std::env::var("TSUMUGI_TEST_KNOWLEDGE_DIGEST")
         .expect("independent package digest required");
     let image = PackageImage::capture_directory(&path, &digest, || true).unwrap();
-    let mut refused_application = None;
     let image = if component_scope != tsumugi_plugin_sdk::ComponentScope::Project {
         fn files(
             root: &std::path::Path,
@@ -302,24 +299,7 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
         let bytes = serde_json::to_vec(&manifest).unwrap();
         let digest = PackageImage::digest(&bytes, &captured).unwrap();
         let adapted = PackageImage::capture(bytes, captured, &digest).unwrap();
-        if application {
-            refused_application = Some(adapted);
-            // Reuse the reviewed fixture owner: split exact capabilities and
-            // adapt strict Worker identity comparisons, never bypass them.
-            scoped_package::capture(
-                &path,
-                &std::env::var("TSUMUGI_TEST_KNOWLEDGE_DIGEST").unwrap(),
-                |contribution| {
-                    if contribution == selected.contribution_id {
-                        tsumugi_plugin_sdk::ComponentScope::Application
-                    } else {
-                        tsumugi_plugin_sdk::ComponentScope::Project
-                    }
-                },
-            )
-        } else {
-            adapted
-        }
+        adapted
     } else {
         image
     };
@@ -350,17 +330,7 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
         || true,
     )
     .unwrap();
-    if let Some(multiple) = refused_application {
-        assert!(
-            tsumugi_plugin_host::core::ApplicationInstance::validate_selection(
-                &multiple,
-                "agent-query-tool",
-                &runtime.clone().into(),
-            )
-            .is_err(),
-            "the original multi-callable component cannot opt into Application execution"
-        );
-    }
+
     let runtime_approval = RuntimeApproval {
         environment: descriptor.into(),
         origin: crate::runtime_bundle::bundled_origin(),
@@ -967,6 +937,332 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
         &window,
         "close_project",
         json!({"sessionToken":context["sessionToken"]}),
+    )
+    .unwrap();
+}
+
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+#[test]
+fn real_application_roster_tool_ipc_shares_one_instance_without_sharing_project_grants() {
+    use crate::commands::plugins::InstalledPluginFixture;
+    use std::{
+        collections::BTreeMap,
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    use tauri::{
+        Manager,
+        ipc::{CallbackFn, InvokeBody},
+        webview::InvokeRequest,
+    };
+    use tsumugi_plugin_host::{
+        CapturedRuntime, PackageFile, PackageImage, RuntimeApproval,
+        catalog::{PackageApproval, PackageOrigin},
+    };
+    use tsumugi_plugin_sdk as sdk;
+    fn call(
+        window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        command: &str,
+        request: Value,
+    ) -> Result<Value, Value> {
+        tauri::test::get_ipc_response(
+            window,
+            InvokeRequest {
+                cmd: command.into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: crate::ipc_test_url().parse().unwrap(),
+                body: InvokeBody::Json(json!({"request":request})),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+        .map(|response| response.deserialize::<Value>().unwrap())
+    }
+    fn output(
+        window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        context: &Value,
+        attempt: &Value,
+    ) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            let mut request = context.clone();
+            request["attemptId"] = attempt.clone();
+            request["offset"] = json!(0);
+            request["limit"] = json!(10);
+            let detail = call(window, "read_execution_attempt", request).unwrap();
+            if let Some(id) = detail["items"][0]["resultId"].as_str() {
+                let mut request = context.clone();
+                request["attemptId"] = attempt.clone();
+                request["resultId"] = json!(id);
+                return call(window, "read_execution_output", request).unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "synthetic roster Tool did not finish: {detail}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    let reference = |id: &str| sdk::ContractRef {
+        id: id.into(),
+        schema_version: 1,
+        behavior_version: 1,
+    };
+    let mut manifest = sdk::PluginManifest {
+        protocol_version: sdk::MANIFEST_PROTOCOL,
+        plugin: sdk::PluginIdentity {
+            publisher: "example".into(),
+            id: "application-roster".into(),
+            version: "0.1.0".into(),
+        },
+        permissions: vec![sdk::PermissionRequest::CapturedInput],
+        components: vec![sdk::ComponentDeclaration {
+            id: "shared".into(),
+            scope: sdk::ComponentScope::Application,
+            runtime: sdk::RuntimeKind::JavaScript,
+            entrypoint: Some("component.mjs".into()),
+            dependencies: vec![],
+            exit: sdk::ExitRequirements {
+                stop_timeout_ms: 1000,
+                cleanup_timeout_ms: 1000,
+            },
+        }],
+        contributions: vec![],
+    };
+    let mut files = BTreeMap::from([
+        (
+            "component.mjs".into(),
+            PackageFile {
+                bytes: include_bytes!(
+                    "../../../../../../../crates/plugin-host/tests/support/javascript-component.mjs"
+                )
+                .to_vec(),
+                executable: false,
+            },
+        ),
+        (
+            "behavior.txt".into(),
+            PackageFile {
+                bytes: b"roster".to_vec(),
+                executable: false,
+            },
+        ),
+    ]);
+    for id in ["alpha", "beta"] {
+        manifest.contributions.push(sdk::ContributionDeclaration {
+            id: id.into(),
+            component_id: "shared".into(),
+            contribution: sdk::ContributionKind::Capability {
+                declaration: sdk::CapabilityDeclaration {
+                    contract: reference(&format!("example.{id}")),
+                    input_schema: reference("example.input"),
+                    output_schema: reference("example.output"),
+                    error_schema: reference("example.error"),
+                    profiles: vec![],
+                    effect: sdk::EffectKind::ReadOnly,
+                    permissions: vec![sdk::PermissionRequest::CapturedInput],
+                    limits: sdk::CapabilityLimits {
+                        max_input_bytes: 4096,
+                        max_output_bytes: 4096,
+                        concurrency: 1,
+                        timeout_ms: 5000,
+                    },
+                },
+            },
+        });
+        let declaration = sdk::CapabilityToolDeclaration {
+            name: format!("{id}_tool"),
+            title: format!("Synthetic {id} tool"),
+            description: "Read one explicitly captured synthetic input".into(),
+            capability_id: id.into(),
+            profile: None,
+            supporting_resources: vec![],
+            skill: None,
+            query: None,
+        };
+        files.insert(
+            format!("{id}.json"),
+            PackageFile {
+                bytes: serde_json::to_vec(&declaration).unwrap(),
+                executable: false,
+            },
+        );
+        manifest.contributions.push(sdk::ContributionDeclaration {
+            id: format!("{id}-tool"),
+            component_id: "shared".into(),
+            contribution: sdk::ContributionKind::Resource {
+                schema: sdk::tool_declaration_contract(),
+                path: format!("{id}.json"),
+            },
+        });
+    }
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let digest = PackageImage::digest(&manifest, &files).unwrap();
+    let image = PackageImage::capture(manifest, files, &digest).unwrap();
+    let descriptor: sdk::RuntimeEnvironmentDescriptor = serde_json::from_slice(
+        &fs::read(
+            std::env::var_os("TSUMUGI_TEST_RUNTIME_APPROVAL")
+                .expect("explicit Process3 runtime approval required"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let runtime = CapturedRuntime::capture_directories(
+        &PathBuf::from(
+            std::env::var_os("TSUMUGI_TEST_RUNTIME_TOOL").expect("explicit runtime tool required"),
+        ),
+        &PathBuf::from(
+            std::env::var_os("TSUMUGI_TEST_RUNTIME_HOST").expect("explicit Process3 Host required"),
+        ),
+        &descriptor,
+        || true,
+    )
+    .unwrap();
+    let approval = PackageApproval {
+        plugin: image.manifest().manifest().plugin.clone(),
+        package_digest: digest,
+        origin: PackageOrigin {
+            source_id: "synthetic-roster-source".into(),
+            publisher_id: "synthetic-roster-publisher".into(),
+        },
+    };
+    let runtime_approval = RuntimeApproval {
+        environment: descriptor.into(),
+        origin: crate::runtime_bundle::bundled_origin(),
+    };
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .invoke_handler(crate::commands::execution::production_handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let state = app.state::<AppState>();
+    let fixture =
+        InstalledPluginFixture::from_image(state.plugins.clone(), image, approval.clone());
+    fixture.install();
+    fixture.install_runtime(&runtime, &runtime_approval);
+    fixture.decide(true, vec![runtime_approval.clone()]);
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let mut contexts: Vec<Value> = Vec::new();
+    let mut starts: Vec<Value> = Vec::new();
+    let mut saved: Vec<Value> = Vec::new();
+    let mut basis = Value::Null;
+    for (ordinal, id) in ["alpha", "beta"].into_iter().enumerate() {
+        let project=call(&window,"create_project",json!({"destination":temporary.path().join(id),"displayName":format!("Synthetic {id}"),"sourceLocale":"en","targetLocales":["zh-CN"]})).unwrap();
+        let context = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]});
+        let tool = json!({"package":{"plugin":approval.plugin,"packageDigest":approval.package_digest},"resourceId":format!("{id}-tool"),"environmentDigest":runtime_approval.environment.digest().unwrap()});
+        let mut prepare = context.clone();
+        prepare["attemptId"] = json!(ExecutionId::new());
+        prepare["tool"] = tool;
+        prepare["payloads"] = json!([{ "text":id }]);
+        let preflight = call(&window, "prepare_plugin_tool", prepare).unwrap();
+        assert_eq!(
+            preflight["applicationCapabilities"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        if ordinal == 0 {
+            basis = preflight["applicationScope"].clone();
+        } else {
+            assert_eq!(preflight["applicationScope"], basis);
+        }
+        let mut start = context.clone();
+        start["attemptId"] = preflight["attemptId"].clone();
+        start["inputDigest"] = preflight["inputDigest"].clone();
+        start["grantId"] = json!(ExecutionId::new());
+        start["expiresAtMs"] = json!(
+            (SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                + 60_000)
+                .to_string()
+        );
+        start["unsandboxedExecution"] = json!(true);
+        start["applicationExecution"] = json!(ordinal == 0);
+        if ordinal == 1 {
+            let mut foreign = starts[0].clone();
+            foreign["sessionToken"] = context["sessionToken"].clone();
+            foreign["projectId"] = context["projectId"].clone();
+            assert!(call(&window, "start_plugin_tool", foreign).is_err());
+        }
+        let attempt = call(&window, "start_plugin_tool", start.clone()).unwrap();
+        let result = output(&window, &context, &attempt);
+        assert_eq!(result["plugin"]["authorizationId"], start["grantId"]);
+        assert_eq!(result["plugin"]["channel"]["contributionId"], id);
+        assert_eq!(
+            result["plugin"]["channel"]["instanceId"],
+            basis["instanceId"]
+        );
+        let payload: Value = serde_json::from_str(
+            result["plugin"]["result"]["outcome"]["output"]["utf8"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["member"], id);
+        assert_eq!(payload["ordinal"], ordinal + 1);
+        contexts.push(context.clone());
+        starts.push(start);
+        saved.push(result);
+        if ordinal == 0 {
+            call(&window, "quiesce_execution", context.clone()).unwrap();
+            call(
+                &window,
+                "close_project",
+                json!({"sessionToken":context["sessionToken"]}),
+            )
+            .unwrap();
+        }
+    }
+    assert_ne!(starts[0]["grantId"], starts[1]["grantId"]);
+    assert_eq!(
+        saved[0]["plugin"]["channel"]["instanceId"],
+        saved[1]["plugin"]["channel"]["instanceId"]
+    );
+    let stop = json!({"actionId":ExecutionId::new(),"basis":basis});
+    call(&window, "stop_application_plugin_instance", stop.clone()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        let value = call(
+            &window,
+            "read_application_plugin_instance",
+            json!({"basis":basis}),
+        )
+        .unwrap();
+        if value["state"] == "stopped" {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        call(&window, "start_plugin_tool", starts[1].clone()).unwrap(),
+        starts[1]["attemptId"]
+    );
+    assert_eq!(
+        output(&window, &contexts[1], &starts[1]["attemptId"]),
+        saved[1]
+    );
+    assert_eq!(
+        call(&window, "stop_application_plugin_instance", stop).unwrap()["basis"],
+        basis
+    );
+    call(&window, "quiesce_execution", contexts[1].clone()).unwrap();
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":contexts[1]["sessionToken"]}),
     )
     .unwrap();
 }

@@ -11,7 +11,7 @@ fn application_binding() -> PluginExecutionBinding {
 }
 fn lease(binding: &PluginExecutionBinding) -> ApplicationExecutionLease {
     ApplicationExecutionLease::capture(
-        binding.clone(),
+        vec![binding.clone()],
         true,
         Cancellation::default(),
         Cancellation::default(),
@@ -340,7 +340,7 @@ fn application_lease_narrows_results_validation_and_reopen_without_restoring_aut
     );
     assert!(
         ApplicationExecutionLease::capture(
-            binding.clone(),
+            vec![binding.clone()],
             false,
             Cancellation::default(),
             Cancellation::default()
@@ -456,7 +456,7 @@ fn application_settings_withdrawal_and_runner_retirement_are_exact_and_irreversi
     });
     let settings = Cancellation::default();
     let old_lease = ApplicationExecutionLease::capture(
-        old.clone(),
+        vec![old.clone()],
         true,
         Cancellation::default(),
         settings.clone(),
@@ -673,4 +673,199 @@ fn cancelling_a_project_call_does_not_grant_another_call_or_extend_its_deadline(
         )
         .unwrap();
     assert!(store.plugin_permit(&second).unwrap().is_authorized());
+}
+
+#[test]
+fn application_roster_narrows_each_member_profile_and_original_project_grant() {
+    let (temporary, mut store, mut runtime, _) = setup();
+    let first = application_binding();
+    let mut second = first.clone();
+    second.capability.provider.contribution_id = "second.call".into();
+    let profile = sdk::ContractRef {
+        id: "example.profile".into(),
+        schema_version: 1,
+        behavior_version: 1,
+    };
+    let other = sdk::ContractRef {
+        id: "example.other-profile".into(),
+        schema_version: 1,
+        behavior_version: 1,
+    };
+    second.capability.declaration.profiles = vec![profile.clone(), other.clone()];
+    second.profile = Some(profile);
+    let revoked = Cancellation::default();
+    let application = ApplicationExecutionLease::capture(
+        vec![first.clone(), second.clone()],
+        true,
+        revoked.clone(),
+        Cancellation::default(),
+    )
+    .unwrap();
+    for invalid in
+        [
+            Vec::new(),
+            vec![first.clone(), first.clone()],
+            {
+                let mut value = second.clone();
+                value.application_scope.as_mut().unwrap().instance_id = ExecutionId::new();
+                vec![first.clone(), value]
+            },
+            {
+                let mut value = second.clone();
+                value.capability.provider.component_id = "other".into();
+                vec![first.clone(), value]
+            },
+            {
+                let mut value = second.clone();
+                value.environment = plugin_binding("c").environment;
+                vec![first.clone(), value]
+            },
+            {
+                let mut value = second.clone();
+                value.capability.declaration.limits.max_output_bytes += 1;
+                vec![second.clone(), value]
+            },
+            {
+                let mut value = second.clone();
+                value.capability.declaration.effect = sdk::EffectKind::External;
+                vec![first.clone(), value]
+            },
+            {
+                let mut value = second.clone();
+                value.capability.declaration.permissions.push(
+                    sdk::PermissionRequest::ProjectService {
+                        contract: sdk::ContractRef {
+                            id: "example.service".into(),
+                            schema_version: 1,
+                            behavior_version: 1,
+                        },
+                    },
+                );
+                vec![first.clone(), value]
+            },
+        ]
+    {
+        assert!(
+            ApplicationExecutionLease::capture(
+                invalid,
+                true,
+                Cancellation::default(),
+                Cancellation::default()
+            )
+            .is_err()
+        );
+    }
+    let (calls, received) = mpsc::channel();
+    for binding in [&first, &second] {
+        runtime
+            .register_read_only(Arc::new(SelectedPlugin::new(binding, calls.clone())))
+            .unwrap();
+    }
+    let a = plugin_input(&store, first.clone());
+    let b = plugin_input(&store, second.clone());
+    let expiry = plugin_authority::plugin_now_ms().unwrap() + 60_000;
+    let grant_a = ExecutionId::new();
+    let grant_b = ExecutionId::new();
+    for (input, grant, flag) in [(&a, grant_a, true), (&b, grant_b, false)] {
+        runtime
+            .authorize_application_plugin(
+                &mut store,
+                grant,
+                input,
+                expiry,
+                PluginConsent {
+                    unsandboxed_execution: true,
+                    application_execution: flag,
+                },
+                &application,
+            )
+            .unwrap();
+        runtime.submit(&mut store, input).unwrap();
+    }
+    let mut outside = second.clone();
+    outside.profile = Some(other);
+    let outside = plugin_input(&store, outside);
+    assert!(!application.matches(&outside));
+    assert!(
+        runtime
+            .authorize_application_plugin(
+                &mut store,
+                ExecutionId::new(),
+                &outside,
+                expiry,
+                PluginConsent {
+                    unsandboxed_execution: true,
+                    application_execution: false
+                },
+                &application
+            )
+            .is_err()
+    );
+    let request_a = store
+        .dispatch_execution_item(a.envelope().attempt_id, a.envelope().items[0].item_id)
+        .unwrap();
+    let request_b = store
+        .dispatch_execution_item(b.envelope().attempt_id, b.envelope().items[0].item_id)
+        .unwrap();
+    assert!(!request_a.plugin_permit().unwrap().matches(&b));
+    assert!(!request_b.plugin_permit().unwrap().matches(&a));
+    let saved = evidence(&request_a, &first);
+    let late = evidence(&request_b, &second);
+    assert_eq!(
+        saved.envelope().plugin.as_ref().unwrap().authorization_id,
+        grant_a
+    );
+    assert_eq!(
+        late.envelope().plugin.as_ref().unwrap().authorization_id,
+        grant_b
+    );
+    assert_eq!(
+        saved.envelope().plugin.as_ref().unwrap().channel.instance(),
+        late.envelope().plugin.as_ref().unwrap().channel.instance()
+    );
+    assert!(store.save_execution_result(&saved).unwrap());
+    runtime
+        .cancel(&mut store, a.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    assert!(application.is_live());
+    assert!(request_b.plugin_permit().unwrap().is_authorized());
+    revoked.request();
+    assert!(!request_b.plugin_permit().unwrap().is_authorized());
+    assert!(store.save_execution_result(&late).is_err());
+    assert!(received.try_recv().is_err());
+    drop(runtime);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(temporary.path().join("project")).unwrap();
+    for (input, grant, flag) in [(&a, grant_a, true), (&b, grant_b, false)] {
+        assert_eq!(
+            reopened
+                .execution_input(input.envelope().attempt_id)
+                .unwrap()
+                .bytes(),
+            input.bytes()
+        );
+        assert!(reopened.plugin_permit(input).is_err());
+        assert!(
+            reopened
+                .reconcile_plugin_start(
+                    grant,
+                    input.envelope().attempt_id,
+                    input.digest(),
+                    expiry,
+                    PluginConsent {
+                        unsandboxed_execution: true,
+                        application_execution: flag
+                    }
+                )
+                .unwrap()
+                .is_some()
+        );
+    }
+    assert_eq!(
+        reopened
+            .execution_result(a.envelope().attempt_id, saved.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        saved.bytes()
+    );
 }

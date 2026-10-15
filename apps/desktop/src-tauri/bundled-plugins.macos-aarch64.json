@@ -5,7 +5,7 @@
     "architecture": "aarch64"
   },
   "runtimeProfile": "node-system-libraries-v1",
-  "processProtocol": 2,
+  "processProtocol": 3,
   "packages": [
     {
       "id": "webvtt",
@@ -15,13 +15,13 @@
         "id": "webvtt",
         "version": "0.1.0-alpha.1"
       },
-      "packageDigest": "6f3cb25a38ee7cd9487a92b950947c8fa817b402caf62c49509a39825d14efab",
+      "packageDigest": "354051413f7ac12983ce9c523657dd303dcd6692cba770d5db7db1b1d10cd21e",
       "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
-      "sourceCommit": "7e14b3a283bd9846510bebf7c8517babe814bdc6",
+      "sourceCommit": "73a5aee72e42f4601e16404c157f0a945c576129",
       "sdkVersion": "0.1.0-alpha.1",
-      "sdkArtifactSha256": "18bafc93a84135fdd5b36987b8b1248dacba241140b7a1ad00045508fa937dac",
+      "sdkArtifactSha256": "dffc605fd13db2e94ff2506cdbe82a278dda36be97e968565df6d67c20f1334b",
       "archiveName": "webvtt.tar",
-      "archiveSha256": "d5ef39eb27062d67cbfd2f930b652ac552c4d54fe1fc1a47b881df80f43e8c36"
+      "archiveSha256": "46b7e119561fc1dc00ae15f28925bea09419a5820935f46017183cfb9af8178b"
     },
     {
       "id": "stardew-smapi",
@@ -31,13 +31,13 @@
         "id": "stardew-smapi",
         "version": "0.1.0-alpha.1"
       },
-      "packageDigest": "13682a57f0c90219e199490d652690697ab4f18aaaaace0fa0e8a96ec6b4bf44",
+      "packageDigest": "e0ede00f3a33f5d7fd9d26d040d77d7934447daa73d792d9ad6719c7c9fda8a7",
       "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
-      "sourceCommit": "7e14b3a283bd9846510bebf7c8517babe814bdc6",
+      "sourceCommit": "73a5aee72e42f4601e16404c157f0a945c576129",
       "sdkVersion": "0.1.0-alpha.1",
-      "sdkArtifactSha256": "18bafc93a84135fdd5b36987b8b1248dacba241140b7a1ad00045508fa937dac",
+      "sdkArtifactSha256": "dffc605fd13db2e94ff2506cdbe82a278dda36be97e968565df6d67c20f1334b",
       "archiveName": "stardew-smapi.tar",
-      "archiveSha256": "110a737f21ba896ed323c0546c1e06f030bd5d262221ac132fd41469b3646ab4"
+      "archiveSha256": "b24a5eae616397563761d233cf11fe9fc71578039765495ee7c8d02c8eff662d"
     }
   ]
 }

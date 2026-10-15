@@ -51,6 +51,7 @@ beforeEach(async () => {
         if (holdPreparation) await holdPreparation;
         prepared = { attemptId: input.attemptId, inputDigest: "c".repeat(64), tool: { ...structuredClone(toolQueryView), componentScope: applicationMode ? "application" : "project" },
           applicationScope: applicationMode ? structuredClone(applicationBasis) : null,
+          applicationCapabilities: applicationMode ? [{ contributionId: toolQueryView.binding.capability.provider.contributionId, capability: structuredClone(toolQueryView.binding.capability.declaration) }, { contributionId: "secondary.call", capability: structuredClone(toolQueryView.binding.capability.declaration) }] : [],
           items: input.payloads.map((payload, index) => ({ itemId: fixtureIdentity(1000 + index), payload })).reverse() };
         return structuredClone(prepared);
       }
@@ -461,12 +462,39 @@ it("keeps a failed saved-result read distinct from empty or malformed output and
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
 });
 
+it.each(["missing-selected", "duplicate-member", "external-member", "ordinary-roster"])("retains the original preparation when the returned component roster is %s", async mode => {
+  applicationMode = mode !== "ordinary-roster";
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const response = await original(command, args);
+    if (command !== "prepare_plugin_tool") return response;
+    const forged = structuredClone(response) as PluginToolPreflight;
+    if (mode === "missing-selected") forged.applicationCapabilities.shift();
+    else if (mode === "duplicate-member") forged.applicationCapabilities.push(structuredClone(forged.applicationCapabilities[0]));
+    else if (mode === "external-member") forged.applicationCapabilities[1].capability.effect = "external";
+    else forged.applicationCapabilities = [{ contributionId: toolQueryView.binding.capability.provider.contributionId, capability: structuredClone(toolQueryView.binding.capability.declaration) }];
+    return forged;
+  });
+  const { user, owner } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "keep the exact draft");
+  await user.click(screen.getByRole("button", { name: "Review queries" }));
+  await waitFor(() => expect(owner().current().uncertain).toBe(true));
+  expect(owner().current().capture).toBeNull();
+  expect(owner().current().pending?.kind).toBe("prepare");
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("keep the exact draft");
+  expect(screen.queryByRole("checkbox", { name: /^I allow this exact shared instance/ })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
+});
+
 it("requires independent application lifetime consent and preserves drafts/results after an unknown exact stop", async () => {
   applicationMode = true;
   const { user, owner } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "kept query");
   await review(user);
   const lifetime = await screen.findByRole("checkbox", { name: /^I allow this exact shared instance/ });
+  expect(screen.getByText("secondary.call")).toBeVisible();
+  expect(screen.getByText(toolQueryView.binding.capability.provider.contributionId)).toBeVisible();
+  expect(screen.getByText(i18n.t("toolQuery.applicationCapabilities"))).toBeVisible();
   const run = screen.getByRole("button", { name: "Run reference queries" });
   await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
   expect(run).toBeDisabled();

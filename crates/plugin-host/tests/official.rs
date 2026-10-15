@@ -99,8 +99,8 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
         };
         let mut session = launch(&image, "source-semantic-check", temporary.path()).await;
         let semantic_channel = session.channel();
-        assert_eq!(semantic_channel.provider.selection(), semantic.provider);
-        assert_ne!(semantic_channel.provider.instance_id, extraction_channel.provider.instance_id);
+        assert_eq!(semantic_channel.provider("source-semantic-check").unwrap().selection(), semantic.provider);
+        assert_ne!(semantic_channel.instance.instance_id, extraction_channel.instance.instance_id);
         for (dispatch, mutation) in [("source-check-good", 0), ("source-check-text", 1), ("source-check-basis", 2)] {
             let mut captured = semantic_input.clone();
             match mutation {
@@ -127,7 +127,7 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
                 outcome: CheckOutcome::Completed { findings: vec![] },
             };
             let received = invoke_received(&mut session, &semantic, dispatch, &value).await;
-            assert_eq!(received.channel().provider, semantic_channel.provider);
+            assert_eq!(received.channel().provider, semantic_channel.provider("source-semantic-check").unwrap());
             assert_eq!(received.channel().child_pid, semantic_channel.child_pid);
             let output = success_payload(received.result().outcome.clone());
             assert_eq!(output.schema, check_results_contract());

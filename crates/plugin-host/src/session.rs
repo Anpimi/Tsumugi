@@ -119,6 +119,68 @@ pub struct ChannelReceipt {
     pub child_pid: u32,
     pub scope: SessionScope,
 }
+/// The whole component channel has no preferred contribution. A provider can
+/// only be projected for an exact member of its immutable activation roster.
+#[derive(Clone, Debug)]
+pub struct ComponentChannelReceipt {
+    pub instance: ComponentInstanceBinding,
+    pub capabilities: Vec<ProcessCapability>,
+    pub child_pid: u32,
+    pub scope: SessionScope,
+}
+impl ComponentChannelReceipt {
+    pub fn provider(&self, contribution: &str) -> HostResult<ProviderBinding> {
+        ProcessActivation {
+            instance: self.instance.clone(),
+            capabilities: self.capabilities.clone(),
+            services: Vec::new(),
+        }
+        .provider(contribution)
+        .map_err(|_| HostError::RequestMismatch)
+    }
+}
+
+pub(crate) fn application_roster(
+    image: &PackageImage,
+    component_id: &str,
+) -> HostResult<Vec<ProcessCapability>> {
+    let manifest = image.manifest().manifest();
+    let component = manifest
+        .components
+        .iter()
+        .find(|value| value.id == component_id)
+        .ok_or(HostError::MissingArtifact)?;
+    if component.scope != ComponentScope::Application
+        || component.runtime != RuntimeKind::JavaScript
+        || component.dependencies.iter().any(|value| value.required)
+    {
+        return Err(HostError::UnsupportedRuntime);
+    }
+    let mut capabilities = Vec::new();
+    for contribution in &manifest.contributions {
+        if contribution.component_id != component.id {
+            continue;
+        }
+        if let ContributionKind::Capability { declaration } = &contribution.contribution {
+            if declaration.effect != EffectKind::ReadOnly
+                || declaration.permissions.iter().any(|permission| {
+                    matches!(permission, PermissionRequest::ProjectService { .. })
+                })
+            {
+                return Err(HostError::UnsupportedRuntime);
+            }
+            capabilities.push(ProcessCapability {
+                contribution_id: contribution.id.clone(),
+                capability: declaration.clone(),
+            });
+        }
+    }
+    if capabilities.is_empty() || capabilities.len() > MAX_PROCESS_CAPABILITIES {
+        return Err(HostError::UnsupportedRuntime);
+    }
+    capabilities.sort_by(|a, b| a.contribution_id.cmp(&b.contribution_id));
+    Ok(capabilities)
+}
 /// Valid wire output bound to the captured request and this actual child. Domain
 /// semantics, current authority and adoption must still be checked by Core.
 #[derive(Clone, Debug)]
@@ -156,7 +218,7 @@ struct Pipes {
     tasks: Vec<JoinHandle<()>>,
 }
 
-/// One serialized contribution channel on an owned component instance. Multiple
+/// One serialized capability roster on an owned component instance. Multiple
 /// instances have distinct staged directories, process groups and identities.
 /// Direction/state errors permanently revoke a channel; no hidden retry.
 pub struct ProcessSession {
@@ -175,6 +237,7 @@ pub struct ProcessSession {
     dispatches: BTreeSet<String>,
     result_ids: BTreeSet<String>,
     service_broker: Option<Arc<dyn ProjectServiceBroker>>,
+    service_channel: Option<ChannelReceipt>,
     service_calls: BTreeSet<String>,
     service_output_bytes: usize,
     services_released: bool,
@@ -274,31 +337,17 @@ impl ProcessSession {
                 .iter()
                 .find(|c| c.id == contribution.component_id)
                 .ok_or(HostError::MissingArtifact)?;
+            let capabilities = if component.scope == ComponentScope::Application {
+                application_roster(image, &component.id)?
+            } else {
+                vec![ProcessCapability {
+                    contribution_id: contribution.id.clone(),
+                    capability: declaration.clone(),
+                }]
+            };
             let services = match (&options.scope, component.scope) {
                 (SessionScope::Application { .. }, ComponentScope::Application) => {
-                    if component.runtime != RuntimeKind::JavaScript
-                        || broker.is_some()
-                        || component
-                            .dependencies
-                            .iter()
-                            .any(|dependency| dependency.required)
-                        || declaration.permissions.iter().any(|permission| {
-                            matches!(permission, PermissionRequest::ProjectService { .. })
-                        })
-                        || declaration.effect != EffectKind::ReadOnly
-                        || manifest
-                            .contributions
-                            .iter()
-                            .filter(|candidate| {
-                                candidate.component_id == component.id
-                                    && matches!(
-                                        candidate.contribution,
-                                        ContributionKind::Capability { .. }
-                                    )
-                            })
-                            .count()
-                            != 1
-                    {
+                    if broker.is_some() {
                         return Err(HostError::UnsupportedRuntime);
                     }
                     Vec::new()
@@ -416,10 +465,9 @@ impl ProcessSession {
                 }
             };
             let activation = ProcessActivation {
-                provider: ProviderBinding {
+                instance: ComponentInstanceBinding {
                     plugin: manifest.plugin.clone(),
                     component_id: component.id.clone(),
-                    contribution_id: contribution.id.clone(),
                     package_digest: image.package_digest().into(),
                     instance_id: match &options.scope {
                         SessionScope::Application { instance_id, .. } => instance_id.clone(),
@@ -433,7 +481,7 @@ impl ProcessSession {
                         SessionScope::Bound(_) => 1,
                     },
                 },
-                capability: declaration.clone(),
+                capabilities,
                 services,
             };
             let stop_ms = component
@@ -444,6 +492,17 @@ impl ProcessSession {
                 .exit
                 .cleanup_timeout_ms
                 .min(options.limits.cleanup_timeout_ms);
+            let service_channel = if broker.is_some() {
+                Some(ChannelReceipt {
+                    provider: activation
+                        .provider(&contribution.id)
+                        .map_err(|_| HostError::InvalidContract)?,
+                    child_pid: pid,
+                    scope: options.scope.clone(),
+                })
+            } else {
+                None
+            };
             let mut session = Self {
                 child: pending.child.take().unwrap(),
                 pid,
@@ -460,6 +519,7 @@ impl ProcessSession {
                 dispatches: BTreeSet::new(),
                 result_ids: BTreeSet::new(),
                 service_broker: broker,
+                service_channel,
                 service_calls: BTreeSet::new(),
                 service_output_bytes: 0,
                 services_released: false,
@@ -503,12 +563,23 @@ impl ProcessSession {
             Ok(session)
         }
     }
-    pub fn channel(&self) -> ChannelReceipt {
-        ChannelReceipt {
-            provider: self.activation.provider.clone(),
+    pub fn channel(&self) -> ComponentChannelReceipt {
+        ComponentChannelReceipt {
+            instance: self.activation.instance.clone(),
+            capabilities: self.activation.capabilities.clone(),
             child_pid: self.pid,
             scope: self.options.scope.clone(),
         }
+    }
+    fn invocation_channel(&self, contribution: &str) -> HostResult<ChannelReceipt> {
+        Ok(ChannelReceipt {
+            provider: self
+                .activation
+                .provider(contribution)
+                .map_err(|_| HostError::RequestMismatch)?,
+            child_pid: self.pid,
+            scope: self.options.scope.clone(),
+        })
     }
     pub fn environment_digest(&self) -> Option<&str> {
         self.environment_digest.as_deref()
@@ -608,8 +679,16 @@ impl ProcessSession {
     }
     fn check_request(&self, request: &InvocationRequest) -> HostResult<()> {
         request.validate().map_err(|_| HostError::InvalidContract)?;
-        let c = &self.activation.capability;
-        if request.provider != self.activation.provider
+        let c = &self
+            .activation
+            .capability(&request.provider.contribution_id)
+            .ok_or(HostError::RequestMismatch)?
+            .capability;
+        if request.provider
+            != self
+                .activation
+                .provider(&request.provider.contribution_id)
+                .map_err(|_| HostError::RequestMismatch)?
             || self
                 .environment_digest
                 .as_ref()
@@ -661,7 +740,11 @@ impl ProcessSession {
             .service_broker
             .clone()
             .ok_or(HostError::RequestMismatch)?;
-        let caller = ServiceCaller::capture(self.channel(), invocation, deadline.into_std());
+        let caller = ServiceCaller::capture(
+            self.invocation_channel(&invocation.provider.contribution_id)?,
+            invocation,
+            deadline.into_std(),
+        );
         let captured_services = self.activation.services.clone();
         let service_deadline =
             deadline.min(Instant::now() + Duration::from_millis(binding.limits.timeout_ms.into()));
@@ -771,6 +854,8 @@ impl ProcessSession {
         let deadline = Instant::now()
             + Duration::from_millis(
                 self.activation
+                    .capability(&request.provider.contribution_id)
+                    .ok_or(HostError::RequestMismatch)?
                     .capability
                     .limits
                     .timeout_ms
@@ -811,13 +896,22 @@ impl ProcessSession {
                     _ => return Err(HostError::UnexpectedFrame),
                 }
             };
-            check_result_payload(&result, self.activation.capability.limits.max_output_bytes)?;
+            let capability = &self
+                .activation
+                .capability(&request.provider.contribution_id)
+                .ok_or(HostError::RequestMismatch)?
+                .capability;
+            check_result_payload(&result, capability.limits.max_output_bytes)?;
             let bytes = serde_json::to_vec(&ExchangeDocument {
                 protocol_version: EXCHANGE_PROTOCOL,
                 body: ExchangeBody::Result(result.clone()),
             })
             .map_err(|_| HostError::InvalidFrame)?;
-            receive_invocation_result(&bytes, request, &self.activation.provider)
+            let actual = self
+                .activation
+                .provider(&request.provider.contribution_id)
+                .map_err(|_| HostError::RequestMismatch)?;
+            receive_invocation_result(&bytes, request, &actual)
                 .map_err(|_| HostError::ResultMismatch)?;
             if !self.result_ids.insert(result.result_id.clone()) {
                 return Err(HostError::ResultMismatch);
@@ -833,7 +927,7 @@ impl ProcessSession {
             }
             Ok(ReceivedResult {
                 result,
-                channel: self.channel(),
+                channel: self.invocation_channel(&request.provider.contribution_id)?,
                 invocation_scope: ScopeBinding {
                     project_id: request.context.project_id.clone(),
                     scope_id: request.context.scope_id.clone(),
@@ -893,7 +987,7 @@ impl ProcessSession {
         }
         let acknowledged = async {
             self.send(ProcessBody::Close {
-                provider: self.activation.provider.clone(),
+                instance: self.activation.instance.clone(),
             })?;
             match self
                 .receive(
@@ -905,7 +999,7 @@ impl ProcessSession {
                 .await?
                 .body
             {
-                ProcessBody::Closed { provider } if provider == self.activation.provider => Ok(()),
+                ProcessBody::Closed { instance } if instance == self.activation.instance => Ok(()),
                 _ => Err(HostError::UnexpectedFrame),
             }
         }
@@ -946,8 +1040,8 @@ impl ProcessSession {
     fn release_services(&mut self) {
         if !self.services_released {
             self.services_released = true;
-            if let Some(broker) = &self.service_broker {
-                broker.release_channel(&self.channel());
+            if let (Some(broker), Some(channel)) = (&self.service_broker, &self.service_channel) {
+                broker.release_channel(channel);
             }
         }
     }

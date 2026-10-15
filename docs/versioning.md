@@ -1,5 +1,24 @@
 # Application versioning and changelog maintenance
 
+Application component activation now uses a frozen, bounded capability roster
+and a component instance principal. JavaScript setup registers every exact
+member before Ready; every invocation retains its full provider binding and
+original project grant. The first multi-callable Application profile remains
+read-only without required dependencies or ProjectService access. Project and
+Attempt retain singleton activation; native Application and Windows remain
+unsupported.
+
+Process protocol advances to 3 while manifest and exchange protocols remain 1.
+Persisted execution environments require the current process protocol, so this
+changes saved input validity even without another database column. The
+current-only project format advances to schema 43; older development projects
+and protocol materials are preserved and refused without migration or fallback.
+SDK schemas, the JavaScript facade, native singleton helper and paired component
+entry points use the same protocol. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain the same undistributed batch without a repeated SemVer
+bump. Both Unreleased changelogs are synchronized. Earlier paragraphs describe
+the units that introduced their respective development formats.
+
 Current-entry source-fact decisions append immutable scoped resource actions and
 pin them in a required `projectContext` field in AI/Arena items. There is no
 implicit `not-selected` value for a missing capture field. This unit advances the
