@@ -5,6 +5,11 @@ import type { TranslationSaveReceipt } from "./generated/translation.responses";
 import type { PluginTranslationRequest, PluginTranslationView } from "./pluginCommands";
 import { validateRequestAdopt, validateResponseCheckReview, validateResponseProjectionReview, validateResponseChecked, validateResponseSource, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseFiles, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
 import { validateResponseAdoption } from "./generated/execution.validators";
+import { validateResponseCandidateDecision, validateResponseCandidateAction } from "./generated/translation.validators";
+import type { CandidateDecisionRequest } from "./generated/translation.requests";
+import type { CandidateDecision } from "./generated/translation.responses";
+export type { CandidateDecisionRequest } from "./generated/translation.requests";
+export type { CandidateDecision, CandidateDecisionWrite, CandidateDisposition } from "./generated/translation.responses";
 
 export type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
 export type { TranslationCheckReview, TranslationProjectionReview, TranslationSourceContext, PluginTranslationSelection, PluginTranslationPreflight, TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
@@ -15,6 +20,8 @@ export function translationHistoryAfter(ordinal: string, pageSize: number): stri
 }
 
 export const translationCommands = {
+  decideCandidate: async (request: CandidateDecisionRequest) => confirmCandidateDecision(request, await checkedInvoke("decide_translation_candidate", request, validateResponseCandidateDecision)),
+  candidateAction: (request: TranslationActionRequest) => checkedInvoke("read_translation_candidate_action", request, validateResponseCandidateAction),
   pluginSource: (request: TranslationSourceRequest) => checkedInvoke("read_plugin_translation_source", request, validateResponseSource),
   selectPlugin: (request: PluginTranslationSelectRequest) => checkedInvoke("select_plugin_translation", request, validateResponsePluginSelection),
   pluginFiles: (request: TranslationFilesRequest) => checkedInvoke("list_plugin_translation_files", request, validateResponseFiles),
@@ -32,6 +39,15 @@ export const translationCommands = {
   save: async (request: TranslationSaveRequest) => validateSaveReceipt(await checkedInvoke("save_translation_revision", request, validateResponseSaved), request),
   select: async (request: TranslationSelectRequest) => confirmTranslationSelection(request, await checkedInvoke("select_translation_revision", request, validateResponseSelected)),
 };
+
+export function confirmCandidateDecision(request: CandidateDecisionRequest, value: CandidateDecision) {
+  const expected = request.decision, actual = value.request;
+  if (actual.projectId !== request.projectId || Object.keys(expected).length !== Object.keys(actual).length
+    || Object.entries(expected).some(([key, field]) => actual[key as keyof typeof actual] !== field)) {
+    throw Object.assign(new Error("Invalid candidate decision acknowledgement"), { outcome: "unknown", reason: "invalid-candidate-decision-receipt" });
+  }
+  return value;
+}
 
 export function matchesTranslationEnvironment(view: PluginTranslationView, request: PluginTranslationRequest) {
   return view.resourceId === request.resourceId && view.environmentDigest === request.environmentDigest

@@ -17,19 +17,22 @@ import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnecti
 import { WorkPlanAgentControls } from "./WorkPlanAgentControls";
 import { WorkPlanToolChoice, type PlanToolChoiceHandle } from "./WorkPlanToolChoice";
 import { AiScopePicker } from "./AiScopePicker";
+import { AiCandidateDecisionPanel } from "./AiCandidateDecisionPanel";
+import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { AiEffectStatus } from "./AiEffectStatus";
 import { TextReviewSelections } from "./TextReviewSelections";
 import type { WorkPlanStatusView } from "./workPlanCommands";
 import type {EditorTarget} from "./TranslationWorkbench";
 import {useWorkbenchCommands,type CommandAvailability,type AiPreparationCommandPayload,
-  type AiCandidateCommandPayload,type AiTranslationCommandPayload,type AiAdoptionPendingCommandPayload,type AiEffectCommandPayload,
+  type AiCandidateCommandPayload,type AiSavedCandidateCommandPayload,type AiTranslationCommandPayload,type AiAdoptionPendingCommandPayload,type AiEffectCommandPayload,
   type ExecutionCancellationCommandPayload,type ExecutionCancellationRetryCommandPayload} from "./workbenchCommands";
 export interface AiHandle extends AttemptWorkbenchHandle {allowNavigate:()=>Promise<boolean>}
 const stage=(e:unknown)=>commandFailure(e,"outcome-unknown");
 export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtensions,onOpenConnections,onOpenManual}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string,suggestedText?:string)=>Promise<boolean>;onOpenExtensions?:()=>void;onOpenConnections?:()=>void;onOpenManual?:(area:WorkspaceArea)=>Promise<boolean>}) {
   const {t}=useTranslation();const context=executionContext(project),reads=useSessionReads(),registry=useWorkbenchCommands();
   const [connectionOpen,setConnectionOpen]=useWorkbenchState("ai", "connectionOpen", false);
-  const preparation=useAiPreparation(), tasks=useExecutionTaskSession();
+  const preparation=useAiPreparation(), tasks=useExecutionTaskSession(), translationDraft=useTranslationDraftSession();
+  const [candidateTarget,setCandidateTarget]=useWorkbenchState<AiSavedCandidateCommandPayload|null>("ai","candidateTarget",null);
   const {presetName,setPresetName,config,setConfig,locale,setLocale,selected,selectedSnapshotId,setSelected,preparedPlan:prepared,options,setOptions,toolDraft,setToolDraft,advisoryChecks,setAdvisoryChecks,
     consent,setConsent,staleReason,pendingStart,pendingAdopt,dirty,sourceGeneration,clearSelectedRange,reset,targetAvailable,attempt,busy}=preparation;
   const toolChoice = useRef<PlanToolChoiceHandle>(null);
@@ -70,13 +73,13 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   useEffect(()=>{if(failure){if(["ai-endpoint","ai-model","ai-credential"].includes(failure))setConnectionOpen(true);errorRef.current?.focus();}},[failure]);
   function allowLeave(current: () => boolean = () => true):Promise<boolean> {
     leaveProof.current = current;
-    if(cancelUnresolved){setOpen(true);return Promise.resolve(false);}
+    if(cancelUnresolved||translationDraft.candidates.blocked()||translationDraft.candidates.hasDraft()){setOpen(true);return Promise.resolve(false);}
     if(preparation.reserved()){setOpen(true);return Promise.resolve(false);}
     if(!dirty)return Promise.resolve(true);
     setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});
   }
   function allowNavigate():Promise<boolean> {
-    if(preparation.reserved()){setOpen(true);return Promise.resolve(false);}
+    if(preparation.reserved()||translationDraft.candidates.blocked()){setOpen(true);return Promise.resolve(false);}
     return Promise.resolve(true);
   }
   function settleLeave(value:boolean){if(value&&leaveProof.current&&!leaveProof.current())value=false;setLeaving(false);if(value&&!reset())value=false;leaveResolve.current?.(value);leaveResolve.current=null;leaveProof.current=null;}
@@ -94,7 +97,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     if(!open||leaving||reads.retired)return{enabled:false,reason:"hidden"};
     const current=preparation.current();
     if(current.busy)return{enabled:false,reason:"busy"};
-    if(!recovery&&(current.pendingStart||current.pendingAdopt))return{enabled:false,reason:"pending-action"};
+    if(!recovery&&(current.pendingStart||current.pendingAdopt||translationDraft.candidates.blocked()))return{enabled:false,reason:"pending-action"};
     if(!recovery&&(disabled||preparation.reserved()))return unavailable;
     return{enabled:true};
   }
@@ -117,7 +120,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   function effectAvailability(payload?:AiEffectCommandPayload):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;
     const value=currentView(),row=value?.rows.find(row=>row.itemId===payload?.itemId);
-    return payload&&value&&row?.automation?.retryable&&row.automation.phase==="failed"&&row.automation.actionId===payload.actionId
+    return payload&&value&&row?.automation?.retryable&&row.candidateDecision?.request.disposition!=="rejected"&&row.automation.phase==="failed"&&row.automation.actionId===payload.actionId
       &&value.detail.attemptId===payload.attemptId&&value.planId===payload.planId&&value.planGeneration===payload.expectedGeneration&&planCurrent(value)&&sourceReady()?{enabled:true}:unavailable;
   }
   async function retryEffect(payload:AiEffectCommandPayload,current:WorkPlanContinuation) {
@@ -126,7 +129,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     if(!current.fresh()||latest.planId!==payload.planId||latest.planGeneration!==payload.expectedGeneration
       ||BigInt(permit.expiresAt)<=BigInt(Math.floor(Date.now()/1000)))return;
     const row=latest.rows.find(row=>row.itemId===payload.itemId);
-    if(!row?.automation?.retryable||row.automation.phase!=="failed"||row.automation.actionId!==payload.actionId)return;
+    if(!row?.automation?.retryable||row.candidateDecision?.request.disposition==="rejected"||row.automation.phase!=="failed"||row.automation.actionId!==payload.actionId)return;
     await preparation.retryEffect(payload.attemptId,payload.itemId);
   }
   function sourceReady(){
@@ -156,7 +159,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     return{kind:"ai-translation-target",attemptId:value.detail.attemptId,taskId:value.detail.taskId,itemId:row.itemId,
       translationUnitId:row.item.unitId,locale:row.item.targetLocale,sourceRevisionId:row.item.sourceRevisionId,sourceSnapshotId:row.item.sourceSnapshotId};
   }
-  function targetRow(payload:AiTranslationCommandPayload|AiCandidateCommandPayload){
+  function targetRow(payload:AiTranslationCommandPayload|AiCandidateCommandPayload|AiSavedCandidateCommandPayload){
     const value=currentView();
     if(!value||value.detail.attemptId!==payload.attemptId||value.detail.taskId!==payload.taskId)return null;
     const row=value.rows.find(row=>row.itemId===payload.itemId);
@@ -166,6 +169,19 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   function candidatePayload(value:AiView,row:AiView["rows"][number]):AiCandidateCommandPayload|undefined {
     const unit=value.detail.recovery.units.find(unit=>unit.itemIds.includes(row.itemId));
     return row.resultId&&unit?{...translationPayload(value,row),kind:"ai-candidate",resultId:row.resultId,recoveryUnitId:unit.unitId}:undefined;
+  }
+  function savedCandidatePayload(value:AiView,row:AiView["rows"][number]):AiSavedCandidateCommandPayload|undefined {
+    return row.savedRevisionId&&row.resultId?{...translationPayload(value,row),kind:"ai-saved-candidate",revisionId:row.savedRevisionId,resultId:row.resultId}:undefined;
+  }
+  function savedCandidateAvailability(payload?:AiSavedCandidateCommandPayload):CommandAvailability {
+    const allowed=gate();if(!allowed.enabled)return allowed;
+    const target=payload&&targetRow(payload);
+    return payload&&target&&project.metadata.targetLocales.includes(payload.locale)&&target.row.savedRevisionId===payload.revisionId&&target.row.resultId===payload.resultId?{enabled:true}:unavailable;
+  }
+  function candidateDecisionRow(){
+    if(!candidateTarget)return null;
+    const target=targetRow(candidateTarget);
+    return target&&target.row.savedRevisionId===candidateTarget.revisionId&&target.row.resultId===candidateTarget.resultId?target:null;
   }
   function adoptionAvailability(payload?:AiCandidateCommandPayload):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;
@@ -217,7 +233,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   function translationAvailability(payload?:AiTranslationCommandPayload,rewrite=false):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;
     const target=payload&&targetRow(payload);
-    return payload&&project.metadata.targetLocales.includes(payload.locale)&&target&&(!rewrite||target.row.output)?{enabled:true}:unavailable;
+    return payload&&project.metadata.targetLocales.includes(payload.locale)&&target&&(!rewrite||target.row.output&&target.row.candidateDecision?.request.disposition!=="rejected")?{enabled:true}:unavailable;
   }
   async function openTranslation(payload:AiTranslationCommandPayload,rewrite=false){
     const target=targetRow(payload),ticket=navigationGeneration.current;
@@ -237,6 +253,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   useLayoutEffect(()=>{
     const metadata={category:"ai" as const,scope:commandScope,binding:null,confirmation:"none" as const};
     const remove=[
+      registry.register({...metadata,id:"ai.inspect-candidate",nameKey:"candidateDecisions.inspect",risk:"opens-translation",payloadKind:"ai-saved-candidate",availability:savedCandidateAvailability,handler:payload=>setCandidateTarget(payload)}),
       registry.register({...metadata,id:"ai.effect.retry",nameKey:"ai.effects.retry",risk:"runs-ai",payloadKind:"ai-effect",availability:effectAvailability,handler:payload=>{void perform(current=>retryEffect(payload,current));}}),
       registry.register({...metadata,id:"ai.preview",nameKey:"ai.preview",risk:"captures-ai",payloadKind:"ai-preparation",availability:previewAvailability,handler:()=>{void preparation.preparePlan(()=>assisted&&toolDraft?toolChoice.current?.capture()??null:null,contentOptions.key);}}),
       registry.register({...metadata,id:"ai.adopt-result",nameKey:"ai.saveCandidate",risk:"writes-translation",payloadKind:"ai-candidate",availability:adoptionAvailability,
@@ -251,7 +268,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     ];
     return()=>remove.forEach(cleanup=>cleanup());
   });
-  return <>{open?<WorkbenchPanel open={open} title={t("ai.title")} description={t("ai.description")} className="ai-dialog" onBack={()=>void allowNavigate().then(ok=>{if(ok)setOpen(false);})} backDisabled={disabled||preparation.reserved()}>
+  return <>{open?<WorkbenchPanel open={open} title={t("ai.title")} description={t("ai.description")} className="ai-dialog" onBack={()=>void allowNavigate().then(ok=>{if(ok)setOpen(false);})} backDisabled={disabled||preparation.reserved()||translationDraft.candidates.blocked()}>
     <section aria-label={t("ai.workspace.manualTitle")}><h2>{t("ai.workspace.manualTitle")}</h2><p>{t("ai.workspace.manualHelp")}</p>
       {onOpenManual?<div className="execution-actions">{(["translation","resources","review","source","release"] as const).map(area=><button key={area} type="button" className="secondary-button" disabled={disabled||preparation.reserved()||cancelUnresolved} onClick={()=>{void onOpenManual(area);}}>{t(`ai.workspace.manual.${area}`)}</button>)}</div>:null}
     </section>
@@ -304,7 +321,8 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       session={preparation.agent} component={preparation.component} ownerBusy={()=>preparation.current().busy} run={perform} onBlockedChange={()=>{}} onGenerated={preparation.recordGenerated}/>:null}
     {pendingAdopt?<section><p>{t(pendingAdopt.uncertain?"ai.adoptUnknown":"ai.adoptPending")}</p><p>{pendingAdopt.candidate.item.nativeKey} → {pendingAdopt.candidate.item.targetLocale}</p><pre className="ai-text">{pendingAdopt.candidate.text}</pre>{pendingAdopt.uncertain?<><button className="secondary-button" disabled={!adoptionRecoveryAvailability(adoptionPendingPayload()).enabled} onClick={()=>{const payload=adoptionPendingPayload();if(payload)registry.dispatch("ai.reconcile-adoption",commandScope,payload);}}>{t("ai.reconcile")}</button>{pendingAdopt.retryAllowed?<button className="secondary-button" disabled={!adoptionRecoveryAvailability(adoptionPendingPayload(),true).enabled} onClick={()=>{const payload=adoptionPendingPayload();if(payload)registry.dispatch("ai.retry-adoption",commandScope,payload);}}>{t("ai.retrySame")}</button>:null}</>:null}</section>:null}
     {view?<section><h3>{t("ai.results")}</h3><p>{view.config.model} · {view.recipe}</p><p>{t("ai.progress",{...view.detail.progress,defaultValue:enUS.ai.progress})}</p>{view.budget?<><p>{t("ai.budgetSummary",{...view.budget,defaultValue:enUS.ai.budgetSummary})}</p><p>{t("ai.budgetUsage",{...view.budget,defaultValue:enUS.ai.budgetUsage})}</p>{view.budget.legacyHeld>0?<p>{t("ai.legacyBudget",{count:view.budget.legacyHeld,defaultValue:enUS.ai.legacyBudget})}</p>:null}</>:null}{active?<button className="secondary-button" disabled={!cancellationAvailability(cancellationPayload(view)).enabled} onClick={()=>{registry.dispatch("ai.cancel-task",commandScope,cancellationPayload(view));}}>{t("ai.cancel")}</button>:null}<button className="secondary-button" disabled={busy} onClick={()=>void viewRead.refetch()}>{t("ai.refresh")}</button>
-    {view.rows.map(row=>{const item=view.detail.items.find(i=>i.status.itemId===row.itemId),adoptPayload=candidatePayload(view,row),editorPayload=translationPayload(view,row);const effect=effectPayload(view,row);return <article key={row.itemId}><h4>{row.item.nativeKey}</h4><p>{t(`ai.states.${item?.status.execution}`,{defaultValue:item?.status.execution??""})}</p>{item?.status.diagnostic?<p>{t(`ai.errors.${item.status.diagnostic}`,{defaultValue:t("ai.errors.failed")})}</p>:null}{row.automation?<AiEffectStatus effect={row.automation} disabled={!effectAvailability(effect).enabled} onRetry={()=>{if(effect)registry.dispatch("ai.effect.retry",commandScope,effect);}}/>:null}{row.output?<><pre className="ai-text">{row.output.text}</pre><p>{row.output.usage?t("ai.usage",{...row.output.usage,defaultValue:enUS.ai.usage}):t("ai.usageUnknown")}{row.output.usage&&row.output.usageIncomplete?` · ${t("ai.usageUnknown")}`:""}</p><button className="secondary-button" disabled={!adoptionAvailability(adoptPayload).enabled} onClick={()=>{if(adoptPayload)registry.dispatch("ai.adopt-result",commandScope,adoptPayload);}}>{row.savedRevisionId||item?.status.adoption==="committed"||(row.resultId&&preparation.saved[row.resultId])?t("ai.saved"):t("ai.saveCandidate")}</button></>:null}<div className="execution-actions"><button className="secondary-button" disabled={!translationAvailability(editorPayload).enabled} onClick={()=>{registry.dispatch("ai.open-translation",commandScope,editorPayload);}}>{t("ai.openEditor")}</button>{row.output?<button type="button" className="secondary-button" disabled={!translationAvailability(editorPayload,true).enabled} onClick={()=>{registry.dispatch("ai.rewrite-translation",commandScope,editorPayload);}}>{t("ai.workspace.rewrite")}</button>:null}</div></article>;})}<p>{t("ai.noAutomaticRetry")}</p></section>:null}
+    {view.rows.map(row=>{const item=view.detail.items.find(i=>i.status.itemId===row.itemId),adoptPayload=candidatePayload(view,row),editorPayload=translationPayload(view,row);const effect=effectPayload(view,row),savedPayload=savedCandidatePayload(view,row);return <article key={row.itemId}><h4>{row.item.nativeKey}</h4><p>{t(`ai.states.${item?.status.execution}`,{defaultValue:item?.status.execution??""})}</p>{item?.status.diagnostic?<p>{t(`ai.errors.${item.status.diagnostic}`,{defaultValue:t("ai.errors.failed")})}</p>:null}{row.automation?<AiEffectStatus effect={row.automation} disabled={!effectAvailability(effect).enabled} onRetry={()=>{if(effect)registry.dispatch("ai.effect.retry",commandScope,effect);}}/>:null}{row.output?<><pre className="ai-text">{row.output.text}</pre><p>{row.output.usage?t("ai.usage",{...row.output.usage,defaultValue:enUS.ai.usage}):t("ai.usageUnknown")}{row.output.usage&&row.output.usageIncomplete?` · ${t("ai.usageUnknown")}`:""}</p><button className="secondary-button" disabled={!adoptionAvailability(adoptPayload).enabled} onClick={()=>{if(adoptPayload)registry.dispatch("ai.adopt-result",commandScope,adoptPayload);}}>{row.savedRevisionId||item?.status.adoption==="committed"||(row.resultId&&preparation.saved[row.resultId])?t("ai.saved"):t("ai.saveCandidate")}</button></>:null}{row.candidateDecision?<p role="status">{t(row.candidateDecision.request.disposition==="rejected"?"candidateDecisions.rejected":"candidateDecisions.restored")} · {row.candidateDecision.request.actor}: {row.candidateDecision.request.reason}</p>:null}{row.savedRevisionId?<button className="secondary-button" disabled={!savedCandidateAvailability(savedPayload).enabled} onClick={()=>{if(savedPayload)registry.dispatch("ai.inspect-candidate",commandScope,savedPayload);}}>{t("candidateDecisions.inspect")}</button>:row.output?<p>{t("candidateDecisions.saveFirst")}</p>:null}<div className="execution-actions"><button className="secondary-button" disabled={!translationAvailability(editorPayload).enabled} onClick={()=>{registry.dispatch("ai.open-translation",commandScope,editorPayload);}}>{t("ai.openEditor")}</button>{row.output?<button type="button" className="secondary-button" disabled={!translationAvailability(editorPayload,true).enabled} onClick={()=>{registry.dispatch("ai.rewrite-translation",commandScope,editorPayload);}}>{t("ai.workspace.rewrite")}</button>:null}</div></article>;})}<p>{t("ai.noAutomaticRetry")}</p></section>:null}
 
+    <AiCandidateDecisionPanel key={candidateTarget?.revisionId??"no-candidate"} project={project} disabled={disabled||busy||leaving} target={candidateTarget} currentRow={candidateDecisionRow}/>
   </WorkbenchPanel>:null}<Dialog.Root open={leaving} onOpenChange={next=>{if(!next)settleLeave(false);}}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop"/><Dialog.Content className="confirm-dialog execution-confirm-dialog"><Dialog.Title>{t("ai.unsaved")}</Dialog.Title><Dialog.Description>{t("ai.unsavedDescription")}</Dialog.Description><button className="secondary-button" onClick={()=>settleLeave(false)}>{t("ai.stay")}</button><button className="secondary-button" onClick={()=>settleLeave(true)}>{t("ai.discard")}</button></Dialog.Content></Dialog.Portal></Dialog.Root></>;
 }

@@ -124,6 +124,56 @@ fn source_context_ipc_requires_current_session_and_does_not_mutate_empty_project
     assert_eq!(std::fs::read(database).unwrap(), before);
 }
 
+#[test]
+fn candidate_decision_ipc_requires_current_session_matching_project_and_read_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(&window, "create_project", json!({
+        "destination":directory.path().join("project"), "displayName":"Candidate authorization",
+        "sourceLocale":"en", "targetLocales":["zh-CN"]
+    })).unwrap();
+    let context = json!({"sessionToken":project["sessionToken"], "projectId":project["metadata"]["projectId"]});
+    let request = json!({"sessionToken":context["sessionToken"], "projectId":context["projectId"],
+        "decision":{"projectId":context["projectId"], "actionId":ExecutionId::new(), "unitId":ExecutionId::new(),
+        "locale":"zh-CN", "revisionId":ExecutionId::new(), "sourceRevisionId":ExecutionId::new(),
+        "expectedSelectionId":null, "expectedDecisionId":null, "disposition":"rejected",
+        "actor":"Synthetic reviewer", "reason":"Does not fit this entry"}});
+    let lookup = json!({"sessionToken":context["sessionToken"], "projectId":context["projectId"],
+        "actionId":request["decision"]["actionId"], "unitId":request["decision"]["unitId"], "locale":"zh-CN"});
+    let database = directory.path().join("project/project.sqlite3");
+    let before = std::fs::read(&database).unwrap();
+    let status = call(&window, "execution_status", context.clone()).unwrap();
+
+    // Authorized requests reach the real Core owner, which rejects missing
+    // source/revision evidence rather than granting authority from the wire.
+    assert_eq!(call(&window, "decide_translation_candidate", request.clone()).unwrap_err()["reason"], "translation-source");
+    assert_eq!(call(&window, "read_translation_candidate_action", lookup.clone()).unwrap_err()["reason"], "translation-project");
+    for (command, original) in [("decide_translation_candidate", &request), ("read_translation_candidate_action", &lookup)] {
+        for field in ["sessionToken", "projectId"] {
+            let mut foreign = original.clone();
+            foreign[field] = if field == "sessionToken" { json!("inactive-session") } else { json!(ExecutionId::new()) };
+            assert_eq!(call(&window, command, foreign).unwrap_err()["code"], "session-invalid");
+        }
+        let mut unknown = original.clone();
+        unknown["approved"] = json!(true);
+        assert!(call(&window, command, unknown).is_err());
+    }
+    let mut mismatched = request.clone();
+    mismatched["decision"]["projectId"] = json!(ExecutionId::new());
+    assert_eq!(call(&window, "decide_translation_candidate", mismatched).unwrap_err()["reason"], "unauthorized-selection");
+    let mut nested_authority = request;
+    nested_authority["decision"]["approved"] = json!(true);
+    assert!(call(&window, "decide_translation_candidate", nested_authority).is_err());
+    assert_eq!(call(&window, "execution_status", context).unwrap(), status);
+    assert_eq!(std::fs::read(database).unwrap(), before);
+}
+
 #[cfg(any(windows, target_os = "macos"))]
 fn wait_for_execution_idle(
     webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,

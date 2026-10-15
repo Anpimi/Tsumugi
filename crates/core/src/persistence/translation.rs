@@ -7,6 +7,10 @@ use crate::execution::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+mod candidates;
+pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
+pub(in crate::persistence) use candidates::selectable as candidate_selectable;
+pub(in crate::persistence) use candidates::rejected as candidate_rejected;
 
 /// Immutable matching scopes from the current adopted source. This observation
 /// allocates no identities and grants neither execution nor adoption authority.
@@ -265,6 +269,8 @@ pub struct TranslationRevision {
     pub native_key: Option<String>,
     pub file_digest: Option<String>,
     pub contributors: Vec<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_decision: Option<CandidateDecision>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -307,6 +313,7 @@ pub struct TranslationSaveReceipt {
 }
 
 const TABLES: &[(&str, &str)] = &[
+    candidates::TABLE,
     (
         "translation_revisions",
         "CREATE TABLE translation_revisions (
@@ -368,7 +375,7 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (name, sql) in TABLES {
         connection.execute_batch(&current_sql(name, sql))?;
     }
-    Ok(())
+    candidates::initialize(connection)
 }
 
 /// The shared preview/adoption view of a checked plugin projection. The former
@@ -709,6 +716,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         }
         previous_events.insert(key, (sequence, id));
     }
+    candidates::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(())
 }
 
@@ -920,6 +928,7 @@ pub(super) fn insert_reserved_selection(
     sequence: u64,
     event: ExecutionId,
 ) -> Result<TranslationSelection, ExecutionError> {
+    candidate_selectable(connection, revision)?;
     connection
         .execute(
             "INSERT INTO translation_selections
@@ -1509,6 +1518,7 @@ impl ProjectStore {
             let raw = RawRevision::from_row(row).map_err(super::ledger::sql_error)?;
             let mut revision = raw.parse()?;
             revision.contributors = super::arena::contributors(connection, revision.revision_id)?;
+            revision.candidate_decision = candidates::latest(connection, revision.revision_id)?;
             if revision.unit_id != unit || revision.locale != locale {
                 return Err(error(ErrorCode::CorruptLedger, "translation-scope"));
             }
@@ -1902,6 +1912,7 @@ impl RawRevision {
             native_key: self.native_key,
             file_digest: self.file_digest,
             contributors: vec![],
+            candidate_decision: None,
         })
     }
 }

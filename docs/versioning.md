@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+AI cards now reuse the translation decision owner for in-place rejection and
+restoration of a verified saved revision. Explicit snapshot/history bases do not
+replace a manual editor draft; pending decisions keep their original action and
+newer reason edits. Recovery remains reachable without an editor entry, and
+discarding decision details preserves manual drafts for their own confirmation.
+This frontend integration uses the generated schema 37
+contract below and adds no further stored format, dependency or version bump.
+
 The AI work area now connects the source-ready project action, explicit paged
 scope, manual stage routes and candidate-to-editor drafts through the existing
 project session, AI preparation, typed navigation, session reads and protection
@@ -8,6 +16,17 @@ This frontend behavior changes no Core/Host/SDK/IPC contract, stored format or
 dependency. Bilingual Unreleased entries are synchronized, and application
 `0.2.0-alpha.1` remains the same undistributed batch without an additional bump.
 Native input, accessibility and full product acceptance remain separate.
+
+Saved AI candidate rejection and explicit restoration append human decisions with
+exact candidate/source/selection bases and original action receipts. Shared
+selection writes and automatic selection preparations refuse rejected revisions.
+This adds a current-only decision-history table and advances project schema 36
+to 37; older development directories are refused and preserved without migration
+or reset. The strict Desktop contract is generated from Rust. No SDK/process,
+dependency or lockfile changes are required. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain in the same undistributed batch without another SemVer bump.
+Both Unreleased changelogs and current README format statements are synchronized;
+earlier paragraphs describe their historical development boundaries.
 
 Source recovery clears obsolete preparation failures when returning to current
 content or explicitly discarding preparation. Unrelated input and saved history

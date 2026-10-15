@@ -819,6 +819,95 @@
         ],
         "type": "object"
       },
+      "CandidateDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/CandidateDecisionWrite"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "request",
+          "sourceSnapshotId"
+        ],
+        "type": "object"
+      },
+      "CandidateDecisionWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/CandidateDisposition"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "revisionId",
+          "sourceRevisionId",
+          "expectedSelectionId",
+          "expectedDecisionId",
+          "disposition",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "CandidateDisposition": {
+        "enum": [
+          "rejected",
+          "restored"
+        ],
+        "type": "string"
+      },
       "CapabilityBinding": {
         "additionalProperties": false,
         "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
@@ -3451,6 +3540,16 @@
             "anyOf": [
               {
                 "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidateDecision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CandidateDecision"
               },
               {
                 "type": "null"

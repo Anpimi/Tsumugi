@@ -1386,6 +1386,10 @@ impl ProjectStore {
             is_current_selection,
         ) in rows
         {
+            let translation_revision = id(translation_revision)?;
+            if super::translation::candidate_rejected(connection, translation_revision)? {
+                continue;
+            }
             let score = fuzzy_score(&current_text, &source_text);
             if score < 70 {
                 continue;
@@ -1394,7 +1398,7 @@ impl ProjectStore {
                 unit_id: id(unit)?,
                 source_revision_id: id(source_revision)?,
                 source_text,
-                translation_revision_id: id(translation_revision)?,
+                translation_revision_id: translation_revision,
                 translation_text,
                 target_locale: locale.to_owned(),
                 origin_kind: TranslationOrigin::from_stored(&origin_kind)?,

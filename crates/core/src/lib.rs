@@ -15,6 +15,7 @@ mod review;
 #[cfg(any(test, feature = "execution-test-host"))]
 pub use persistence::BuildLocaleChoice;
 pub use persistence::{
+    CandidateDecision, CandidateDecisionWrite, CandidateDisposition,
     AdvisoryReviewCheck, AttemptView, CaptureContext, CapturedAutomaticSelection,
     CapturedReviewCheckExecution, ChangeScope, ChangeSnapshot, CheckFinding, CheckRuleResult,
     CheckRun, ComputedAutomaticSelection, ComputedReviewEvidence, ContextCapture, ContextItem,

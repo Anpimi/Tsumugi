@@ -126,10 +126,11 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       row("tasks", tasks.unresolved(), false, null),
       row("source", source.hasPending(),
         !!src.selection || Object.keys(src.lineage).length > 0 || !!src.actor.trim() || source.inFlight(), src.editSeq),
-      row("translation", translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
+      row("translation", translation.candidates.blocked() || translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
         || imported.busy || imports.hasPending() || imports.hasActive(),
-        !!manual && (manual.text !== (manual.baseText ?? "") || manual.newerDraftSaved),
-        [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.protection.current().pending]),
+        translation.candidates.hasDraft() || !!manual && (manual.text !== (manual.baseText ?? "") || manual.newerDraftSaved),
+        [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.protection.current().pending,
+          translation.candidates.current().editSeq,translation.candidates.current().pending]),
       row("resources", resources.inFlight() || !!res.pending || resources.tool.blocked(), resources.termDirty() || resources.contextDirty() || resources.tool.hasDraft(),
         [res.termSeq, res.contextSeq, resources.tool.draftSequence.current, resources.tool.current().capture?.review.inputDigest, resources.tool.current().pending]),
       row("review", review.inFlight() || rev.batchRunning || !!rev.pending,
@@ -238,7 +239,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (area === "resources" && resources.tool.blocked()) memory.write("resources", "tab", "queries");
     if (area === "translation") {
       const draft = translation.current();
-      memory.write("translation", "tab", translation.protection.blocked() || draft && (draft.pending || draft.pendingSelection || draft.saving || draft.text !== (draft.baseText ?? "") || draft.newerDraftSaved) ? "edit" : "import");
+      memory.write("translation", "tab", translation.candidates.blocked() || translation.candidates.hasDraft() || translation.protection.blocked() || draft && (draft.pending || draft.pendingSelection || draft.saving || draft.text !== (draft.baseText ?? "") || draft.newerDraftSaved) ? "edit" : "import");
     }
   }
   const ports = useRef({ live, inspect, consumer, accept, blocked });
@@ -266,7 +267,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   if (retired) return <section className="workbench-panel" aria-label={t("workbench.retiredDraftTitle")}>
     <h2>{t("workbench.retiredDraftTitle")}</h2><p>{t("workbench.retiredDraftHelp")}</p>
     <label className="field"><span>{t("workbench.retiredDraftData")}</span><textarea readOnly rows={18} value={JSON.stringify({
-      translation: translation.current(), translationImport: imports.current(), source: source.current(), resources: resources.current(),
+      translation: translation.current(), candidateDecision: translation.candidates.current(), translationImport: imports.current(), source: source.current(), resources: resources.current(),
       review: review.current(), release: release.current(), ai: ai.current(), arena: arena.current(),
       tasks: { cancellation: tasks.state, adoption: tasks.currentActivity() },
     }, null, 2)} /></label>

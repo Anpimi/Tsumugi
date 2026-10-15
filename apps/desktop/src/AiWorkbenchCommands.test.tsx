@@ -169,6 +169,7 @@ it("registers the complete scoped AI command families and routes preview, confir
     "ai.retry-adoption", "ai.retry-cancellation", "ai.retry-start", "ai.start", "ai.effect.retry",
     "ai.plan.pause", "ai.plan.stop", "ai.plan.take-over", "ai.plan.continue", "ai.plan.start-authorized",
     "ai.plan.reconcile-action", "ai.plan.retry-action", "ai.plan.open-translation", "ai.rewrite-translation",
+    "ai.inspect-candidate", "ai.decide-candidate", "ai.check-candidate-decision", "ai.retry-candidate-decision",
   ].sort());
   expect(registry.list(scope).filter(command => command.category === "ai").every(command => command.binding === null)).toBe(true);
   await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
@@ -188,7 +189,7 @@ it("registers the complete scoped AI command families and routes preview, confir
   expect(payloads("start_work_plan")).toEqual([{...reads.context,planId:plan.planId,actionId:authorized.actionId,expectedGeneration:"1"}]);
   expect(registry.list(scope).filter(command=>command.category==="ai").map(command=>command.id)).toEqual(expect.arrayContaining([
     "ai.agent.generate","ai.agent.query-tool","ai.agent.reconcile","ai.component.prepare","ai.component.start","ai.component.discard"]));
-  expect(registry.list(scope).filter(command=>command.category==="ai")).toHaveLength(26);
+  expect(registry.list(scope).filter(command=>command.category==="ai")).toHaveLength(30);
 });
 
 it("rejects stale preparation and start captures without hiding the owner's configuration validation feedback", async () => {
