@@ -1511,6 +1511,7 @@ fn forged_coverage_locations_identity_and_required_fields_are_rejected() {
 
 fn generic_source_binding(checker: bool) -> PluginExecutionBinding {
     PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: sdk::CapabilityBinding {
             provider: sdk::ProviderSelectionBinding {
                 plugin: sdk::PluginIdentity {
@@ -1649,6 +1650,7 @@ fn source_import_declared_capture_preserves_material_without_domain_interpretati
     );
     let environment = generic_source_binding(false).environment;
     let selected = |capability| PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability,
         profile: Some(declaration.profile.clone()),
         environment: environment.clone(),

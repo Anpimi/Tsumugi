@@ -76,6 +76,7 @@ impl RunnerRuntime {
 pub struct RunnerProxy {
     image: PackageImage,
     capability: sdk::CapabilityBinding,
+    component_scope: sdk::ComponentScope,
     capability_version: String,
     runtime: RunnerRuntime,
     environment: sdk::ExecutionEnvironmentDescriptor,
@@ -128,18 +129,32 @@ impl RunnerProxy {
             })?;
         }
         let environment = runtime.environment();
+        if component.scope == sdk::ComponentScope::Attempt
+            && component
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.required)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::DependencyConflict,
+                "plugin-dependency",
+            ));
+        }
         // Reuse Core's binding validation for the captured environment. A
         // declared profile is used only for this validation, never as a default
         // selection: execution_binding still requires an explicit profile.
+        let component_scope = component.scope;
         let checked = PluginExecutionBinding {
             profile: capability.declaration.profiles.first().cloned(),
             capability: capability.clone(),
+            component_scope,
             environment: environment.clone(),
         };
         checked.validate()?;
         Ok(Self {
             image,
             capability,
+            component_scope,
             capability_version: checked.capability_version(),
             runtime,
             environment,
@@ -198,6 +213,7 @@ impl RunnerProxy {
     ) -> Result<PluginExecutionBinding, ExecutionError> {
         let binding = PluginExecutionBinding {
             capability: self.capability.clone(),
+            component_scope: self.component_scope,
             profile,
             environment: self.environment.clone(),
         };
@@ -243,7 +259,16 @@ impl RunnerProxy {
         let options = LaunchOptions {
             scope: ScopeBinding {
                 project_id: project_id.clone(),
-                scope_id: project_id,
+                scope_id: match self.component_scope {
+                    sdk::ComponentScope::Project => project_id,
+                    sdk::ComponentScope::Attempt => request.input.envelope().attempt_id.to_string(),
+                    sdk::ComponentScope::Application => {
+                        return Err(ExecutionError::new(
+                            ErrorCode::InvalidInput,
+                            "plugin-component-scope",
+                        ));
+                    }
+                },
             },
             // Only a matching Core permit can reach this call. The durable
             // grant owner checked consent before issuing the read-only handle.

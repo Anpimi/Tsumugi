@@ -57,6 +57,7 @@ impl ApplicationPlugins {
             &request.package,
             &request.resource_id,
             &request.environment_digest,
+            &[sdk::ComponentScope::Project],
             |image, resource| {
                 let binding = image.source_import(resource)?;
                 let providers = [

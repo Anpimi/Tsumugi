@@ -56,6 +56,7 @@ fn derive(
         .ok_or_else(|| fail(ErrorCode::InvalidInput, "work-plan-tool-query"))?;
     let capability = &tool.binding.capability.declaration;
     let binding = PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: tool.binding.capability.clone(),
         profile: tool.binding.declaration.profile.clone(),
         environment: tool.environment.clone(),

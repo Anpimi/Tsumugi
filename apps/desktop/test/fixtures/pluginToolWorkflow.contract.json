@@ -121,7 +121,8 @@
     "runtimeOrigin": {
       "sourceId": "captured-runtime",
       "publisherId": "user-approved"
-    }
+    },
+    "componentScope": "project"
   },
   "prepare": {
     "sessionToken": "session-1",
@@ -259,7 +260,8 @@
       "runtimeOrigin": {
         "sourceId": "captured-runtime",
         "publisherId": "user-approved"
-      }
+      },
+      "componentScope": "project"
     },
     "items": [
       {

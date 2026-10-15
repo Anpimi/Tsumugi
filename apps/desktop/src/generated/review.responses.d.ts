@@ -94,6 +94,7 @@ export type CheckOutcome =
       kind: "unavailable";
     };
 export type FindingSeverity = "warning" | "error";
+export type ComponentScope = "application" | "project" | "attempt";
 export type ReviewCheckOutcome = "completed" | "failed" | "cancelled" | "unknown";
 export type ReviewDecisionKind = "approve" | "request-changes";
 export type TermOrigin = "manual" | "external";
@@ -403,6 +404,10 @@ export interface SourceReviewBinding {
 }
 export interface PluginExecutionBinding {
   capability: CapabilityBinding;
+  /**
+   * Captured from the selected component, never inferred from a result.
+   */
+  componentScope: ComponentScope;
   /**
    * Exact captured Node artifacts or actual native application Host identity.
    * This data value does not authenticate its source or grant execution.

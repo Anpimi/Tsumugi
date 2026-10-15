@@ -142,6 +142,9 @@ pub struct ProcessSession {
     environment_digest: Option<String>,
     pipes: Pipes,
     activation: ProcessActivation,
+    component_scope: ComponentScope,
+    authority: Arc<dyn Fn() -> bool + Send + Sync>,
+    attempt_revoked: AtomicBool,
     options: LaunchOptions,
     accepting: bool,
     invocations: u32,
@@ -239,7 +242,7 @@ impl ProcessSession {
                 .iter()
                 .find(|c| c.id == contribution.component_id)
                 .ok_or(HostError::MissingArtifact)?;
-            if component.scope != ComponentScope::Project {
+            if component.scope == ComponentScope::Application {
                 return Err(HostError::UnsupportedRuntime);
             }
             let services = crate::service::select_service_bindings(
@@ -377,6 +380,9 @@ impl ProcessSession {
                 environment_digest,
                 pipes,
                 activation,
+                component_scope: component.scope,
+                authority: authorized.clone(),
+                attempt_revoked: AtomicBool::new(false),
                 options,
                 accepting: false,
                 invocations: 0,
@@ -448,7 +454,14 @@ impl ProcessSession {
         self.termination.as_ref()
     }
     fn services_current(&self) -> bool {
-        self.service_broker.as_ref().is_none_or(|broker| {
+        // Attempt channels retain the original admission guard. A caller's
+        // later callback cannot substitute a new grant after this one expires.
+        (self.component_scope != ComponentScope::Attempt || {
+            if !(self.authority)() {
+                self.attempt_revoked.store(true, Ordering::Release);
+            }
+            !self.attempt_revoked.load(Ordering::Acquire)
+        }) && self.service_broker.as_ref().is_none_or(|broker| {
             self.activation
                 .services
                 .iter()
@@ -529,6 +542,8 @@ impl ProcessSession {
                 .is_some_and(|digest| request.context.environment_digest != *digest)
             || request.context.project_id != self.options.scope.project_id
             || request.context.scope_id != self.options.scope.scope_id
+            || (self.component_scope == ComponentScope::Attempt
+                && request.context.attempt_id != self.options.scope.scope_id)
             || request.capability != c.contract
             || request.input.schema != c.input_schema
             || request.output_schema != c.output_schema

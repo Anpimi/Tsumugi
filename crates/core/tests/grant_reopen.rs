@@ -397,3 +397,32 @@ fn an_orphan_grant_cannot_borrow_a_delegated_task() {
     );
     assert_corrupt_on_reopen(&project);
 }
+
+#[test]
+fn saved_results_cannot_select_another_scope_even_with_a_recomputed_storage_digest() {
+    let (directory, store, _) = support::source_fixture();
+    store.close().unwrap();
+    let project = directory.path().join("project");
+    let connection = database(&project);
+    let (result, bytes): (String, Vec<u8>) = connection
+        .query_row(
+            "SELECT result_id,bytes FROM execution_results LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let mut saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let context = &mut saved["plugin"]["result"]["context"];
+    assert_eq!(context["scopeId"], context["projectId"]);
+    assert_ne!(context["scopeId"], context["attemptId"]);
+    context["scopeId"] = context["attemptId"].clone();
+    let changed = serde_json::to_vec(&saved).unwrap();
+    let digest = tsumugi_plugin_sdk::payload_digest(std::str::from_utf8(&changed).unwrap());
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?1,digest=?2 WHERE result_id=?3",
+            params![changed, digest, result],
+        )
+        .unwrap();
+    assert_corrupt_on_reopen(&project);
+}

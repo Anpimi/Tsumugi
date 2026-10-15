@@ -8,6 +8,8 @@ use tsumugi_plugin_sdk as sdk;
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct PluginExecutionBinding {
     pub capability: sdk::CapabilityBinding,
+    /// Captured from the selected component, never inferred from a result.
+    pub component_scope: sdk::ComponentScope,
     pub profile: Option<sdk::ContractRef>,
     /// Exact captured Node artifacts or actual native application Host identity.
     /// This data value does not authenticate its source or grant execution.
@@ -24,6 +26,12 @@ impl PluginExecutionBinding {
     pub fn validate(&self) -> Result<(), ExecutionError> {
         self.capability.validate().map_err(contract_error)?;
         self.environment.validate().map_err(environment_error)?;
+        if self.component_scope == sdk::ComponentScope::Application {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "plugin-component-scope",
+            ));
+        }
         if (self.profile.is_none() && !self.capability.declaration.profiles.is_empty())
             || self
                 .profile
@@ -160,7 +168,16 @@ impl FixedInput {
         let request = sdk::InvocationRequest {
             context: sdk::InvocationContext {
                 project_id: envelope.project_id.to_string(),
-                scope_id: envelope.project_id.to_string(),
+                scope_id: match binding.component_scope {
+                    sdk::ComponentScope::Project => envelope.project_id.to_string(),
+                    sdk::ComponentScope::Attempt => envelope.attempt_id.to_string(),
+                    sdk::ComponentScope::Application => {
+                        return Err(ExecutionError::new(
+                            ErrorCode::InvalidInput,
+                            "plugin-component-scope",
+                        ));
+                    }
+                },
                 operation_id: envelope.task_id.to_string(),
                 attempt_id: envelope.attempt_id.to_string(),
                 item_id: item_id.to_string(),

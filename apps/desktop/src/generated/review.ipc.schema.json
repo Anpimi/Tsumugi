@@ -1367,6 +1367,14 @@
         ],
         "type": "object"
       },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
+        ],
+        "type": "string"
+      },
       "ContextRevision": {
         "additionalProperties": false,
         "properties": {
@@ -1823,6 +1831,14 @@
           "capability": {
             "$ref": "#/definitions/CapabilityBinding"
           },
+          "componentScope": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ComponentScope"
+              }
+            ],
+            "description": "Captured from the selected component, never inferred from a result."
+          },
           "environment": {
             "allOf": [
               {
@@ -1844,6 +1860,7 @@
         },
         "required": [
           "capability",
+          "componentScope",
           "profile",
           "environment"
         ],

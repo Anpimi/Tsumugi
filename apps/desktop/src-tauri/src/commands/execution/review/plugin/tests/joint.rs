@@ -185,6 +185,7 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
         .execution_binding(Some(source.binding.declaration.profile.clone()))
         .unwrap();
     let checker = PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: source.binding.checker.clone(),
         profile: Some(source.binding.declaration.profile.clone()),
         environment: source.runtime.environment(),

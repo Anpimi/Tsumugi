@@ -1125,6 +1125,14 @@
         ],
         "type": "string"
       },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
+        ],
+        "type": "string"
+      },
       "ConflictEvidence": {
         "description": "Values compared at the rejecting boundary, without user text or credentials.",
         "oneOf": [
@@ -2294,6 +2302,9 @@
           "binding": {
             "$ref": "#/definitions/CapabilityToolBinding"
           },
+          "componentScope": {
+            "$ref": "#/definitions/ComponentScope"
+          },
           "environment": {
             "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
           },
@@ -2317,6 +2328,7 @@
           "settingsRevision",
           "resourceId",
           "binding",
+          "componentScope",
           "packageOrigin",
           "environment",
           "environmentDigest",

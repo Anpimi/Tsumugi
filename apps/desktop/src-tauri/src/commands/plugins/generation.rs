@@ -127,6 +127,7 @@ impl ApplicationPlugins {
             &package,
             None,
             &request.environment_digest,
+            &[sdk::ComponentScope::Project],
             |image| {
                 let binding = resolve_generation_component(
                     image,

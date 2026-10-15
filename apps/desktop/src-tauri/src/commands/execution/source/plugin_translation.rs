@@ -152,6 +152,7 @@ fn execution_binding(
     checker: bool,
 ) -> PluginExecutionBinding {
     PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: if checker {
             environment.binding.checker.clone()
         } else {

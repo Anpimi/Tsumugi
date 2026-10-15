@@ -198,6 +198,7 @@ fn selected(environment: &BuildEnvironment) -> Result<ReleaseBuildEnvironment, C
 }
 fn binding(environment: &BuildEnvironment, checker: bool) -> PluginExecutionBinding {
     PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: if checker {
             environment.binding.checker.clone()
         } else {

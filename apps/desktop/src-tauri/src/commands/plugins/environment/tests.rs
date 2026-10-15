@@ -22,6 +22,89 @@ fn native(manifest: &mut sdk::PluginManifest, files: &mut BTreeMap<String, Packa
 }
 
 #[test]
+fn domain_compositions_reject_nonproject_components_without_rescoping() {
+    for scope in [
+        sdk::ComponentScope::Attempt,
+        sdk::ComponentScope::Application,
+    ] {
+        let change = |manifest: &mut sdk::PluginManifest,
+                      files: &mut BTreeMap<String, PackageFile>| {
+            native(manifest, files);
+            for component in &mut manifest.components {
+                if component.runtime != sdk::RuntimeKind::Data {
+                    component.scope = scope;
+                }
+            }
+        };
+        let source = Fixture::new(change);
+        source.install();
+        let approved = approval();
+        source.decide(true, vec![approved.clone()]);
+        let mut request = source.request();
+        request.environment_digest = approved.environment.digest().unwrap();
+        let error = match source.owner.capture_source(&request) {
+            Ok(_) => panic!("unsupported source scope accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.reason.as_deref(), Some("plugin-binding-invalid"));
+        let selected = source.image.source_import("source-profile").unwrap();
+        let review = tsumugi_core::content::SourceReviewBinding::capture(
+            &selected.review,
+            &approved.environment,
+        )
+        .unwrap();
+        assert!(source.owner.capture_review(&review).is_err());
+
+        let build = Fixture::with_resource(
+            Arc::new(ApplicationPlugins::default()),
+            include_bytes!(
+                "../../../../../../../crates/plugin-sdk/tests/fixtures/build.manifest.json"
+            ),
+            "build-profile.json",
+            include_bytes!(
+                "../../../../../../../crates/plugin-sdk/tests/fixtures/build.declaration.json"
+            ),
+            change,
+        );
+        build.install();
+        build.decide(true, vec![approved.clone()]);
+        let error = match build.owner.capture_build(&PluginBuildRequest {
+            package: build.request().package,
+            resource_id: "build-profile".into(),
+            environment_digest: approved.environment.digest().unwrap(),
+        }) {
+            Ok(_) => panic!("unsupported build scope accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.reason.as_deref(), Some("plugin-binding-invalid"));
+
+        let translation = Fixture::with_resource(
+            Arc::new(ApplicationPlugins::default()),
+            include_bytes!(
+                "../../../../../../../crates/plugin-sdk/tests/fixtures/translation-import.manifest.json"
+            ),
+            "translation-profile.json",
+            include_bytes!(
+                "../../../../../../../crates/plugin-sdk/tests/fixtures/translation-import.declaration.json"
+            ),
+            change,
+        );
+        translation.install();
+        translation.decide(true, vec![approved.clone()]);
+        assert!(
+            translation
+                .owner
+                .capture_translation(&PluginTranslationRequest {
+                    package: translation.request().package,
+                    resource_id: "translation-profile".into(),
+                    environment_digest: approved.environment.digest().unwrap()
+                })
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn current_native_host_resolves_source_and_adopted_review_without_node_installation() {
     let fixture = Fixture::new(native);
     fixture.install();

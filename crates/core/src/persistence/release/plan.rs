@@ -53,6 +53,8 @@ impl ReleaseBuildEnvironment {
     }
     fn builder(&self) -> PluginExecutionBinding {
         PluginExecutionBinding {
+            // Build environments currently compose Host-verified Project components.
+            component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
             capability: self.binding.builder.clone(),
             profile: Some(self.binding.declaration.profile.clone()),
             environment: self.environment.clone(),

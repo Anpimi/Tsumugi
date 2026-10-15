@@ -39,6 +39,7 @@ fn declaration() -> sdk::SourceImportBinding {
 }
 fn selected(capability: sdk::CapabilityBinding) -> PluginExecutionBinding {
     PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability,
         profile: Some(declaration().declaration.profile),
         environment: sdk::RuntimeEnvironmentDescriptor {

@@ -108,12 +108,13 @@ fn stale() -> CommandError {
         "tool-preflight-stale",
     ))
 }
-fn binding(environment: &ToolEnvironment) -> PluginExecutionBinding {
-    PluginExecutionBinding {
+fn binding(environment: &ToolEnvironment) -> Result<PluginExecutionBinding, CommandError> {
+    Ok(PluginExecutionBinding {
+        component_scope: environment.component_scope()?,
         capability: environment.binding.capability.clone(),
         profile: environment.binding.declaration.profile.clone(),
         environment: environment.runtime.environment(),
-    }
+    })
 }
 fn finish<'a>(
     sessions: &'a mut SessionManager,
@@ -169,12 +170,12 @@ fn capture(
         project,
         OPERATION,
         &capability.contract.id,
-        &binding(&environment).capability_version(),
+        &binding(&environment)?.capability_version(),
         items,
     )
     .map_err(map_recover)?;
     envelope.attempt_id = request.attempt_id;
-    envelope.plugin = Some(binding(&environment));
+    envelope.plugin = Some(binding(&environment)?);
     envelope.limits.timeout_ms = capability.limits.timeout_ms.min(60_000);
     envelope.limits.max_result_bytes = result_bytes;
     let tool = environment.view()?;
@@ -370,7 +371,7 @@ pub async fn start_plugin_tool(
                 accepted_work.check()?;
                 let environment = current_plugins.capture_tool(&fixed.request.tool)?;
                 if environment.view()? != fixed.view.tool
-                    || fixed.input.envelope().plugin.as_ref() != Some(&binding(&environment))
+                    || fixed.input.envelope().plugin.as_ref() != Some(&binding(&environment)?)
                 {
                     return Err(stale());
                 }
@@ -396,7 +397,7 @@ pub async fn start_plugin_tool(
                     let (host, store) = active.execution_parts()?;
                     let (environment, proxy) = loaded?;
                     plugins.with_environment_revision(environment.settings_revision, || {
-                        host.register_plugin(proxy, binding(&environment))
+                        host.register_plugin(proxy, binding(&environment)?)
                             .map_err(map_recover)?;
                         host.runtime
                             .authorize_plugin(

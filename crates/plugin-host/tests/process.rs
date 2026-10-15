@@ -20,6 +20,13 @@ fn image(mode: &str) -> PackageImage {
     image_with_observer(mode, None)
 }
 fn image_with_observer(mode: &str, observer: Option<&std::path::Path>) -> PackageImage {
+    image_with_scope(mode, observer, ComponentScope::Project)
+}
+fn image_with_scope(
+    mode: &str,
+    observer: Option<&std::path::Path>,
+    scope: ComponentScope,
+) -> PackageImage {
     let manifest = PluginManifest {
         protocol_version: MANIFEST_PROTOCOL,
         plugin: PluginIdentity {
@@ -30,10 +37,18 @@ fn image_with_observer(mode: &str, observer: Option<&std::path::Path>) -> Packag
         permissions: vec![PermissionRequest::CapturedInput],
         components: vec![ComponentDeclaration {
             id: "query".into(),
-            scope: ComponentScope::Project,
+            scope,
             runtime: RuntimeKind::NativeWorker,
             entrypoint: Some("bin/worker".into()),
-            dependencies: vec![],
+            dependencies: if matches!(mode, "requires-service" | "optional-service") {
+                vec![CapabilityDependency {
+                    contract: contract("example.service"),
+                    required: mode == "requires-service",
+                    selection: ProviderSelection::Single,
+                }]
+            } else {
+                vec![]
+            },
             exit: ExitRequirements {
                 stop_timeout_ms: 100,
                 cleanup_timeout_ms: 500,
@@ -149,6 +164,200 @@ fn runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .unwrap()
+}
+
+#[test]
+fn attempt_channels_bind_project_and_attempt_and_cleanup_only_the_owned_instance() {
+    runtime().block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let image = image_with_scope("normal", None, ComponentScope::Attempt);
+        let mut a_options = options();
+        a_options.scope.scope_id = "attempt-a".into();
+        let mut b_options = options();
+        b_options.scope.scope_id = "attempt-b".into();
+        let mut a = ProcessSession::launch(
+            &image,
+            "query.call",
+            directory.path(),
+            &RuntimeLauncher::Native,
+            a_options,
+            || true,
+        )
+        .await
+        .unwrap();
+        let mut b = ProcessSession::launch(
+            &image,
+            "query.call",
+            directory.path(),
+            &RuntimeLauncher::Native,
+            b_options,
+            || true,
+        )
+        .await
+        .unwrap();
+        let mut a_request = request(&a, "dispatch-a", "first");
+        a_request.context.scope_id = "attempt-a".into();
+        a.invoke(&a_request, || false, || true).await.unwrap();
+        let mut wrong_attempt = request(&b, "wrong-attempt", "second");
+        wrong_attempt.context.scope_id = "attempt-b".into();
+        assert_eq!(
+            b.invoke(&wrong_attempt, || false, || true)
+                .await
+                .unwrap_err(),
+            HostError::RequestMismatch
+        );
+        let mut b_request = wrong_attempt.clone();
+        b_request.context.attempt_id = "attempt-b".into();
+        let mut wrong_project = b_request.clone();
+        wrong_project.context.project_id = "project-b".into();
+        assert_eq!(
+            b.invoke(&wrong_project, || false, || true)
+                .await
+                .unwrap_err(),
+            HostError::RequestMismatch
+        );
+        assert_ne!(
+            a.channel().provider.instance_id,
+            b.channel().provider.instance_id
+        );
+        assert!(a.close().await.direct_child_reaped);
+        assert!(a.close().await.direct_child_reaped);
+        drop(a);
+        let received = b.invoke(&b_request, || false, || true).await.unwrap();
+        assert_eq!(received.result().context.attempt_id, "attempt-b");
+        assert_eq!(received.result().context.scope_id, "attempt-b");
+        assert!(b.close().await.direct_child_reaped);
+        assert_eq!(
+            b.invoke(&b_request, || false, || true).await.unwrap_err(),
+            HostError::Closed
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    });
+}
+
+#[test]
+fn attempt_channels_retain_the_original_guard_and_reject_cancelled_or_revoked_late_results() {
+    runtime().block_on(async {
+        for cancel in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let observer = directory.path().join("invoked");
+            let image = image_with_scope("late-result", Some(&observer), ComponentScope::Attempt);
+            let original = Arc::new(AtomicBool::new(true));
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let guard = original.clone();
+            let mut configured = options();
+            configured.scope.scope_id = "attempt-a".into();
+            let mut session = ProcessSession::launch(
+                &image,
+                "query.call",
+                directory.path(),
+                &RuntimeLauncher::Native,
+                configured,
+                move || guard.load(Ordering::Acquire),
+            )
+            .await
+            .unwrap();
+            let mut invocation = request(&session, "dispatch-a", "late");
+            invocation.context.scope_id = "attempt-a".into();
+            let revoke = original.clone();
+            let cancellation = cancelled.clone();
+            let pending = tokio::spawn(async move {
+                let deadline = tokio::time::Instant::now() + Duration::from_millis(800);
+                while !observer.exists() {
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "worker never received the invocation"
+                    );
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                if cancel {
+                    cancellation.store(true, Ordering::Release);
+                } else {
+                    revoke.store(false, Ordering::Release);
+                }
+            });
+            // A different callback cannot replace the original admission guard.
+            assert_eq!(
+                session
+                    .invoke(&invocation, || cancelled.load(Ordering::Acquire), || true)
+                    .await
+                    .unwrap_err(),
+                if cancel {
+                    HostError::Cancelled
+                } else {
+                    HostError::AuthorityRevoked
+                }
+            );
+            pending.await.unwrap();
+            original.store(true, Ordering::Release);
+            cancelled.store(false, Ordering::Release);
+            assert!(!session.is_accepting());
+            assert_eq!(
+                session
+                    .invoke(&invocation, || false, || true)
+                    .await
+                    .unwrap_err(),
+                HostError::Closed
+            );
+            assert!(session.close().await.direct_child_reaped);
+            assert_eq!(
+                std::fs::read(directory.path().join("invoked")).unwrap(),
+                b"invoked"
+            );
+            std::fs::remove_file(directory.path().join("invoked")).unwrap();
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        }
+    });
+}
+
+#[test]
+fn unsupported_scopes_and_required_attempt_services_refuse_launch_without_staging() {
+    runtime().block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        for (scope, mode, expected) in [
+            (
+                ComponentScope::Application,
+                "normal",
+                HostError::UnsupportedRuntime,
+            ),
+            (
+                ComponentScope::Attempt,
+                "requires-service",
+                HostError::DependencyUnavailable,
+            ),
+        ] {
+            let result = ProcessSession::launch(
+                &image_with_scope(mode, None, scope),
+                "query.call",
+                directory.path(),
+                &RuntimeLauncher::Native,
+                options(),
+                || true,
+            )
+            .await;
+            assert!(matches!(result, Err(error) if error == expected));
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        }
+        let mut configured = options();
+        configured.scope.scope_id = "attempt-a".into();
+        let mut session = ProcessSession::launch(
+            &image_with_scope("optional-service", None, ComponentScope::Attempt),
+            "query.call",
+            directory.path(),
+            &RuntimeLauncher::Native,
+            configured,
+            || true,
+        )
+        .await
+        .unwrap();
+        let mut invocation = request(&session, "dispatch-a", "optional dependency absent");
+        invocation.context.scope_id = "attempt-a".into();
+        session
+            .invoke(&invocation, || false, || true)
+            .await
+            .unwrap();
+        assert!(session.close().await.direct_child_reaped);
+    });
 }
 #[test]
 fn actual_process_channel_and_heartbeat_keep_exact_utf8_and_empty_environment() {

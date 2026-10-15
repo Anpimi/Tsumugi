@@ -1560,6 +1560,7 @@ mod tracking_tests {
                 let view: crate::commands::plugins::PluginGenerationComponentView =
                     serde_json::from_value(wire["view"].clone()).unwrap();
                 let binding = PluginExecutionBinding {
+                    component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
                     capability: view.binding,
                     profile: view.profile,
                     environment: view.environment,

@@ -114,6 +114,8 @@ impl WorkPlanTools {
                 .validate()
                 .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "work-plan-tool"))?;
             let binding = crate::execution::PluginExecutionBinding {
+                // Agent plans currently accept Host-verified Project tools only.
+                component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
                 capability: tool.binding.capability.clone(),
                 profile: tool.binding.declaration.profile.clone(),
                 environment: tool.environment.clone(),

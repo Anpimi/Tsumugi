@@ -78,6 +78,8 @@ impl AdvisoryReviewCheck {
             },
             kind: ReviewCheckerKind::AdvisoryText,
             binding: PluginExecutionBinding {
+                // Advisory review composition requires a Host-verified Project component.
+                component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
                 capability: self.binding.checker.clone(),
                 profile: Some(self.binding.declaration.profile.clone()),
                 environment: self.environment.clone(),

@@ -101,6 +101,7 @@ impl ArtifactValidationCapture {
             .validate_check_input(&payload)
             .map_err(|_| invalid())?;
         let selected = PluginExecutionBinding {
+            component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
             capability: binding.checker.clone(),
             profile: Some(binding.declaration.profile.clone()),
             environment: environment.environment().clone(),

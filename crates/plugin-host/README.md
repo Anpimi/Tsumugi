@@ -7,8 +7,9 @@ It has no domain runner or model dependency. Desktop source/build commands use
 exact approved installed packages and runtimes; default domain-package distribution
 and the complete extension lifecycle remain under development.
 
-The implemented profile is one serialized capability on a project-scoped native
-worker or JavaScript component. The Unix launcher creates an owned process group;
+The implemented profile is one serialized capability on a project- or
+attempt-scoped native worker or JavaScript component. Application-scoped
+executable components remain unsupported. The Unix launcher creates an owned process group;
 this profile is tested on macOS. Windows is refused until an owned Job Object implementation is verified.
 The JavaScript launcher requires a `CapturedRuntime` containing the independently
 approved Node tool and complete [built component Host](../../runtimes/javascript-host/README.md) trees. That Host
@@ -18,6 +19,25 @@ The local installation store can retain and reopen the approved runtime trees.
 Trusted runtime acquisition and desktop distribution remain separate work.
 
 ## Project-service broker
+
+Attempt components retain the original launch-authority guard for their entire
+channel lifetime. Their scope ID must equal the invocation's exact attempt ID,
+in addition to the captured project, package, contribution and actual instance.
+An observed loss of authority cannot be undone by supplying another callback.
+Core's `PluginExecutionBinding.componentScope` is required captured input data;
+the immutable package determines it before consent. Requests and historical
+result validation derive scope from that input, never from a worker's output.
+The original input digest and grant therefore also bind the selected scope.
+Each Core dispatch still owns and closes its process; no shared scope registry,
+grant renewal or automatic activation is introduced.
+
+Project service bindings cannot be rescaled into attempt authority. An attempt
+component with required services, or an attempt channel offered any service
+binding, is refused. Absent optional services remain allowed. Existing project
+brokers keep their exact scope, permissions, effects and generation checks.
+The Desktop's manual generic Tool path captures attempt scope end to end.
+Source, translation, review, build and Agent compositions currently accept only
+Project components and reject other executable scopes at package capture.
 
 `ProcessSession::launch_with_services` accepts a trusted `ProjectServiceBroker`.
 It validates the broker's explicit selected bindings against actual component
@@ -430,7 +450,7 @@ acknowledgement of unsandboxed execution. The manifest's requested permissions d
 not provide either. Launch resolves the declared entrypoint and contribution,
 does not inherit the parent environment, and assigns a fresh instance identity
 to the actual process/pipe channel. Required dependencies without an implemented broker
-are refused; other component scopes are refused. The handshake must echo the
+are refused; Application executable scope remains refused. The handshake must echo the
 captured capability and provider binding exactly. It cannot upgrade declarations,
 effects, versions, limits or permission requests.
 

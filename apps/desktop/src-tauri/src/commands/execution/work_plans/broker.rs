@@ -177,6 +177,11 @@ fn spec(
     view: PluginToolView,
     selected: &WorkPlanToolSelectionEntry,
 ) -> Result<WorkPlanToolSpec, CommandError> {
+    // Agent tool plans currently capture project service scope only. Manual
+    // tools use their independently captured component scope instead.
+    if view.component_scope != sdk::ComponentScope::Project {
+        return Err(stale());
+    }
     Ok(WorkPlanToolSpec {
         handle: selected.handle,
         binding: view.binding,

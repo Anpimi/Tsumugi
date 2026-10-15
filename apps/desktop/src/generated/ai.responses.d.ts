@@ -327,6 +327,7 @@ export type CheckOutcome =
       kind: "unavailable";
     };
 export type FindingSeverity = "warning" | "error";
+export type ComponentScope = "application" | "project" | "attempt";
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
 export type CandidateDisposition = "rejected" | "restored";
 export type WorkPlanCheckerView =
@@ -918,6 +919,10 @@ export interface SourceReviewBinding {
 }
 export interface PluginExecutionBinding {
   capability: CapabilityBinding;
+  /**
+   * Captured from the selected component, never inferred from a result.
+   */
+  componentScope: ComponentScope;
   /**
    * Exact captured Node artifacts or actual native application Host identity.
    * This data value does not authenticate its source or grant execution.

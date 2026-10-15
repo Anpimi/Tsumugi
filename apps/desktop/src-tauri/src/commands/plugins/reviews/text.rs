@@ -58,6 +58,7 @@ impl ApplicationPlugins {
             &request.package,
             &request.resource_id,
             &request.environment_digest,
+            &[sdk::ComponentScope::Project],
             |image, resource| {
                 let binding = image.text_review_declaration(resource)?;
                 let providers = [binding.checker.clone()];

@@ -167,6 +167,7 @@ export type PermissionRequest =
       program: string;
     };
 export type ToolQueryPathPart = string | number;
+export type ComponentScope = "application" | "project" | "attempt";
 /**
  * Fixed execution choices for the two actual runtime profiles. Each variant
  * has a strict, distinct profile value and its own data/hash owner. Captured
@@ -481,6 +482,7 @@ export interface PluginToolItem {
 }
 export interface PluginToolView {
   binding: CapabilityToolBinding;
+  componentScope: ComponentScope;
   environment: ExecutionEnvironmentDescriptor;
   environmentDigest: string;
   packageOrigin: PluginOriginView;

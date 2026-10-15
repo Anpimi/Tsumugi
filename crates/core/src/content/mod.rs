@@ -399,6 +399,8 @@ impl SourceReviewBinding {
     ) -> Result<Self, ExecutionError> {
         binding.validate().map_err(source_contract_error)?;
         let checker = PluginExecutionBinding {
+            // This domain composition requires a Host-verified Project component.
+            component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
             capability: binding.checker.clone(),
             profile: Some(binding.declaration.profile.clone()),
             environment: environment.clone().into(),

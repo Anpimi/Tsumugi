@@ -20,6 +20,7 @@ fn binding(package: &PluginPackageRequest) -> PluginExecutionBinding {
         behavior_version: 1,
     };
     PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
         capability: sdk::CapabilityBinding {
             provider: sdk::ProviderSelectionBinding {
                 plugin: package.plugin.clone(),
