@@ -18,6 +18,7 @@ import { useWorkbenchCommands, type CommandAvailability, type TranslationImportP
   type TranslationRevisionCommandPayload, type TranslationSelectionPendingCommandPayload, type TranslationContentRowCommandPayload } from "./workbenchCommands";
 import { contentSelectionIds, fixedContentSelection, type ContentSelection } from "./contentSelection";
 import { EditorMemoryReferences } from "./EditorMemoryReferences";
+import { EditorSourceContext } from "./EditorSourceContext";
 import { validateResponseHistory } from "./generated/translation.validators";
 import { validateResponseEditor } from "./generated/review.validators";
 import type { ChangeScope } from "./sessionReads";
@@ -92,6 +93,10 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const [readyListRead, setReadyListRead] = useState<ListReadProof | null>(null);
   const [editorIntent, setEditorIntent] = useWorkbenchState<EditorReadIntent | null>("translation", "editorReadIntent", null);
   const [readyEditorRead, setReadyEditorRead] = useState<number | null>(null);
+  // Keep only the source identity that established the retained draft. A later
+  // editor read can fail when that unit disappears from the current source.
+  const draftSourceBasis = useWorkbenchRef<{ projectId: string; sessionToken: string; unitId: string;
+    locale: string; sourceRevisionId: string; sourceSnapshotId: string } | null>("translation", "draftSourceBasis", null);
   const [editorActivation, setEditorActivation] = useState<EditorActivation | null>(null);
   const [historyIntent, setHistoryIntent] = useWorkbenchState<HistoryReadIntent | null>("translation", "historyReadIntent", null);
   const listScope = useWorkbenchRef<{ id: string; locale: string; query: string } | null>("translation", "listScope", null);
@@ -255,6 +260,11 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     const result = reads.client.getQueryState<T>(reads.key(key));
     return !reads.retired && result?.status === "success" && result.fetchStatus === "idle" && !result.isInvalidated && result.error === null && result.data === value;
   }
+  const retainedSourceChanged = !!editorDraft && !!source && !!draftSourceBasis.current
+    && draftSourceBasis.current.projectId === context.projectId && draftSourceBasis.current.sessionToken === context.sessionToken
+    && draftSourceBasis.current.unitId === editorDraft.unitId && draftSourceBasis.current.locale === editorDraft.locale
+    && draftSourceBasis.current.sourceRevisionId === editorDraft.sourceRevisionId
+    && checkedRead(sourceScopeKey, source) && source.currentSnapshot !== draftSourceBasis.current.sourceSnapshotId;
   function confirmedList() {
     if (!listIntent || !readyListRead || readyListRead.intent !== listIntent || reads.retired) return false;
     const query = reads.client.getQueryCache().find({ queryKey: reads.key(listKey(listIntent)), exact: true });
@@ -805,6 +815,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     }
     const nextTarget = listTarget(snapshot.target), next = snapshot.translations;
     if (!draftSession.begin({ ...nextTarget, locale }, next.current, next.currentText, suggestedText)) { setFailure("navigation-edited"); return; }
+    draftSourceBasis.current = { ...context, unitId: nextTarget.unitId, locale,
+      sourceRevisionId: nextTarget.sourceRevisionId, sourceSnapshotId: snapshot.target.sourceSnapshotId };
     setEditorTarget(nextTarget); setHistoryIntent(null); setNavigationEnd(false); setTab("edit");
   }
   function chooseEditor(target: EditorTarget) {
@@ -1078,6 +1090,17 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
               <EditorMemoryReferences context={context} target={displayedTarget} locale={targetLocale} draftText={draft}
                 enabled={referencesOpen && open && tab === "edit" && targetAvailable && !!snapshot && snapshot.target.sourceRevisionId === displayedTarget.sourceRevisionId
                   && readyEditorRead === editorIntent?.id && checkedRead(editorKey(editorIntent), snapshot)} />
+              <EditorSourceContext context={context} enabled={referencesOpen && open && tab === "edit" && targetAvailable}
+                sourceChanged={retainedSourceChanged || !!snapshot && !!editorDraft && snapshot.target.unitId === editorDraft.unitId
+                  && snapshot.target.locale === editorDraft.locale && snapshot.target.sourceRevisionId !== editorDraft.sourceRevisionId}
+                scope={snapshot && editorDraft && editorIntent && readyEditorRead === editorIntent.id
+                  && snapshot.target.unitId === displayedTarget.unitId && snapshot.target.sourceRevisionId === displayedTarget.sourceRevisionId
+                  && snapshot.target.unitId === editorDraft.unitId && snapshot.target.locale === editorDraft.locale
+                  && editorDraft.locale === targetLocale && snapshot.target.sourceRevisionId === editorDraft.sourceRevisionId
+                  && checkedRead(editorKey(editorIntent), snapshot)
+                  ? { projectId: context.projectId, sourceSnapshotId: snapshot.target.sourceSnapshotId,
+                      unitId: snapshot.target.unitId, sourceRevisionId: snapshot.target.sourceRevisionId, locale: snapshot.target.locale }
+                  : null} />
               <section aria-label={t("translation.history")}><div className="execution-section-heading"><h4>{t("translation.history")}</h4><button className="text-button" disabled={busy || readBusy || !targetAvailable || !!pendingSave || !editorTarget} onClick={() => void performRead(refreshHistory)}>{t("translation.refreshHistory")}</button></div>{historyRead.error && historyIntent ? <button className="secondary-button" disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable} onClick={() => void performRead(current => loadHistory(historyIntent.after, current))}>{t("execution.refresh")}</button> : null}{historyStale ? <p role="status">{t("translation.historyStale")}</p> : null}{history?.rows.length ? <ul>{history.rows.map(revision => <li key={revision.revisionId}><p>{revision.ordinal}: {revision.text === "" ? t("translation.empty") : revision.text}</p><p>{revision.originKind === "import" ? t("translation.importOrigin", { file: revision.logicalPath ?? "" }) : revision.originKind === "ai" ? t("ai.origin") : t("translation.manualOrigin")}</p>{revision.originKind === "import" ? <details><summary>{t("translation.evidence")}</summary><p>{t("translation.key")}: {revision.nativeKey}</p><p>{t("translation.file")}: {revision.logicalPath}</p><code>{revision.fileDigest}</code></details> : null}<button className="secondary-button" disabled={!revisionAvailability(revisionPayload(revision)).enabled} onClick={() => {const payload=revisionPayload(revision);if(payload)commandRegistry.dispatch("translation.select-revision",commandScope,payload);}}>{t("translation.selectRevision")}</button></li>)}</ul> : historyStale ? null : <p>{t("translation.noHistory")}</p>}
               {history ? <div className="execution-actions"><button className="secondary-button" disabled={busy || readBusy || !targetAvailable || historyRead.isFetching || history.rows[0]?.ordinal === "1"} onClick={() => void performRead(current => loadHistory(translationHistoryAfter(history.rows[0]?.ordinal ?? "1", 101), current))}>{t("translation.earlier")}</button>{history.nextOrdinal !== null ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable || historyRead.isFetching} onClick={() => void performRead(current => loadHistory(history.nextOrdinal!, current))}>{t("translation.later")}</button> : null}</div> : null}</section>
                 </details>

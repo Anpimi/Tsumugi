@@ -38,4 +38,20 @@ Choose a source unit in Context and memory to save a manual context note and rea
 
 The translation editor shows the currently applicable adopted terms and manual context beside the source and selected translation. This is current guidance, not evidence that an older translation used those facts. Return to Context and memory to edit the note or inspect fixed input and omissions.
 
+Expand the editor's **References** to read **Original source observations** for the current
+entry and language. The panel distinguishes extracted facts from inferences and
+shows inference rationale, adjacent original text and exact local source ranges.
+Empty and unsupported blocks remain visible; an unknown required block is an
+uninterpreted observation. No speaker, role or scene is invented for absent data.
+Reading this panel does not share anything with a model or adopt a human fact.
+AI and Arena sharing still requires their own preview and confirmation.
+
+References load separately from the editable draft, in pages of whole blocks
+followed by neighboring occurrences. Each page is bounded to 20 entries and
+128 KiB including its evidence. Use **Load more source observations** to continue.
+Refresh or retry from the panel after a read failure; manual editing remains
+available. If the source changed while an older draft was retained, references
+stay hidden until you explicitly resolve that source change. A later response
+never replaces the draft with a new source or translation.
+
 Affected work lists current selected translations with possible dependencies on changed terms or unit context. It shows the old and new values, reason, and coverage limit; a possible text match needs human review. Open translation takes you to the existing editor. This view does not create review decisions, run QA, or build or publish a translated Mod. Use Review and QA to examine current review and check coverage. Resource and context history are stored in the project's SQLite database. See the [README](../README.md#development) for the current schema. Other development schemas are refused without upgrading or resetting their directories.

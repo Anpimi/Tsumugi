@@ -65,6 +65,106 @@ export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type SourceChangeKind =
   "unchanged" | "moved" | "changed" | "added" | "rename-candidate" | "ambiguous" | "removed";
 export type SourceImpactStatus = "preserved" | "reassess" | "unresolved";
+export type SourceContextPageEntry =
+  | {
+      kind: "block";
+      value: SourceContextBlock;
+    }
+  | {
+      kind: "neighbor";
+      value: SourceContextNeighbor;
+    };
+/**
+ * Classification for presentation, without interpreting a format's syntax or
+ * normalizing its literal text. Other source-associated information uses Note.
+ */
+export type SourceContextFactKind = "speaker" | "role" | "scene" | "time" | "location" | "note";
+/**
+ * References are observations in captured source, not proof of an inference.
+ * Human project decisions remain in the project's independent revision owner.
+ */
+export type SourceContextFactOrigin =
+  | {
+      kind: "extracted";
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    }
+  | {
+      kind: "inferred";
+      rationale: string;
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    };
+export type ExtensionHandling = "required" | "preserve" | "optional";
+export type ContentTarget =
+  | {
+      kind: "snapshot";
+    }
+  | {
+      id: string;
+      kind: "unit";
+    }
+  | {
+      id: string;
+      kind: "occurrence";
+    };
+export type SourceContextDirection = "before" | "after";
 
 export interface Responses {
   action: AdoptionAction;
@@ -80,6 +180,7 @@ export interface Responses {
   pluginPreflight: PluginSourcePreflight;
   pluginSelection: PluginSourceSelection | null;
   scope: ContentScope;
+  sourceContext: SourceContextPage;
 }
 export interface AdoptionAction {
   actionId: ExecutionId;
@@ -473,4 +574,96 @@ export interface PluginSourceSelection {
   folderName: string;
   selectionId: ExecutionId;
   source: PluginSourceView;
+}
+export interface SourceContextPage {
+  after: number;
+  contentRevision: Revision;
+  entries: SourceContextPageEntry[];
+  localUnitId: string;
+  nextAfter: number | null;
+  observations: SourceContextObservations;
+  occurrenceCount: number;
+  scope: SourceContextRequest;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+  totalEntries: number;
+}
+/**
+ * The block's index and local target retain its identity inside the exact
+ * result. `None` facts means an unsupported version; `Some` with an empty list
+ * is the domain's explicit empty observation. Missing blocks remain missing.
+ */
+export interface SourceContextBlock {
+  blockIndex: number;
+  facts: SourceContextFacts | null;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+/**
+ * The surrounding DomainBlock supplies Snapshot/Unit/Occurrence applicability.
+ * Empty facts report an explicit empty observation; absence is not that report.
+ */
+export interface SourceContextFacts {
+  /**
+   * @maxItems 32
+   */
+  facts: SourceContextFact[];
+}
+export interface SourceContextFact {
+  /**
+   * Unique only inside this block; it is not a project revision or entity ID.
+   */
+  id: string;
+  kind: SourceContextFactKind;
+  origin: SourceContextFactOrigin;
+  text: string;
+}
+export interface SourceContextNeighbor {
+  adjacentTo: SourceContextAdjacency[];
+  occurrence: SourceContextOccurrence;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface SourceContextAdjacency {
+  /**
+   * The neighbor's position relative to this selected occurrence.
+   */
+  direction: SourceContextDirection;
+  occurrenceId: ExecutionId;
+}
+export interface SourceContextOccurrence {
+  localOccurrenceId: string;
+  occurrenceId: ExecutionId;
+  source: SourceReference;
+}
+/**
+ * Missing, explicitly empty and unknown schema observations are distinct.
+ */
+export interface SourceContextObservations {
+  emptyBlocks: number;
+  knownBlocks: number;
+  knownFacts: number;
+  missingBlocks: boolean;
+  neighborOccurrences: number;
+  unknownBlocks: number;
+  unknownRequiredBlocks: number;
+  unknownSamples: UnknownSourceBlockSample[];
+}
+export interface UnknownSourceBlockSample {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
 }

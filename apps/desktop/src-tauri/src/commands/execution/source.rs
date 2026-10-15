@@ -76,27 +76,50 @@ pub struct Preflight {
     pub files: Vec<content::FileCoverage>,
 }
 #[cfg(any(test, feature = "execution-test-host"))]
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] CaptureRequest {
-    selection_id: ExecutionId,
-    source_language: String
-});
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    CaptureRequest {
+        selection_id: ExecutionId,
+        source_language: String
+    }
+);
 #[cfg(any(test, feature = "execution-test-host"))]
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] StartRequest {
-    selection_id: ExecutionId,
-    source_language: String,
-    attempt_id: ExecutionId
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] PreviewRequest {
-    attempt_id: ExecutionId,
-    result_id: ExecutionId,
-    after: u32,
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ContentRequest {
-    snapshot_id: ExecutionId,
-    after: u32,
-    limit: u32
-});
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    StartRequest {
+        selection_id: ExecutionId,
+        source_language: String,
+        attempt_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    PreviewRequest {
+        attempt_id: ExecutionId,
+        result_id: ExecutionId,
+        after: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContentRequest {
+        snapshot_id: ExecutionId,
+        after: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SourceContextReadRequest {
+        source_snapshot_id: ExecutionId,
+        unit_id: ExecutionId,
+        source_revision_id: ExecutionId,
+        locale: String,
+        after: u32,
+        limit: u32
+    }
+);
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ComparisonRequest {
     attempt_id: ExecutionId,
     result_id: ExecutionId,
@@ -105,32 +128,47 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Comp
     after: u32,
     limit: u32
 });
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] HistoryRequest {
-    offset: u32,
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] HistoryContentRequest {
-    snapshot_id: ExecutionId,
-    query: String,
-    after: u32,
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] LineageRequest {
-    snapshot_id: ExecutionId,
-    ordinal: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ImpactRequest {
-    snapshot_id: ExecutionId,
-    locale: String,
-    after: u32,
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SourceAdoptRequest {
-    attempt_id: ExecutionId,
-    result_id: ExecutionId,
-    action_id: ExecutionId,
-    confirmation: SourceConfirmation
-});
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    HistoryRequest {
+        offset: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    HistoryContentRequest {
+        snapshot_id: ExecutionId,
+        query: String,
+        after: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    LineageRequest {
+        snapshot_id: ExecutionId,
+        ordinal: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ImpactRequest {
+        snapshot_id: ExecutionId,
+        locale: String,
+        after: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SourceAdoptRequest {
+        attempt_id: ExecutionId,
+        result_id: ExecutionId,
+        action_id: ExecutionId,
+        confirmation: SourceConfirmation
+    }
+);
 fn map_source(error: ExecutionError) -> CommandError {
     let mapped = map_execution(error, CommandStage::ExecutionRead);
     mapped
@@ -508,10 +546,16 @@ pub async fn read_source_integration(
                         .plugin_id
                         == content::webvtt::PLUGIN
                     {
-                        return Ok(content::webvtt_descriptor(cfg!(any(windows, target_os = "macos"))));
+                        return Ok(content::webvtt_descriptor(cfg!(any(
+                            windows,
+                            target_os = "macos"
+                        ))));
                     }
                 }
-                Ok(content::integration_descriptor(cfg!(any(windows, target_os = "macos"))))
+                Ok(content::integration_descriptor(cfg!(any(
+                    windows,
+                    target_os = "macos"
+                ))))
             },
         )
         .await
@@ -534,7 +578,10 @@ pub async fn read_webvtt_integration(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                Ok(content::webvtt_descriptor(cfg!(any(windows, target_os = "macos"))))
+                Ok(content::webvtt_descriptor(cfg!(any(
+                    windows,
+                    target_os = "macos"
+                ))))
             },
         )
         .await
@@ -612,6 +659,40 @@ pub async fn read_source_content(
                 )?
                 .store
                 .source_content(request.snapshot_id, request.after, request.limit)
+                .map_err(map_source)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_source_context(
+    state: State<'_, AppState>,
+    request: SourceContextReadRequest,
+) -> Result<tsumugi_core::SourceContextPage, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_source_context",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_context_page(
+                    &tsumugi_core::SourceContextRequest {
+                        project_id: request.project_id,
+                        source_snapshot_id: request.source_snapshot_id,
+                        unit_id: request.unit_id,
+                        source_revision_id: request.source_revision_id,
+                        locale: request.locale,
+                    },
+                    request.after,
+                    request.limit,
+                )
                 .map_err(map_source)
             },
         )

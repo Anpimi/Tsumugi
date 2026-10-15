@@ -60,6 +60,7 @@ pub use resources::{
     TermResolutionEntry, TermRevision, TmMatchKind, TmSuggestion, UnknownSourceBlockSample,
     select_source_context,
 };
+pub use resources::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
 pub(crate) use review::validate_choices;
 pub use review::{
     AdvisoryReviewCheck, CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun,

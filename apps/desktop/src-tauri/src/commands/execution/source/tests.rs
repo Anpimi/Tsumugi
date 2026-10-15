@@ -14,6 +14,8 @@ fn source_wire_fixture_matches_rust_types() {
     round_trip::<SessionRequest>(&fixture["session"]);
     round_trip::<PreviewRequest>(&fixture["preview"]);
     round_trip::<ContentRequest>(&fixture["content"]);
+    round_trip::<SourceContextReadRequest>(&fixture["sourceContextRequest"]);
+    round_trip::<tsumugi_core::SourceContextPage>(&fixture["sourceContext"]);
     round_trip::<SourceAdoptRequest>(&fixture["prepare"]);
     round_trip::<ContentPage>(&fixture["page"]);
     round_trip::<HistoryRequest>(&fixture["historyRequest"]);
@@ -75,6 +77,51 @@ fn call(
         },
     )
     .map(|r| r.deserialize::<Value>().unwrap())
+}
+
+#[test]
+fn source_context_ipc_requires_current_session_and_does_not_mutate_empty_project() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(
+        &window,
+        "create_project",
+        json!({
+            "destination":directory.path().join("project"), "displayName":"Source context reads",
+            "sourceLocale":"en", "targetLocales":["zh-CN"]
+        }),
+    )
+    .unwrap();
+    let request = json!({"sessionToken":project["sessionToken"], "projectId":project["metadata"]["projectId"],
+        "sourceSnapshotId":ExecutionId::new(), "unitId":ExecutionId::new(),
+        "sourceRevisionId":ExecutionId::new(), "locale":"zh-CN", "after":0, "limit":4});
+    let database = directory.path().join("project/project.sqlite3");
+    let before = std::fs::read(&database).unwrap();
+    let missing = call(&window, "read_source_context", request.clone()).unwrap_err();
+    assert_eq!(missing["reason"], "source-context-snapshot");
+    for field in ["sessionToken", "projectId"] {
+        let mut foreign = request.clone();
+        foreign[field] = if field == "sessionToken" {
+            json!("foreign-session")
+        } else {
+            json!(ExecutionId::new())
+        };
+        let error = call(&window, "read_source_context", foreign).unwrap_err();
+        assert_eq!(error["code"], "session-invalid");
+    }
+    let mut authority = request.clone();
+    authority["approved"] = json!(true);
+    assert!(call(&window, "read_source_context", authority).is_err());
+    let mut overflow = request;
+    overflow["after"] = json!(4_294_967_296u64);
+    assert!(call(&window, "read_source_context", overflow).is_err());
+    assert_eq!(std::fs::read(database).unwrap(), before);
 }
 
 #[cfg(any(windows, target_os = "macos"))]
@@ -256,11 +303,24 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     let mut source_history_request = context.clone();
     source_history_request["offset"] = json!(0);
     source_history_request["limit"] = json!(100);
-    let source_history = call(&view, "read_source_history", source_history_request.clone()).unwrap();
+    let source_history =
+        call(&view, "read_source_history", source_history_request.clone()).unwrap();
     assert_eq!(source_history["snapshots"][0]["snapshotId"], snapshot);
-    let expected_revision = (preview["scope"]["revision"].as_str().unwrap().parse::<u64>().unwrap() + 1).to_string();
-    assert_eq!(source_history["snapshots"][0]["revision"], expected_revision);
-    assert_eq!(source_history["snapshots"][0]["revision"], receipt["changes"][0]["revision"]);
+    let expected_revision = (preview["scope"]["revision"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap()
+        + 1)
+    .to_string();
+    assert_eq!(
+        source_history["snapshots"][0]["revision"],
+        expected_revision
+    );
+    assert_eq!(
+        source_history["snapshots"][0]["revision"],
+        receipt["changes"][0]["revision"]
+    );
     let mut summary_request = context.clone();
     summary_request["locale"] = json!("zh-CN");
     summary_request["query"] = json!("");
@@ -362,7 +422,10 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     read["sessionToken"] = reopened["sessionToken"].clone();
     assert_eq!(call(&view, "read_source_content", read).unwrap(), content);
     source_history_request["sessionToken"] = reopened["sessionToken"].clone();
-    assert_eq!(call(&view, "read_source_history", source_history_request).unwrap(), source_history);
+    assert_eq!(
+        call(&view, "read_source_history", source_history_request).unwrap(),
+        source_history
+    );
     call(
         &view,
         "close_project",

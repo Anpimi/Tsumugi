@@ -222,3 +222,36 @@ it("validates and transports separately fixed plugin source and semantic-check r
   invoke.mockResolvedValueOnce(null); await sourceCommands.finishCheck(flow.finishCheck);
   expect(invoke).toHaveBeenLastCalledWith("finish_source_check", { request: flow.finishCheck });
 });
+
+
+it("reads bounded whole source-context entries with exact request and revision evidence", async () => {
+  expect(validators.validateRequestSourceContext(fixture.sourceContextRequest)).toBe(true);
+  expect(validators.validateResponseSourceContext(fixture.sourceContext)).toBe(true);
+  invoke.mockResolvedValueOnce(structuredClone(fixture.sourceContext));
+  const result = await sourceCommands.sourceContext(fixture.sourceContextRequest);
+  expect(result).toEqual(fixture.sourceContext);
+  expect(result.contentRevision).toBe("9007199254740993");
+  expect(invoke).toHaveBeenLastCalledWith("read_source_context", {request:fixture.sourceContextRequest});
+  const numeric = {...fixture.sourceContext,contentRevision:9007199254740992};
+  expect(validators.validateResponseSourceContext(numeric)).toBe(false);
+});
+
+it("refuses source-context responses for a different exact scope", async () => {
+  for (const field of ["projectId","sourceSnapshotId","unitId","sourceRevisionId","locale"] as const) {
+    const response = structuredClone(fixture.sourceContext);
+    response.scope[field] = field === "locale" ? "ja" : fixtureIdentity(999);
+    expect(validators.validateResponseSourceContext(response)).toBe(true);
+    invoke.mockResolvedValueOnce(response);
+    await expect(sourceCommands.sourceContext(fixture.sourceContextRequest)).rejects.toThrow("source context page association");
+  }
+});
+
+it("rejects nonprogressing, overlapping and prematurely terminal source-context page cursors", async () => {
+  for (const change of [{after:1},{nextAfter:0},{nextAfter:4},{entries:[],nextAfter:1},{totalEntries:5,nextAfter:null}]) {
+    invoke.mockResolvedValueOnce({...fixture.sourceContext,...change});
+    await expect(sourceCommands.sourceContext(fixture.sourceContextRequest)).rejects.toThrow();
+  }
+  const page = {...fixture.sourceContext,entries:fixture.sourceContext.entries.slice(0,1),nextAfter:1};
+  invoke.mockResolvedValueOnce(page);
+  expect(await sourceCommands.sourceContext({...fixture.sourceContextRequest,limit:1})).toEqual(page);
+});

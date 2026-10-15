@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
 import type { ProjectView } from "./projectCommands";
+import type { SourceContextPage } from "./sourceCommands";
 import type { TranslationHistory, TranslationPreview } from "./translationCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
@@ -75,6 +76,15 @@ beforeEach(async () => {
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
     if (command === "read_source_content") return content;
+    if (command === "read_source_context") {
+      expect(args.request.after).toBe(0);
+      return {scope:{projectId:String(args.request.projectId),sourceSnapshotId:String(args.request.sourceSnapshotId),
+        unitId:String(args.request.unitId),sourceRevisionId:String(args.request.sourceRevisionId),locale:String(args.request.locale)},
+        contentRevision:"2",sourceAttemptId:fixtureIdentity(201),sourceResultId:fixtureIdentity(202),sourceResultDigest:"e".repeat(64),
+        sourceLocale:"en",localUnitId:"fixture-unit",occurrenceCount:1,
+        observations:{missingBlocks:true,knownBlocks:0,knownFacts:0,emptyBlocks:0,unknownBlocks:0,unknownRequiredBlocks:0,neighborOccurrences:0,unknownSamples:[]},
+        entries:[],after:0,nextAfter:null,totalEntries:0} satisfies SourceContextPage;
+    }
     if (command === "read_review_summary_page") return reviewSummaryPageFixture(content.rows.map(row => reviewSummaryFor(reviewTargetFixture({ unitId: row.unitId!, locale: String(args.request.locale), nativeKey: row.occurrence.key, sourceText: row.occurrence.text, sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: row.sourceRevisionId!, selectionId: history.locale === args.request.locale ? history.current?.eventId ?? null : null, revisionId: history.locale === args.request.locale ? history.current?.revisionId ?? null : null, translationText: history.locale === args.request.locale ? history.currentText : null, basis: "basis" }))));
     if (command === "read_review_target") return reviewTargetFixture({ unitId: fixtureIdentity(204), nativeKey: "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" });
     if (command === "read_review_editor_snapshot") {
@@ -2153,6 +2163,11 @@ it("keeps the fixed list scope and draft through a hidden semantic source change
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   await user.type(await screen.findByRole("textbox", { name: "Your draft" }), " hidden B");
   const captured = owner.current();
+  await user.click(screen.getByText("Terms, context and history"));
+  await within(screen.getByRole("region",{name:i18n.t("sourceContextRead.title")})).findByText(i18n.t("sourceContextRead.noEntries"));
+  const sourceReads = invoke.mock.calls.filter(([name]) => name === "read_source_context");
+  expect(sourceReads).toHaveLength(1);
+  expect(sourceReads[0][1].request).toMatchObject({projectId:project.metadata.projectId,sourceSnapshotId:fixtureIdentity(200),unitId:fixtureIdentity(204),sourceRevisionId:fixtureIdentity(205),locale:"zh-CN"});
   const captures = invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null).length;
   const original = invoke.getMockImplementation()!, nextSnapshot = fixtureIdentity(1810), nextScope = fixtureIdentity(1811);
   view.rerender(null, project);
@@ -2171,8 +2186,11 @@ it("keeps the fixed list scope and draft through a hidden semantic source change
   await act(async () => { reads.invalidate(["source", "translation", "resources"]); });
   view.rerender(ui, project);
   await screen.findByRole("alert");
-  await user.click(screen.getByText("Terms, context and history"));
+  const references = screen.getByText("Terms, context and history");
+  if (!references.closest("details")!.open) await user.click(references);
   expect(await screen.findByText(/Current hidden resource/)).toBeVisible();
+  expect(screen.getByText(i18n.t("sourceContextRead.sourceChanged"))).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_context")).toHaveLength(sourceReads.length);
   expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Saved base hidden B"); expect(owner.current()).toBe(captured);
   expect(screen.getByText("Original", { selector: ".editor-source pre" })).toBeInTheDocument();
   expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null)).toHaveLength(captures);
@@ -2182,6 +2200,46 @@ it("keeps the fixed list scope and draft through a hidden semantic source change
   expect(owner.current()).toBe(captured);
   expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null)).toHaveLength(captures + 1);
   expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision")).toBe(false);
+});
+
+it("guides a retained draft when its unit disappears from a newly confirmed source, but not on a read failure", async () => {
+  seedSelectedTranslation();
+  let reads!: ReturnType<typeof useSessionReads>, owner!: ReturnType<typeof useTranslationDraftSession>;
+  const user = userEvent.setup();
+  render(<><QueryProbe capture={(value, draft) => { reads = value; owner = draft; }} />
+    <TranslationWorkbench project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, " retained B");
+  const captured = owner.current();
+  await user.click(screen.getByText("Terms, context and history"));
+  const panel = screen.getByRole("region", { name: i18n.t("sourceContextRead.title") });
+  await within(panel).findByText(i18n.t("sourceContextRead.noEntries"));
+
+  const original = invoke.getMockImplementation()!;
+  let removed = false;
+  const nextSnapshot = fixtureIdentity(1813);
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_content_scope" && removed) return { revision: "3", currentSnapshot: nextSnapshot };
+    if (command === "read_source_content" && removed) return { ...content, snapshotId: nextSnapshot,
+      scope: { revision: "3", currentSnapshot: nextSnapshot }, rows: [], total: 0 };
+    if (command === "read_review_editor_snapshot") throw { code: "dependency-conflict", outcome: "rejected",
+      stage: "execution-read", recoveryRequired: false, reason: "review-unit" };
+    return original(command, args);
+  });
+  await act(async () => { reads.invalidate(["source"]); });
+  await within(panel).findByText(i18n.t("sourceContextRead.unavailable"));
+  expect(within(panel).queryByText(i18n.t("sourceContextRead.sourceChanged"))).not.toBeInTheDocument();
+
+  removed = true;
+  await act(async () => { reads.invalidate(["source"]); });
+  expect(await within(panel).findByText(i18n.t("sourceContextRead.sourceChanged"))).toBeVisible();
+  expect(within(panel).queryByText(i18n.t("sourceContextRead.noEntries"))).not.toBeInTheDocument();
+  expect(editor).toHaveValue("Saved base retained B");
+  expect(owner.current()).toBe(captured);
+  expect(invoke.mock.calls.some(([name]) => name === "save_translation_revision" || name === "select_translation_revision"
+    || name === "enqueue_ai_translation")).toBe(false);
 });
 
 it("keeps pure neighbor waiting separate from save availability and cancels only its view continuation on return", async () => {
@@ -2415,4 +2473,28 @@ it("shows current-item memory comparisons inside references without changing the
     projectId: project.metadata.projectId, sessionToken: project.sessionToken, unitId: fixtureIdentity(204), locale: "zh-CN", offset: 0, limit: 20,
   });
   expect(invoke.mock.calls.filter(([name]) => ["save_translation_revision", "select_translation_revision", "record_review_decision", "enqueue_ai_translation"].includes(name))).toHaveLength(0);
+});
+
+
+it("keeps source-reference read failures local while allowing the original draft to save", async () => {
+  seedSelectedTranslation();
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command:string,args:unknown) => {
+    if(command === "read_source_context") throw new Error("Synthetic source read failure");
+    return original(command,args);
+  });
+  let owner!:ReturnType<typeof useTranslationDraftSession>;
+  const user=userEvent.setup();
+  render(<><QueryProbe capture={(_reads,draft)=>{owner=draft;}}/><TranslationWorkbench project={project} disabled={false}/></>,project);
+  await user.click(screen.getByRole("button",{name:"Translations"}));await user.click(await screen.findByRole("button",{name:"first"}));
+  const editor=await screen.findByRole("textbox",{name:"Your draft"});await user.type(editor," local B");const captured=owner.current();
+  await user.click(screen.getByText("Terms, context and history"));
+  const panel=screen.getByRole("region",{name:i18n.t("sourceContextRead.title")});
+  expect(await within(panel).findByText(i18n.t("sourceContextRead.readFailed"))).toBeVisible();
+  expect(owner.current()).toBe(captured);expect(editor).toHaveValue("Saved base local B");
+  expect(screen.getByRole("button",{name:"Save revision"})).toBeEnabled();
+  await user.click(screen.getByRole("button",{name:"Save revision"}));
+  await waitFor(()=>expect(invoke.mock.calls.filter(([name])=>name==="save_translation_revision")).toHaveLength(1));
+  expect(invoke.mock.calls.find(([name])=>name==="save_translation_revision")![1].request.text).toBe("Saved base local B");
+  expect(editor).toHaveValue("Saved base local B");
 });

@@ -20,6 +20,7 @@ export interface Requests {
   pluginStart: PluginStartRequest;
   preview: PreviewRequest;
   session: SessionRequest;
+  sourceContext: SourceContextReadRequest;
 }
 export interface SourceAdoptRequest {
   actionId: ExecutionId;
@@ -153,4 +154,14 @@ export interface PreviewRequest {
 export interface SessionRequest {
   projectId: ExecutionId;
   sessionToken: string;
+}
+export interface SourceContextReadRequest {
+  after: number;
+  limit: number;
+  locale: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
 }

@@ -6,5 +6,7 @@ export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeOperatingSystemValues = ["macos","linux"] as const;
 export const SourceChangeKindValues = ["unchanged","moved","changed","added","rename-candidate","ambiguous","removed"] as const;
+export const SourceContextDirectionValues = ["before","after"] as const;
+export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
 export const SourceImpactStatusValues = ["preserved","reassess","unresolved"] as const;
 export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;

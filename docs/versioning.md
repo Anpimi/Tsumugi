@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The current editor adds an authorized read-only source-observation page and an
+on-demand References consumer. Whole blocks and neighboring entries use a
+separate 20-entry / 128 KiB read limit, independent of AI selection budgets.
+Rust generates the additive source IPC contract. No stored field, execution
+grant, SDK/process format, dependency or version source changes; current-only
+project schema 36 and application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` remain
+the same undistributed batch. No additional bump, migration or distribution is
+needed; both Unreleased changelogs and the resource guide are synchronized.
+
 AI/Arena configuration and immutable item payloads now require independent
 source-context selection and capture fields. All three source categories default
 off; first authorization uses a fresh checked preview, and accepted execution

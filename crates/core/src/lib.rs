@@ -43,6 +43,7 @@ pub use persistence::{
     AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
     ComparisonView, MergeBasis,
 };
+pub use persistence::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub use persistence::{
     SavedBuildArtifact, SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,

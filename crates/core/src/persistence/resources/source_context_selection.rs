@@ -594,46 +594,7 @@ pub fn select_source_context(
     if !selection.is_enabled() {
         return Ok(SourceContextCapture::NotSelected);
     }
-    let mut observations = SourceContextObservations {
-        missing_blocks: view.blocks.is_empty(),
-        known_blocks: 0,
-        known_facts: 0,
-        empty_blocks: 0,
-        unknown_blocks: 0,
-        unknown_required_blocks: 0,
-        neighbor_occurrences: view.neighbors.len() as u32,
-        unknown_samples: Vec::new(),
-    };
-    for block in &view.blocks {
-        if block.schema.id != sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID
-            || (block.schema == sdk::source_context_facts_contract()) != block.facts.is_some()
-        {
-            return Err(invalid());
-        }
-        if let Some(facts) = &block.facts {
-            observations.known_blocks += 1;
-            observations.known_facts += facts.facts.len() as u32;
-            if facts.facts.is_empty() {
-                observations.empty_blocks += 1;
-            }
-        } else {
-            observations.unknown_blocks += 1;
-            if block.handling == sdk::ExtensionHandling::Required {
-                observations.unknown_required_blocks += 1;
-            }
-            if observations.unknown_samples.len() < MAX_SAMPLES {
-                observations.unknown_samples.push(UnknownSourceBlockSample {
-                    block_index: block.block_index,
-                    target: block.target.clone(),
-                    schema: block.schema.clone(),
-                    handling: block.handling,
-                });
-                if encoded_len(&observations)? > MAX_OBSERVATION_BYTES {
-                    observations.unknown_samples.pop();
-                }
-            }
-        }
-    }
+    let observations = observe_source_context(view)?;
     if (selection.extracted || selection.inferred) && observations.unknown_required_blocks > 0 {
         return Err(ExecutionError::new(
             ErrorCode::DependencyConflict,
@@ -735,6 +696,67 @@ pub fn select_source_context(
     };
     capture.validate_against(selection, &view.scope)?;
     Ok(capture)
+}
+
+/// Summarize the checked view without interpreting any source fact version.
+/// Reading may report unknown required blocks; only fact selection refuses them.
+pub(super) fn observe_source_context(
+    view: &SourceContextView,
+) -> Result<SourceContextObservations, ExecutionError> {
+    if view.blocks.len() > sdk::MAX_CONTENT_DOMAIN_BLOCKS
+        || view.neighbors.len() > sdk::MAX_CONTENT_ITEMS
+        || view.occurrences.len() > sdk::MAX_CONTENT_ITEMS
+    {
+        return Err(invalid());
+    }
+    let mut observations = SourceContextObservations {
+        missing_blocks: view.blocks.is_empty(),
+        known_blocks: 0,
+        known_facts: 0,
+        empty_blocks: 0,
+        unknown_blocks: 0,
+        unknown_required_blocks: 0,
+        neighbor_occurrences: view.neighbors.len() as u32,
+        unknown_samples: Vec::new(),
+    };
+    for block in &view.blocks {
+        if block.schema.id != sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID
+            || (block.schema == sdk::source_context_facts_contract()) != block.facts.is_some()
+            || block.block_index as usize >= sdk::MAX_CONTENT_DOMAIN_BLOCKS
+        {
+            return Err(invalid());
+        }
+        if let Some(facts) = &block.facts {
+            // The checked reader has validated SDK payloads once for this
+            // source snapshot. Observation only needs the count bound here;
+            // capture separately validates each included fact.
+            if facts.facts.len() > sdk::MAX_SOURCE_CONTEXT_FACTS {
+                return Err(invalid());
+            }
+            observations.known_blocks += 1;
+            observations.known_facts += facts.facts.len() as u32;
+            if facts.facts.is_empty() {
+                observations.empty_blocks += 1;
+            }
+        } else {
+            observations.unknown_blocks += 1;
+            if block.handling == sdk::ExtensionHandling::Required {
+                observations.unknown_required_blocks += 1;
+            }
+            if observations.unknown_samples.len() < MAX_SAMPLES {
+                observations.unknown_samples.push(UnknownSourceBlockSample {
+                    block_index: block.block_index,
+                    target: block.target.clone(),
+                    schema: block.schema.clone(),
+                    handling: block.handling,
+                });
+                if encoded_len(&observations)? > MAX_OBSERVATION_BYTES {
+                    observations.unknown_samples.pop();
+                }
+            }
+        }
+    }
+    Ok(observations)
 }
 
 #[cfg(test)]

@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The translation editor can read source observations from its References panel.
+  Separate on-demand pages retain complete blocks, fact origins, inference
+  rationale, neighboring text and local source references. Unknown and empty
+  observations remain distinct. Source changes hide these references while
+  preserving an older draft; a local read failure can be retried without
+  blocking manual editing. Reading does not share data with a model.
+
 - AI and Arena preparations can separately share extracted source facts,
   inferred facts and neighboring text, all off by default. Previews retain whole
   selected entries, their original evidence and bounded omission counts. Each

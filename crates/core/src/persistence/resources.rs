@@ -13,11 +13,15 @@ const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
 mod source_context;
+mod source_context_page;
 mod source_context_selection;
 pub(super) use source_context::SourceContextReader;
 pub use source_context::{
     SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
     SourceContextOccurrence, SourceContextRequest, SourceContextView,
+};
+pub use source_context_page::{
+    MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry,
 };
 pub use source_context_selection::{
     SelectedSourceContext, SelectedSourceFact, SourceContextCapture, SourceContextObservations,

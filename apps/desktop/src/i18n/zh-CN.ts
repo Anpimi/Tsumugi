@@ -52,6 +52,36 @@ sourceContext: {
     "note": "源说明"
   }
 },
+sourceContextRead: {
+  "title": "原始源资料观察",
+  "help": "只读查看此条目的源事实与相邻原文。推断仍是假设；在此阅读不会将资料分享给模型。",
+  "unavailable": "打开当前条目后可读取源资料观察；译文草稿已保留。",
+  "sourceChanged": "源内容已变化，较早的译文草稿仍保留。请核对当前源内容并决定如何处理这份草稿，再打开可用条目读取其源资料观察。",
+  "loading": "正在读取源资料观察…",
+  "readFailed": "无法读取源资料观察；译文草稿已保留，请重试本次读取。",
+  "basisChanged": "翻页期间源内容已变化；较早的观察已隐藏。核对当前条目后刷新此参考资料。",
+  "retry": "重试源资料读取",
+  "refresh": "刷新源资料观察",
+  "more": "加载更多源资料观察",
+  "progress": "已加载 {{loaded}}／{{total}} 个源条目。",
+  "complete": "已加载全部源条目。",
+  "noEntries": "此条目没有可用的源观察条目。",
+  "requiredUnknownCount": "采用未知必需版本的源区块：{{count}}；未解读其内容。",
+  "block": "源事实区块 {{number}}",
+  "emptyBlock": "此区块明确没有源事实。",
+  "unknownBlock": "此区块采用未知版本；未解读其内容。",
+  "unknownRequired": "此区块需要未知版本；未解读其内容。",
+  "provenance": "原始源资料详情",
+  "target": "适用对象",
+  "schema": "源资料格式",
+  "handling": "版本处理方式",
+  "handlingKinds": { "required": "必需", "preserve": "保留原样", "optional": "可选" },
+  "revisionBasis": "源修订依据",
+  "inRevision": "纳入此源修订",
+  "outsideRevision": "未纳入此源修订",
+  "occurrence": "源出现位置",
+  "reference": "原文区间"
+},
 
 connections: {
   "requestSummary": "每次请求最多 {{tokens}} 输出 token、重试 {{retries}} 次、{{timeout}} 秒；请求数与并发共享整个比较的预算。",

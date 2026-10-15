@@ -1,10 +1,12 @@
 import type { AdoptionAction, Receipt, SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import { pluginCommands, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
-import type { SourceAdoptRequest, PreviewRequest, ContentRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
-import { validateRequestAdopt, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
+import type { SourceAdoptRequest, PreviewRequest, ContentRequest, SourceContextReadRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
+import { validateRequestAdopt, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseSourceContext, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
 
 export type { SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
+export type { SourceContextReadRequest } from "./generated/source.requests";
+export type { SourceContextPage, SourceContextPageEntry, SourceContextBlock, SourceContextNeighbor } from "./generated/source.responses";
 export type { PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
 export type { PluginSourceSelection, PluginSourcePreflight, SourceCheckReview, PluginSourceSelection as SourceSelection, PluginSourcePreflight as Preflight } from "./generated/source.responses";
 export type { PluginStartRequest as StartRequest } from "./generated/source.requests";
@@ -21,6 +23,17 @@ export const sourceCommands = {
   scope: (request: SessionRequest) => checkedInvoke("read_content_scope", request, validateResponseScope),
   preview: (request: PreviewRequest) => checkedInvoke("read_source_preview", request, validateResponsePage),
   content: (request: ContentRequest) => checkedInvoke("read_source_content", request, validateResponsePage),
+  sourceContext: async (request: SourceContextReadRequest) => {
+    const page = await checkedInvoke("read_source_context", request, validateResponseSourceContext);
+    const scope = page.scope, end = page.after + page.entries.length;
+    if (scope.projectId !== request.projectId || scope.sourceSnapshotId !== request.sourceSnapshotId
+      || scope.unitId !== request.unitId || scope.sourceRevisionId !== request.sourceRevisionId || scope.locale !== request.locale
+      || page.after !== request.after || page.entries.length > request.limit || end > page.totalEntries
+      || (page.nextAfter === null ? end !== page.totalEntries : page.entries.length === 0 || page.nextAfter !== end || page.nextAfter >= page.totalEntries)) {
+      throw new Error("Invalid source context page association");
+    }
+    return page;
+  },
   compare: (request: Omit<ComparisonRequest, "filter"> & { filter?: string }) => checkedInvoke("read_source_comparison", { base: null, filter: "", ...request }, validateResponseComparison),
   history: (request: HistoryRequest) => checkedInvoke("read_source_history", request, validateResponseHistory),
   historyContent: (request: HistoryContentRequest) => checkedInvoke("read_source_history_content", request, validateResponsePage),
