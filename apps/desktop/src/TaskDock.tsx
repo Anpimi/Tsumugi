@@ -3,6 +3,7 @@ import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { executionCommands, executionContext, type TaskActivity, type TaskActivityRow } from "./executionCommands";
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import type { ProjectView } from "./projectCommands";
+import { enUS } from "./i18n/en-US";
 import "./TaskDock.css";
 
 const phases = ["active", "attention", "saved"] as const;
@@ -28,7 +29,7 @@ export function TaskDock({ project, disabled, onOpen }: {
           <CommandFailureDetails failure={commandFailure(activity.error)} />
           <button type="button" className="secondary-button" disabled={activity.isFetching || reads.retired} onClick={() => void activity.refetch()}>{t("execution.refresh")}</button>
         </div> : value ? <>
-          <p>{t("execution.dock.scope", { shown: value.rows.length, total: value.total })}</p>
+          <p>{t("execution.dock.scope", { defaultValue: enUS.execution.dock.scope, shown: value.rows.length, total: value.total })}</p>
           <div className="task-dock-groups">{phases.map(phase => {
             const rows = value.rows.filter(row => row.phase === phase);
             return rows.length ? <section key={phase} aria-label={t(`execution.dock.${phase}`)}>
@@ -39,7 +40,7 @@ export function TaskDock({ project, disabled, onOpen }: {
                     : row.operation === "ai-translation" ? "ai.title" : row.operation === "locale-build" ? "release.title" : "execution.operation")}
                   {" · "}{t("execution.taskNumber", { number: row.sequence })}
                 </button>
-                <p>{t("execution.dock.progress", { running: row.progress.running, queued: row.progress.queued,
+                <p>{t("execution.dock.progress", { defaultValue: enUS.execution.dock.progress, running: row.progress.running, queued: row.progress.queued,
                   saved: row.progress.succeeded, total: row.progress.total, applied: row.progress.adopted,
                   failed: row.progress.failed, unknown: row.progress.unknown, cancelled: row.progress.cancelled })}</p>
               </li>)}</ul>
