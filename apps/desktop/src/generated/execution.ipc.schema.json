@@ -495,6 +495,29 @@
         ],
         "type": "object"
       },
+      "TaskActivityRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "limit"
+        ],
+        "type": "object"
+      },
       "TaskRequest": {
         "additionalProperties": false,
         "properties": {
@@ -552,6 +575,9 @@
       }
     },
     "properties": {
+      "activity": {
+        "$ref": "#/definitions/TaskActivityRequest"
+      },
       "adopt": {
         "$ref": "#/definitions/AdoptRequest"
       },
@@ -604,6 +630,7 @@
     "required": [
       "session",
       "list",
+      "activity",
       "task",
       "attempt",
       "output",
@@ -2739,6 +2766,77 @@
         ],
         "type": "string"
       },
+      "TaskActivity": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "$ref": "#/definitions/Revision"
+          },
+          "attention": {
+            "$ref": "#/definitions/Revision"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TaskActivityRow"
+            },
+            "type": "array"
+          },
+          "saved": {
+            "$ref": "#/definitions/Revision"
+          },
+          "total": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "total",
+          "active",
+          "attention",
+          "saved",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "TaskActivityPhase": {
+        "enum": [
+          "active",
+          "attention",
+          "saved"
+        ],
+        "type": "string"
+      },
+      "TaskActivityRow": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/definitions/TaskActivityPhase"
+          },
+          "progress": {
+            "$ref": "#/definitions/Progress"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "operation",
+          "sequence",
+          "phase",
+          "progress"
+        ],
+        "type": "object"
+      },
       "TaskView": {
         "additionalProperties": false,
         "properties": {
@@ -2979,6 +3077,9 @@
       "action": {
         "$ref": "#/definitions/AdoptionAction"
       },
+      "activity": {
+        "$ref": "#/definitions/TaskActivity"
+      },
       "adoption": {
         "$ref": "#/definitions/AdoptionReceipt"
       },
@@ -3052,6 +3153,7 @@
       "identity",
       "status",
       "tasks",
+      "activity",
       "attempts",
       "attempt",
       "output",

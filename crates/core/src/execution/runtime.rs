@@ -454,6 +454,20 @@ impl ExecutionRuntime {
             .iter()
             .any(|worker| worker.request.input.envelope().attempt_id == attempt)
     }
+    /// Compact status uses the same live-worker observation as `attempt`.
+    /// Reading it never constructs a runtime or restores a dispatch grant.
+    pub fn task_activity(
+        &self,
+        store: &ProjectStore,
+        limit: u32,
+    ) -> Result<crate::TaskActivity, ExecutionError> {
+        let active: Vec<_> = self
+            .workers
+            .iter()
+            .map(|worker| worker.request.input.envelope().attempt_id)
+            .collect();
+        store.execution_task_activity(limit, &active)
+    }
     /// Read the original ledger's explicit presence result without granting or
     /// restoring execution authority. Storage errors remain errors.
     pub fn input_if_present(

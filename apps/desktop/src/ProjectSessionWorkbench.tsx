@@ -19,6 +19,7 @@ import { ReleaseWorkbench } from "./ReleaseWorkbench";
 import { AiWorkbench } from "./AiWorkbench";
 import { ArenaWorkbench } from "./ArenaWorkbench";
 import { ExecutionTasks } from "./ExecutionTasks";
+import { TaskDock } from "./TaskDock";
 import { useWorkspaceView, useWorkspaceViewChanges, type WorkspaceArea } from "./WorkbenchFrame";
 import { executionContext } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
@@ -155,6 +156,24 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (!current()) return false;
     setFailure(null);
     if (destination.kind === "area") return true;
+    if (destination.kind === "task" || destination.kind === "task-list") {
+      const pending = tasks.currentActivity();
+      if (tasks.unresolved() || pending && pending.phase !== "recorded" && pending.phase !== "rejected") return false;
+      if (destination.kind === "task") {
+        const activity = reads.client.getQueryState<import("./executionCommands").TaskActivity>(reads.key(["task-activity", 12]));
+        if (activity?.status !== "success" || activity.fetchStatus !== "idle" || activity.isInvalidated || !activity.data
+          || !activity.data.rows.some(row => row.taskId === destination.taskId && row.attemptId === destination.attemptId)) return false;
+      }
+      const memory = committed.current.view.memory;
+      memory.write("tasks", "taskId", destination.kind === "task" ? destination.taskId : null);
+      memory.write("tasks", "attemptId", destination.kind === "task" ? destination.attemptId : null);
+      memory.write("tasks", "cursor", "0");
+      memory.write("tasks", "attemptCursor", "0"); memory.write("tasks", "offset", 0);
+      memory.write("tasks", "continuationCursor", "0"); memory.write("tasks", "historySelection", null);
+      memory.write("tasks", "outputSelection", null); memory.write("tasks", "savedOutput", null);
+      memory.write("tasks", "receiptSelection", null); memory.write("tasks", "confirmation", null);
+      return true;
+    }
     if (destination.kind === "ai-selection") {
       const selected = destination.selection, cached = reads.client.getQueryState<ContentScope>(reads.key(["translation-source-scope"]));
       if (committed.current.view.memory.read<ContentSelection>("translation", "contentSelection") !== selected
@@ -287,5 +306,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     {view.area === "tasks" ? <ExecutionTasks ref={handle => register("tasks", handle)} project={project} disabled={locked}
       onSavedBuild={attemptId => navigation.navigate({ kind: "saved-build", attemptId })}
       onSourcePreview={id => attempt("source", id)} onTranslationPreview={id => attempt("translation", id)} onAiPreview={id => attempt("ai", id)} onArenaPreview={id => attempt("arena", id)} /> : null}
+    <TaskDock project={project} disabled={locked} onOpen={row => {
+      void navigation.navigate(row ? { kind: "task", taskId: row.taskId, attemptId: row.attemptId } : { kind: "task-list" });
+    }} />
   </>;
 }

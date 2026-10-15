@@ -379,6 +379,25 @@ fn setup() -> (
 }
 
 #[test]
+fn task_activity_read_is_authorized_bounded_and_does_not_initialize_execution() {
+    let (_directory, app, webview, context) = setup();
+    let request = |limit: u32| {
+        let mut request = context.clone(); request["limit"] = json!(limit); request
+    };
+    let page = call(&webview, "read_execution_task_activity", request(12)).unwrap();
+    assert_eq!(page, json!({"total":"0","active":"0","attention":"0","saved":"0","rows":[]}));
+    app.state::<AppState>().sessions.with(|sessions| {
+        assert!(sessions.active.as_ref().unwrap().execution.is_none());
+    });
+    assert!(call(&webview, "read_execution_task_activity", request(0)).is_err());
+    assert!(call(&webview, "read_execution_task_activity", request(21)).is_err());
+    let mut alien = request(12); alien["projectId"] = json!(ExecutionId::new());
+    assert!(call(&webview, "read_execution_task_activity", alien).is_err());
+    let mut stale = request(12); stale["sessionToken"] = json!("stale-session");
+    assert!(call(&webview, "read_execution_task_activity", stale).is_err());
+}
+
+#[test]
 fn retired_query_blocks_session_close_and_generation_rotation_until_thread_exit() {
     let (_directory, app, webview, context) = setup();
     let (release, generation, attempt, before) =

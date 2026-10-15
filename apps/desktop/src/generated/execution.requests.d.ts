@@ -12,6 +12,7 @@ export type RecoveryAction =
 export type UnsignedDecimal = string;
 
 export interface Requests {
+  activity: TaskActivityRequest;
   adopt: AdoptRequest;
   attempt: AttemptRequest;
   cancel: CancelRequest;
@@ -28,6 +29,11 @@ export interface Requests {
   toolDiscard: PluginToolDiscardRequest;
   toolPrepare: PluginToolPrepareRequest;
   toolStart: PluginStartRequest;
+}
+export interface TaskActivityRequest {
+  limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
 }
 export interface AdoptRequest {
   actionId: ExecutionId;

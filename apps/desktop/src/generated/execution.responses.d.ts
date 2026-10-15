@@ -2,6 +2,7 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+export type TaskActivityPhase = "active" | "attention" | "saved";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
@@ -200,6 +201,7 @@ export type UnsignedDecimal = string;
 
 export interface Responses {
   action: AdoptionAction;
+  activity: TaskActivity;
   adoption: AdoptionReceipt;
   attempt: AttemptDetail;
   attempts: AttemptSummary[];
@@ -226,6 +228,31 @@ export interface AdoptionAction {
   projectId: ExecutionId;
   resultIds: ExecutionId[];
   unitId: ExecutionId;
+}
+export interface TaskActivity {
+  active: Revision;
+  attention: Revision;
+  rows: TaskActivityRow[];
+  saved: Revision;
+  total: Revision;
+}
+export interface TaskActivityRow {
+  attemptId: ExecutionId;
+  operation: string;
+  phase: TaskActivityPhase;
+  progress: Progress;
+  sequence: Revision;
+  taskId: ExecutionId;
+}
+export interface Progress {
+  adopted: number;
+  cancelled: number;
+  failed: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  total: number;
+  unknown: number;
 }
 export interface AdoptionReceipt {
   actionId: ExecutionId;
@@ -267,16 +294,6 @@ export interface ItemStatus {
   itemId: ExecutionId;
   retrySafe: boolean;
   validation: ValidationState;
-}
-export interface Progress {
-  adopted: number;
-  cancelled: number;
-  failed: number;
-  queued: number;
-  running: number;
-  succeeded: number;
-  total: number;
-  unknown: number;
 }
 export interface RecoveryPlan {
   attemptId: ExecutionId;

@@ -91,6 +91,7 @@ struct PluginResponses {
 struct ExecutionRequests {
     session: execution::SessionRequest,
     list: execution::ListRequest,
+    activity: execution::TaskActivityRequest,
     task: execution::TaskRequest,
     attempt: execution::AttemptRequest,
     output: execution::OutputRequest,
@@ -113,6 +114,7 @@ struct ExecutionResponses {
     identity: tsumugi_core::execution::ExecutionId,
     status: execution::RuntimeStatus,
     tasks: Vec<tsumugi_core::TaskView>,
+    activity: tsumugi_core::TaskActivity,
     attempts: Vec<execution::AttemptSummary>,
     attempt: execution::AttemptDetail,
     output: execution::ExecutionOutputView,

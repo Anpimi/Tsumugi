@@ -1565,6 +1565,15 @@ ai: {
   }
 },
     execution: {
+      dock: {
+        title: "后台任务", unavailable: "状态暂不可用", empty: "暂无任务",
+        counts: "运行或排队 {{active}} 项 · 待检查 {{attention}} 项 · 已保存输出 {{saved}} 项",
+        active: "运行或排队", attention: "待检查", saved: "已保存输出",
+        scope: "显示 {{total}} 项任务中的 {{shown}} 项，优先显示在途工作。完整历史可在任务页查看。",
+        progress: "运行 {{running}} · 排队 {{queued}} · 已保存输出 {{saved}}/{{total}} · 已应用 {{applied}} · 失败 {{failed}} · 结果未确认 {{unknown}} · 已取消 {{cancelled}}",
+        meaning: "输出已保存不代表检查已通过、已应用到项目或已导出。打开任务可查看后续步骤。",
+        readFailed: "暂时无法读取后台状态，当前工作仍保留。请刷新此状态或打开任务页。",
+      },
     "savedBuildBlocked": "构建与导出中仍有未完成的草稿、准备或操作。已保留当前工作，请先完成或明确放弃，再查看另一条已保存构建。",
         "updatesUnavailable": "暂时无法更新任务状态。已有工作仍保留，可刷新核对工程。",
       "operation": "项目操作",

@@ -1,0 +1,17 @@
+.workspace > .workspace-body { display: flex; flex-direction: column; }
+.workspace > .workspace-body > .workbench-content,
+.workspace > .workspace-body > .workbench-panel { flex: 1; height: auto; min-height: 0; }
+.task-dock { flex: 0 0 auto; min-width: 0; border-top: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; }
+.task-dock summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 10px 24px; cursor: pointer; font-weight: 600; }
+.task-dock summary::before { content: "+"; }
+.task-dock details[open] > summary::before { content: "−"; }
+.task-dock summary span { font-weight: 400; color: var(--muted); }
+.task-dock-content { max-height: 35vh; overflow: auto; padding: 0 24px 14px; }
+.task-dock-content > p { margin: 6px 0 10px; color: var(--muted); }
+.task-dock-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 12px; }
+.task-dock-groups h2 { font-size: 13px; margin: 4px 0; }
+.task-dock-groups ul { margin: 0; padding: 0; list-style: none; }
+.task-dock-groups li { padding-block: 5px; }
+.task-dock-groups li p { margin: 4px 0; color: var(--muted); }
+.task-dock button { max-width: 100%; overflow-wrap: anywhere; text-align: start; }
+.task-dock summary:focus-visible { outline: 2px solid var(--accent, #33558d); outline-offset: -3px; }

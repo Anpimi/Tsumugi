@@ -15,6 +15,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   revision cannot replace the current draft. Uncertain actions still require
   reconciliation before leaving.
 
+- A compact background task dock remains available while working in a project.
+  It groups current item states across execution attempts, prioritizes active work and shows
+  bounded rows with all-project totals. Open a task through the same draft-safe
+  navigation; reading status never starts work or applies saved output.
+
 - Returning from a failed source preparation to current content clears the old
   failure while keeping unrelated preparation text. Explicit discard reports
   its own cancellation failure. Source comparison labels also cover changed
