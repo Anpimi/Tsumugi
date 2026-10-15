@@ -43,13 +43,13 @@ export type ProcessBody =
     }
   | {
       data: {
-        provider: ProviderBinding;
+        instance: ComponentInstanceBinding;
       };
       kind: "close";
     }
   | {
       data: {
-        provider: ProviderBinding;
+        instance: ComponentInstanceBinding;
       };
       kind: "closed";
     }
@@ -123,22 +123,37 @@ export type InvocationOutcome =
  */
 export interface ProcessFrame {
   body: ProcessBody;
-  protocolVersion: 2;
+  protocolVersion: 3;
 }
 /**
- * A captured declaration for one capability on one actual component channel.
- * Echoing this structure is a handshake claim, never a grant or source proof.
+ * A frozen declaration roster for one actual component channel. A Ready
+ * receiver must compare the complete value to its original Activate. Echoing
+ * it is a handshake claim, never a grant or source proof.
  *
  * This interface was referenced by `ProcessFrame`'s JSON-Schema
  * via the `definition` "ProcessActivation".
  */
 export interface ProcessActivation {
-  capability: CapabilityDeclaration;
-  provider: ProviderBinding;
+  /**
+   * @minItems 1
+   * @maxItems 128
+   */
+  capabilities: [ProcessCapability, ...ProcessCapability[]];
+  instance: ComponentInstanceBinding;
   /**
    * Host-selected project services, resolved before component activation.
    */
   services: ServiceBinding[];
+}
+/**
+ * One callable declaration in the Host-captured component roster.
+ *
+ * This interface was referenced by `ProcessFrame`'s JSON-Schema
+ * via the `definition` "ProcessCapability".
+ */
+export interface ProcessCapability {
+  capability: CapabilityDeclaration;
+  contributionId: string;
 }
 /**
  * This interface was referenced by `ProcessFrame`'s JSON-Schema
@@ -179,16 +194,15 @@ export interface CapabilityLimits {
   timeoutMs: number;
 }
 /**
- * A claimed wire binding. Only the trusted host can compare it to the actual
- * verified package and channel; constructing this value proves no authority.
+ * One actual component instance, independent of a selected contribution.
+ * This is a claimed wire principal, not a grant or proof of package provenance.
  *
  * This interface was referenced by `ProcessFrame`'s JSON-Schema
- * via the `definition` "ProviderBinding".
+ * via the `definition` "ComponentInstanceBinding".
  */
-export interface ProviderBinding {
+export interface ComponentInstanceBinding {
   activationGeneration: number;
   componentId: string;
-  contributionId: string;
   instanceId: string;
   packageDigest: string;
   plugin: PluginIdentity;
@@ -266,6 +280,21 @@ export interface EncodedPayload {
   schema: ContractRef;
   sha256: string;
   utf8: string;
+}
+/**
+ * A claimed wire binding. Only the trusted host can compare it to the actual
+ * verified package and channel; constructing this value proves no authority.
+ *
+ * This interface was referenced by `ProcessFrame`'s JSON-Schema
+ * via the `definition` "ProviderBinding".
+ */
+export interface ProviderBinding {
+  activationGeneration: number;
+  componentId: string;
+  contributionId: string;
+  instanceId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
 }
 /**
  * This interface was referenced by `ProcessFrame`'s JSON-Schema

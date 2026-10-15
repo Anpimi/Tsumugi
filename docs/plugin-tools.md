@@ -116,19 +116,28 @@ and validators with `pnpm generate:contracts`; use the centralized
 
 ## Shared Application query instances
 
-For an approved JavaScript Tool component with exactly one callable capability,
-no required dependencies and no ProjectService permission, **Review queries**
+For an approved JavaScript Tool component whose callable capabilities are all
+read-only, with no required dependencies or ProjectService permission,
+**Review queries**
 reserves an exact instance identity without starting component code. The preview
 includes required nullable `applicationScope`: an instance UUID/activation
 generation for Application, and explicit null for Project/Attempt. Its original
 Core binding, input digest and actual channel must agree on that identity.
+The required `applicationCapabilities` list shows the whole frozen component
+roster for Application and is explicitly empty for Project/Attempt. The lifetime
+consent displays this set before execution; selecting another Tool in the same
+component does not allocate a separate shared process.
 
 The first run requires both the existing exact query consent and a separate
 checkbox allowing this instance to live until application exit, explicit stop,
 package withdrawal or retirement. A package/runtime approval, project grant,
 manifest scope or query result cannot create this lifetime lease. Later project
 queries can reuse the same live instance, but each requires its own fixed input,
-project authorization, cancellation, grant and original deadline. Closing one
+exact selected capability and profile, project authorization, cancellation,
+grant and original deadline. Process protocol 3 freezes the entire nonempty,
+unique roster (at most 128 callables) at activation. Each invocation and result
+retain their complete contribution binding and their own schemas and limits;
+membership alone grants no permission to invoke a sibling capability. Closing one
 project withdraws its authority while the independently consented instance may
 remain running for another project.
 
@@ -138,7 +147,7 @@ no in-process project memory isolation. The Host sends each new input only
 under that project's current permit, with no inherited project service handles.
 
 The preview shows the reserved/active/stopping/stopped state and an explicit
-**Stop shared instance** action. Stopping interrupts calls on this shared
+**Stop shared instance** action. Stopping from any member interrupts calls on this shared
 activation while keeping query drafts and saved ledger output. Unknown stop
 acknowledgements retain the exact original stop action for reconciliation.
 A historical start/stop ACK is data only and cannot restart an old activation.
@@ -153,8 +162,8 @@ records and control actions are bounded for one application session; exhausted
 capacity is reported explicitly. Drained processes, runtime images and obsolete
 runner registrations are released by their original owners.
 
-Application Native workers, multiple callable contributions, required/offered
-project services, domain Source/Translation/Review/Build, work-plan Agent tools
+Application Native workers, required/offered project services,
+domain Source/Translation/Review/Build, work-plan Agent tools
 and generation components remain explicitly unsupported. Data Resources and
 Skills remain readable without activating an executable component. Internal IPC
 status/stop adapters are `executionCommands.applicationInstance` and

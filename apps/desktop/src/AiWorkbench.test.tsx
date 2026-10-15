@@ -493,7 +493,7 @@ it("displays native application identity and keeps checker consent separate", as
       if (checker?.kind !== "ready" || checker.plugin.kind !== "format") throw new Error("captured format checker required");
       value.checkers = [{ ...checker, plugin: { ...checker.plugin, plugin: { ...checker.plugin.plugin, environment: {
         protocolVersion: 1, platform: { operatingSystem: "macos", architecture: "aarch64" },
-        sdkVersion: "0.1.0-alpha.1", processProtocol: 2, profile: "native-application-host-v1",
+        sdkVersion: "0.1.0-alpha.1", processProtocol: 3, profile: "native-application-host-v1",
         hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) },
       } } } } satisfies WorkPlanView["checkers"][number]];
     }

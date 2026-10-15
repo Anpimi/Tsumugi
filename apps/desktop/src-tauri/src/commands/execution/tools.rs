@@ -123,6 +123,7 @@ pub struct PluginToolPreflight {
         schemars(schema_with = "tsumugi_core::execution::application_scope_schema")
     )]
     pub application_scope: Option<tsumugi_core::execution::ApplicationScopeBasis>,
+    pub application_capabilities: Vec<tsumugi_plugin_sdk::ProcessCapability>,
 }
 
 fn stale() -> CommandError {
@@ -166,7 +167,12 @@ fn capture(
     application: Option<Arc<ApplicationInstance>>,
 ) -> Result<Arc<PreparedTool>, CommandError> {
     let execution = match application.as_ref() {
-        Some(instance) => instance.binding().map_err(map_recover)?,
+        Some(instance) => instance
+            .binding(
+                &environment.binding.declaration.capability_id,
+                environment.binding.declaration.profile.clone(),
+            )
+            .map_err(map_recover)?,
         None => binding(&environment)?,
     };
     let capability = &environment.binding.capability.declaration;
@@ -226,6 +232,10 @@ fn capture(
         input_digest: input.digest().into(),
         tool,
         application_scope: execution.application_scope,
+        application_capabilities: application
+            .as_ref()
+            .map(|instance| instance.capabilities())
+            .unwrap_or_default(),
         items: input
             .envelope()
             .items
@@ -410,13 +420,14 @@ pub async fn start_plugin_tool(
                 accepted_work.check()?;
                 let environment = current_plugins.capture_tool(&fixed.request.tool)?;
                 let execution = match &fixed.application {
-                    Some(instance) => instance.binding().map_err(map_recover)?,
+                    Some(instance) => instance.binding(&environment.binding.declaration.capability_id,
+                        environment.binding.declaration.profile.clone()).map_err(map_recover)?,
                     None => binding(&environment)?,
                 };
                 if environment.view()? != fixed.view.tool || fixed.input.envelope().plugin.as_ref() != Some(&execution) {
                     return Err(stale());
                 }
-                let proxy = if let Some(instance) = &fixed.application { instance.runner() } else { RunnerProxy::new(
+                let proxy = if let Some(instance) = &fixed.application { instance.runner(&environment.binding.declaration.capability_id).map_err(map_recover)? } else { RunnerProxy::new(
                     environment.package.image().clone(),
                     &environment.binding.declaration.capability_id,
                     environment.runtime.clone(),

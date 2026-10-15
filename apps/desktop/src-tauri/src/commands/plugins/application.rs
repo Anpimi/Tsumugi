@@ -157,7 +157,9 @@ impl ApplicationPlugins {
             return Ok(None);
         }
         let key = serde_json::to_vec(&(
-            &environment.binding,
+            &environment.binding.capability.provider.plugin,
+            &environment.binding.capability.provider.package_digest,
+            &environment.binding.capability.provider.component_id,
             environment.runtime.environment(),
             environment.settings_revision,
         ))

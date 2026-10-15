@@ -149,7 +149,7 @@ The trusted application retains installed-settings revocation until the child's
 execution and authorized effects are terminal. Repeating a call identity only
 reads its original receipt; generic retry cannot replace its attempt to lose the
 origin. Reopening preserves historical associations but cannot reconstruct live
-authority or renew deadlines. This Core adapter requires the matching Process-2
+authority or renew deadlines. This Core adapter requires the matching Process-3
 SDK and Host; production Desktop execution and service binding remain separate
 integration.
 

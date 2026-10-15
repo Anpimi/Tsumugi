@@ -23,7 +23,7 @@ fn native_digest_matches_an_independently_calculated_vector() {
     let original = native();
     assert_eq!(
         original.digest().unwrap(),
-        "290f36ac6e522b393ce442c64092a8b08d4e4cca3dbc59fde7b1564a712448f7"
+        "2f95a020864dbac75089b03733c74bf6f2cbd897c6220bba116a6ff587e6fe01"
     );
     let execution = ExecutionEnvironmentDescriptor::from(original.clone());
     let bytes = serde_json::to_vec(&original).unwrap();
@@ -87,6 +87,13 @@ fn native_protocol_versions_identity_algorithms_and_hashes_are_checked() {
                 .is_err()
         );
     }
+    let mut old = native();
+    old.process_protocol = 2;
+    assert_eq!(
+        old.validate().unwrap_err().code,
+        ContractErrorCode::UnsupportedProtocol
+    );
+    assert!(old.digest().is_err());
 }
 
 #[test]

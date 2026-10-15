@@ -393,6 +393,7 @@ toolQuery: {
   scopes: { project: "组件存活范围：当前项目", attempt: "组件存活范围：本次任务尝试", application: "组件存活范围：当前应用共享" },
   applicationTitle: "应用共享实例",
   applicationHelp: "此实例可以跨项目持续运行，并在停止前将运行状态及此前提供的输入保留在内存中。每次新查询仍需独立的项目授权。停止共享实例会中断它当前的查询，并保留已保存结果。",
+  applicationCapabilities: "以下能力共用一个组件进程及其存活许可。每次查询仍只授权所选能力和准确输入；停止实例会停止列表中的全部能力。",
   applicationConsent: "我允许此准确共享实例持续运行，直至退出应用、显式停止该实例或撤销包权限。此同意不授权额外的项目查询。",
   applicationStates: { reserved: "该实例尚未获得运行授权。", active: "共享实例已获得应用存活授权。", stopping: "正在停止实例并等待其拥有的资源关闭。", stopped: "实例已停止。请重新审阅查询，为新实例明确授权。" },
   applicationLoading: "正在核对共享实例…",

@@ -38,6 +38,11 @@ fn main() {
 ```
 
 The one selected contribution and its contract are supplied to `activate`.
+This basic facade accepts process protocol 3 with exactly one captured roster
+member. It rejects a multi-callable activation before invoking author code or
+publishing Ready; understanding protocol 3 does not enable Native Application
+execution. Close and Closed refer to the captured component instance, including
+its original activation generation, rather than selecting a contribution.
 The component receives immutable captured payload/context/profile values in
 `invoke`; it returns only `Succeeded`, `Failed` or `Unknown` UTF-8 bytes. The SDK
 supplies the original provider, context, schema and digest. Its result ID is the
@@ -100,8 +105,8 @@ transport tests do not prove a domain extraction/check/build workflow or Core
 adoption.
 
 This basic native component facade currently handles captured-input computation
-without service calls. It rejects a nonempty process-2 service table before
+without service calls. It rejects a nonempty process-3 service table before
 activating author code, rather than claiming service readiness. Native authors
-who implement service calls directly must use the public process-2 contracts and
+who implement service calls directly must use the public process-3 contracts and
 observe the same exact context, schema, cancellation and lifetime rules. The
 JavaScript facade's service API does not imply a native facade implementation.

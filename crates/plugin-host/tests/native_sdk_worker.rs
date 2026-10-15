@@ -39,7 +39,7 @@ fn request(session: &ProcessSession, id: &str, utf8: &str) -> InvocationRequest 
             environment_digest: "c".repeat(64),
             configuration_digest: "d".repeat(64),
         },
-        provider: session.channel().provider,
+        provider: session.channel().provider("echo").unwrap(),
         capability: contract("example.echo"),
         profile: None,
         input,
@@ -79,7 +79,10 @@ async fn public_sdk_binary_preserves_unicode_serial_identity_and_cooperative_cle
     {
         let request = request(&session, &format!("dispatch-{i}"), text);
         let received = session.invoke(&request, || false, || true).await.unwrap();
-        assert_eq!(received.channel().provider, channel.provider);
+        assert_eq!(
+            received.channel().provider,
+            channel.provider("echo").unwrap()
+        );
         assert_eq!(received.channel().child_pid, channel.child_pid);
         assert_eq!(received.result().context, request.context);
         assert_eq!(received.result().result_id, request.context.dispatch_id);
@@ -163,7 +166,10 @@ async fn native_core_channel_checks_captured_environment_and_reaps_on_cancel_or_
         real.context.environment_digest = runtime.environment_digest().into();
         let received = session.invoke(&real, || false, || true).await.unwrap();
         assert_eq!(received.result().context, real.context);
-        assert_eq!(received.result().provider, session.channel().provider);
+        assert_eq!(
+            received.result().provider,
+            session.channel().provider("echo").unwrap()
+        );
         let sdk_output = &received.result().outcome;
         assert!(
             matches!(sdk_output, InvocationOutcome::Succeeded { output } if output == &real.input)

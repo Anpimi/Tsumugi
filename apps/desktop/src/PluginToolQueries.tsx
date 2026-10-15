@@ -282,6 +282,8 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
         <p>{t(`toolQuery.scopes.${capture.review.tool.componentScope}`)}</p>
         {applicationBasis ? <section aria-label={t("toolQuery.applicationTitle")}>
           <p>{t("toolQuery.applicationHelp")}</p>
+          <p>{t("toolQuery.applicationCapabilities")}</p>
+          <ul>{capture.review.applicationCapabilities.map(member => <li key={member.contributionId}>{member.contributionId}</li>)}</ul>
           {instance.isFetching ? <p role="status">{t("toolQuery.applicationLoading")}</p> : null}
           {instance.error ? <div role="alert"><CommandFailureDetails failure={commandFailure(instance.error)} /></div> : null}
           {instance.data ? <p role="status">{t(`toolQuery.applicationStates.${instance.data.state}`)}</p> : null}

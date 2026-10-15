@@ -22,15 +22,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 "use strict";
-export const validate = validate277;
-export default validate277;
-const schema298 = {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"GenerationServiceError","type":"object","properties":{"code":{"$ref":"#/$defs/GenerationServiceErrorCode"}},"additionalProperties":false,"required":["code"],"$defs":{"GenerationServiceErrorCode":{"type":"string","enum":["invalid-input","unavailable","permission-denied","cancelled","limit-exceeded","conflict","busy","storage-failed","outcome-unknown"]}}};
-const schema299 = {"type":"string","enum":["invalid-input","unavailable","permission-denied","cancelled","limit-exceeded","conflict","busy","storage-failed","outcome-unknown"]};
+export const validate = validate280;
+export default validate280;
+const schema301 = {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"GenerationServiceError","type":"object","properties":{"code":{"$ref":"#/$defs/GenerationServiceErrorCode"}},"additionalProperties":false,"required":["code"],"$defs":{"GenerationServiceErrorCode":{"type":"string","enum":["invalid-input","unavailable","permission-denied","cancelled","limit-exceeded","conflict","busy","storage-failed","outcome-unknown"]}}};
+const schema302 = {"type":"string","enum":["invalid-input","unavailable","permission-denied","cancelled","limit-exceeded","conflict","busy","storage-failed","outcome-unknown"]};
 
-function validate277(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate280(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate277.evaluated;
+const evaluated0 = validate280.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -41,14 +41,14 @@ if(errors === 0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if((data.code === undefined) && (missing0 = "code")){
-validate277.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate280.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs1 = errors;
 for(const key0 in data){
 if(!(key0 === "code")){
-validate277.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate280.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -57,11 +57,11 @@ if(_errs1 === errors){
 if(data.code !== undefined){
 let data0 = data.code;
 if(typeof data0 !== "string"){
-validate277.errors = [{instancePath:instancePath+"/code",schemaPath:"#/$defs/GenerationServiceErrorCode/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate280.errors = [{instancePath:instancePath+"/code",schemaPath:"#/$defs/GenerationServiceErrorCode/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 if(!(((((((((data0 === "invalid-input") || (data0 === "unavailable")) || (data0 === "permission-denied")) || (data0 === "cancelled")) || (data0 === "limit-exceeded")) || (data0 === "conflict")) || (data0 === "busy")) || (data0 === "storage-failed")) || (data0 === "outcome-unknown"))){
-validate277.errors = [{instancePath:instancePath+"/code",schemaPath:"#/$defs/GenerationServiceErrorCode/enum",keyword:"enum",params:{allowedValues: schema299.enum},message:"must be equal to one of the allowed values"}];
+validate280.errors = [{instancePath:instancePath+"/code",schemaPath:"#/$defs/GenerationServiceErrorCode/enum",keyword:"enum",params:{allowedValues: schema302.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 }
@@ -69,11 +69,11 @@ return false;
 }
 }
 else {
-validate277.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate280.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate277.errors = vErrors;
+validate280.errors = vErrors;
 return errors === 0;
 }
-validate277.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate280.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};

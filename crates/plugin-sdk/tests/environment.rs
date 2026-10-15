@@ -51,7 +51,7 @@ fn descriptor_digest_matches_the_independent_profile_vector() {
     // field order, rather than from this implementation's returned bytes.
     assert_eq!(
         original.digest().unwrap(),
-        "0c1b4d9cb0087fe0c3d2bf05e5b8d64b7d3b775f4c37a6ff071174b25ea51ed7"
+        "fb82574603deea27d971fc878cf63fd8563e2c05d98b7ffc7ba29fe362759396"
     );
     let mut fields: Vec<_> = serde_json::to_value(&original)
         .unwrap()
@@ -85,7 +85,7 @@ fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
     );
     assert_eq!(
         wrapped.digest().unwrap(),
-        "0c1b4d9cb0087fe0c3d2bf05e5b8d64b7d3b775f4c37a6ff071174b25ea51ed7"
+        "fb82574603deea27d971fc878cf63fd8563e2c05d98b7ffc7ba29fe362759396"
     );
     assert_eq!(
         serde_json::from_slice::<ExecutionEnvironmentDescriptor>(
@@ -128,6 +128,13 @@ fn unsupported_protocols_and_invalid_bindings_cannot_be_hashed() {
         assert!(descriptor.validate().is_err());
         assert!(descriptor.digest().is_err());
     }
+    let mut old = descriptor();
+    old.process_protocol = 2;
+    assert_eq!(
+        old.validate().unwrap_err().code,
+        ContractErrorCode::UnsupportedProtocol
+    );
+    assert!(old.digest().is_err());
 }
 
 #[test]

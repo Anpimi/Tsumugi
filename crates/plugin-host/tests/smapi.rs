@@ -121,7 +121,28 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
         validate_source_extraction(&input, &exchange).unwrap();
         assert_eq!(exchange.artifacts, input.artifacts);
         assert_eq!(exchange.units.iter().map(|unit| unit.text.as_str()).collect::<Vec<_>>(), vec!["Hi {{name}} 👩🏽‍💻 é", "same", "same", ""]);
-        assert!(exchange.relations.is_empty() && exchange.domain_blocks.is_empty());
+        assert!(exchange.relations.is_empty());
+        assert_eq!(exchange.domain_blocks.len(), 2);
+        for block in &exchange.domain_blocks {
+            assert_eq!(block.target, ContentTarget::Snapshot);
+            assert_eq!(block.handling, ExtensionHandling::Required);
+        }
+        let context = exchange.domain_blocks.iter().find(|block| block.schema == source_context_facts_contract()).unwrap();
+        let facts = parse_source_context_block(context, &exchange.artifacts).unwrap();
+        assert_eq!(facts.facts.len(), 1);
+        let name = &facts.facts[0];
+        assert_eq!(name.id, "manifest-name");
+        assert_eq!(name.kind, SourceContextFactKind::Note);
+        assert_eq!(name.text, "Test");
+        assert!(matches!(&name.origin, SourceContextFactOrigin::Extracted { .. }));
+        let references = name.origin.sources();
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].artifact_id, "manifest");
+        let range = &references[0].range;
+        assert_eq!(range.encoding, TextEncoding::Utf8Byte);
+        assert_eq!(serde_json::from_slice::<String>(&manifest.as_bytes()[range.start as usize..range.end as usize]).unwrap(), name.text);
+        let basis = exchange.domain_blocks.iter().find(|block| block.schema == contract("smapi.manifest-context-basis")).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&basis.payload_utf8).unwrap(), serde_json::json!({"version": 1, "name": "Test"}));
         assert_ne!(exchange.units[1].id, exchange.units[2].id);
         for (index, unit) in exchange.units.iter().enumerate() {
             assert_eq!(unit.occurrences.len(), 1);
@@ -147,7 +168,7 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
         let fixed = requirement("smapi.source-semantics", &source_binding.checker, &serde_json::to_value(&input).unwrap().to_string(), &extracted.utf8, &input.source_set_id);
         let original_check = SourceExtractionCheckInput { source: input.clone(), proposal: exchange.clone(), requirements: vec![fixed.clone()] };
         let mut checker = launch(&image, "source-semantic-check", temporary.path()).await;
-        assert_ne!(checker.channel().provider.instance_id, extraction_channel.provider.instance_id);
+        assert_ne!(checker.channel().instance.instance_id, extraction_channel.instance.instance_id);
         for (dispatch, forged) in [("source-check-good", false), ("source-check-forged", true)] {
             let mut check = original_check.clone(); if forged { check.proposal.units[0].text = "Structurally valid forged text".into(); }
             validate_source_extraction(&check.source, &check.proposal).unwrap();
@@ -189,7 +210,7 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
         let fixed = requirement("smapi.artifact-conformance", &build_binding.checker, &serde_json::to_value(&build).unwrap().to_string(), &built.utf8, "smapi-locale-output");
         let original = ArtifactCheckInput { input: build, output: artifacts, requirements: vec![fixed.clone()] };
         let mut checker = launch(&image, "validate-artifact", temporary.path()).await;
-        assert_ne!(checker.channel().provider.instance_id, extraction_channel.provider.instance_id);
+        assert_ne!(checker.channel().instance.instance_id, extraction_channel.instance.instance_id);
         for (dispatch, replace) in [("artifact-good", None), ("artifact-forged", Some(("你好", "wrong"))), ("artifact-format", Some(("  \"MiXA\"", " \"MiXA\"")))] {
             let mut check = original.clone();
             if let Some((from, to)) = replace { let artifact = &mut check.output.artifacts[0]; artifact.utf8 = artifact.utf8.replacen(from, to, 1); artifact.sha256 = payload_digest(&artifact.utf8); }
@@ -270,7 +291,7 @@ fn official_smapi_translation_proposals_and_independent_checks_use_the_captured_
         let fixed = requirement("smapi.translation-semantics", &binding.checker, &serde_json::to_value(&input).unwrap().to_string(), &extracted.utf8, &input.import_id);
         let original = TranslationExtractionCheckInput { input: input.clone(), proposal: proposal.clone(), requirements: vec![fixed.clone()] };
         let mut checker = launch(&image, "translation-semantic-check", temporary.path()).await;
-        assert_ne!(checker.channel().provider.instance_id, extraction_channel.provider.instance_id);
+        assert_ne!(checker.channel().instance.instance_id, extraction_channel.instance.instance_id);
         for (dispatch, mutation) in [("translation-check-good", 0), ("translation-check-forged", 1), ("translation-check-missing", 2), ("translation-check-order", 3), ("translation-check-native", 4)] {
             let mut request = original.clone();
             match mutation {

@@ -13,16 +13,17 @@ import { PROCESS_PROFILE } from '../dist/generated/protocol.js';
 
 const invocation = JSON.parse(await readFile(new URL('../../../crates/plugin-sdk/tests/fixtures/invocation.request.json', import.meta.url), 'utf8')).body.data;
 const binding = JSON.parse(await readFile(new URL('../../../crates/plugin-sdk/tests/fixtures/service.binding.json', import.meta.url), 'utf8'));
+const instanceOf = ({ contributionId, ...instance }) => instance;
 const activation = {
-  provider: invocation.provider,
+  instance: instanceOf(invocation.provider),
   services: [binding],
-  capability: {
+  capabilities: [{ contributionId: invocation.provider.contributionId, capability: {
     contract: invocation.capability, inputSchema: invocation.input.schema,
     outputSchema: invocation.outputSchema, errorSchema: invocation.errorSchema,
     profiles: [invocation.profile], effect: 'proposal',
     permissions: [{ kind: 'project-service', contract: binding.contract }],
     limits: { concurrency: 1, maxInputBytes: 1048576, maxOutputBytes: 65536, timeoutMs: 1000 },
-  },
+  } }],
 };
 const digest = text => createHash('sha256').update(text, 'utf8').digest('hex');
 const frame = body => ({ protocolVersion: PROCESS_PROFILE.protocolVersion, body });
@@ -65,12 +66,12 @@ async function harness(t, source) {
       await until(() => frames.some(value => value.kind === 'ready'));
     },
     async close() {
-      this.send({ kind: 'close', data: { provider: activation.provider } });
+      this.send({ kind: 'close', data: { instance: activation.instance } });
       assert.deepEqual(await ended, [0, null]);
     },
   };
 }
-const calling = `export default {activate(api) {api.register(async (input,meta) => {
+const calling = `export default {activate(api) {api.register(api.contributions[0].id, async (input,meta) => {
   const result = await meta.services.call(api.services[0].handleId,'{"units":["unit-a"]}','service-call-a');
   return {kind:'succeeded',utf8:JSON.stringify(result)};
 });}};`;
@@ -79,7 +80,7 @@ test('service descriptors precede activation and serial calls preserve context a
   const h = await harness(t, `export default {activate(api) {
     if (!Object.isFrozen(api.services) || !Object.isFrozen(api.services[0])
       || !Object.isFrozen(api.services[0].limits) || api.services[0].effect !== 'proposal') throw new Error('Mutable descriptor');
-    api.register(async (input,meta) => {
+    api.register(api.contributions[0].id, async (input,meta) => {
       if (meta.services.bindings !== api.services || !Object.isFrozen(meta.services)) throw new Error('Wrong bindings');
       const results=[];
       for (let i=0;i<3;i++) {
@@ -114,7 +115,7 @@ test('service descriptors precede activation and serial calls preserve context a
 });
 
 test('service call rejects concurrency, invalid input and duplicate IDs without sending extra work', { timeout: 7000 }, async t => {
-  const h = await harness(t, `export default {activate(api) {api.register(async (input,meta) => {
+  const h = await harness(t, `export default {activate(api) {api.register(api.contributions[0].id, async (input,meta) => {
     const call = meta.services.call(api.services[0].handleId,'{}','one-call');
     const failures=[];
     for (const invoke of [
@@ -145,7 +146,7 @@ test('cancel or close rejects the pending promise and disposes without a late re
     const h = await harness(t, `import {writeFile} from 'node:fs/promises';
       export default {activate(api) {
         api.onDispose(()=>writeFile('cleaned','yes'));
-        api.register(async (input,meta) => {
+        api.register(api.contributions[0].id, async (input,meta) => {
           try {await meta.services.call(api.services[0].handleId,'{}','waiting-call'); throw new Error('Unexpected response')}
           catch (error) {if (!meta.signal.aborted) throw error; await writeFile('rejected','yes')}
           return {kind:'succeeded',utf8:'late'};
@@ -167,7 +168,7 @@ test('cancel or close rejects the pending promise and disposes without a late re
 });
 
 test('unawaited pending service calls fail the channel instead of emitting a proposal or hanging', { timeout: 5000 }, async t => {
-  const h = await harness(t, `export default {activate(api) {api.register((input,meta) => {
+  const h = await harness(t, `export default {activate(api) {api.register(api.contributions[0].id, (input,meta) => {
     meta.services.call(api.services[0].handleId,'{}','unawaited-call');
     return {kind:'succeeded',utf8:'not-safe'};
   });}};`);
@@ -220,7 +221,7 @@ test('unsolicited and cancelled service responses are rejected without invoking 
 
 test('callbacks from an earlier invocation cannot send services during a later invocation', { timeout: 7000 }, async t => {
   const h = await harness(t, `let old;
-    export default {activate(api) {api.register(async (input,meta) => {
+    export default {activate(api) {api.register(api.contributions[0].id, async (input,meta) => {
       if (!old) {old=meta.services.call; return {kind:'succeeded',utf8:'first'}}
       let refused=false;
       try {old(api.services[0].handleId,'{}','old-call')} catch {refused=true}
@@ -243,7 +244,7 @@ test('callbacks from an earlier invocation cannot send services during a later i
 });
 
 test('service call count is bounded across invocations and not reset by successful calls', { timeout: 10000 }, async t => {
-  const h = await harness(t, `let consumed=false; export default {activate(api) {api.register(async (input,meta) => {
+  const h = await harness(t, `let consumed=false; export default {activate(api) {api.register(api.contributions[0].id, async (input,meta) => {
     if (consumed) {
       let refused=false; try {meta.services.call(api.services[0].handleId,'{}','new-invocation-call')} catch {refused=true}
       return {kind:'succeeded',utf8:JSON.stringify({refused})};
@@ -274,7 +275,7 @@ test('service activation rejects duplicate selections and invalid semantic descr
   const root = await mkdtemp(join(tmpdir(), 'tsumugi-service-binding-test-'));
   t.after(() => rm(root, { recursive: true }));
   const entry = join(root, 'component.mjs');
-  await writeFile(entry, 'export default {activate(api){api.register(()=>({kind:"succeeded",utf8:"{}"}));}};');
+  await writeFile(entry, 'export default {activate(api){api.register(api.contributions[0].id, ()=>({kind:"succeeded",utf8:"{}"}));}};');
   for (const corruption of ['handle', 'provider', 'count', 'generation', 'digest', 'concurrency', 'input', 'name']) {
     const selected = structuredClone(activation);
     switch (corruption) {
@@ -322,7 +323,7 @@ test('pending call is installed before transport can synchronously deliver its r
   session.receive(frame({ kind: 'invoke', data: invocation }));
   await until(() => sent.length === 3);
   assert.deepEqual(JSON.parse(sent[2].data.outcome.output.utf8), response(sent[1].data));
-  session.receive(frame({ kind: 'close', data: { provider: activation.provider } }));
+  session.receive(frame({ kind: 'close', data: { instance: activation.instance } }));
   await until(() => finished);
   assert.equal(failed, false);
 });

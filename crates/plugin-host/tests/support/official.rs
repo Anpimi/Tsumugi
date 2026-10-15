@@ -100,7 +100,13 @@ pub fn request_for(
 ) -> InvocationRequest {
     // Actual child identity comes from the Host, independently of request data.
     let channel = session.channel();
-    assert_eq!(channel.provider.selection(), binding.provider);
+    assert_eq!(
+        channel
+            .provider(&binding.provider.contribution_id)
+            .unwrap()
+            .selection(),
+        binding.provider
+    );
     assert!(channel.child_pid > 0);
     assert_eq!(binding.declaration.profiles.len(), 1);
     let input =
@@ -119,7 +125,10 @@ pub fn request_for(
             environment_digest: session.environment_digest().unwrap().into(),
             configuration_digest: payload_digest("captured-configuration"),
         },
-        provider: channel.provider.clone(),
+        provider: channel
+            .provider(&binding.provider.contribution_id)
+            .unwrap()
+            .clone(),
         capability: binding.declaration.contract.clone(),
         profile: Some(
             binding
@@ -145,10 +154,16 @@ pub async fn invoke_received(
     let channel = session.channel();
     let request = request_for(session, binding, dispatch, value);
     let received = session.invoke(&request, || false, || true).await.unwrap();
-    assert_eq!(received.channel().provider, channel.provider);
+    assert_eq!(
+        received.channel().provider,
+        channel.provider(&binding.provider.contribution_id).unwrap()
+    );
     assert_eq!(received.channel().child_pid, channel.child_pid);
     assert_eq!(received.channel().scope, channel.scope);
-    assert_eq!(received.result().provider, channel.provider);
+    assert_eq!(
+        received.result().provider,
+        channel.provider(&binding.provider.contribution_id).unwrap()
+    );
     assert_eq!(received.result().context, request.context);
     received
 }

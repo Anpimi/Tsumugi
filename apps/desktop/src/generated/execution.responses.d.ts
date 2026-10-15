@@ -491,11 +491,38 @@ export interface TaskView {
   taskId: ExecutionId;
 }
 export interface PluginToolPreflight {
+  applicationCapabilities: ProcessCapability[];
   applicationScope: ApplicationScopeBasis | null;
   attemptId: ExecutionId;
   inputDigest: string;
   items: PluginToolItem[];
   tool: PluginToolView;
+}
+/**
+ * One callable declaration in the Host-captured component roster.
+ */
+export interface ProcessCapability {
+  capability: CapabilityDeclaration;
+  contributionId: string;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
 }
 export interface PluginToolItem {
   itemId: ExecutionId;
@@ -528,25 +555,6 @@ export interface CapabilityToolBinding {
 export interface CapabilityBinding {
   declaration: CapabilityDeclaration;
   provider: ProviderSelectionBinding;
-}
-export interface CapabilityDeclaration {
-  contract: ContractRef;
-  effect: EffectKind;
-  errorSchema: ContractRef;
-  inputSchema: ContractRef;
-  limits: CapabilityLimits;
-  outputSchema: ContractRef;
-  permissions: PermissionRequest[];
-  profiles: ContractRef[];
-}
-/**
- * Requested upper bounds. The host must also enforce its own current limits.
- */
-export interface CapabilityLimits {
-  concurrency: number;
-  maxInputBytes: number;
-  maxOutputBytes: number;
-  timeoutMs: number;
 }
 /**
  * A fixed package/contribution choice, independent of any active instance.

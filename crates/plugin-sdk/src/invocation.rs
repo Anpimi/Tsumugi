@@ -24,6 +24,18 @@ pub struct ProviderBinding {
     pub activation_generation: u32,
 }
 impl ProviderBinding {
+    /// The actual component principal, without selecting a contribution.
+    /// This projection neither authenticates the channel nor grants authority.
+    pub fn instance(&self) -> ComponentInstanceBinding {
+        ComponentInstanceBinding {
+            plugin: self.plugin.clone(),
+            component_id: self.component_id.clone(),
+            package_digest: self.package_digest.clone(),
+            instance_id: self.instance_id.clone(),
+            activation_generation: self.activation_generation,
+        }
+    }
+
     /// The fixed package/contribution choice, without a runtime instance or
     /// activation generation. Equality of this projection proves no authority.
     pub fn selection(&self) -> ProviderSelectionBinding {

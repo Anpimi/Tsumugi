@@ -9,7 +9,7 @@
     },
     "protocolVersion": {
       "type": "integer",
-      "const": 2
+      "const": 3
     }
   },
   "additionalProperties": false,
@@ -95,6 +95,37 @@
         "maxOutputBytes",
         "concurrency",
         "timeoutMs"
+      ]
+    },
+    "ComponentInstanceBinding": {
+      "description": "One actual component instance, independent of a selected contribution.\nThis is a claimed wire principal, not a grant or proof of package provenance.",
+      "type": "object",
+      "properties": {
+        "activationGeneration": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "componentId": {
+          "type": "string"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "packageDigest": {
+          "type": "string"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "componentId",
+        "packageDigest",
+        "instanceId",
+        "activationGeneration"
       ]
     },
     "ContractRef": {
@@ -445,14 +476,19 @@
       ]
     },
     "ProcessActivation": {
-      "description": "A captured declaration for one capability on one actual component channel.\nEchoing this structure is a handshake claim, never a grant or source proof.",
+      "description": "A frozen declaration roster for one actual component channel. A Ready\nreceiver must compare the complete value to its original Activate. Echoing\nit is a handshake claim, never a grant or source proof.",
       "type": "object",
       "properties": {
-        "capability": {
-          "$ref": "#/$defs/CapabilityDeclaration"
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProcessCapability"
+          },
+          "maxItems": 128,
+          "minItems": 1
         },
-        "provider": {
-          "$ref": "#/$defs/ProviderBinding"
+        "instance": {
+          "$ref": "#/$defs/ComponentInstanceBinding"
         },
         "services": {
           "description": "Host-selected project services, resolved before component activation.",
@@ -464,8 +500,8 @@
       },
       "additionalProperties": false,
       "required": [
-        "provider",
-        "capability",
+        "instance",
+        "capabilities",
         "services"
       ]
     },
@@ -631,13 +667,13 @@
             "data": {
               "type": "object",
               "properties": {
-                "provider": {
-                  "$ref": "#/$defs/ProviderBinding"
+                "instance": {
+                  "$ref": "#/$defs/ComponentInstanceBinding"
                 }
               },
               "additionalProperties": false,
               "required": [
-                "provider"
+                "instance"
               ]
             },
             "kind": {
@@ -657,13 +693,13 @@
             "data": {
               "type": "object",
               "properties": {
-                "provider": {
-                  "$ref": "#/$defs/ProviderBinding"
+                "instance": {
+                  "$ref": "#/$defs/ComponentInstanceBinding"
                 }
               },
               "additionalProperties": false,
               "required": [
-                "provider"
+                "instance"
               ]
             },
             "kind": {
@@ -729,6 +765,23 @@
             "data"
           ]
         }
+      ]
+    },
+    "ProcessCapability": {
+      "description": "One callable declaration in the Host-captured component roster.",
+      "type": "object",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/CapabilityDeclaration"
+        },
+        "contributionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contributionId",
+        "capability"
       ]
     },
     "ProviderBinding": {

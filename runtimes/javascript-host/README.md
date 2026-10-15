@@ -4,9 +4,12 @@ This private workspace is the Node side of the [Rust process Host](../../crates/
 It uses pinned `cordis@4.0.0-rc.10` for component registration and owned cleanup.
 Plugins see only the [SDK component facade](../../crates/plugin-sdk/javascript/component.d.ts),
 not a Cordis Context, Loader, service registry, credential or project database.
-It implements one project-scoped, serial capability per process. A trusted Rust
-parent may supply exact project-service bindings through its explicit broker.
-Missing required dependencies and unsupported scopes are refused before launch.
+It implements a frozen, bounded callable roster on one serial component process.
+Project and Attempt channels activate only their selected capability; the initial
+Application profile supports multiple read-only capabilities without required
+dependencies or project services. A trusted Rust parent may supply exact project
+services on the supported singleton channels through its explicit broker.
+Unsupported scopes and dependencies are refused before launch.
 Desktop builds can opt into the fixed runtime bundle described below; application
 AI service integration remains separate from this transport.
 
@@ -16,24 +19,33 @@ A captured `.mjs` entrypoint exports a component:
 export default {
   activate(api) {
     api.onDispose(async () => { /* release resources owned by this component */ });
-    api.register(async (input, { signal }) => {
-      signal.throwIfAborted();
-      return { kind: 'succeeded', utf8: input.utf8 };
-    });
+    for (const contribution of api.contributions) {
+      api.register(contribution.id, async (input, { signal }) => {
+        signal.throwIfAborted();
+        return { kind: 'succeeded', utf8: input.utf8 };
+      });
+    }
   },
 };
 ```
 
-Register exactly once during activation. Register cleanup during activation too;
-late registrations are rejected. The scope signal aborts on close, and each
-invocation receives its own cancellation signal. Input/context/contribution data
-is cloned and frozen. Results provide only `kind` (`succeeded`, `failed`, `unknown`)
+Register every declared contribution ID exactly once during activation. Ready
+echoes the complete captured activation only after asynchronous setup completes.
+Missing, extra, duplicate and late registrations fail; catching a setup error
+does not permit a partial Ready. A failed setup disposes its entire owned fiber.
+Register cleanup during activation too. The scope signal aborts on close, and
+each invocation receives its own cancellation signal. Input, context,
+`api.instance` and `api.contributions` are cloned and deeply frozen. The facade
+has no singleton `contribution` property or `register(handler)` fallback.
+Results provide only `kind` (`succeeded`, `failed`, `unknown`)
 and exact `utf8`; the Host supplies captured schema, provider, context and digest.
 Exceptions terminate the channel, not a fabricated domain error payload. Domain
 schemas still require their own semantic validators in Core.
 
 Invocation metadata also exposes the frozen actual `provider` from the
-Host-validated activation/request channel. Components can compare a payload's
+Host-validated instance and selected roster member. Each invocation is checked
+against that member's provider, schemas, profile and byte limits before selecting
+its handler. Components can compare a payload's
 claimed provider selection to it without receiving grants or transport handles.
 Payload fields cannot replace this identity, and result reception still checks
 the actual channel independently. Build and capture the current Host when using
@@ -52,8 +64,11 @@ unawaited service call. The Rust parent owns permissions, current selection,
 actual channel identity and the original deadline. Services expose no credentials,
 Cordis Context or project database.
 
-Process protocol 2 requires the current generated bindings and captured Host.
-Earlier protocol-1 runtime trees are refused; no fallback is provided.
+Process protocol 3 requires the current generated bindings and captured Host.
+Activate/Ready carry the exact nonempty roster (at most 128 unique members);
+Invoke/Result retain the selected member's full ProviderBinding. Close/Closed
+identify the whole component instance, including its activation generation.
+Earlier process protocols and singleton facade versions are refused.
 
 Close stops new handlers, aborts active work and waits for activation, handlers and
 owned asynchronous cleanup. A cleanup failure cannot produce `closed`. Late output
@@ -238,7 +253,7 @@ aliases, duplicate/extra/missing files, changed inputs and inspection failures
 leave no new final resource directory. Later failures retain only this attempt's
 staging for review. No fallback selects an older package or another source.
 
-The catalog selects independent Process-2 WebVTT and SMAPI packages with their
+The catalog selects independent Process-3 WebVTT and SMAPI packages with their
 source, mandatory review/build resources, SDK helpers and licenses. SMAPI also
 includes its translation-import resources and parser runtime. Their archive
 transport hashes and Host package digests are different identities. The catalog

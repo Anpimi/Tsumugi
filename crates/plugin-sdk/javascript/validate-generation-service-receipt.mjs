@@ -22,16 +22,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 "use strict";
-export const validate = validate276;
-export default validate276;
-const schema297 = {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"GenerationServiceReceipt","description":"The original ledger accepted these identities. A repeated call may already\nbe terminal; this acknowledgement does not claim queue or model completion.\nIt carries no grant, lease, credential or authorization renewal handle.","type":"object","properties":{"attemptId":{"type":"string","pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$"},"inputDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"},"taskId":{"type":"string","pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$"}},"additionalProperties":false,"required":["taskId","attemptId","inputDigest"]};
+export const validate = validate279;
+export default validate279;
+const schema300 = {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"GenerationServiceReceipt","description":"The original ledger accepted these identities. A repeated call may already\nbe terminal; this acknowledgement does not claim queue or model completion.\nIt carries no grant, lease, credential or authorization renewal handle.","type":"object","properties":{"attemptId":{"type":"string","pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$"},"inputDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"},"taskId":{"type":"string","pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$"}},"additionalProperties":false,"required":["taskId","attemptId","inputDigest"]};
 const pattern4 = new RegExp("^[A-Za-z0-9.\\-_:/]{1,128}$", "u");
 const pattern8 = new RegExp("^[a-f0-9]{64}$", "u");
 
-function validate276(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate279(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate276.evaluated;
+const evaluated0 = validate279.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -42,14 +42,14 @@ if(errors === 0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if((((data.taskId === undefined) && (missing0 = "taskId")) || ((data.attemptId === undefined) && (missing0 = "attemptId"))) || ((data.inputDigest === undefined) && (missing0 = "inputDigest"))){
-validate276.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate279.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs1 = errors;
 for(const key0 in data){
 if(!(((key0 === "attemptId") || (key0 === "inputDigest")) || (key0 === "taskId"))){
-validate276.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate279.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -61,12 +61,12 @@ const _errs2 = errors;
 if(errors === _errs2){
 if(typeof data0 === "string"){
 if(!pattern4.test(data0)){
-validate276.errors = [{instancePath:instancePath+"/attemptId",schemaPath:"#/properties/attemptId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9.\\-_:/]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9.\\-_:/]{1,128}$"+"\""}];
+validate279.errors = [{instancePath:instancePath+"/attemptId",schemaPath:"#/properties/attemptId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9.\\-_:/]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9.\\-_:/]{1,128}$"+"\""}];
 return false;
 }
 }
 else {
-validate276.errors = [{instancePath:instancePath+"/attemptId",schemaPath:"#/properties/attemptId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate279.errors = [{instancePath:instancePath+"/attemptId",schemaPath:"#/properties/attemptId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -82,12 +82,12 @@ const _errs4 = errors;
 if(errors === _errs4){
 if(typeof data1 === "string"){
 if(!pattern8.test(data1)){
-validate276.errors = [{instancePath:instancePath+"/inputDigest",schemaPath:"#/properties/inputDigest/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
+validate279.errors = [{instancePath:instancePath+"/inputDigest",schemaPath:"#/properties/inputDigest/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
 return false;
 }
 }
 else {
-validate276.errors = [{instancePath:instancePath+"/inputDigest",schemaPath:"#/properties/inputDigest/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate279.errors = [{instancePath:instancePath+"/inputDigest",schemaPath:"#/properties/inputDigest/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -103,12 +103,12 @@ const _errs6 = errors;
 if(errors === _errs6){
 if(typeof data2 === "string"){
 if(!pattern4.test(data2)){
-validate276.errors = [{instancePath:instancePath+"/taskId",schemaPath:"#/properties/taskId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9.\\-_:/]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9.\\-_:/]{1,128}$"+"\""}];
+validate279.errors = [{instancePath:instancePath+"/taskId",schemaPath:"#/properties/taskId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9.\\-_:/]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9.\\-_:/]{1,128}$"+"\""}];
 return false;
 }
 }
 else {
-validate276.errors = [{instancePath:instancePath+"/taskId",schemaPath:"#/properties/taskId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate279.errors = [{instancePath:instancePath+"/taskId",schemaPath:"#/properties/taskId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -123,11 +123,11 @@ var valid0 = true;
 }
 }
 else {
-validate276.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate279.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate276.errors = vErrors;
+validate279.errors = vErrors;
 return errors === 0;
 }
-validate276.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate279.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};

@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Shared JavaScript Application reference tools activate an exact component
+  capability set and register every handler before becoming callable. Each query
+  still requires its own captured binding and project consent; stopping any
+  member stops the whole instance. Process protocol 3 binds the component
+  handshake and shutdown separately from each invocation. Old development
+  projects and protocol materials are preserved and refused without conversion.
+
 - Correct individual source facts for an exact entry and target language, reject
   inferences, and explicitly restore their originals. Decisions preserve original
   observations and history, use checked actions, and retain newer resource and
@@ -30,7 +37,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   saves only through the existing explicit context revision flow. Extracted
   facts and AI inferences are unchanged.
 
-- Current development projects use current-only schema 42 and internal immutable
+- Current development projects use current-only schema 43 and internal immutable
   WorkPlan format 3. Captured component scope, application instance, original
   grant consent, project-context capture and maintenance fields have no implicit defaults. Other
   development project formats are refused before

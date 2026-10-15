@@ -7,7 +7,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
-use std::thread::JoinHandle;
+use std::{collections::BTreeMap, thread::JoinHandle};
 use tsumugi_core::execution::{ApplicationExecutionLease, ApplicationScopeBasis, ExecutionId};
 
 struct Call {
@@ -23,8 +23,8 @@ struct Control {
 }
 pub struct ApplicationInstance {
     basis: ApplicationScopeBasis,
-    proxy: RunnerProxy,
-    profile: Option<sdk::ContractRef>,
+    proxies: BTreeMap<String, RunnerProxy>,
+    bindings: Vec<PluginExecutionBinding>,
     revocation: Cancellation,
     finished: Arc<AtomicBool>,
     cleanup_confirmed: Arc<AtomicBool>,
@@ -56,18 +56,43 @@ impl ApplicationInstance {
             instance_id: ExecutionId::new(),
             activation_generation: 1,
         };
-        let proxy = RunnerProxy::new_inner(
-            image,
-            tool.capability.provider.contribution_id.clone(),
-            runtime,
-            staging_parent,
-            limits,
-            Some(basis.clone()),
-        )?;
+        super::validate_application_selection(&image, &tool.capability, &runtime)?;
+        let roster =
+            crate::session::application_roster(&image, &tool.capability.provider.component_id)
+                .map_err(|_| denied())?;
+        let mut proxies = BTreeMap::new();
+        let mut bindings = Vec::new();
+        let mut bytes = 2usize;
+        for member in roster {
+            let proxy = RunnerProxy::new_inner(
+                image.clone(),
+                member.contribution_id.clone(),
+                runtime.clone(),
+                staging_parent.clone(),
+                limits.clone(),
+                Some(basis.clone()),
+            )?;
+            let profiles = if member.capability.profiles.is_empty() {
+                vec![None]
+            } else {
+                member.capability.profiles.into_iter().map(Some).collect()
+            };
+            for profile in profiles {
+                let binding = proxy.execution_binding(profile)?;
+                bytes = bytes
+                    .checked_add(serde_json::to_vec(&binding).map_err(|_| denied())?.len() + 1)
+                    .filter(|bytes| *bytes <= tsumugi_core::execution::MAX_INPUT_BYTES)
+                    .ok_or_else(|| {
+                        ExecutionError::new(ErrorCode::LimitExceeded, "application-instance-roster")
+                    })?;
+                bindings.push(binding);
+            }
+            proxies.insert(member.contribution_id, proxy);
+        }
         Ok(Arc::new(Self {
             basis,
-            proxy,
-            profile: tool.declaration.profile,
+            proxies,
+            bindings,
             revocation: Cancellation::default(),
             finished: Arc::new(AtomicBool::new(false)),
             cleanup_confirmed: Arc::new(AtomicBool::new(false)),
@@ -92,13 +117,37 @@ impl ApplicationInstance {
                 .lock()
                 .is_ok_and(|control| control.lease.as_ref().is_some_and(|lease| lease.is_live()))
     }
-    pub fn binding(&self) -> Result<PluginExecutionBinding, ExecutionError> {
-        self.proxy.execution_binding(self.profile.clone())
+    pub fn binding(
+        &self,
+        contribution: &str,
+        profile: Option<sdk::ContractRef>,
+    ) -> Result<PluginExecutionBinding, ExecutionError> {
+        let binding = self
+            .proxies
+            .get(contribution)
+            .ok_or_else(denied)?
+            .execution_binding(profile)?;
+        if !self.bindings.contains(&binding) {
+            return Err(denied());
+        }
+        Ok(binding)
     }
-    pub fn runner(self: &Arc<Self>) -> Arc<RunnerProxy> {
-        let mut proxy = self.proxy.clone();
+    pub fn capabilities(&self) -> Vec<sdk::ProcessCapability> {
+        self.proxies
+            .iter()
+            .map(|(id, proxy)| sdk::ProcessCapability {
+                contribution_id: id.clone(),
+                capability: proxy.capability.declaration.clone(),
+            })
+            .collect()
+    }
+    pub fn runner(
+        self: &Arc<Self>,
+        contribution: &str,
+    ) -> Result<Arc<RunnerProxy>, ExecutionError> {
+        let mut proxy = self.proxies.get(contribution).ok_or_else(denied)?.clone();
         proxy.application = Some(self.clone());
-        Arc::new(proxy)
+        Ok(Arc::new(proxy))
     }
     /// The application entry owns this independent consent and the original
     /// settings signal. Neither package metadata nor a project grant calls it.
@@ -119,13 +168,13 @@ impl ApplicationInstance {
             return Err(denied());
         }
         let lease = ApplicationExecutionLease::capture(
-            self.binding()?,
+            self.bindings.clone(),
             true,
             self.revocation.clone(),
             settings_revocation.clone(),
         )?;
         let (sender, mut receiver) = tokio::sync::mpsc::channel::<Call>(8);
-        let proxy = self.proxy.clone();
+        let proxies = self.proxies.clone();
         let basis = self.basis.clone();
         let revoked = self.revocation.clone();
         let finished = self.finished.clone();
@@ -141,6 +190,14 @@ impl ApplicationInstance {
                             call = receiver.recv() => match call { Some(call) => call, None => break },
                             _ = tokio::time::sleep(Duration::from_millis(5)) => continue,
                         };
+                        let proxy = match call.request.input.envelope().plugin.as_ref()
+                            .and_then(|binding| proxies.get(&binding.capability.provider.contribution_id)) {
+                            Some(proxy) => proxy,
+                            None => { let _ = call.reply.send(Err(denied())); continue; }
+                        };
+                        if let Err(error) = proxy.check_request(&call.request) {
+                            let _ = call.reply.send(Err(error)); continue;
+                        }
                         let permit = match call.request.plugin_permit().cloned() {
                             Some(permit) => permit,
                             None => { let _ = call.reply.send(Err(denied())); continue; }
@@ -199,7 +256,14 @@ impl ApplicationInstance {
         request: DispatchRequest,
         cancellation: Cancellation,
     ) -> Result<FixedResult, ExecutionError> {
-        if self.is_stopped() || request.input.envelope().plugin.as_ref() != Some(&self.binding()?) {
+        if self.is_stopped()
+            || !request
+                .input
+                .envelope()
+                .plugin
+                .as_ref()
+                .is_some_and(|binding| self.bindings.contains(binding))
+        {
             return Err(denied());
         }
         let (reply, result) = mpsc::sync_channel(1);

@@ -7,11 +7,11 @@ It has no domain runner or model dependency. Desktop source/build commands use
 exact approved installed packages and runtimes; default domain-package distribution
 and the complete extension lifecycle remain under development.
 
-The implemented profile is one serialized capability on a project- or
-attempt-scoped native worker or JavaScript component. The limited Application
-profile supports one JavaScript read-only Tool callable with no required
-dependencies or ProjectService access, under a separate explicit lifetime lease.
-Native Application and all broader Application compositions remain unsupported. The Unix launcher creates an owned process group;
+Project- and attempt-scoped native workers or JavaScript components retain one
+serialized capability per channel. The Application profile supports a frozen
+roster of JavaScript read-only Tool callables with no required dependencies or
+ProjectService access, under a separate explicit lifetime lease. Native
+Application and broader Application compositions remain unsupported. The Unix launcher creates an owned process group;
 this profile is tested on macOS. Windows is refused until an owned Job Object implementation is verified.
 The JavaScript launcher requires a `CapturedRuntime` containing the independently
 approved Node tool and complete [built component Host](../../runtimes/javascript-host/README.md) trees. That Host
@@ -22,8 +22,9 @@ Trusted runtime acquisition and desktop distribution remain separate work.
 
 ## Application Tool lifetime
 
-With `core-adapter`, `ApplicationInstance::reserve` captures one immutable Tool
-selection and allocates a fresh instance UUID/activation generation. It starts
+With `core-adapter`, `ApplicationInstance::reserve` captures the selected Tool's
+entire immutable component roster and declared profiles, then allocates a fresh
+instance UUID/activation generation. It starts
 no component instructions. The trusted application owner separately authorizes
 its lifetime with the user's explicit consent and original settings-revocation
 signal; ordinary `RunnerProxy::new` and Core `authorize_plugin` refuse this
@@ -31,16 +32,29 @@ scope. Each real dispatch still carries a separate project permit, cancellation,
 fixed input and original deadline. No project connection or service broker is
 retained by the idle Host owner.
 
-A bounded IO owner serializes calls to the same actual process across projects.
-`ChannelReceipt.scope` describes its lifetime basis; `ReceivedResult` separately
-records each request's project/scope principal. Core fixes the basis in its
+A bounded IO owner serializes calls to the same actual process across projects
+and component members. Its queue and cumulative budgets belong to the whole
+instance. `ProcessSession::channel()` returns a `ComponentChannelReceipt` with
+the frozen roster and no preferred member; `ChannelReceipt` on each
+`ReceivedResult` identifies the exact invoked contribution. The receipt's scope
+describes its lifetime basis, while `ReceivedResult` separately records each
+request's project/scope principal. Core fixes the basis in its
 required nullable binding before consent and checks the actual channel identity
 on receipt and reopening. The process can retain its own state and previously
 supplied inputs in memory; this unsandboxed profile makes no in-process project
 memory-isolation claim. Unauthorized new input is refused before invocation.
 
-Only JavaScript, one callable contribution, read-only effects, no required
-dependencies and no ProjectService permission are supported. Resources/Skills
+The trusted lease retains exact member/profile bindings within Core's original
+input byte ceiling. Every call still requires that member's own original grant,
+schemas, profile, input, cancellation and deadline. Process protocol 3 activates
+the full nonempty unique roster (at most 128 callables); only a matching complete
+Ready acknowledgement admits calls. Close/Closed identify the whole component.
+Project/Attempt and native workers keep a singleton roster; older process
+protocols are rejected without a fallback.
+
+Only JavaScript, read-only effects, no required dependencies and no
+ProjectService permission are supported. Every callable must meet these rules,
+including members other than the currently selected Tool. Resources/Skills
 remain inert data. Application generation/domain/Agent and Native workers stay
 refused. Stop, settings withdrawal, cancellation, failure or cumulative budget
 exhaustion retires the original activation. It is never silently replaced.
@@ -112,8 +126,8 @@ Wrong-direction, duplicate, stale or mismatched traffic terminates the owned
 process. Service output remains opaque and unadopted. This public transport does
 not add an AI runner, credential store, project mutation boundary or Core grant.
 
-The SDK-owned process protocol is now 2. Rebuild and capture the current Host and
-regenerate consumers; earlier process-1 runtime descriptors are refused. Other
+The SDK-owned process protocol is now 3. Rebuild and capture the current Host and
+regenerate consumers; earlier process-1/2 runtime descriptors are refused. Other
 protocol, project and installation format identities remain separately owned.
 
 ## Captured package and actual channel
