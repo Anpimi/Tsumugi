@@ -327,6 +327,16 @@ The experimental `read_plugin_source` command accepts an exact package identity/
 
 The Tasks view exposes persisted execution progress, saved outputs, cancellation, eligible recovery, and explicit result adoption. Normal builds have no synthetic task creation menu. Developers can use the isolated [execution test host](docs/execution-test-host.md) to exercise these paths without a translation provider.
 
+The collapsible **Background tasks** dock is available throughout an open
+project. Its totals include every task, while the list shows at most twelve
+tasks with active or queued work first. Each item's latest state is retained
+across partial continuations, including still-running or uncertain earlier work.
+Output saved, checks passed,
+applied changes and exported files remain distinct facts. Open a row to inspect
+the exact task and attempt through the normal draft-preserving navigation;
+reading or refreshing the dock starts no work. Status read failures can be
+retried locally without discarding current input.
+
 Experimental [read-only tool query commands](docs/plugin-tools.md) prepare fixed single or batch inputs for an enabled installed capability, require exact current runtime/settings and per-attempt consent, and retain unadopted results in the same execution ledger. Product query interfaces and Agent orchestration remain under development.
 
 The Source content view selects an enabled installed source package and an independently approved installed runtime. Declare the source language, capture the package-declared files, separately permit extraction and semantic checking, then review the saved strings and explicitly apply the complete checked snapshot. Existing projects can compare and adopt a new complete source snapshot while retaining earlier content and releases. Original files remain unchanged. See [supported inputs and recovery](docs/source-import.md). The Translations view imports a flat `i18n/<language>.json`, previews matches against the current source, creates candidates or checked selections, and saves immutable manual revisions. See [translation import and editing](docs/translation-import.md). Glossary and context lets you edit adopted terms, review a local glossary file one entry at a time, capture context, inspect translation suggestions, and locate potentially affected translations. See [glossary and context](docs/resources.md). Review and QA records human decisions, runs current checks, shows work by language, and assesses build readiness under the balanced policy; see [review and QA](docs/review-qa.md). Build and export turns approved translations into verified local SMAPI language files; see [local build and export](docs/build-release.md). Packaging or installing complete Mods is not implemented.

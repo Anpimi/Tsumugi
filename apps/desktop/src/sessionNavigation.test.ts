@@ -20,6 +20,15 @@ function setup() {
 }
 
 describe("project session navigation", () => {
+  it("routes a task dock entry through the same current-work guard", async () => {
+    const test = setup(); test.setArea("translation");
+    test.presentation.allowNavigate.mockResolvedValueOnce(false);
+    const destination = { kind: "task" as const, taskId: "task", attemptId: "attempt" };
+    expect(await test.navigation.navigate(destination)).toBe(false);
+    expect(test.area()).toBe("translation"); expect(test.ports.accept).not.toHaveBeenCalled();
+    expect(await test.navigation.navigate(destination)).toBe(true);
+    expect(test.area()).toBe("tasks"); expect(test.ports.accept).toHaveBeenCalledWith(destination, expect.any(Function));
+  });
   it("finds a hidden dirty owner and rechecks business state after its dialog", async () => {
     const test = setup();
     test.setStates([{ area: "resources", status: "dirty", revision: "input-A" }]);

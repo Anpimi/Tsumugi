@@ -37,7 +37,10 @@ pub use application::{
 pub use arena::{
     ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
 };
-pub use ledger::{AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskView};
+pub use ledger::{
+    AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskActivity, TaskActivityPhase,
+    TaskActivityRow, TaskView,
+};
 #[cfg(any(test, feature = "execution-test-host"))]
 pub use release::BuildLocaleChoice;
 pub use release::{

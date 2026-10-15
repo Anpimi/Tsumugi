@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+The background task dock reads a compact current-item projection through an
+additive, Rust-generated Desktop IPC contract. It grants no execution or
+adoption authority and changes no persisted field, schema 36, SDK/process,
+dependency or version source. All-project counts and bounded prioritized rows
+come from one SQLite statement. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain in the same undistributed batch without an additional
+bump; both Unreleased changelogs are synchronized.
+
 Source recovery clears obsolete preparation failures when returning to current
 content or explicitly discarding preparation. Unrelated input and saved history
 remain intact; a failed cancellation reports its own failure. Comparison labels

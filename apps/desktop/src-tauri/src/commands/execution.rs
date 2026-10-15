@@ -34,7 +34,7 @@ macro_rules! handlers {
         super::plugins::reviews::text::read_plugin_text_review, super::plugins::reviews::text::read_plugin_text_reviews,
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
         super::plugins::runtimes::set_plugin_native_host_approval,
-        list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
+        list_execution_tasks,read_execution_task_activity,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
@@ -703,6 +703,13 @@ request!(
 );
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TaskActivityRequest {
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     TaskRequest {
         task_id: ExecutionId,
         after: Revision,
@@ -964,6 +971,32 @@ pub async fn list_execution_tasks(
                     .store
                     .execution_tasks(request.after, request.limit)
                     .map_err(map_read)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_execution_task_activity(
+    state: State<'_, AppState>,
+    request: TaskActivityRequest,
+) -> Result<tsumugi_core::TaskActivity, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_execution_task_activity",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                match active.execution.as_ref() {
+                    Some(host) => host.runtime.task_activity(&active.store, request.limit),
+                    None => active.store.execution_task_activity(request.limit, &[]),
+                }
+                .map_err(map_read)
             },
         )
         .await

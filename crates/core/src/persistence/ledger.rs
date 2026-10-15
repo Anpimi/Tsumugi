@@ -2,7 +2,9 @@ use super::ProjectStore;
 use crate::execution::{codec, *};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+mod activity;
 mod input_storage;
+pub use activity::{TaskActivity, TaskActivityPhase, TaskActivityRow};
 pub(crate) mod provider;
 pub use provider::ProviderBudget;
 

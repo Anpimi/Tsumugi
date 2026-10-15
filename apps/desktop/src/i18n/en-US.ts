@@ -1559,6 +1559,15 @@ ai: {
   }
 },
     execution: {
+      dock: {
+        title: "Background tasks", unavailable: "Status unavailable", empty: "No tasks yet",
+        counts: "{{active}} active or queued · {{attention}} need review · {{saved}} have saved outputs",
+        active: "Active or queued", attention: "Needs review", saved: "Outputs saved",
+        scope: "Showing {{shown}} of {{total}} tasks, with active work first. Open Tasks for the full history.",
+        progress: "{{running}} running · {{queued}} queued · {{saved}} of {{total}} outputs saved · {{applied}} applied · {{failed}} failed · {{unknown}} uncertain · {{cancelled}} cancelled",
+        meaning: "Saved output does not confirm its checks, application to the project or export. Open the task to inspect its next steps.",
+        readFailed: "Background status could not be read. Your current work is kept; refresh this status or open Tasks.",
+      },
     "savedBuildBlocked": "Build and export has an unfinished draft, preparation or action. Your current work has been kept; finish it or explicitly discard it before viewing another saved build.",
         "updatesUnavailable": "Live updates are unavailable. Your work is preserved. Refresh to check the project again.",
       "operation": "Project operation",

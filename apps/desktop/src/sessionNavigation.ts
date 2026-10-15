@@ -4,6 +4,8 @@ import type { ContentSelection } from "./contentSelection";
 
 export type WorkspaceDestination =
   | { kind: "area"; area: WorkspaceArea }
+  | { kind: "task"; taskId: string; attemptId: string }
+  | { kind: "task-list" }
   | { kind: "translation"; target: EditorTarget; locale: string; suggestedText?: string }
   | { kind: "review-work" }
   | { kind: "ai-selection"; selection: ContentSelection; expectedEditSeq: number }
@@ -30,7 +32,7 @@ export interface SessionNavigationPorts {
 export function destinationArea(destination: WorkspaceDestination): WorkspaceArea {
   return destination.kind === "area" || destination.kind === "attempt" ? destination.area
     : destination.kind === "translation" ? "translation" : destination.kind === "ai-selection" ? "ai" : destination.kind === "saved-build" ? "release"
-      : destination.kind === "tool-query" ? "resources" : "review";
+      : destination.kind === "tool-query" ? "resources" : destination.kind === "task" || destination.kind === "task-list" ? "tasks" : "review";
 }
 
 /** One in-flight UI intent. Business state and write reservations stay in the original owners. */

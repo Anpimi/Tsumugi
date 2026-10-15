@@ -1,5 +1,6 @@
 use super::*;
 mod input_chunks;
+mod activity;
 use crate::{
     PersistenceErrorCode, ProjectMetadata,
     content::{SourceAdoptionHandler, SourceBundle, SourceRunner},
