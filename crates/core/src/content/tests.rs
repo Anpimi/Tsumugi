@@ -1950,6 +1950,135 @@ pub(crate) fn adopt_shared_source_fixture(store: &mut ProjectStore) {
 }
 
 #[test]
+fn maintenance_window_keeps_occurrence_display_and_canonical_plan_identity_separate() {
+    use crate::application::{
+        MaintenanceAction, MaintenanceChoice, MaintenancePlanBasis, PlanOptions,
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = create(&temp.path().join("project"));
+    adopt_shared_source_fixture(&mut store);
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let content = store.source_content(snapshot, 0, 3).unwrap();
+    let unit = content.rows[0].unit_id.unwrap();
+    assert_eq!(content.rows[1].unit_id, Some(unit));
+    assert_eq!(content.rows[0].occurrence.key, "Original A");
+    assert_eq!(content.rows[1].occurrence.key, "Original B");
+
+    let assessment = store
+        .maintenance_assessment(project, snapshot, "zh-CN", 1, 1)
+        .unwrap();
+    assert_eq!(assessment.rows.len(), 1);
+    assert_eq!(assessment.rows[0].unit_id, unit);
+    assert_eq!(assessment.rows[0].native_key, "Original B");
+    let basis = MaintenancePlanBasis {
+        assessment,
+        choices: vec![MaintenanceChoice {
+            unit_id: unit,
+            action: MaintenanceAction::Repair,
+            excluded: false,
+        }],
+    };
+    let config = crate::ai::AiConfig {
+        endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+        model: "synthetic-model".into(),
+        credential_env: String::new(),
+        ..crate::ai::AiConfig::default()
+    };
+    let ordinary = store
+        .prepare_work_plan(
+            Some(config.clone()),
+            "zh-CN",
+            &[unit],
+            PlanOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(ordinary.selection_basis[0].native_key, "Original A");
+    let plan = store
+        .prepare_maintenance_work_plan(
+            Some(config.clone()),
+            "zh-CN",
+            &[unit],
+            PlanOptions::default(),
+            None,
+            basis.clone(),
+        )
+        .unwrap();
+    assert_eq!(plan.selection_basis, ordinary.selection_basis);
+    assert_eq!(plan.maintenance.as_ref(), Some(&basis));
+    let input = plan.fixed_input().unwrap();
+    assert_eq!(
+        crate::ai::item_payload(&input, input.envelope().items[0].item_id)
+            .unwrap()
+            .native_key,
+        "Original A"
+    );
+    store.verify_work_plan(&plan).unwrap();
+
+    let mut manual_options = PlanOptions::default();
+    for stage in &mut manual_options.stages {
+        stage.mode = crate::application::StageMode::Manual;
+    }
+    let mut wrong_key = store
+        .prepare_work_plan(None, "zh-CN", &[unit], manual_options)
+        .unwrap();
+    wrong_key.selection_basis[0].native_key = "Changed canonical key".into();
+    let wrong_key = wrong_key.with_maintenance(basis.clone()).unwrap();
+    assert_eq!(
+        store.verify_work_plan(&wrong_key).unwrap_err().stage,
+        "work-plan-selection"
+    );
+
+    for field in ["unit", "source-revision", "source-snapshot", "selection"] {
+        let mut altered = basis.clone();
+        let row = &mut altered.assessment.rows[0];
+        match field {
+            "unit" => {
+                row.unit_id = ExecutionId::new();
+                row.protection.unit_id = row.unit_id;
+                altered.choices[0].unit_id = row.unit_id;
+            }
+            "source-revision" => row.source_revision_id = ExecutionId::new(),
+            "source-snapshot" => altered.assessment.source_snapshot_id = ExecutionId::new(),
+            "selection" => row.selection_id = Some(ExecutionId::new()),
+            _ => unreachable!(),
+        }
+        // Keep the assessment internally well-formed: refusal must follow from
+        // its mismatch with the fixed plan or current project, not a stale digest.
+        altered.assessment.digest = altered.assessment.computed_digest().unwrap();
+        assert_eq!(
+            ordinary
+                .clone()
+                .with_maintenance(altered.clone())
+                .unwrap_err()
+                .stage,
+            "maintenance-scope",
+            "{field}"
+        );
+        assert_eq!(
+            store
+                .prepare_maintenance_work_plan(
+                    Some(config.clone()),
+                    "zh-CN",
+                    &[unit],
+                    PlanOptions::default(),
+                    None,
+                    altered,
+                )
+                .unwrap_err()
+                .stage,
+            if field == "source-snapshot" {
+                "stale-preview"
+            } else {
+                "maintenance-current"
+            },
+            "{field}"
+        );
+    }
+}
+
+#[test]
 fn generic_source_adoption_maps_shared_units_and_preserves_fixed_revision_evidence_on_reopen() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project");

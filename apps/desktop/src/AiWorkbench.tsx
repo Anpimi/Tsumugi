@@ -14,6 +14,7 @@ import {aiTarget,defaultAiConfig,type AiView} from "./aiCommands";
 import {useAiPreparation,type WorkPlanContinuation} from "./AiPreparationSession";
 import { WorkPlanControls } from "./WorkPlanControls";
 import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnectionPicker";
+import { IncrementalMaintenance } from "./IncrementalMaintenance";
 import { WorkPlanAgentControls } from "./WorkPlanAgentControls";
 import { WorkPlanToolChoice, type PlanToolChoiceHandle } from "./WorkPlanToolChoice";
 import { AiScopePicker } from "./AiScopePicker";
@@ -274,6 +275,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       {onOpenManual?<div className="execution-actions">{(["translation","resources","review","source","release"] as const).map(area=><button key={area} type="button" className="secondary-button" disabled={disabled||preparation.reserved()||cancelUnresolved} onClick={()=>{void onOpenManual(area);}}>{t(`ai.workspace.manual.${area}`)}</button>)}</div>:null}
     </section>
     {!project.metadata.targetLocales.length?<p role="status">{t("ai.workspace.noTargets")}</p>:null}
+    <IncrementalMaintenance project={project} active={open} disabled={locked} onOpenManual={onOpenManual}/>
     <TaskCancellationFeedback origin="ai" taskId={view?.detail.taskId} disabled={busy} retryCommand={{
       available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,
       dispatch:intent=>{registry.dispatch("ai.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});},
@@ -303,11 +305,11 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     <label className="field">{t("ai.tokenField")}<select value={config.tokenField} onChange={e=>change("tokenField",e.target.value)}><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
     </details><details open={failure==="ai-limits"?true:undefined}><summary>{t("ai.budget")}</summary>{failure==="ai-limits"?<p id="ai-error-limits" className="field-error">{t("ai.errors.ai-limits")}</p>:null}{numeric.map(([key,min,max])=><label className="field" key={key}>{t(`ai.${key}`)}<input type="number" min={min} max={max} value={Number.isFinite(config[key])?config[key]:""} aria-invalid={failure==="ai-limits"&&(!Number.isInteger(config[key])||config[key]<min||config[key]>max)||undefined} aria-describedby={failure==="ai-limits"?"ai-error-limits":undefined} onChange={e=>change(key,e.target.valueAsNumber)}/></label>)}<button className="secondary-button" type="button" onClick={()=>{setConfig(c=>({...defaultAiConfig,endpoint:c.endpoint,model:c.model,credentialEnv:c.credentialEnv,tokenField:c.tokenField,connectionProfile:c.connectionProfile}));}}>{t("ai.reset")}</button></details></>:null}
     {assisted?<WorkPlanToolChoice ref={toolChoice} open={open} disabled={locked} value={toolDraft} onChange={setToolDraft}/>:null}
-    <label className="field">{t("ai.locale")}<select value={locale} onChange={e=>{setLocale(e.target.value);}}>{!targetAvailable&&locale?<option value={locale} disabled>{locale}</option>:null}{project.metadata.targetLocales.map(l=><option key={l}>{l}</option>)}</select></label>
+    <label className="field">{t("ai.locale")}<select value={locale} disabled={!!preparation.maintenance} onChange={e=>{setLocale(e.target.value);}}>{!targetAvailable&&locale?<option value={locale} disabled>{locale}</option>:null}{project.metadata.targetLocales.map(l=><option key={l}>{l}</option>)}</select></label>
     {assisted?<><label className="source-check"><input type="checkbox" checked={config.shareTerms} onChange={e=>change("shareTerms",e.target.checked)}/>{t("ai.shareTerms")}</label><label className="source-check"><input type="checkbox" checked={config.shareContext} onChange={e=>change("shareContext",e.target.checked)}/>{t("ai.shareContext")}</label></>:null}
     {assisted?<SourceContextChoice value={config.sourceContext} onChange={value=>change("sourceContext",value)}/>:null}
     <AiScopePicker page={visiblePage} snapshotId={scopeRead.data?.currentSnapshot??null} selectedSnapshotId={selectedSnapshotId} selected={selected} after={after}
-      ready={sourceReady()} loading={scopeRead.isFetching||contentRead.isFetching} failed={!!scopeRead.error||!!contentRead.error} disabled={locked}
+      ready={sourceReady()} loading={scopeRead.isFetching||contentRead.isFetching} failed={!!scopeRead.error||!!contentRead.error} disabled={locked||!!preparation.maintenance}
       onChange={setSelected} onRefresh={refreshReads} onPage={loadPage} onOpenEditor={target=>{void openSourceEditor(target);}}/>
     <button className="secondary-button" type="button" disabled={locked||!selected.length} onClick={()=>{if(locked)return;clearSelectedRange();}}>{t("ai.clearSelectedRange")}</button>
     {options.stages.some(choice=>choice.stage==="checks"&&choice.mode==="assisted")?<><p>{t("review.formatChecksRequired")}</p><TextReviewSelections value={advisoryChecks} active={open} scopeKey={JSON.stringify([context,locale])} disabled={locked} onOpenExtensions={onOpenExtensions} onSnapshotRevision={revision=>{if(prepared?.checkers.some(checker=>checker.kind==="ready"&&checker.plugin.plugin.settingsRevision!==revision))preparation.invalidatePreview();}} onChange={setAdvisoryChecks}/></>:null}

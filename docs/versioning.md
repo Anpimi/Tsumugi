@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Finite maintenance assessments reuse current source impact, resource impact,
+review and protection facts without writing a queue or granting execution.
+Captured choices enter the original immutable WorkPlan as a required nullable
+`maintenance` field: ordinary plans explicitly use `null`, while maintenance
+plans pin their repair scope and protection revisions. This changes WorkPlan's
+internal captured format from version 2 to 3 and advances the current-only
+project schema to 40. Older development directories are refused and preserved,
+without migration or reset. Other changes in this undistributed batch retain
+their own required fields and owners. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` need no further SemVer bump; both Unreleased changelogs and the
+current README format statements are synchronized. Earlier format paragraphs
+describe the development units that introduced them.
+
 Application connection facts notify preparation consumers of Query state changes
 instead of render-time cache structure events. Focus invalidation cancels an
 unfinished earlier read before reading again; obsolete responses cannot become

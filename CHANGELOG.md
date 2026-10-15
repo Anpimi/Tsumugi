@@ -6,6 +6,17 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Review a finite window of maintenance work, retain applicable entries, mark
+  current rechecks or unresolved work, and explicitly choose a repair subset.
+  Protected entries and unresolved source mappings are excluded from automatic
+  maintenance. New plans capture the exact choices and protection revisions;
+  changed protection is checked again before authorization and execution.
+  Historical and external query coverage stays explicit, and task completion
+  does not replace current review or build validation.
+- Maintenance plan evidence advances the current-only project format to schema
+  40 and the internal immutable WorkPlan format to version 3. Other development
+  directories are refused and preserved, with no migration or reset. This stays
+  in the same undistributed application/SDK alpha batch without another bump.
 - Opening saved model connection choices no longer triggers render-time owner
   updates. A window focus check replaces an unfinished earlier read, so its late
   response cannot restore obsolete connection choices as current. Existing
@@ -175,7 +186,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   inside the sidebar.
 
 
-The combined development build opens project schema 37 only. Earlier Unreleased
+The combined development build opens project schema 40 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 

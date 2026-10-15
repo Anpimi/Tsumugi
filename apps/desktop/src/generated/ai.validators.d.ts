@@ -2,6 +2,7 @@
 import type { Requests } from "./ai.requests";
 import type { Responses } from "./ai.responses";
 export declare function validateRequestEffectRetry(value: unknown): value is Requests["effectRetry"];
+export declare function validateRequestMaintenanceAssessment(value: unknown): value is Requests["maintenanceAssessment"];
 export declare function validateRequestPreview(value: unknown): value is Requests["preview"];
 export declare function validateRequestRead(value: unknown): value is Requests["read"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
@@ -23,6 +24,7 @@ export declare function validateRequestWorkProtectionRead(value: unknown): value
 export declare function validateRequestWorkProtectionSet(value: unknown): value is Requests["workProtectionSet"];
 export declare function validateResponseEffectRetry(value: unknown): value is Responses["effectRetry"];
 export declare function validateResponseIdentity(value: unknown): value is Responses["identity"];
+export declare function validateResponseMaintenanceAssessment(value: unknown): value is Responses["maintenanceAssessment"];
 export declare function validateResponsePrepared(value: unknown): value is Responses["prepared"];
 export declare function validateResponseView(value: unknown): value is Responses["view"];
 export declare function validateResponseWorkPlan(value: unknown): value is Responses["workPlan"];

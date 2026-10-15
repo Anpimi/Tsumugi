@@ -72,7 +72,7 @@ macro_rules! handlers {
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
         arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
         arena::reveal_arena_identity,arena::save_arena_merge,
-        work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,
+        work_plans::read_maintenance_assessment,work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,
         work_plans::generation::prepare_work_plan_generation_component,
         work_plans::generation::start_work_plan_generation_component,
         work_plans::generation::discard_work_plan_generation_component,

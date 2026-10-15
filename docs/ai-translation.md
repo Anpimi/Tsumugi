@@ -1,5 +1,22 @@
 # Direct AI translation
 
+**Maintain changed work** assesses one explicit window of at most 100 current
+source occurrences. It reuses source correspondence, resource changes, current
+review evidence and manual protection. Keep applicable work, request a current
+review, mark unresolved work, or choose repair candidates; protected entries and
+unresolved mappings are excluded from automatic maintenance. Capturing or
+refreshing an assessment does not grant execution or approve a translation.
+Historical and external query coverage remains unknown; literal resource
+matches are possible dependencies, not a proven minimal affected set. Full
+manual review and source correspondence remain available through their existing
+workspaces. Repair choices feed a new ordinary WorkPlan preview, budget and
+consent flow. A changed protection revision blocks the captured maintenance
+plan at preparation, authorization, continuation and dispatch. Other ordinary
+plans can still offer candidates for protected entries under their existing
+rules. Rechecks use Review; no standalone automatic check-only plan is implied.
+Current reads do not overwrite captured choices, model settings or manual drafts.
+Task completion never closes a finding in place of current QA or build evidence.
+
 Use **Compare saved translations** beside a revision in editor history, or while
 reviewing a saved AI candidate, to open that exact entry and language in Arena.
 The application rechecks the current source and the selected historical revision
@@ -81,7 +98,7 @@ During a save you can continue editing. A successful older save does not discard
 
 The internal Rust and desktop IPC interfaces remain experimental. Producer callers now obtain `DispatchRequest` from the execution runtime or store dispatch boundary rather than constructing its fields directly; the runtime supplies the private durable-budget channel. `ExecutionRuntime::register` and `ProjectStore::enqueue_execution` conservatively record `external-unknown` effects. A trusted host must explicitly use `register_read_only` / `enqueue_read_only_execution`, or `register_with_policy` for another reviewed effect contract. A producer's own claim or operation name cannot authorize replay. Persisted policies cannot be changed by resubmitting the same identity.
 
-Current development projects use schema 38 only. Durable budgets, reservations,
+Current development projects use schema 40 only. Durable budgets, reservations,
 ancestry, effect policies and exact continuation identities retain their original
 owners. Other development schemas are refused without an application upgrade,
 rebuild or reset; SQLite may complete its own hot-journal recovery. Preserve those

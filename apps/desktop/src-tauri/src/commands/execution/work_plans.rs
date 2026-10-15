@@ -14,10 +14,10 @@ use tsumugi_core::{AdvisoryReviewCheck, ReviewChecker, ReviewCheckerKey};
 use tsumugi_core::{
     ai::{self, AiConfig, AiPreview},
     application::{
-        AuthorizeWorkPlan, AutomationEffect, AutomationLease, ControlWorkPlan, PlanOptions,
-        PlanSelectionBasis, SetWorkProtection, WorkPlan, WorkPlanAgentScope, WorkPlanCommand,
-        WorkPlanReceipt, WorkPlanState, WorkPlanStatus, WorkPlanToolConsent, WorkPlanTools,
-        WorkProtection,
+        AuthorizeWorkPlan, AutomationEffect, AutomationLease, ControlWorkPlan,
+        MaintenanceAssessment, MaintenancePlanBasis, PlanOptions, PlanSelectionBasis,
+        SetWorkProtection, WorkPlan, WorkPlanAgentScope, WorkPlanCommand, WorkPlanReceipt,
+        WorkPlanState, WorkPlanStatus, WorkPlanToolConsent, WorkPlanTools, WorkProtection,
     },
 };
 use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
@@ -301,9 +301,52 @@ request!(
         unit_ids: Vec<ExecutionId>,
         options: PlanOptions,
         advisory_checks: Vec<PluginTextReviewSelection>,
-        tool_selection: Option<broker::WorkPlanToolSelection>
+        tool_selection: Option<broker::WorkPlanToolSelection>,
+        #[serde(deserialize_with = "tsumugi_core::application::required_maintenance")]
+        #[cfg_attr(feature = "wire-schema", schemars(schema_with = "tsumugi_core::application::maintenance_schema"))]
+        maintenance: Option<MaintenancePlanBasis>
     }
 );
+
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    MaintenanceAssessmentRequest {
+        snapshot_id: ExecutionId,
+        locale: String,
+        after: u32,
+        limit: u32
+    }
+);
+#[tauri::command]
+pub async fn read_maintenance_assessment(
+    state: State<'_, AppState>,
+    request: MaintenanceAssessmentRequest,
+) -> Result<MaintenanceAssessment, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_maintenance_assessment",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .maintenance_assessment(
+                    request.project_id,
+                    request.snapshot_id,
+                    &request.locale,
+                    request.after,
+                    request.limit,
+                )
+                .map_err(map_read)
+            },
+        )
+        .await
+}
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     WorkPlanAuthorizeRequest {
@@ -384,6 +427,12 @@ pub struct WorkPlanView {
     pub attempt_id: Option<ExecutionId>,
     pub checkers: Vec<WorkPlanCheckerView>,
     pub tools: Option<WorkPlanTools>,
+    #[serde(deserialize_with = "tsumugi_core::application::required_maintenance")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "tsumugi_core::application::maintenance_schema")
+    )]
+    pub maintenance: Option<MaintenancePlanBasis>,
 }
 
 impl TryFrom<&WorkPlan> for WorkPlanView {
@@ -420,6 +469,7 @@ impl TryFrom<&WorkPlan> for WorkPlanView {
             attempt_id: plan.input.as_ref().map(|input| input.attempt_id),
             checkers: Vec::new(),
             tools: plan.tools.clone(),
+            maintenance: plan.maintenance.clone(),
         })
     }
 }
@@ -545,16 +595,28 @@ pub async fn prepare_work_plan(
             host.allow_mutation()?;
             selected_work.check()?;
             if let Some(config) = &initial.config {
-                connections::verify_configs(initial_connections.as_ref(), std::slice::from_ref(config))?;
+                connections::verify_configs(
+                    initial_connections.as_ref(),
+                    std::slice::from_ref(config),
+                )?;
             }
-            let plan = store
-                .prepare_work_plan(
+            let plan = match initial.maintenance {
+                Some(basis) => store.prepare_maintenance_work_plan(
                     initial.config,
                     &initial.locale,
                     &initial.unit_ids,
                     initial.options,
-                )
-                .map_err(map_read)?;
+                    None,
+                    basis,
+                ),
+                None => store.prepare_work_plan(
+                    initial.config,
+                    &initial.locale,
+                    &initial.unit_ids,
+                    initial.options,
+                ),
+            }
+            .map_err(map_read)?;
             let source = store.work_plan_review_binding(&plan).map_err(map_read)?;
             let checkers = store.work_plan_review_checkers(&plan).map_err(map_read)?;
             let work = host.begin_package_work(
@@ -611,15 +673,24 @@ pub async fn prepare_work_plan(
                     }
                     store.verify_work_plan(&plan).map_err(map_read)?;
                     let plan = if tools.is_some() {
-                        store
-                            .prepare_work_plan_with_tools(
+                        match request.maintenance.clone() {
+                            Some(basis) => store.prepare_maintenance_work_plan(
                                 request.config.clone(),
                                 &request.locale,
                                 &request.unit_ids,
                                 plan.options.clone(),
                                 tools,
-                            )
-                            .map_err(map_read)?
+                                basis,
+                            ),
+                            None => store.prepare_work_plan_with_tools(
+                                request.config.clone(),
+                                &request.locale,
+                                &request.unit_ids,
+                                plan.options.clone(),
+                                tools,
+                            ),
+                        }
+                        .map_err(map_read)?
                     } else {
                         plan
                     };
@@ -785,7 +856,11 @@ pub async fn authorize_work_plan(
                     }
                     let finish = || {
                         store.verify_work_plan(&plan).map_err(map_recover)?;
-                        if store.work_plan_receipt(request.action_id).map_err(map_recover)?.is_none() {
+                        if store
+                            .work_plan_receipt(request.action_id)
+                            .map_err(map_recover)?
+                            .is_none()
+                        {
                             verify_plan_connections(connection_store.as_ref(), &plan)?;
                         }
                         let mut bindings = Vec::new();
@@ -1332,6 +1407,44 @@ mod tests {
     }
 
     #[test]
+    fn maintenance_read_is_session_project_scoped_and_never_grants_or_starts_work() {
+        let fixture = Fixture::create();
+        let before = fixture.bytes();
+        let attempts = fixture.attempt_count();
+        let request = json!({"snapshotId":fixture.snapshot,"locale":"zh-CN","after":0,"limit":100});
+        let view = fixture
+            .call("read_maintenance_assessment", request.clone())
+            .unwrap();
+        assert_eq!(view["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(view["sourceSnapshotId"], json!(fixture.snapshot));
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.attempt_count(), attempts);
+        for field in ["projectId", "sessionToken"] {
+            let mut invalid = request.clone();
+            invalid[field] = json!(ExecutionId::new().to_string());
+            assert!(
+                fixture
+                    .call("read_maintenance_assessment", invalid)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn current_work_plan_wire_requires_explicit_maintenance_even_for_ordinary_plans() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/workPlanCommands.contract.json"
+        ))
+        .unwrap();
+        let mut request = fixture["requests"]["prepare"].clone();
+        request.as_object_mut().unwrap().remove("maintenance");
+        assert!(serde_json::from_value::<WorkPlanPrepareRequest>(request).is_err());
+        let mut plan = fixture["responses"]["plan"].clone();
+        plan.as_object_mut().unwrap().remove("maintenance");
+        assert!(serde_json::from_value::<WorkPlanView>(plan).is_err());
+    }
+
+    #[test]
     fn shared_work_plan_fixture_round_trips_through_serde() {
         let fixture: Value = serde_json::from_str(include_str!(
             "../../../../test/fixtures/workPlanCommands.contract.json"
@@ -1410,7 +1523,11 @@ mod tests {
         snapshot: ExecutionId,
     }
 
-    fn call(webview: &MockWebview, command: &str, request: Value) -> Result<Value, Value> {
+    fn call(webview: &MockWebview, command: &str, mut request: Value) -> Result<Value, Value> {
+        // Ordinary synthetic plans explicitly carry the current nullable field.
+        if command == "prepare_work_plan" && request.get("maintenance").is_none() {
+            request["maintenance"] = Value::Null;
+        }
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             let response = tauri::test::get_ipc_response(

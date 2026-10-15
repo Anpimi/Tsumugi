@@ -11,7 +11,7 @@ import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import { workPlanCommands, type WorkPlanView, type WorkPlanStatusView, type PlanOptions } from "./workPlanCommands";
+import { workPlanCommands, type MaintenanceAssessment, type MaintenancePlanBasis, type MaintenanceChoice, type WorkPlanView, type WorkPlanStatusView, type PlanOptions } from "./workPlanCommands";
 import { useWorkPlanControlSession } from "./WorkPlanControls";
 import { useWorkPlanAgentSession } from "./WorkPlanAgentControls";
 import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
@@ -32,6 +32,7 @@ type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; u
 type Candidate = { taskId: string; item: AiItem; resultId: string; unitId: string; text: string };
 type AdoptCapture = { request: PrepareRequest; candidate: Candidate; editSeq: number; action: AdoptionAction | null; receipt: Receipt | null; uncertain: boolean; retryAllowed: boolean };
 interface State {
+  maintenance: MaintenancePlanBasis | null;
   presetName: string; config: AiConfig; locale: string; selected: string[]; selectedSnapshotId: string | null; capture: PreparationCapture | null; consent: boolean;
   options: PlanOptions; toolDraft: PlanToolDraft | null; advisoryChecks: PluginTextReviewSelection[]; planId: string | null;
   startedPlan: { prepared: WorkPlanView; attemptId: string; taskId: string | null; generation: string; unitIds: string[] } | null;
@@ -100,7 +101,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   const reads = useSessionReads(), tasks = useExecutionTaskSession();
   const connections = useConnectionFacts();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
-  const [state,setState] = useState<PreparationState>(() => preparationState({ presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,
+  const [state,setState] = useState<PreparationState>(() => preparationState({ maintenance:null,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,
     options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
     staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,checkedTask:null,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null }));
   const stateRef = useRef(state), mounted = useSessionAlive(), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
@@ -142,7 +143,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }
   function edit<K extends "config" | "presetName" | "locale" | "selected" | "options" | "toolDraft" | "advisoryChecks">(key: K, value: State[K]) {
     basis.current++;
-    update(before => ({ ...before,[key]:fixed(value),capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,[key]:fixed(value),...(key==="selected"||key==="locale"?{maintenance:null}:{}),capture:null,consent:false,staleReason:null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
   }
   useLayoutEffect(() => {
@@ -160,7 +161,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     // Transfer only a user range. Existing preparation, consent and execution
     // authority cannot accompany it; the next explicit preview reads Core facts.
     basis.current++;
-    update(before => ({ ...before,locale:selection.capture.locale,selected:fixed(selected),selectedSnapshotId:selection.capture.sourceSnapshotId,capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,maintenance:null,locale:selection.capture.locale,selected:fixed(selected),selectedSnapshotId:selection.capture.sourceSnapshotId,capture:null,consent:false,staleReason:null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
     return true;
   }
@@ -175,6 +176,30 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       && before.checkedTask?.attemptId === before.attempt && before.checkedTask.taskId === view.detail.taskId
       && view.detail.progress.queued === 0 && view.detail.progress.running === 0
       && !view.rows.some(row => row.automation && ["waiting","saving-candidate","checking"].includes(row.automation.phase));
+  }
+  function captureMaintenance(assessment: MaintenanceAssessment, expectedEditSeq: number, currentRead: () => boolean) {
+    if (!canReceiveContentSelection() || current().editSeq!==expectedEditSeq || !currentRead()
+      || assessment.projectId!==session.projectId || !available(assessment.locale)) return false;
+    const choices: MaintenanceChoice[]=assessment.rows.map(row=>({unitId:row.unitId,action:row.suggested,
+      excluded:row.protection.protected||row.mappingUnresolved}));
+    basis.current++;
+    update(before=>({...before,maintenance:fixed({assessment,choices}),locale:assessment.locale,
+      selected:choices.filter(choice=>!choice.excluded&&choice.action==="repair").map(choice=>choice.unitId),
+      selectedSnapshotId:assessment.sourceSnapshotId,capture:null,consent:false,staleReason:null,dirty:true,editSeq:before.editSeq+1,failure:null,notice:null}));
+    return true;
+  }
+  function editMaintenance(choice: MaintenanceChoice, expectedEditSeq: number) {
+    const before=current(), maintenance=before.maintenance, row=maintenance?.assessment.rows.find(row=>row.unitId===choice.unitId);
+    if (!live()||reserved()||before.editSeq!==expectedEditSeq||!maintenance||!row
+      || (!choice.excluded&&choice.action==="repair"&&(row.protection.protected||row.mappingUnresolved))) return false;
+    const choices=maintenance.choices.map(value=>value.unitId===choice.unitId?choice:value);
+    basis.current++;
+    update(value=>({...value,maintenance:fixed({...maintenance,choices}),selected:choices.filter(value=>!value.excluded&&value.action==="repair").map(value=>value.unitId),
+      capture:null,consent:false,dirty:true,editSeq:value.editSeq+1,failure:null,notice:null})); return true;
+  }
+  function discardMaintenance() {
+    if (!live()||reserved()||!current().maintenance) return false;
+    edit("selected",[]); update(value=>({...value,selectedSnapshotId:null})); return true;
   }
   async function run(work: () => Promise<void>, recovery = false) {
     if (!live() || flight.current || (!recovery && reserved())) return;
@@ -200,6 +225,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       && validateResponseIdentity(session.projectId) && !!session.sessionToken && before.selected.length > 0 && (!model || connectionCurrent());
   }
   async function preview() {
+    if(current().maintenance)return;
     if (!canPreview() || !available()) return;
     const before = current(), version = basis.current;
     const request = fixed({ ...session,config:before.config,locale:before.locale,unitIds:before.selected });
@@ -220,7 +246,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     const assisted = before.options.stages.some(choice => choice.stage === "generation" && choice.mode === "assisted");
     if (!canPreview(assisted) || !available()) return;
     const capture = fixed({ ...session, config: assisted ? before.config : null, locale: before.locale,
-      unitIds: before.selected, options: before.options, advisoryChecks: before.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted") ? before.advisoryChecks : [] });
+      unitIds: before.selected, options: before.options, maintenance:before.maintenance, advisoryChecks: before.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted") ? before.advisoryChecks : [] });
     await run(async () => {
       const tools = captureTools(), selectedTools = tools && fixed(tools);
       const sourceWitness = reads.watchExactQuery(["source-scope"]);
@@ -585,7 +611,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   function reset() {
     if (!live() || reserved()) return false;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
-    update(before => ({ ...before,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,maintenance:null,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,
       dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],failure:null,notice:null })); return true;
   }
   const contentToolAttempt = agent.current().toolRun?.prepared.attemptId ?? null;
@@ -595,7 +621,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }), [reads,state.attempt,contentToolAttempt]);
   const contentRangeAvailable = useSyncExternalStore(subscribeContentAvailability, canReceiveContentSelection, canReceiveContentSelection);
   return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan, contentRangeAvailable,
-    planControl, agent, component, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
+    planControl, agent, component, captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
     setAdvisoryChecks:(value:PluginTextReviewSelection[]) => edit("advisoryChecks",value),

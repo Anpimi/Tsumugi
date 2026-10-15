@@ -71,7 +71,7 @@ beforeEach(async()=>{
   if(command==="read_source_content")return sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)},rows:[sourceRowFixture({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId},{key:"first",text:item.sourceText})]});
   if(command==="prepare_work_plan"){
    if(request.config)prepared.preview.config=request.config as typeof defaultAiConfig;
-   plan={tools:null,checkers: request.options && (request.options as WorkPlanView["options"]).selectionPolicy !== "candidates-only" ? [formatCheckerFixture()] : [],planId,digest:"plan-digest",locale:String(request.locale),options:request.options as WorkPlanView["options"],scope:[{unitId:item.unitId,sourceSnapshotId:item.sourceSnapshotId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,selectionId:null}],attemptId:request.config?aiAttempt:null,preview:request.config?prepared.preview:null};return plan;
+   plan={maintenance:structuredClone(request.maintenance) as WorkPlanView["maintenance"],tools:null,checkers: request.options && (request.options as WorkPlanView["options"]).selectionPolicy !== "candidates-only" ? [formatCheckerFixture()] : [],planId,digest:"plan-digest",locale:String(request.locale),options:request.options as WorkPlanView["options"],scope:[{unitId:item.unitId,sourceSnapshotId:item.sourceSnapshotId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,selectionId:null}],attemptId:request.config?aiAttempt:null,preview:request.config?prepared.preview:null};return plan;
   }
   if(command==="authorize_work_plan"){
    const receipt:WorkPlanReceiptView={actionId:String(request.actionId),lease:{planId,generation:"1"},state:"active",attemptId:aiAttempt,parentTask:null};
@@ -399,7 +399,7 @@ it("retains an unknown control action and retries it only after its receipt is m
 
 it("reopens a persisted plan through its execution view and reads current control authority without dispatch",async()=>{
  const user=userEvent.setup(),ref=createRef<AiHandle>();
- plan={tools:null,checkers: [],planId,digest:"old",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false,advisoryChecks:[]},scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:item.nativeKey,selectionId:null}],preview:prepared.preview,attemptId:aiAttempt};
+ plan={maintenance:null,tools:null,checkers: [],planId,digest:"old",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false,advisoryChecks:[]},scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:item.nativeKey,selectionId:null}],preview:prepared.preview,attemptId:aiAttempt};
  authority={plan,lease:{planId,generation:"3"},state:"paused",effects:["save-candidate"],expiresAt:String(Math.floor(Date.now()/1000)+600),toolInvocations:null};
  render(<TestAiWorkbench ref={ref} project={project}/>);
  ref.current!.showAttempt(aiAttempt);await screen.findByText("Automation paused");

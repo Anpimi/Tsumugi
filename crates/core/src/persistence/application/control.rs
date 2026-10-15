@@ -199,6 +199,7 @@ fn active(c: &Connection, input: &FixedInput) -> Result<Option<StoredPlan>, Exec
     {
         return Err(err(ErrorCode::Cancelled, "work-plan-control"));
     }
+    super::maintenance::check_protection(c, &stored.plan)?;
     Ok(Some(stored))
 }
 /// Only a renewed grant can acknowledge cancellation of its original budget
@@ -367,6 +368,9 @@ pub(in crate::persistence) fn check_input(
     c: &Connection,
     input: &FixedInput,
 ) -> Result<(), ExecutionError> {
+    if let Some(lease) = input.envelope().automation {
+        super::maintenance::check_protection(c, &load(c, lease.plan_id)?.plan)?;
+    }
     if input.envelope().plugin.is_some() && input.envelope().automation.is_some() {
         let bytes: Option<Vec<u8>> = c
             .query_row(
