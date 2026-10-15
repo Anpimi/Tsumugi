@@ -83,11 +83,14 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     validate_schema(connection, |_, _| Ok(()))
 }
 
-pub(super) fn validate_for_open(connection: &Connection) -> Result<(), ExecutionError> {
-    validate_schema(
-        connection,
-        super::plugin_execution::validate_associated_input,
-    )
+pub(super) fn validate_for_open(
+    connection: &Connection,
+    mut validate_review: impl FnMut(&Connection, &FixedInput) -> Result<(), ExecutionError>,
+) -> Result<(), ExecutionError> {
+    validate_schema(connection, |connection, input| {
+        super::plugin_execution::validate_associated_input(connection, input)?;
+        validate_review(connection, input)
+    })
 }
 
 fn validate_schema(

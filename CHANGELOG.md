@@ -6,10 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
-- Reopening a project validates saved plugin grants alongside the original
-  execution inputs, avoiding a second reconstruction of those inputs. All
-  open-time integrity checks share one read snapshot; damaged associations
-  remain rejected, and historical grants do not restore execution approval.
+- Reopening a project checks saved plugin grants and QA evidence alongside
+  each original execution input, avoiding repeated input reconstruction.
+  Missing or damaged evidence is still rejected within one read snapshot;
+  historical reads retain full validation and do not restore execution approval.
 
 - The experimental standalone SDK defines bounded work-plan generation-service
   input, child-identity receipts and finite errors at schema/behavior 1/1, with

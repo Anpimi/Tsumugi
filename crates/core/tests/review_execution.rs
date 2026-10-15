@@ -4,8 +4,9 @@
 mod support;
 use std::sync::Arc;
 use tsumugi_core::{
-    ComputedReviewEvidence, PreparedReviewCheck, ProjectStore, ReviewCheckOrigin, ReviewCheckerKey,
-    ReviewDecisionKind, ReviewWrite, SaveTranslationRevision, execution::*,
+    ComputedReviewEvidence, PersistenceErrorCode, PersistenceStage, PreparedReviewCheck,
+    ProjectStore, ReviewCheckOrigin, ReviewCheckerKey, ReviewDecisionKind, ReviewWrite,
+    SaveTranslationRevision, execution::*,
 };
 use tsumugi_plugin_sdk as sdk;
 
@@ -633,6 +634,104 @@ fn persisted_qa_cannot_replace_actual_domain_findings() {
     assert!(store.review_target(project(&store), unit, "zh-CN").is_err());
     store.close().unwrap();
     assert!(ProjectStore::open(&directory.path().join("project")).is_err());
+}
+
+#[test]
+fn open_rejects_missing_or_changed_original_review_origin() {
+    for alteration in [
+        "missing-attempt",
+        "missing-result",
+        "input-digest",
+        "result-digest",
+        "qa-basis",
+        "scope-locale",
+    ] {
+        let (directory, mut store, rows) = support::source_fixture();
+        let unit = rows[0].unit_id.unwrap();
+        save(&mut store, unit, "译文");
+        let (computed, _runtime, _grant) = compute_actual(&mut store, unit, Response::Exact);
+        store
+            .commit_review_evidence(computed, &Cancellation::default())
+            .unwrap();
+        store.close().unwrap();
+
+        let database_path = directory.path().join("project/project.sqlite3");
+        let db = rusqlite::Connection::open(&database_path).unwrap();
+        let (raw, original_locale): (String, String) = db
+            .query_row(
+                "SELECT evidence_json,locale FROM review_checks",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let mut evidence: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let original = evidence.clone();
+        let mut locale = original_locale.clone();
+        let altered = "f".repeat(64);
+        match alteration {
+            "missing-attempt" => {
+                evidence["origins"][0]["attemptId"] =
+                    serde_json::json!(ExecutionId::new().to_string());
+                assert_ne!(
+                    evidence["origins"][0]["attemptId"],
+                    original["origins"][0]["attemptId"]
+                );
+            }
+            "missing-result" => {
+                evidence["origins"][0]["resultId"] =
+                    serde_json::json!(ExecutionId::new().to_string());
+                assert_ne!(
+                    evidence["origins"][0]["resultId"],
+                    original["origins"][0]["resultId"]
+                );
+            }
+            "input-digest" => {
+                evidence["origins"][0]["inputDigest"] = serde_json::json!(altered);
+                assert_ne!(
+                    evidence["origins"][0]["inputDigest"],
+                    original["origins"][0]["inputDigest"]
+                );
+            }
+            "result-digest" => {
+                evidence["origins"][0]["resultDigest"] = serde_json::json!(altered);
+                assert_ne!(
+                    evidence["origins"][0]["resultDigest"],
+                    original["origins"][0]["resultDigest"]
+                );
+            }
+            "qa-basis" => {
+                evidence["qaBasis"] = serde_json::json!(altered);
+                assert_ne!(evidence["qaBasis"], original["qaBasis"]);
+            }
+            "scope-locale" => {
+                assert_eq!(original_locale, "zh-CN");
+                locale = "ja-JP".into();
+                assert_ne!(locale, original_locale);
+            }
+            _ => unreachable!(),
+        }
+        db.execute(
+            "UPDATE review_checks SET evidence_json=?1,qa_basis=?2,locale=?3",
+            rusqlite::params![evidence.to_string(), evidence["qaBasis"].as_str(), locale],
+        )
+        .unwrap();
+        drop(db);
+        let before_open = std::fs::read(&database_path).unwrap();
+        let error = ProjectStore::open(&directory.path().join("project"))
+            .err()
+            .unwrap_or_else(|| panic!("open accepted altered {alteration}"));
+        assert_eq!(
+            error.code(),
+            PersistenceErrorCode::CorruptProject,
+            "{alteration}"
+        );
+        assert_eq!(error.stage(), PersistenceStage::Open, "{alteration}");
+        assert_eq!(
+            std::fs::read(&database_path).unwrap(),
+            before_open,
+            "{alteration}"
+        );
+    }
 }
 
 #[test]

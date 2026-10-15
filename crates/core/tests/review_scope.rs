@@ -26,14 +26,14 @@ thread_local! {
 // elapsed times are diagnostic windows rather than exclusive CPU timings.
 const REOPEN_WINDOWS: [(&str, &str, &str); 3] = [
     (
+        "review-index",
+        "SELECT project_id,action_id FROM review_checks",
+        "SELECT attempt_id FROM execution_attempts ORDER BY sequence",
+    ),
+    (
         "ledger-attempts",
         "SELECT attempt_id FROM execution_attempts ORDER BY sequence",
         "SELECT producer_result_id,valid FROM plugin_validation_links",
-    ),
-    (
-        "review-checks",
-        "SELECT project_id,action_id FROM review_checks",
-        "SELECT release_id FROM release_records",
     ),
     (
         "plugin-grants",
@@ -464,12 +464,12 @@ fn full_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
         serde_json::json!(profile.completed)
     );
     for window in &profile.completed {
-        if window["name"] == "plugin-grants" {
-            assert_eq!(window["reconstructedFrames"], 0);
-            assert_eq!(window["reconstructedBytes"], 0);
-        } else {
+        if window["name"] == "ledger-attempts" {
             assert!(window["reconstructedFrames"].as_u64().unwrap() >= 2000);
             assert!(window["reconstructedBytes"].as_u64().unwrap() >= input_bytes as u64);
+        } else {
+            assert_eq!(window["reconstructedFrames"], 0);
+            assert_eq!(window["reconstructedBytes"], 0);
         }
     }
     assert!(

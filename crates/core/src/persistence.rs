@@ -933,9 +933,21 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
     ledger::provider::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    ledger::validate_for_open(connection).map_err(|_| PersistenceError::CorruptProject {
+    let mut review_open =
+        review::prepare_open(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
+    ledger::validate_for_open(connection, |connection, input| {
+        review_open.validate_input(connection, input)
+    })
+    .map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
+    review_open
+        .finish()
+        .map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
     content::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
@@ -943,9 +955,6 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
         stage: PersistenceStage::Open,
     })?;
     resources::validate(connection).map_err(|_| PersistenceError::CorruptProject {
-        stage: PersistenceStage::Open,
-    })?;
-    review::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     release::validate(connection).map_err(|_| PersistenceError::CorruptProject {
