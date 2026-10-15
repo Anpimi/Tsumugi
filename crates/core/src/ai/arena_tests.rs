@@ -724,8 +724,10 @@ fn arena_manual_merge_preserves_current_ancestry_and_refuses_schema_ten() {
     .unwrap();
     assert_eq!(
         unchanged
-            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |r| r
-                .get::<_, i64>(0))
+            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
             .unwrap(),
         4
     );

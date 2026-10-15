@@ -393,6 +393,26 @@
         ],
         "type": "object"
       },
+      "TbxPreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale"
+        ],
+        "type": "object"
+      },
       "TermHistoryRequest": {
         "additionalProperties": false,
         "properties": {
@@ -480,6 +500,26 @@
         ],
         "type": "object"
       },
+      "TmxPreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale"
+        ],
+        "type": "object"
+      },
       "UnitLocaleRequest": {
         "additionalProperties": false,
         "properties": {
@@ -530,6 +570,9 @@
       "suggestions": {
         "$ref": "#/definitions/SuggestionRequest"
       },
+      "tbxPreview": {
+        "$ref": "#/definitions/TbxPreviewRequest"
+      },
       "term": {
         "$ref": "#/definitions/TermRequest"
       },
@@ -539,12 +582,17 @@
       "terms": {
         "$ref": "#/definitions/TermListRequest"
       },
+      "tmxPreview": {
+        "$ref": "#/definitions/TmxPreviewRequest"
+      },
       "unitLocale": {
         "$ref": "#/definitions/UnitLocaleRequest"
       }
     },
     "required": [
       "session",
+      "tmxPreview",
+      "tbxPreview",
       "captures",
       "capture",
       "term",
@@ -1046,6 +1094,321 @@
         ],
         "type": "object"
       },
+      "TbxExchangePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLen": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "documentLocale": {
+            "type": "string"
+          },
+          "license": {
+            "$ref": "#/definitions/TbxLicenseStatus"
+          },
+          "losses": {
+            "items": {
+              "$ref": "#/definitions/TbxLossEntry"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TbxExchangeRow"
+            },
+            "type": "array"
+          },
+          "sourceDescriptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          },
+          "titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "digest",
+          "byteLen",
+          "sourceLocale",
+          "targetLocale",
+          "documentLocale",
+          "titles",
+          "sourceDescriptions",
+          "license",
+          "rows",
+          "losses"
+        ],
+        "type": "object"
+      },
+      "TbxExchangeRow": {
+        "additionalProperties": false,
+        "properties": {
+          "conceptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/definitions/TbxRowReason"
+            },
+            "type": "array"
+          },
+          "sourceTerms": {
+            "items": {
+              "$ref": "#/definitions/TbxTermPreview"
+            },
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/definitions/TbxRowStatus"
+          },
+          "targetTerms": {
+            "items": {
+              "$ref": "#/definitions/TbxTermPreview"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ordinal",
+          "conceptId",
+          "sourceTerms",
+          "targetTerms",
+          "status",
+          "reasons"
+        ],
+        "type": "object"
+      },
+      "TbxFilePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "fileName": {
+            "type": "string"
+          },
+          "preview": {
+            "$ref": "#/definitions/TbxExchangePreview"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "fileName",
+          "preview"
+        ],
+        "type": "object"
+      },
+      "TbxLicenseStatus": {
+        "enum": [
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "TbxLossEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "field": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TbxLossKind"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/definitions/TbxLossSample"
+            },
+            "type": "array"
+          },
+          "unlisted": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "field",
+          "count",
+          "samples",
+          "unlisted"
+        ],
+        "type": "object"
+      },
+      "TbxLossKind": {
+        "enum": [
+          "unmapped-metadata",
+          "unknown-attribute",
+          "unknown-element",
+          "unknown-data-category",
+          "extra-language",
+          "duplicate-concept-id",
+          "duplicate-term-id",
+          "duplicate-language",
+          "duplicate-term-text",
+          "invalid-language",
+          "missing-term",
+          "empty-term",
+          "inline-markup",
+          "unknown-structure",
+          "unknown-usage-status",
+          "duplicate-usage-status",
+          "schema-hint"
+        ],
+        "type": "string"
+      },
+      "TbxLossSample": {
+        "additionalProperties": false,
+        "properties": {
+          "byteOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "byteOffset",
+          "ordinal",
+          "path"
+        ],
+        "type": "object"
+      },
+      "TbxRowReason": {
+        "enum": [
+          "missing-source",
+          "missing-target",
+          "ambiguous-source",
+          "ambiguous-target",
+          "invalid-language",
+          "unknown-structure",
+          "invalid-source-term",
+          "invalid-target-term"
+        ],
+        "type": "string"
+      },
+      "TbxRowStatus": {
+        "enum": [
+          "possible-mapping",
+          "excluded"
+        ],
+        "type": "string"
+      },
+      "TbxTermPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "languageOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/definitions/TbxTermReason"
+            },
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "termSecId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usageStatuses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "languageOrdinal",
+          "ordinal",
+          "termSecId",
+          "text",
+          "usageStatuses",
+          "sources",
+          "reasons"
+        ],
+        "type": "object"
+      },
+      "TbxTermReason": {
+        "enum": [
+          "missing-term",
+          "ambiguous-term",
+          "empty-term",
+          "inline-markup",
+          "unknown-structure"
+        ],
+        "type": "string"
+      },
       "TermOrigin": {
         "enum": [
           "manual",
@@ -1263,6 +1626,329 @@
         ],
         "type": "object"
       },
+      "TmxExchangePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLen": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "header": {
+            "$ref": "#/definitions/TmxProvenance"
+          },
+          "license": {
+            "$ref": "#/definitions/TmxLicenseStatus"
+          },
+          "losses": {
+            "items": {
+              "$ref": "#/definitions/TmxLossEntry"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TmxExchangeRow"
+            },
+            "type": "array"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile",
+          "digest",
+          "byteLen",
+          "sourceLocale",
+          "targetLocale",
+          "license",
+          "header",
+          "rows",
+          "losses"
+        ],
+        "type": "object"
+      },
+      "TmxExchangeRow": {
+        "additionalProperties": false,
+        "properties": {
+          "effectiveSourceLocale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/definitions/TmxRowReason"
+            },
+            "type": "array"
+          },
+          "sourceProvenance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TmxProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/definitions/TmxRowStatus"
+          },
+          "targetProvenance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TmxProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targetText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tuProvenance": {
+            "$ref": "#/definitions/TmxProvenance"
+          },
+          "tuid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ordinal",
+          "tuid",
+          "sourceText",
+          "targetText",
+          "status",
+          "reasons",
+          "effectiveSourceLocale",
+          "tuProvenance",
+          "sourceProvenance",
+          "targetProvenance"
+        ],
+        "type": "object"
+      },
+      "TmxFilePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "fileName": {
+            "type": "string"
+          },
+          "preview": {
+            "$ref": "#/definitions/TmxExchangePreview"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "fileName",
+          "preview"
+        ],
+        "type": "object"
+      },
+      "TmxLicenseStatus": {
+        "enum": [
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "TmxLossEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "field": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TmxLossKind"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/definitions/TmxLossSample"
+            },
+            "type": "array"
+          },
+          "unlisted": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "field",
+          "count",
+          "samples",
+          "unlisted"
+        ],
+        "type": "object"
+      },
+      "TmxLossKind": {
+        "enum": [
+          "unmapped-metadata",
+          "unknown-attribute",
+          "unknown-element",
+          "extra-language",
+          "duplicate-tuid",
+          "duplicate-language",
+          "direction-mismatch",
+          "wildcard-direction",
+          "invalid-language",
+          "missing-segment",
+          "empty-segment",
+          "inline-markup",
+          "unknown-structure"
+        ],
+        "type": "string"
+      },
+      "TmxLossSample": {
+        "additionalProperties": false,
+        "properties": {
+          "byteOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "byteOffset",
+          "ordinal",
+          "path"
+        ],
+        "type": "object"
+      },
+      "TmxProvenance": {
+        "additionalProperties": false,
+        "properties": {
+          "changeDate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creationDate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creationTool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creationToolVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "originalTmFormat": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "creationTool",
+          "creationToolVersion",
+          "originalTmFormat",
+          "creationId",
+          "creationDate",
+          "changeId",
+          "changeDate"
+        ],
+        "type": "object"
+      },
+      "TmxRowReason": {
+        "enum": [
+          "source-direction-mismatch",
+          "wildcard-source-direction",
+          "missing-source",
+          "missing-target",
+          "ambiguous-source",
+          "ambiguous-target",
+          "invalid-language",
+          "empty-source",
+          "empty-target",
+          "inline-markup",
+          "unknown-structure"
+        ],
+        "type": "string"
+      },
+      "TmxRowStatus": {
+        "enum": [
+          "eligible",
+          "excluded"
+        ],
+        "type": "string"
+      },
       "TranslationOrigin": {
         "enum": [
           "import",
@@ -1323,6 +2009,16 @@
         },
         "type": "array"
       },
+      "tbxPreview": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TbxFilePreview"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "term": {
         "$ref": "#/definitions/TermRevision"
       },
@@ -1331,9 +2027,21 @@
           "$ref": "#/definitions/TermRevision"
         },
         "type": "array"
+      },
+      "tmxPreview": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TmxFilePreview"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
+      "tmxPreview",
+      "tbxPreview",
       "captures",
       "capture",
       "preview",

@@ -10,6 +10,10 @@ beforeEach(() => invoke.mockReset());
 
 it("validates both directions of every shared resource contract", async () => {
   for (const [validate, value] of [
+    [validators.validateRequestTmxPreview, fixture.requests.tmxPreview],
+    [validators.validateResponseTmxPreview, fixture.responses.tmxPreview], [validators.validateResponseTmxPreview, null],
+    [validators.validateRequestTbxPreview, fixture.requests.tbxPreview],
+    [validators.validateResponseTbxPreview, fixture.responses.tbxPreview], [validators.validateResponseTbxPreview, null],
     [validators.validateRequestSession, fixture.requests.session], [validators.validateRequestCaptures, fixture.requests.captures],
     [validators.validateRequestCapture, fixture.requests.capture], [validators.validateRequestTerm, fixture.requests.term],
     [validators.validateRequestDecision, fixture.requests.decision], [validators.validateRequestTerms, fixture.requests.terms],
@@ -27,6 +31,8 @@ it("validates both directions of every shared resource contract", async () => {
   const decision = fixture.requests.decision;
   if (!validators.validateRequestDecision(decision)) throw new Error("Invalid resource fixture");
   for (const [command, request, response, run] of [
+    ["preview_tmx_exchange", fixture.requests.tmxPreview, fixture.responses.tmxPreview, () => resourceCommands.previewTmx(fixture.requests.tmxPreview)],
+    ["preview_tbx_exchange", fixture.requests.tbxPreview, fixture.responses.tbxPreview, () => resourceCommands.previewTbx(fixture.requests.tbxPreview)],
     ["list_resource_captures", fixture.requests.captures, fixture.responses.captures, () => resourceCommands.captures(fixture.requests.captures)],
     ["choose_resource_file", fixture.requests.session, null, () => resourceCommands.chooseFile(fixture.requests.session)],
     ["read_resource_preview", fixture.requests.capture, fixture.responses.preview, () => resourceCommands.preview(fixture.requests.capture)],
@@ -48,6 +54,25 @@ it("validates both directions of every shared resource contract", async () => {
   }
 });
 
+it("checks TMX report scope and treats picker cancellation as a read without granting file authority", async () => {
+  expect(validators.validateRequestTmxPreview({ ...fixture.requests.tmxPreview, path: "/forged.tmx" })).toBe(false);
+  expect(validators.validateResponseTmxPreview({ ...fixture.responses.tmxPreview,
+    preview: { ...fixture.responses.tmxPreview.preview, license: "approved" } })).toBe(false);
+  expect(validators.validateResponseTmxPreview({ ...fixture.responses.tmxPreview,
+    preview: { ...fixture.responses.tmxPreview.preview, rows: [{ ...fixture.responses.tmxPreview.preview.rows[0], status: "imported" }] } })).toBe(false);
+  invoke.mockResolvedValueOnce(null);
+  await expect(resourceCommands.previewTmx(fixture.requests.tmxPreview)).resolves.toBeNull();
+  for (const value of [
+    { ...fixture.responses.tmxPreview, projectId: "30000000-0000-4000-8000-000000000099" },
+    { ...fixture.responses.tmxPreview, preview: { ...fixture.responses.tmxPreview.preview, targetLocale: "de" } },
+  ]) {
+    invoke.mockResolvedValueOnce(value);
+    await expect(resourceCommands.previewTmx(fixture.requests.tmxPreview)).rejects.toThrow("Invalid TMX preview association");
+  }
+  expect(invoke).toHaveBeenCalledTimes(3);
+  expect(invoke).toHaveBeenLastCalledWith("preview_tmx_exchange", { request: fixture.requests.tmxPreview });
+});
+
 it("preserves external term keys and Unicode without treating them as generated identities", () => {
   expect(fixture.responses.terms[1].termId).toBe("external:contract-glossary:barrel");
   expect(validators.validateResponseTerm(fixture.responses.terms[1])).toBe(true);
@@ -55,6 +80,28 @@ it("preserves external term keys and Unicode without treating them as generated 
   expect(fixture.responses.term.target).toBe("木桶 👩🏽‍💻 é");
   const { termId: _term, expectedRevisionId: _revision, ...term } = fixture.requests.term.term;
   expect(validators.validateRequestTerm({ ...fixture.requests.term, term })).toBe(true);
+});
+
+it("checks TBX read scope and strict shape without upgrading file-reported terminology status", async () => {
+  const request = fixture.requests.tbxPreview, response = fixture.responses.tbxPreview;
+  expect(validators.validateRequestTbxPreview({ ...request, schemaHref: "forged.xsd" })).toBe(false);
+  const withRow = (row: unknown) => ({ ...response, preview: { ...response.preview, rows: [row] } });
+  const row = response.preview.rows[0], term = row.sourceTerms[0];
+  expect(validators.validateResponseTbxPreview(withRow({ ...row, status: "adopted" }))).toBe(false);
+  expect(validators.validateResponseTbxPreview(withRow({ ...row, sourceTerms: [{ ...term, ordinal: 4294967296 }] }))).toBe(false);
+  expect(validators.validateResponseTbxPreview(withRow({ ...row, sourceTerms: [{ ...term, approved: true }] }))).toBe(false);
+  expect(validators.validateResponseTbxPreview(withRow({ ...row, sourceTerms: [{ ...term, usageStatuses: ["file-reported-unknown"] }] }))).toBe(true);
+  invoke.mockResolvedValueOnce(null);
+  await expect(resourceCommands.previewTbx(request)).resolves.toBeNull();
+  for (const value of [
+    { ...response, projectId: "30000000-0000-4000-8000-000000000099" },
+    { ...response, preview: { ...response.preview, targetLocale: "de" } },
+  ]) {
+    invoke.mockResolvedValueOnce(value);
+    await expect(resourceCommands.previewTbx(request)).rejects.toThrow("Invalid TBX preview association");
+  }
+  expect(invoke).toHaveBeenCalledTimes(3);
+  expect(invoke).toHaveBeenLastCalledWith("preview_tbx_exchange", { request });
 });
 
 it("rejects missing nested evidence, unknown states, invalid identities and primitive overflow", () => {

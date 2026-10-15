@@ -2,5 +2,9 @@
 export const AdoptionStateValues = ["unapplied","committed","conflict","rejected"] as const;
 export const ExecutionStateValues = ["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"] as const;
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;
+export const SourceContextDirectionValues = ["before","after"] as const;
+export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
+export const SourceContextOmissionReasonValues = ["not-selected","byte-budget","item-limit"] as const;
+export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;
 export const TranslationOriginValues = ["import","manual","ai"] as const;
 export const ValidationStateValues = ["absent","pending","valid","invalid"] as const;

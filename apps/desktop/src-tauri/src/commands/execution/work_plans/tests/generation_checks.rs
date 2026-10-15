@@ -60,7 +60,7 @@ fn completed_result(window: &MockWebview, context: &Value, attempt: Value) -> Va
     }
 }
 
-fn declared_fixture(
+pub(super) fn declared_fixture(
     application: &Path,
     format_approval: &PackageApproval,
     environment_digest: &str,

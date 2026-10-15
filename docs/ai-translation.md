@@ -16,7 +16,26 @@ The provider origin has a two-request-per-second rolling limit independent of th
 
 Requests reserve durable budget before network dispatch. The saved summary distinguishes reserved requests, unresolved outcomes, unknown usage and reported token totals. Reservations survive cancellation, timeout and project reopening; unknown requests are not free. Successful responses without usage also retain unknown usage. Local trusted child tasks share every ancestor limit and cannot expand the captured scope or connection and sharing configuration; this is a Core scheduling API, not a shipped autonomous Agent interface.
 
-Select the target language and source units. Adopted applicable terms and captured context are optional and off by default. **Preview what will be sent** shows the full source text, destination, budget, selected resources and omissions. Changing inputs invalidates the preview and consent. Confirm sharing and choose an authorization duration of 1–1440 minutes before sending. Choose **Save candidates; choose manually**, **Choose only entries without a translation**, or **Allow replacing the translations shown in this scope**. The latter two enable mechanical checks and add that exact selection effect to the displayed authorization. Only clean checks, unchanged source/resources/selection and unprotected entries permit selection. Approval, resource adoption and export remain separate manual actions.
+Select the target language and source units. Adopted applicable terms and saved human context are optional and off by default. **Preview what will be sent** shows the full source text, destination, budget, selected resources and omissions. Changing inputs invalidates the preview and consent. Confirm sharing and choose an authorization duration of 1–1440 minutes before sending. Choose **Save candidates; choose manually**, **Choose only entries without a translation**, or **Allow replacing the translations shown in this scope**. The latter two enable mechanical checks and add that exact selection effect to the displayed authorization. Only clean checks, unchanged source/resources/selection and unprotected entries permit selection. Approval, resource adoption and export remain separate manual actions.
+
+**Source observations** separately offers extracted source facts, source inferences
+with their rationale, and adjacent original text. All three start off and are
+independent of terms and saved human context. The preview preserves fact origins
+and original references locally; inferences remain hypotheses. Missing, explicitly
+empty and unsupported facts remain distinguishable. Selecting facts that require
+an unavailable interpreter blocks preparation; neighbors can be selected without
+interpreting those facts.
+
+The source-observation budget defaults to 16,384 encoded bytes and 128 entries per
+original. It accepts 27–16,384 bytes and 1–128 entries, counting the complete JSON
+entries and their array container. Facts follow their original block order before
+adjacent text; an entry that does not fit is omitted whole. The preview shows
+omission categories, reasons, up to eight reference samples and the remaining
+unlisted count. Provider requests include only the chosen fact kind, text,
+origin and inference rationale, or adjacent text and relative direction.
+Source coordinates, artifact identities and revision evidence stay local.
+Accepted execution and recovery retain the original capture, sharing choices and
+deadlines; editing a choice requires a new preview and confirmation.
 
 Requests contain text only: a fixed translation system instruction and a user message containing JSON text. No files, images, audio or tools are sent. The service must return a single assistant choice with `finish_reason: "stop"` and JSON content containing exactly `unitId`, `targetLocale` and `text`, copying the supplied identity and locale. The client validates output locally; it does not request a server-side JSON Schema mode.
 
@@ -28,7 +47,7 @@ If authorization or control has an uncertain result, check the original action r
 
 ## Arena comparison
 
-Choose **Arena comparison** to generate two to four schemes for the same selected original strings and one target language. Each scheme has its own endpoint, model, output token parameter, timeout, retry limit and optional terms/context sharing. The whole round shares one request and concurrency budget. Defaults are two schemes, up to 20 original strings, 40 requests including retries and concurrency 1. At most 100 expanded string × scheme items are allowed; requests are bounded to 300 and concurrency to 2. An initial request count larger than the chosen budget is rejected.
+Choose **Arena comparison** to generate two to four schemes for the same selected original strings and one target language. Each scheme has its own endpoint, model, output token parameter, timeout, retry limit, terms/human-context sharing and source-observation selection and budget. The whole round shares one request and concurrency budget. Defaults are two schemes, up to 20 original strings, 40 requests including retries and concurrency 1. At most 100 expanded string × scheme items are allowed; requests are bounded to 300 and concurrency to 2. An initial request count larger than the chosen budget is rejected.
 
 Preview every scheme's destination, complete text, actual resources and parameters, then explicitly confirm the shared budget. Changing a scheme, source or relevant resources requires a new preview. Each result remains bound to its scheme even if responses arrive out of order or have identical text. The display identifies differing inputs or parameters and repeated sampling. Reported token totals cover only the known portion; missing usage and uncertain requests remain unknown.
 
@@ -46,6 +65,16 @@ During a save you can continue editing. A successful older save does not discard
 
 The internal Rust and desktop IPC interfaces remain experimental. Producer callers now obtain `DispatchRequest` from the execution runtime or store dispatch boundary rather than constructing its fields directly; the runtime supplies the private durable-budget channel. `ExecutionRuntime::register` and `ProjectStore::enqueue_execution` conservatively record `external-unknown` effects. A trusted host must explicitly use `register_read_only` / `enqueue_read_only_execution`, or `register_with_policy` for another reviewed effect contract. A producer's own claim or operation name cannot authorize replay. Persisted policies cannot be changed by resubmitting the same identity.
 
-Current development projects use schema 33 only. Earlier development projects are preserved and refused; create a new project and reimport original source files. There is no automatic migration from abandoned development snapshots. See [work plans](work-plans.md) for current authorization and human-control boundaries.
+Current development projects use schema 36 only. Durable budgets, reservations,
+ancestry, effect policies and exact continuation identities retain their original
+owners. Other development schemas are refused without an application upgrade,
+rebuild or reset; SQLite may complete its own hot-journal recovery. Preserve those
+directories and create a new project to reimport original source files. Existing
+attempts retain their captured host-reviewed policy. See the [README](../README.md#development)
+and [work plans](work-plans.md) for current compatibility and human-control boundaries.
 
-The Tasks view keeps an explicit resume/retry intent, selected items and original cancellation basis after a lost acknowledgement. Exact lookup or the same request returns the stored continuation without another enqueue or model reservation; changed requests conflict. This generic execution recovery does not replace the work-plan Continue authorization described in [work plans](work-plans.md), or restore a closed component scope.
+The Tasks view keeps an explicit resume/retry intent, selected items and original
+cancellation basis after a lost acknowledgement. Exact lookup or the same request
+returns the stored continuation without another enqueue or model reservation;
+changed requests conflict. Generic recovery does not replace work-plan Continue
+authorization or restore a closed component scope.

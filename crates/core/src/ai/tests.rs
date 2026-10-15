@@ -3,6 +3,8 @@ use super::*;
 mod arena_tests;
 #[path = "provider_tests.rs"]
 mod provider_tests;
+#[path = "connection_tests.rs"]
+mod connection_tests;
 use crate::{ProjectMetadata, ProjectStore, content::*};
 use std::{
     io::{Read, Write},

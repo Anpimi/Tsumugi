@@ -1,22 +1,26 @@
-import { createRef } from "react";
+import { createRef, useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ResourceWorkbench, type ResourceHandle } from "./ResourceWorkbench";
-import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { useResourceDraftSession } from "./ResourceDraftSession";
+import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
+import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSupport/pluginToolFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { i18n } from "./i18n";
+import { SessionNavigation, type SessionExitPermit } from "./sessionNavigation";
 import type { ProjectView } from "./projectCommands";
-import type { AttemptDetail, PluginToolPrepareRequest, PluginToolPreflight, ResultEnvelope } from "./executionCommands";
+import type { AttemptDetail, PluginToolPrepareRequest, PluginToolPreflight, ExecutionOutputView } from "./executionCommands";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import errorFixture from "../test/fixtures/commandErrors.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "synthetic-query-session", locator: "/synthetic/project", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(900), displayName: "Query demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 let serial: number, inventory: typeof toolQueryInventory, prepared: PluginToolPreflight | null, detail: AttemptDetail | null;
-let outputs: Map<string, ResultEnvelope>, startUnknown: boolean, malformedOutput: boolean, queued: boolean;
+let outputs: Map<string, ExecutionOutputView>, startUnknown: boolean, malformedOutput: boolean, queued: boolean;
 let holdPreparation: Promise<void> | null;
 
 beforeEach(async () => {
@@ -75,12 +79,30 @@ afterEach(cleanup);
 
 async function open() {
   const user = userEvent.setup(), ref = createRef<ResourceHandle>();
-  render(<ResourceWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={() => true} />);
+  let commands!: WorkbenchCommands, owner!: ReturnType<typeof useResourceDraftSession>;
+  function Probe() {
+    const currentCommands = useWorkbenchCommands(), currentOwner = useResourceDraftSession();
+    useLayoutEffect(() => { commands = currentCommands; owner = currentOwner; });
+    return null;
+  }
+  const ui = () => <><ResourceWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={() => true} /><Probe /></>;
+  const view = render(ui(), project);
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await user.click(screen.getByRole("tab", { name: "Reference queries" }));
   await screen.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
   await user.click(screen.getByRole("checkbox", { name: /^Term 👩🏽‍💻/ }));
-  return { user, ref };
+  return { user, ref, view, ui, commands: () => commands, owner: () => owner.tool, resources: () => owner };
+}
+function exitNavigation(handle: Awaited<ReturnType<typeof open>>) {
+  return new SessionNavigation({ live: () => true, area: () => "resources", show: () => {},
+    consumer: async () => handle.ref.current, accept: async () => false,
+    inspect: () => {
+      const owner = handle.resources(), state = owner.current(), tool = owner.tool;
+      return [{ area: "resources", status: owner.inFlight() || state.pending || tool.blocked() ? "blocked"
+        : owner.termDirty() || owner.contextDirty() || tool.hasDraft() ? "dirty" : "ready",
+        revision: JSON.stringify([state.termSeq, state.contextSeq, tool.draftSequence.current,
+          tool.current().capture?.review.inputDigest, tool.current().pending]) }];
+    }, blocked: () => {}, busy: () => {}, failure: () => {} });
 }
 async function review(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Review queries" }));
@@ -160,19 +182,22 @@ it("retains the exact grant and request after an unknown start acknowledgement a
 });
 
 it("preserves hidden query drafts, prompts before leaving and explicitly discards the captured review", async () => {
-  const { user } = await open();
+  const { user, ref } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "draft e\u0301");
   await review(user);
   await user.click(screen.getByRole("tab", { name: "Terms" }));
   await user.click(screen.getByRole("tab", { name: "Reference queries" }));
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("draft e\u0301");
-  await user.click(screen.getByRole("button", { name: "Back to overview" }));
+  let leaving: Promise<boolean> | undefined;
+  await act(async () => { leaving = ref.current?.allowLeave(); });
   const dialog = await screen.findByRole("dialog", { name: "Discard query input and leave?" });
   await user.click(within(dialog).getByRole("button", { name: "Stay and keep edits" }));
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("draft e\u0301");
-  await user.click(screen.getByRole("button", { name: "Back to overview" }));
+  expect(await leaving).toBe(false);
+  await act(async () => { leaving = ref.current?.allowLeave(); });
   await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Discard edits and leave" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "discard_plugin_tool_preflight")).toBe(true));
+  expect(await leaving).toBe(true);
   expect(invoke.mock.calls.some(([command]) => command === "cancel_execution_task")).toBe(false);
 });
 
@@ -186,6 +211,87 @@ it("keeps text when extension availability changes and distinguishes malformed s
   await screen.findByText("Enable a reference package in Extensions and approve its runtime. Your text stays here while the package is unavailable.");
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("input kept");
   expect(screen.getByRole("button", { name: "Review queries" })).toBeDisabled();
+});
+
+it("settles an actual navigation exit after discarding the original captured tool draft", async () => {
+  const handle = await open(), navigation = exitNavigation(handle);
+  await handle.user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original draft 👩🏽‍💻");
+  await review(handle.user);
+  const capture = handle.owner().current().capture;
+  expect(capture).not.toBeNull();
+  let permit: SessionExitPermit | null | undefined;
+  await act(async () => { void navigation.prepareExit().then(value => { permit = value; }); });
+  const dialog = await screen.findByRole("dialog", { name: "Discard query input and leave?" });
+  await handle.user.click(within(dialog).getByRole("button", { name: "Discard edits and leave" }));
+  await waitFor(() => expect(permit).toBeDefined());
+  expect(permit?.current()).toBe(true);
+  expect(handle.owner().current().capture).toBeNull();
+  expect(handle.owner().current().pending).toBeNull();
+  expect(handle.owner().current().rows.map(row => row.text)).toEqual([""]);
+  const discards = invoke.mock.calls.filter(([command]) => command === "discard_plugin_tool_preflight");
+  expect(discards).toHaveLength(1);
+  expect(discards[0][1].request).toEqual({ projectId: project.metadata.projectId,
+    sessionToken: project.sessionToken, attemptId: capture!.review.attemptId });
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  expect(invoke.mock.calls.some(([command]) => ["start_plugin_tool", "cancel_execution_task"].includes(command))).toBe(false);
+  permit?.release();
+});
+
+it.each(["tool-input", "resource-input", "retired-intent"] as const)("rejects exit after %s changes during the checked Tool discard", async change => {
+  const handle = await open(), navigation = exitNavigation(handle);
+  await handle.user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original A");
+  await review(handle.user);
+  const original = invoke.getMockImplementation()!;
+  let finish!: () => void;
+  const held = new Promise<void>(resolve => { finish = resolve; });
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "discard_plugin_tool_preflight") await held;
+    return original(command, args);
+  });
+  let permit: SessionExitPermit | null | undefined;
+  await act(async () => { void navigation.prepareExit().then(value => { permit = value; }); });
+  const dialog = await screen.findByRole("dialog", { name: "Discard query input and leave?" });
+  await handle.user.click(within(dialog).getByRole("button", { name: "Discard edits and leave" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "discard_plugin_tool_preflight")).toHaveLength(1));
+  await act(async () => {
+    if (change === "tool-input") { handle.owner().setRows([{ id: 0, text: "new B 👩🏽‍💻" }]); handle.owner().edit(); }
+    else if (change === "resource-input") handle.resources().editTerm({ ...handle.resources().current().termDraft, target: "new B" });
+    else navigation.dispose();
+    finish();
+  });
+  await waitFor(() => expect(permit).toBeNull());
+  expect(handle.owner().current().capture).toBeNull();
+  expect(handle.owner().current().pending).toBeNull();
+  expect(handle.owner().current().rows.map(row => row.text)).toEqual([change === "tool-input" ? "new B 👩🏽‍💻" : "original A"]);
+  if (change === "resource-input") expect(handle.resources().current().termDraft.target).toBe("new B");
+  expect(invoke.mock.calls.filter(([command]) => command === "discard_plugin_tool_preflight")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  expect(invoke.mock.calls.some(([command]) => ["start_plugin_tool", "cancel_execution_task"].includes(command))).toBe(false);
+});
+
+it("retains unknown Tool discard and refuses another actual exit intent", async () => {
+  const handle = await open(), navigation = exitNavigation(handle);
+  await handle.user.type(screen.getByRole("textbox", { name: "Query text 1" }), "kept A");
+  await review(handle.user);
+  const capture = handle.owner().current().capture, original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "discard_plugin_tool_preflight"
+    ? Promise.resolve({ unconfirmed: true }) : original(command, args));
+  let permit: SessionExitPermit | null | undefined;
+  await act(async () => { void navigation.prepareExit().then(value => { permit = value; }); });
+  const dialog = await screen.findByRole("dialog", { name: "Discard query input and leave?" });
+  await handle.user.click(within(dialog).getByRole("button", { name: "Discard edits and leave" }));
+  await waitFor(() => expect(handle.owner().current().uncertain).toBe(true));
+  await handle.user.click(within(dialog).getByRole("button", { name: "Stay and keep edits" }));
+  await waitFor(() => expect(permit).toBeNull());
+  const pending = handle.owner().current().pending;
+  expect(pending).toEqual({ kind: "discard", request: { projectId: project.metadata.projectId,
+    sessionToken: project.sessionToken, attemptId: capture!.review.attemptId } });
+  expect(handle.owner().current().capture).toBe(capture);
+  expect(handle.owner().current().rows.map(row => row.text)).toEqual(["kept A"]);
+  await act(async () => { expect(await navigation.prepareExit()).toBeNull(); });
+  expect(handle.owner().current().pending).toBe(pending);
+  expect(invoke.mock.calls.filter(([command]) => command === "discard_plugin_tool_preflight")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
 });
 
 it("does not pick the first of multiple installed providers and reports explicit selection and text limits", async () => {
@@ -235,4 +341,111 @@ it("appends editor text without replacing an existing draft or inheriting its re
   expect(screen.getByRole("checkbox", { name: /^I allow this exact component/ })).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Run reference queries" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
+});
+
+
+it("keeps the complete unknown tool action after the consumer unmounts and a later retry is rejected", async () => {
+  const { user, ref, view, ui } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original Unicode 👩🏽‍💻");
+  await review(user); startUnknown = true; await start(user);
+  await screen.findByRole("button", { name: "Check the original action" });
+  const first = invoke.mock.calls.find(([command]) => command === "start_plugin_tool")![1];
+  const identities = invoke.mock.calls.filter(([command]) => command === "create_execution_identity").length;
+  const native = invoke.getMockImplementation()!;
+  let rejectRetry = true;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "start_plugin_tool" && rejectRetry) { rejectRetry = false; return Promise.reject(errorFixture.errors[1]); }
+    return native(command, args);
+  });
+  view.rerender(<span>Consumer is unmounted</span>, project);
+  const reads = invoke.mock.calls.filter(([command]) => command === "read_execution_attempt").length;
+  await refreshWorkbenchReads();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_execution_attempt")).toHaveLength(reads);
+  view.rerender(ui(), project);
+  await user.click(await screen.findByRole("button", { name: "Check the original action" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check the original action" })).toBeEnabled());
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("original Unicode 👩🏽‍💻");
+  let allowed: boolean | undefined;
+  await act(async () => { allowed = await ref.current?.allowLeave(); });
+  expect(allowed).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Check the original action" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Check the original action" })).toBeNull());
+  const retries = invoke.mock.calls.filter(([command]) => command === "start_plugin_tool");
+  expect(retries).toHaveLength(3);
+  retries.forEach(([, args]) => expect(args).toEqual(first));
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_plugin_tool")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(identities);
+});
+
+
+it("accepts only a complete cloned original tool recovery payload and retains its first unknown after rejection", async () => {
+  const { user, commands, owner } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original query");
+  await review(user); startUnknown = true; await start(user);
+  await screen.findByRole("button", { name: "Check the original action" });
+  const original = owner().current().pending!;
+  expect(original.kind).toBe("start");
+  const native = invoke.getMockImplementation()!;
+  let rejectRetry = true;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "start_plugin_tool" && rejectRetry) { rejectRetry = false; return Promise.reject(errorFixture.errors[1]); }
+    return native(command, args);
+  });
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "resources" as const };
+  const payload = { kind: "resource-tool-pending" as const, intent: structuredClone(original) };
+  await act(async () => { expect(commands().dispatch("resource.retry-tool", scope, payload)).toBe(true); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(2));
+  expect(owner().current().pending).toEqual(original); expect(owner().current().uncertain).toBe(true);
+  const changed = structuredClone(payload);
+  if (changed.intent.kind !== "start") throw new Error("Expected original start");
+  changed.intent.request.expiresAtMs = "1";
+  expect(commands().dispatch("resource.retry-tool", scope, changed)).toBe(false);
+  await user.click(await screen.findByRole("button", { name: "Check the original action" }));
+  await waitFor(() => expect(owner().current().pending).toBeNull());
+  const requests = invoke.mock.calls.filter(([command]) => command === "start_plugin_tool").map(([, args]) => args.request);
+  expect(requests).toHaveLength(3); requests.forEach(request => expect(request).toEqual(requests[0]));
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
+});
+
+it("rejects a changed task association for the same tool attempt and keeps cancellation bound to its original task", async () => {
+  const { user, owner } = await open(); queued = true;
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "queued original");
+  await review(user); await start(user);
+  await screen.findByRole("button", { name: "Request cancellation" });
+  await waitFor(() => expect(owner().current().knownTask?.taskId).toBe(fixtureIdentity(1200)));
+  if (!detail) throw new Error("Expected original attempt");
+  detail = { ...structuredClone(detail), taskId: fixtureIdentity(1201) };
+  await refreshWorkbenchReads();
+  await screen.findByText(i18n.t("toolQuery.recordReadFailed"));
+  expect(owner().current().knownTask).toMatchObject({ taskId: fixtureIdentity(1200), attemptId: detail.attemptId });
+  await user.click(screen.getByRole("button", { name: "Request cancellation" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "cancel_execution_task")).toHaveLength(1));
+  const request = invoke.mock.calls.find(([command]) => command === "cancel_execution_task")![1].request;
+  expect(request.taskId).toBe(fixtureIdentity(1200)); expect(request.taskId).not.toBe(detail.taskId);
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+});
+
+
+it("keeps a failed saved-result read distinct from empty or malformed output and retries only the original read", async () => {
+  const { user } = await open(), native = invoke.getMockImplementation()!;
+  let unavailable = true;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_execution_output" && unavailable) return Promise.reject(new Error("Result read unavailable"));
+    return native(command, args);
+  });
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original input kept");
+  await review(user); await start(user);
+  const notice = await screen.findByText(i18n.t("toolQuery.outputReadFailed"));
+  expect(screen.queryByText(i18n.t("toolQuery.invalidResult"))).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("original input kept");
+  const before = invoke.mock.calls.filter(([command]) => command === "read_execution_output").length;
+  unavailable = false;
+  await user.click(within(notice.parentElement!).getByRole("button", { name: i18n.t("toolQuery.retryRead") }));
+  await within(await screen.findByRole("region", { name: "Query results" })).findByText("<script>untrusted</script>");
+  const reads = invoke.mock.calls.filter(([command]) => command === "read_execution_output").map(([, args]) => args.request);
+  expect(reads).toHaveLength(before + 1); reads.forEach(request => expect(request).toEqual(reads[0]));
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_plugin_tool")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
 });

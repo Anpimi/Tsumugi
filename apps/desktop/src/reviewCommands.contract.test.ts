@@ -15,6 +15,17 @@ function decisionRequest() {
 }
 beforeEach(() => invoke.mockReset());
 
+it.each(["scope", "locale", "duplicate", "excluded"])("rejects a shape-valid but mismatched fixed scope acknowledgement: %s", async kind => {
+  const request = { ...fixture.requests.scope, excluded: [] as string[] }, response = structuredClone(fixture.responses.scope);
+  if (kind === "scope") response.scopeId = fixture.requests.target.unitId;
+  if (kind === "locale") response.locale = "fr";
+  if (kind === "duplicate") response.units.push(response.units[0]);
+  if (kind === "excluded") request.excluded = [response.units[0].unitId];
+  expect(validators.validateResponseScope(response)).toBe(true);
+  invoke.mockResolvedValue(response);
+  await expect(reviewCommands.captureScope(request)).rejects.toThrow();
+});
+
 it("receives the native profile and rejects mixed runtime fields or claimed authorization", () => {
   const value = structuredClone(fixture.responses.prepareCheck);
   const slot = value.view.checkers[0];
@@ -159,4 +170,24 @@ it("checks the preparation acknowledgement against the exact review action and b
   }
   invoke.mockResolvedValueOnce({ kind: "recorded", run: fixture.responses.check });
   expect(await reviewCommands.prepareCheck(request)).toEqual({ kind: "recorded", run: fixture.responses.check });
+});
+
+it.each([null, fixture.responses.summary.scopeId])("rejects a wrong source snapshot in a summary captured at scope %s", async scopeId => {
+  const page = fixture.responses.summary;
+  const response = { ...page, rows: page.rows.map(row => ({ ...row, sourceSnapshotId: fixture.responses.waiver.waiverId })) };
+  expect(validators.validateResponseSummary(response)).toBe(true);
+  invoke.mockResolvedValueOnce(response);
+  await expect(reviewCommands.summaryPage({ ...fixture.requests.summary, scopeId })).rejects.toThrow("Invalid IPC response: read_review_summary_page");
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it("rejects a summary for another fixed scope or language while preserving valid empty pages", async () => {
+  const page = fixture.responses.summary;
+  const request = { ...fixture.requests.summary, scopeId: page.scopeId };
+  invoke.mockResolvedValueOnce({ ...page, scopeId: fixture.responses.waiver.waiverId });
+  await expect(reviewCommands.summaryPage(request)).rejects.toThrow("Invalid IPC response: read_review_summary_page");
+  invoke.mockResolvedValueOnce({ ...page, rows: page.rows.map(row => ({ ...row, locale: "ja" })) });
+  await expect(reviewCommands.summaryPage(request)).rejects.toThrow("Invalid IPC response: read_review_summary_page");
+  invoke.mockResolvedValueOnce({ ...page, rows: [] });
+  expect(await reviewCommands.summaryPage(request)).toEqual({ ...page, rows: [] });
 });

@@ -1,7 +1,9 @@
 //! Component generation delegates to the original work-plan ledger and budget.
 //! Channel receipts preserve provenance; only the original live grant can execute.
 use super::{ProjectStore, control};
-use crate::execution::plugin_authority::{PluginAuthority, ServiceOriginGuard, plugin_now_ms};
+use crate::execution::plugin_authority::{
+    PackageKey, PluginAuthority, ServiceOriginGuard, plugin_now_ms,
+};
 use crate::{application::*, execution::*};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -147,6 +149,11 @@ impl PreparedWorkPlanServiceGeneration {
     }
     pub fn identity(&self) -> Result<WorkPlanServiceCallIdentity, ExecutionError> {
         self.origin.identity(&self.call)
+    }
+    /// Read-only ownership from the original sealed dispatch, not a live grant.
+    pub fn original_caller_package(&self) -> (&sdk::PluginIdentity, &str) {
+        let package = self.origin.guard.permit.original_package();
+        (package.plugin(), package.digest())
     }
 }
 
@@ -341,6 +348,74 @@ fn receipt(
 }
 
 impl ProjectStore {
+    /// Resolve immutable service provenance for package shutdown. Revoked or
+    /// historical calls remain attributable without regaining execution rights.
+    pub(crate) fn work_plan_service_package(
+        &self,
+        input: &FixedInput,
+    ) -> Result<Option<PackageKey>, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "service-call-storage"))?;
+        super::super::review::read_snapshot(c, |_| {
+            let original = load_input_origin(c, input)?;
+            let retained = self
+                .plugin_authority
+                .retained_service_origin(input.envelope().attempt_id)?;
+            match original {
+                None if retained.is_some() => Err(corrupt()),
+                None => Ok(None),
+                Some((origin, digest)) => {
+                    let package = PackageKey::from_package(
+                        &origin.invocation.provider.plugin,
+                        &origin.invocation.provider.package_digest,
+                    );
+                    if retained.as_ref().is_some_and(|guard| {
+                        guard.digest != digest || guard.permit.original_package() != &package
+                    }) {
+                        return Err(corrupt());
+                    }
+                    Ok(Some(package))
+                }
+            }
+        })
+    }
+
+    /// A read-only query retains the original live guard, never reconstructing
+    /// it from a durable service receipt after release or process reopen.
+    pub(crate) fn work_plan_service_query_origin(
+        &self,
+        input: &FixedInput,
+    ) -> Result<Option<Arc<ServiceOriginGuard>>, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "service-call-storage"))?;
+        super::super::review::read_snapshot(c, |_| {
+            let original = load_input_origin(c, input)?;
+            let guard = self
+                .plugin_authority
+                .service_origin(input.envelope().attempt_id)?;
+            match original {
+                None if guard.is_some() => Err(corrupt()),
+                None => Ok(None),
+                Some((origin, digest)) => {
+                    let guard = guard
+                        .ok_or_else(|| fail(ErrorCode::Unauthorized, "service-origin-query"))?;
+                    if guard.digest != digest
+                        || guard.permit.original_package()
+                            != &PackageKey::from_package(
+                                &origin.invocation.provider.plugin,
+                                &origin.invocation.provider.package_digest,
+                            )
+                    {
+                        return Err(corrupt());
+                    }
+                    Ok(Some(guard))
+                }
+            }
+        })
+    }
+
     /// Only a true dispatch can capture this origin. Outcome-query data has no
     /// absolute deadline and cannot create or renew a service authorization.
     /// The trusted installation owner supplies its original one-way revocation
@@ -581,23 +656,9 @@ pub(in crate::persistence) fn check_input(
     input: &FixedInput,
     authority: &PluginAuthority,
 ) -> Result<(), ExecutionError> {
-    let identity: Option<WorkPlanServiceCallIdentity> = c.query_row(
-        "SELECT s.outer_attempt,s.outer_item,s.outer_dispatch,s.handle_id,s.call_id FROM application_service_calls s JOIN execution_attempts a ON a.attempt_id=s.child_attempt WHERE a.task_id=?1",
-        [input.envelope().task_id.to_string()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
-    ).optional().map_err(sql)?.map(|(attempt, item, dispatch, handle_id, call_id)| Ok::<_, ExecutionError>(WorkPlanServiceCallIdentity {
-        outer_attempt_id: ExecutionId::parse(&attempt)?, outer_item_id: ExecutionId::parse(&item)?,
-        outer_dispatch_id: ExecutionId::parse(&dispatch)?, handle_id, call_id,
-    })).transpose()?;
-    let Some(identity) = identity else {
+    let Some((origin, digest)) = load_input_origin(c, input)? else {
         return Ok(());
     };
-    let (stored_input, origin, _, digest) = load_call(c, &identity)?.ok_or_else(corrupt)?;
-    if input.envelope().attempt_id != stored_input.envelope().attempt_id {
-        return Err(fail(ErrorCode::Unauthorized, "service-child-retry"));
-    }
-    if input.bytes() != stored_input.bytes() {
-        return Err(corrupt());
-    }
     authority.check_service_origin(input.envelope().attempt_id, &digest)?;
     if plugin_now_ms()? >= origin.deadline_at_ms {
         return Err(fail(ErrorCode::Unauthorized, "service-origin-expired"));
@@ -609,6 +670,30 @@ pub(in crate::persistence) fn check_input(
         return Err(corrupt());
     }
     Ok(())
+}
+
+fn load_input_origin(
+    c: &Connection,
+    input: &FixedInput,
+) -> Result<Option<(OriginRecord, String)>, ExecutionError> {
+    let identity: Option<WorkPlanServiceCallIdentity> = c.query_row(
+        "SELECT s.outer_attempt,s.outer_item,s.outer_dispatch,s.handle_id,s.call_id FROM application_service_calls s JOIN execution_attempts a ON a.attempt_id=s.child_attempt WHERE a.task_id=?1",
+        [input.envelope().task_id.to_string()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+    ).optional().map_err(sql)?.map(|(attempt, item, dispatch, handle_id, call_id)| Ok::<_, ExecutionError>(WorkPlanServiceCallIdentity {
+        outer_attempt_id: ExecutionId::parse(&attempt)?, outer_item_id: ExecutionId::parse(&item)?,
+        outer_dispatch_id: ExecutionId::parse(&dispatch)?, handle_id, call_id,
+    })).transpose()?;
+    let Some(identity) = identity else {
+        return Ok(None);
+    };
+    let (stored_input, origin, _, digest) = load_call(c, &identity)?.ok_or_else(corrupt)?;
+    if input.envelope().attempt_id != stored_input.envelope().attempt_id {
+        return Err(fail(ErrorCode::Unauthorized, "service-child-retry"));
+    }
+    if input.bytes() != stored_input.bytes() {
+        return Err(corrupt());
+    }
+    Ok(Some((origin, digest)))
 }
 
 pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {

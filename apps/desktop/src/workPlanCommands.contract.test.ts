@@ -4,6 +4,7 @@ import { workPlanCommands } from "./workPlanCommands";
 import * as validators from "./generated/ai.validators";
 import type { Requests, WorkPlanControlRequest } from "./generated/ai.requests";
 import { hasUnknownOutcome } from "./projectCommands";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -110,4 +111,21 @@ it("prepares manual work without any model and validates renewed continuation re
   const continued = { ...fixture.responses.control, state: "active", attemptId: fixture.responses.plan.attemptId, parentTask: fixture.responses.plan.planId };
   invoke.mockResolvedValueOnce(continued);
   expect(await workPlanCommands.control(continuing)).toEqual(continued);
+});
+
+function savedPreparation() {
+  return {...requests.workPlanPrepare,config:{...requests.workPlanPrepare.config!,connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}}};
+}
+it("accepts a serialized captured profile with all exact configuration fields",async()=>{
+  const request=savedPreparation(),response={...structuredClone(fixture.responses.plan),preview:{...structuredClone(fixture.responses.plan.preview),config:structuredClone(request.config)}};
+  expect(validators.validateResponseWorkPlan(response)).toBe(true);invoke.mockResolvedValueOnce(response);
+  expect(await workPlanCommands.prepare(request)).toEqual(response);
+  expect(invoke).toHaveBeenLastCalledWith("prepare_work_plan",{request});
+});
+it.each(["storeId","profileId","revision","digest"] as const)("rejects a transplanted %s even when every saved default is unchanged",async field=>{
+  const request=savedPreparation(),config=structuredClone(request.config);
+  config.connectionProfile[field]=field==="revision"?"2":field==="digest"?"b".repeat(64):fixtureIdentity(702);
+  const response={...structuredClone(fixture.responses.plan),preview:{...structuredClone(fixture.responses.plan.preview),config}};
+  expect(validators.validateResponseWorkPlan(response)).toBe(true);invoke.mockResolvedValueOnce(response);
+  await expect(workPlanCommands.prepare(request)).rejects.toMatchObject({reason:"invalid-work-plan-acknowledgement",outcome:"unknown"});
 });

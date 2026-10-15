@@ -12,9 +12,11 @@ export interface Requests {
   impacts: ImpactRequest;
   session: SessionRequest;
   suggestions: SuggestionRequest;
+  tbxPreview: TbxPreviewRequest;
   term: TermRequest;
   termHistory: TermHistoryRequest;
   terms: TermListRequest;
+  tmxPreview: TmxPreviewRequest;
   unitLocale: UnitLocaleRequest;
 }
 export interface CaptureRequest {
@@ -87,6 +89,11 @@ export interface SuggestionRequest {
   sessionToken: string;
   unitId: ExecutionId;
 }
+export interface TbxPreviewRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
 export interface TermRequest {
   projectId: ExecutionId;
   sessionToken: string;
@@ -115,6 +122,11 @@ export interface TermHistoryRequest {
 export interface TermListRequest {
   afterTermId?: string | null;
   limit: number;
+  locale: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface TmxPreviewRequest {
   locale: string;
   projectId: ExecutionId;
   sessionToken: string;

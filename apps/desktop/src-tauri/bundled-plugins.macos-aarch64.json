@@ -13,9 +13,9 @@
         "id": "webvtt",
         "version": "0.1.0-alpha.1"
       },
-      "packageDigest": "e0228209d3ee79b997eba69e1e0f18c7ebcd9aa594a806aeeb77e9b3650b7559",
+      "packageDigest": "a08305eb934c9e9c3370d55d0a2863d3e9206b6cfea250a91058871d2bfdd5c2",
       "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
-      "sourceCommit": "be0001a1bd92a9fd12c5c7df541ce7b0231e05ba",
+      "sourceCommit": "1dd02169b8ba5481b2dedf7f3477a7d0b0aa3cac",
       "sdkVersion": "0.1.0-alpha.1"
     },
     {
@@ -26,9 +26,9 @@
         "id": "stardew-smapi",
         "version": "0.1.0-alpha.1"
       },
-      "packageDigest": "41433207985a3329e70843c80331d79d753e359c685a9b0f4a362d9be61c8573",
+      "packageDigest": "f77f4b78f0b98a17f4085e9d434d9e896a750e6b5b101823a45562880c1e9012",
       "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
-      "sourceCommit": "be0001a1bd92a9fd12c5c7df541ce7b0231e05ba",
+      "sourceCommit": "1dd02169b8ba5481b2dedf7f3477a7d0b0aa3cac",
       "sdkVersion": "0.1.0-alpha.1"
     }
   ]

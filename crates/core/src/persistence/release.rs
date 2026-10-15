@@ -19,8 +19,10 @@ use std::collections::BTreeSet;
 
 mod plan;
 mod record;
+mod saved;
 pub use plan::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub(super) use plan::{VerifiedBuildInput, prepare_input, verify_prepared_input};
+pub use saved::{SavedBuildArtifact, SavedBuildLocale, SavedBuildResult, SavedPluginBuildView};
 
 const TABLES: &[(&str, &str)] = &[
     (

@@ -3,13 +3,10 @@
 use super::{ProjectStore, ledger};
 use crate::execution::{
     ErrorCode, ExecutionError, ExecutionId, FixedInput, PluginConsent, PluginPermit,
-    plugin_authority::{MAX_PLUGIN_GRANT_LIFETIME_MS, PluginAuthority, PluginEpoch, plugin_now_ms},
+    plugin_authority::{PluginAuthority, PluginEpoch, plugin_grant_deadline, plugin_now_ms},
 };
 use rusqlite::{Connection, OptionalExtension, params};
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 // A grant may be recorded before its fixed input is enqueued. Association with
 // the eventual attempt is checked against the exact captured digest, not an FK
@@ -353,25 +350,14 @@ impl ProjectStore {
         expires_at_ms: u64,
         consent: PluginConsent,
     ) -> Result<(), ExecutionError> {
-        if input.envelope().plugin.is_none()
-            || input.envelope().automation.is_some()
-            || !consent.unsandboxed_execution
-        {
+        if !consent.allows(input) {
             return Err(denied());
         }
         let authority = Arc::clone(&self.plugin_authority);
         authority.require_generation(generation)?;
-        let now = plugin_now_ms()?;
-        let remaining = expires_at_ms
-            .checked_sub(now)
-            .filter(|remaining| *remaining > 0 && *remaining <= MAX_PLUGIN_GRANT_LIFETIME_MS)
-            .filter(|_| expires_at_ms <= i64::MAX as u64)
-            .ok_or_else(|| failure(ErrorCode::InvalidInput, "plugin-grant-expiry"))?;
         // Capture the monotonic limit before the transaction. A wall-clock
         // rollback during commit cannot extend the consent's original duration.
-        let deadline = Instant::now()
-            .checked_add(Duration::from_millis(remaining))
-            .ok_or_else(denied)?;
+        let deadline = plugin_grant_deadline(expires_at_ms)?;
         let tx = self.execution_write()?;
         check_project(&tx, input)?;
         not_cancelled(&tx, input.envelope().task_id)?;
@@ -438,24 +424,45 @@ impl ProjectStore {
         generation: ExecutionId,
         grant_id: ExecutionId,
     ) -> Result<(), ExecutionError> {
+        self.revoke_plugin_grants(generation, &[grant_id])
+    }
+    pub(crate) fn revoke_plugin_grants(
+        &mut self,
+        generation: ExecutionId,
+        grant_ids: &[ExecutionId],
+    ) -> Result<(), ExecutionError> {
         let authority = Arc::clone(&self.plugin_authority);
         authority.require_generation(generation)?;
+        if grant_ids.len() > 128 {
+            return Err(failure(ErrorCode::LimitExceeded, "plugin-grants"));
+        }
+        if grant_ids.is_empty() {
+            return Ok(());
+        }
         let tx = self.execution_write()?;
-        let record = for_grant(&tx, grant_id)?.ok_or_else(denied)?;
-        if record.generation != generation {
-            return Err(denied());
+        let mut already_revoked = true;
+        for grant_id in grant_ids {
+            let record = for_grant(&tx, *grant_id)?.ok_or_else(denied)?;
+            if record.generation != generation {
+                return Err(denied());
+            }
+            already_revoked &= record.revoked;
         }
         // Revocation is one-way even if COMMIT fails or its result is unknown.
         // Only an explicit new attempt can obtain another grant.
-        authority.revoke_grant(generation, grant_id)?;
-        if record.revoked {
+        for grant_id in grant_ids {
+            authority.revoke_grant(generation, *grant_id)?;
+        }
+        if already_revoked {
             return Ok(());
         }
-        tx.execute(
-            "UPDATE plugin_execution_grants SET revoked=1 WHERE grant_id=?1",
-            [grant_id.to_string()],
-        )
-        .map_err(sql)?;
+        for grant_id in grant_ids {
+            tx.execute(
+                "UPDATE plugin_execution_grants SET revoked=1 WHERE grant_id=?1 AND generation=?2",
+                [grant_id.to_string(), generation.to_string()],
+            )
+            .map_err(sql)?;
+        }
         ledger::commit(tx)
     }
 }

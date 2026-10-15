@@ -25,6 +25,11 @@ export type InvocationOutcome =
       error: EncodedPayload;
       kind: "unknown";
     };
+/**
+ * Finite public failure classifications; details never determine permissions.
+ */
+export type SourceExtractionErrorCode =
+  "invalid-input" | "unsupported-profile" | "invalid-source" | "unsupported-structure" | "limit-exceeded" | "cancelled";
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -127,6 +132,7 @@ export type CommandStage =
   | "close"
   | "plugin-install"
   | "plugin-settings"
+  | "model-connections"
   | "execution-read"
   | "execution-cancel"
   | "execution-recover"
@@ -202,7 +208,7 @@ export interface Responses {
   continuationReceipt: ContinuationReceipt | null;
   continuations: ContinuationPage;
   identity: ExecutionId;
-  output: ResultEnvelope;
+  output: ExecutionOutputView;
   receipt: AdoptionReceipt | null;
   recovery: RecoveryView;
   status: RuntimeStatus;
@@ -316,7 +322,10 @@ export interface ContinuationPage {
   next: Revision | null;
   receipts: ContinuationReceipt[];
 }
-export interface ResultEnvelope {
+/**
+ * Read-only display projection. The stored ResultEnvelope remains unchanged.
+ */
+export interface ExecutionOutputView {
   attemptId: ExecutionId;
   capabilityId: string;
   capabilityVersion: string;
@@ -328,6 +337,7 @@ export interface ResultEnvelope {
   plugin?: PluginResultEvidence | null;
   projectId: ExecutionId;
   resultId: ExecutionId;
+  sourceFailure?: SourceExtractionError | null;
   supersedes: ExecutionId | null;
 }
 export interface Diagnostic {
@@ -400,6 +410,16 @@ export interface EncodedPayload {
   schema: ContractRef;
   sha256: string;
   utf8: string;
+}
+/**
+ * A bounded public diagnostic. Producers must use public descriptions and
+ * captured artifact IDs, never local paths, raw source text or secrets. Data
+ * validation cannot establish that arbitrary diagnostic text is safe to share.
+ */
+export interface SourceExtractionError {
+  artifactId: string | null;
+  code: SourceExtractionErrorCode;
+  detail: string;
 }
 export interface RecoveryView {
   attemptId: ExecutionId;

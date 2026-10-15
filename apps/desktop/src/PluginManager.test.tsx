@@ -2,6 +2,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { PluginManager } from "./PluginManager";
+import { ApplicationReadProvider } from "./ApplicationReadProvider";
 import { validateResponseInventory } from "./generated/plugins.validators";
 import type { PluginInventoryView } from "./pluginCommands";
 import { i18n } from "./i18n";
@@ -14,7 +15,7 @@ const onBusy = vi.fn();
 const empty = { ...inventory.empty, runtimeOffers: [] };
 if (!validateResponseInventory(empty)) throw new Error("Invalid plugin inventory fixture");
 const installed: PluginInventoryView = { ...empty, settingsRevision: "1", lastSettingsAction: "00000000-0000-4000-8000-000000000020",
-  packages: [{ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, state: "sealed" }],
+  packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, state: "sealed" }],
   packageDecisions: [{ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, enabled: false }],
 };
 beforeEach(async () => {
@@ -33,7 +34,7 @@ it.each([["en-US", "Extensions", "Choose plugin folder", "I trust this exact", "
   ["zh-CN", "扩展", "选择插件目录", "我信任此准确", "批准并安装", "启用"]])("requires explicit local trust and keeps installation disabled in %s", async (locale, entry, choose, consent, install, enable) => {
   await i18n.changeLanguage(locale);
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: entry }));
   await user.click(await screen.findByRole("button", { name: choose }));
   const approve = await screen.findByRole("button", { name: install });
@@ -65,7 +66,7 @@ it("retains an unknown original request across panel close and confirms that sam
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Choose plugin folder" }));
   await user.click(await screen.findByRole("checkbox", { name: /I trust this exact/ }));
@@ -90,7 +91,7 @@ it("keeps a settings conflict distinct from an empty installation list", async (
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Enable" }));
   expect(await screen.findByText(/Plugin settings changed/)).toBeInTheDocument();
@@ -109,7 +110,7 @@ it("does not close the panel or duplicate installation while an accepted request
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Choose plugin folder" }));
   await user.click(await screen.findByRole("checkbox", { name: /I trust this exact/ }));
@@ -129,7 +130,7 @@ it("preserves the last observation and blocks mutations after a failed refresh",
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   expect(await screen.findByRole("button", { name: "Enable" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Read current state" }));

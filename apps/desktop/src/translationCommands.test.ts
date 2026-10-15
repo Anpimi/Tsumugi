@@ -5,7 +5,10 @@ import captureFixture from "../test/fixtures/pluginTranslationCapture.contract.j
 import * as validators from "./generated/translation.validators";
 import unicodeFixture from "../../../crates/core/tests/fixtures/source-unicode.contract.json";
 import { hasUnknownOutcome } from "./projectCommands";
-import { translationCommands, translationHistoryAfter, validateSaveReceipt, type TranslationSaveRequest } from "./translationCommands";
+import { translationCommands, translationHistoryAfter, validateSaveReceipt, confirmTranslationAction, confirmTranslationReceipt,
+  sameTranslationConfirmation, confirmTranslationSelection, type TranslationSaveRequest } from "./translationCommands";
+import { translationActionFixture, translationReceiptFixture } from "./testSupport/translationFixture";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -203,4 +206,40 @@ it("refuses forged translation execution authority, rounded consent and ambiguou
   if (!validators.validateRequestCheckFinish(request)) throw new Error("Invalid shared check identity");
   invoke.mockResolvedValueOnce(true);
   await expect(translationCommands.finishCheck(request)).rejects.toSatisfy(hasUnknownOutcome);
+
+});
+
+it("binds a complete import confirmation to its independent execution adoption unit", () => {
+  if (!validators.validateRequestAdopt(fixture.adopt)) throw new Error("Invalid fixture");
+  const request = fixture.adopt, unit = fixtureIdentity(403);
+  const action = translationActionFixture(request, unit);
+  expect(unit).not.toBe(request.confirmation.targetUnitId);
+  expect(() => confirmTranslationAction(request, unit, action)).not.toThrow();
+  expect(() => confirmTranslationAction(request, request.confirmation.targetUnitId, action)).toThrow();
+  expect(sameTranslationConfirmation(request.confirmation, { ...request.confirmation, expectedSelectionId: undefined })).toBe(false);
+  const none = { ...request, confirmation: { ...request.confirmation, decision: "candidate-only" as const, expectedSelectionId: null } };
+  const { expectedSelectionId: _omitted, ...confirmation } = none.confirmation;
+  expect(() => confirmTranslationAction({ ...none, confirmation }, unit, translationActionFixture(none, unit))).not.toThrow();
+  expect(() => confirmTranslationAction(request, unit, { ...action, parameters: { resultDigest: request.confirmation.resultDigest } })).toThrow();
+});
+
+it("checks import changes by their selection strategy without confusing selection sequence and revision ordinal", () => {
+  if (!validators.validateRequestAdopt(fixture.adopt)) throw new Error("Invalid fixture");
+  const unit = fixtureIdentity(403), request = fixture.adopt;
+  const replaced = translationReceiptFixture(request, unit, "3");
+  expect(replaced.changes.map(change => change.revision)).toEqual(["7", "4"]);
+  expect(confirmTranslationReceipt(request, unit, replaced, "3")).toBe(replaced);
+  expect(replaced.requestDigest).not.toBe(request.confirmation.resultDigest);
+  const candidate = { ...request, confirmation: { ...request.confirmation, decision: "candidate-only" as const } };
+  expect(confirmTranslationReceipt(candidate, unit, translationReceiptFixture(candidate, unit, "3"), "3").changes).toHaveLength(1);
+  const empty = { ...request, confirmation: { ...request.confirmation, decision: "select-if-empty" as const, expectedSelectionId: null } };
+  expect(confirmTranslationReceipt(empty, unit, translationReceiptFixture(empty, unit), null).changes.map(change => change.revision)).toEqual(["7", "1"]);
+  expect(() => confirmTranslationReceipt(empty, unit, { ...translationReceiptFixture(empty, unit), requestDigest: "A".repeat(64) }, null)).toThrow();
+  expect(() => confirmTranslationReceipt(request, unit, { ...replaced, changes: [...replaced.changes].reverse() }, "3")).toThrow();
+});
+
+it("checks the exact original revision selection instead of accepting a truthy selection", () => {
+  expect(confirmTranslationSelection(fixture.select, fixture.selected)).toEqual(fixture.selected);
+  expect(() => confirmTranslationSelection(fixture.select, { ...fixture.selected, revisionId: fixtureIdentity(99) })).toThrow();
+  expect(() => confirmTranslationSelection(fixture.select, { ...fixture.selected, previousEventId: null })).toThrow();
 });

@@ -19,7 +19,8 @@ pub use package::installation::{
     ApprovedPackageSetting, InstallError, InstallReceipt, InstallResult, InstalledInventory,
     InstalledObjectState, InstalledPackage, InstalledPackageRecord, InstalledRuntime,
     InstalledRuntimeRecord, MAX_INSTALLED_PACKAGES, MAX_INSTALLED_RUNTIMES, PackageStore,
-    PluginSettings, PluginSettingsUpdate, RuntimeApproval, RuntimeInstallReceipt,
+    PluginSettings, PluginSettingsUpdate, RuntimeApproval, RuntimeInstallReceipt, UninstallReceipt,
+    UninstallRecord,
 };
 pub use package::{PackageFile, PackageImage, PackageInspection};
 pub use runtime::{CapturedRuntime, RuntimeInspection, RuntimeInspectionRequest};

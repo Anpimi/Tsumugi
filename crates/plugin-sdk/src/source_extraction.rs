@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CapturedTextArtifact, CheckImplementation, CheckRequirement, CheckResult, ContentExchange,
-    ContractError, ContractErrorCode, ContractRef, MAX_EXCHANGE_BYTES,
+    ContractError, ContractErrorCode, ContractRef, MAX_CONTENT_EXCHANGE_BYTES, MAX_EXCHANGE_BYTES,
     MAX_INVOCATION_PAYLOAD_BYTES,
     checks::validate_check_results,
     content::validate_source_material,
@@ -157,7 +157,7 @@ impl SourceExtractionCheckInput {
 }
 
 pub fn parse_content_exchange(bytes: &[u8]) -> Result<ContentExchange, ContractError> {
-    if bytes.len() > MAX_EXCHANGE_BYTES {
+    if bytes.len() > MAX_CONTENT_EXCHANGE_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "contentExchange",

@@ -15,10 +15,211 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   revision cannot replace the current draft. Uncertain actions still require
   reconciliation before leaving.
 
-The combined development build opens project schema 33 only. Earlier entries
-retain the format boundaries introduced during this undistributed batch; they
-do not define alternate current project formats.
+- Returning from a failed source preparation to current content clears the old
+  failure while keeping unrelated preparation text. Explicit discard reports
+  its own cancellation failure. Source comparison labels also cover changed
+  interpretation, including source descriptions with unchanged original text.
 
+- Failed source extraction and source checks retain the plugin's bounded reason
+  in local technical details in both the source workbench and task results.
+  The Host validates the original error contract and captured input association;
+  reading the reason does not authorize a retry, adoption or model sharing.
+
+- TMX and TBX file previews remain visible after returning from the native file
+  chooser or refocusing an unchanged project. Actual source, resource or session
+  changes still clear the report and require an explicit new selection.
+
+- Resource updates can preview explicitly selected UTF-8 plain-text TMX 1.4
+  files and a recognized TBX-Basic DCA subset against the project languages.
+  Separate local pages show complete mapped text, all selected-language term
+  candidates, excluded rows, unverified provenance and classified mapping losses
+  with bounded location samples. Ambiguous terminology is never chosen
+  automatically; ignored schema hints do not run standard validation. Content
+  license remains unknown. Previewing saves or adopts nothing and grants no
+  model sharing; unsupported structure and exceeded limits are reported explicitly.
+
+- The translation editor can read source observations from its References panel.
+  Separate on-demand pages retain complete blocks, fact origins, inference
+  rationale, neighboring text and local source references. Unknown and empty
+  observations remain distinct. Source changes hide these references while
+  preserving an older draft; a local read failure can be retried without
+  blocking manual editing. Reading does not share data with a model.
+
+- AI and Arena preparations can separately share extracted source facts,
+  inferred facts and neighboring text, all off by default. Previews retain whole
+  selected entries, their original evidence and bounded omission counts. Each
+  variant captures its own selection and budget; edits require a new preview and
+  confirmation. Provider requests contain only selected semantic text, fact
+  origins and inference rationale, excluding source coordinates and provenance
+  identifiers. Accepted requests retain their original capture during recovery.
+- These required selection and capture fields advance the current-only project
+  format to schema 36. Preserve older development directories and reimport their
+  sources into a new project; no conversion or reset is performed.
+
+- AI and Arena previews read source evidence and opted-in resources from one
+  SQLite snapshot. Each preparation verifies the original source result,
+  semantic proof and project mappings once for all units and variants; changed
+  evidence is refused before any preview is returned. Variants keep independent
+  terminology, manual-context and source-context sharing choices.
+
+- Source execution retains the original SDK content once, with a checked
+  schema/digest projection instead of duplicating the parsed proposal. Bounded
+  quoted content above 2 MiB can complete checking, adoption and reopening within
+  the existing 8 MiB result ledger; source identity and semantic proof are still
+  verified from the exact original bytes. The stored representation advances
+  the current-only project format to schema 35. Preserve older development
+  directories and reimport their sources into a new project; no conversion or
+  reset is performed.
+
+- SDK content exchanges allow up to 4,000 domain blocks and 4 MiB encoded content,
+  so separate identity and context extensions can cover the existing 2,000-item
+  scope. Other content counts,
+  2 MiB material/artifact limits and the 4 MiB combined invocation budget remain
+  unchanged; process framing and permissions do not expand.
+
+- Core exposes a read-only source-context observation for an exact current
+  project, snapshot, unit, source revision and target locale. It retains domain
+  fact origins, unsupported/empty block distinctions and immediate neighbors
+  with their original occurrence and revision evidence. Reads verify the stored
+  source result, semantic proof and project mappings in one SQLite snapshot.
+  Manual context remains separate from source-fact sharing.
+
+- The experimental SDK defines bounded source-context facts with explicit
+  extracted or inferred origin and references to captured source ranges.
+  The existing content receiver checks supported blocks without rewriting their
+  bytes or interpreting unknown domains. Rust and generated JavaScript contracts
+  share limits; these data helpers grant no sharing or execution authority.
+  Domain collection and the desktop context workflow still require integration.
+
+- AI and Arena preparations can choose named saved connections and open their
+  application settings without losing the preparation. Choosing defaults keeps
+  scope, sharing and budgets; editing a copied default makes it a one-time
+  connection. Budget and sharing summaries stay visible while advanced fields
+  are folded. Arena shows one shared round budget with separate per-request
+  limits. Closing settings returns keyboard focus to its preparation opener. An unchanged current read keeps consent; changed selected defaults
+  require a new preview and confirmation. Accepted authorization retains its
+  captured request and deadline, and manual plans ignore unused model defaults.
+- Work-plan acknowledgement checks compare complete serialized configuration,
+  including all four captured profile-reference fields, so a correct saved
+  connection is accepted and a transplanted reference is refused.
+
+- Captured AI configuration can retain a non-secret saved-connection identity.
+  Fresh previews and first authorization check the current profile and exact
+  defaults; edits or archival invalidate that preparation. Accepted requests,
+  original receipts and deadlines keep their captured configuration. Profile
+  identities do not enter provider payloads.
+- The schema 34 development boundary introduced captured connection
+  provenance. Earlier development directories are refused without conversion
+  or reset; retain them and reimport sources into a new project.
+
+- Connection settings save, archive and restore named non-secret defaults.
+  Closing the panel or changing projects keeps the draft and original save;
+  a late acknowledgement preserves newer edits. Unknown saves can be checked
+  from the same panel, while stale records require an explicit review.
+  Window exit checks pending saves and current draft decisions before closing.
+
+- Desktop exposes typed connection-profile reads and exact save/archive/restore
+  operations, with original-action lookup and current-reference resolution.
+  Core supplies the read basis and profile references from one snapshot; clients
+  validate acknowledgements without rebuilding hashes or reading credentials.
+
+- Core provides a separate application store for named, non-secret model
+  connection defaults. Atomic changes retain their original receipts, detect
+  stale writes and preserve archived profiles. Saved defaults carry no model
+  permission and do not change captured request budgets or sharing settings.
+
+- The content editor shows saved project translation-memory suggestions beside
+  terms, context and revision history. Read-only comparisons retain the editable
+  draft, distinguish AI/import/manual origins and check the current source basis.
+  A reference does not grant approval or run a model; failed reads can be retried
+  inside the sidebar.
+
+
+The combined development build opens project schema 36 only. Earlier Unreleased
+entries retain intermediate format boundaries from this undistributed batch;
+they do not define alternate current project formats.
+
+- Content range selection captures every match across pages, including its
+  original bases and explicit exclusions. Later searches keep that fixed set;
+  replacing it requires confirmation. Selected entries can be transferred to
+  AI preparation without running a model or restoring preview, consent or
+  execution authority. Original plans, model settings and budgets are retained.
+
+- Translation navigation and Save and next remain available after a routine
+  focus check returns the same confirmed list. Actual source, translation,
+  resource or review changes, changed list data and replaced Query records still
+  require a fresh explicit read; unfinished drafts remain intact.
+  Explicit list reads confirm current project changes before recording their
+  navigation basis, so a delayed save notification cannot disable the next entry.
+  Save and recovery actions stay at the editor panel's bottom while content and
+  references scroll independently, including the compact layout.
+  Expanded references share the compact panel's available height while keeping
+  the editor as its main region. Opening an entry brings the focused draft into view.
+
+- The experimental standalone SDK defines bounded work-plan generation-service
+  input, child-identity receipts and finite errors at schema/behavior 1/1, with
+  Rust receivers and generated JavaScript contracts. Configuration, model
+  destinations, consent and cumulative budgets remain application-owned; a
+  valid payload supplies no execution authority. The SDK also constructs declared
+  text-query payloads from exact text and explicit options, retaining fixed
+  template fields and checking complete encoded input limits. Process protocol 2
+  and the undistributed SDK alpha.1 version remain unchanged.
+
+- Tasks now shows saved plugin build plans and every artifact's allowed path,
+  role, byte count and SHA-256, with the original plan's target count. An exact
+  read-only route opens the same build in Build and export without replacing an
+  unfinished mapping, preparation, consent or pending action. Historical reads
+  verify the original immutable plan and results without requiring an installed
+  builder or restoring execution approval. Unsupported generic semantic checks
+  are no longer offered for plugin output; fresh execution still requires its
+  separately prepared input and explicit approval.
+
+- Experimental desktop IPC can independently withdraw approval and remove one
+  exact installation. Accepted continuations retain the original request after
+  a lost waiter, stop dependent work before removal, and keep project switching
+  fenced through Store confirmation. Original removal receipts are reconciled
+  before stopping a target, so an old completed request cannot remove or stop a
+  reinstall. Inventory exposes the original installation action and retained
+  removal observations; these observations alone do not confirm durability.
+  Frontend acknowledgements check the complete original identity and action.
+  The extension panel provides separate reviewed approval revocation, exact
+  installation removal and original-operation recovery in English and Chinese.
+  Busy continuations preserve their original request and recovery guidance;
+  closing or refreshing the panel does not replace it. Native acceptance remains
+  under development. A failed installation keeps its original recovery request
+  once approval is saved; a known settings rejection before that confirmation
+  permits reviewing current state without leaving an unusable pending action.
+
+- Desktop execution retains package ownership through accepted capture and
+  preparation IO, so stopping a package prevents late results from publishing
+  even after its IPC waiter disappears. Internal package cleanup retires only
+  dependent work and query threads, retains its session fence through the
+  installation handoff, and preserves independent packages and saved data.
+  Invalid checker consent is refused before it can retain a Review action and
+  block its original valid request; uncertain committed grants stay recoverable.
+  Full native lifecycle acceptance remains under development.
+
+- The experimental Core runtime can stop one exact package across its registered
+  environments without rotating unrelated packages' execution authority. Original
+  grants and cancellation requests stay revoked across retries; completion waits
+  for its owned workers and active queries. Captured query callbacks remain closed,
+  and a completed old control cannot unregister an explicitly reinstalled package.
+  Full native lifecycle acceptance remains under development.
+
+- Execution shutdown waits for owned producer and outcome-query threads to exit,
+  including threads retired after cancellation or timeout. Revoked result
+  delivery no longer permits early runtime rotation, project closure or directory
+  rename while the original runner is still held. New work stays blocked while
+  quiescing; uncooperative threads require application restart.
+
+- The experimental Host Store can explicitly remove one exact sealed package
+  after its local approval has been removed. Disabled approval is still retained
+  and blocks removal. A durable original-action journal keeps immutable recovery
+  bytes outside active inventory and loading; retries preserve uncertain outcomes
+  and cannot remove a later reinstall. Other packages, runtime installations,
+  settings and project data remain separate. Callers must first stop and drain
+  the original execution instances. Desktop removal controls and cache collection
+  remain under development.
 - Tasks retain the complete original cancellation request when its outcome cannot
   be confirmed. Explicit retry uses the same request identity; a missing, malformed
   or zero revision cannot clear recovery. Deferred recovery preserves the request
@@ -169,7 +370,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
   checked selection distinguish required coverage from advisory findings and
   invocation failures; history preserves typed rules and text diagnostics.
   Desktop previews and WorkPlans require consent for each selected checker.
-  The current project format is schema 31; earlier development directories are
+  The current project format is schema 33; earlier development directories are
   refused unchanged without migration. Knowledge Resources remain unadopted.
 
 - Experimental SDK advisory text checks now declare explicit rule subsets and
@@ -285,6 +486,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Changed
 
+- Execution continuation identities and their unique new attempt are stored in one transaction with the existing chunked input, package, grant, budget and release checks. Current development project compatibility is described in the [README](README.md#development); earlier formats are preserved and refused without conversion.
+
+- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation. Current projects use schema 33 and refuse earlier development directories unchanged.
+- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Current projects use schema 33 and refuse earlier development directories unchanged. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
 - Current development projects use schema 33, combining exact recovery intent and cancellation associations with the original work-plan service children, captured input chunks and ancestor budgets. Other development formats are refused before application schema changes, without an upgrade, rebuild or reset. Keep their directories and reimport source files into a new project. Internal execution consumers regenerate the typed continuation requests; stored receipt replay does not renew a grant, lease or scheduling authority.
 
 
@@ -302,6 +507,75 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
 ### Fixed
+
+- Package removal waits for generation-service children, outcome queries and selection effects owned by the original calling package, including retired workers. Independent packages keep their existing model runtime and authority.
+- Project overview rereads source availability through the shared session cache after source changes and when returning to the view. Refreshing or failed reads cannot keep the translation shortcut ready, and responses from a previous project cannot change the current overview.
+
+- Project metadata recovery checks the original saved request through scoped commands. While its result is being checked, users may edit the text and folder checkbox without changing that request; confirmation keeps newer edits unsaved, and repeated reads or late responses cannot clear another draft or continue navigation.
+
+- Translation import, fixed match application and historical revision selection share scoped commands and preserve their original requests. A later rejected retry cannot erase an earlier uncertain import or selection; checked history and current-source reads remain separate from captured import work.
+
+- Build and export actions share scoped commands with exact mappings, saved release identities and destination consent. Original uncertain requests remain recoverable across view changes; historical release export stays available when current readiness or history reads fail.
+
+- Task recovery, saved-result application, cancellation and preview navigation verify the exact workspace and original scope through the shared command context. Confirmed requests retain their identities across view changes; uncertain results require an exact lookup before explicit replay, and changed or failed reads cannot authorize new task actions.
+
+- Arena actions verify their exact workspace scope, comparison basis, draft or saved candidate through the shared command context. Original uncertain requests remain recoverable, checked Task cancellation stays available during view refreshes, and captured work survives view changes without accepting a replaced or failed read.
+
+- AI actions share the current workspace command context and verify the selected scope or saved candidate before starting. Original uncertain requests remain available for explicit recovery, and approved captured work continues across view switches without applying late results to a replacement project.
+
+- Translation and review workspaces refresh their current references and history through the project session while preserving drafts and captured scopes. Failed reads keep completed saves distinct from uncertain writes; returning to a workspace does not restore stale editing or navigation permission.
+
+- Keep workspace positions and unsaved work when inactive views unmount. Work-plan controls, plugin capture/check/build stages, reference queries and editor protection keep complete original pending actions in the project session. Explicit recovery retains original consent and deadlines, including after a later retry is rejected. Project close and replacement check unfinished work in every workspace, retain unknown operations for recovery, and reject stale navigation or newer input after saving. Discarding captured reference input completes its original exit confirmation after the action settles; newer query or resource edits and unresolved discards still prevent exit. Captured plugin builds stop reopening editable package discovery; unrelated Store contention no longer misreports their accepted preparation as failed, and returning to editable setup rereads current options. Independent artifact checks now match the Core build scope to its captured source snapshot and language, and reject results from another scope. Captured builder and runtime labels come from the original input; preparation and failed reads do not claim that packages are missing. Blocked project and window exits explain the unfinished or unconfirmed work in its workspace so you can review it and explicitly retry. Confirmed project changes still settle when newer input arrives during opening or closing; local work from the ended session stays read-only for copying until explicitly discarded, and its operations cannot continue into the new session.
+
+- Tasks preserve complete application decisions and original requests across view remounts, including groups spanning result pages. Shared translation writes and same-task cancellation are coordinated before application starts. Uncertain applications require matching preparation and receipt evidence before settling; keeping output or refreshing progress cannot discard an unknown outcome. Recovery actions without a provable original result retain their scope and uncertainty.
+
+- Build mappings, destination checks and original build/export recovery survive release-workspace remounts. Late build confirmations preserve newer input, complete file receipts are checked before confirmation, and selecting a folder again authorizes checking the original export without treating a missing record in that folder as proof that no export occurred. Ordinary navigation retains preparation; leaving the project asks before discarding it.
+
+- Arena settings, explicit generation consent, fixed merge drafts and original start, comparison, reveal, selection and candidate-save requests survive view remounts. Recovery checks complete rounds and the original action, preserves newer input and confirmed saves after read failures, and shares the translation write reservation for selection, merging and candidate saving.
+
+- AI generation and candidate saving keep their original preview, complete selected scope and requests across view remounts. Explicit recovery checks the original attempt or action; confirmed saves remain recorded when result reads fail, and late confirmations preserve newer settings.
+
+- Task, Source, AI and Arena cancellation share the original request across workspace changes and remounts. Explicit retries reuse its identity, and a checked cancellation acknowledgement is kept separate from later task reads and actual worker stopping.
+
+- Translation import preparations, fixed match previews, complete-file confirmations and original uncertain actions survive leaving their view. Checked adoption keeps newer manual input, and import, manual saves and revision selection share one write reservation. Uncertain revision selections retain their captured text and can reconcile the original action after source or language changes.
+
+- Source content, history, identity evidence and translation impact refresh with current project facts. Paged searches retry their original filter and cursor, hidden views stop reads, and removed languages block stale navigation. Automatic comparison reads preserve fixed identity decisions and confirmation evidence; viewing current content remains separate from reading an earlier applied snapshot, including beside newer decisions retained after a late confirmation.
+
+- Source selections, declarations, fixed previews and identity decisions survive view remounts. Original uncertain actions retain their exact request for checked recovery; preparation and adoption confirmations must match that request and its frozen unit. Confirmed application remains saved when a later content read fails, and late confirmations keep newer decisions.
+
+- Current glossary, context, translation-memory and impact reads refresh with project changes, retain paged read recovery, and stop when their view closes. Fresh resource actions recheck their exact target and current read evidence after preparation; automatic comparison refreshes retain the original captured comparison until it is explicitly read again.
+
+- Resource term and context drafts, captured file comparisons and fixed input evidence survive navigation and view remounts. Late saves keep newer edits; removed languages block new work while original uncertain saves, decisions and context captures can be retried with the same request. A captured file remains available when its preview read fails.
+
+- Review fallback and waiver actions recheck the displayed entry, issue and existing exception before dispatch. Batch approvals keep their displayed confirmation scope, recheck availability before starting, and retain the stop control while an entry is being recorded.
+
+- Build-readiness assessments keep the explicitly selected languages, refresh after relevant project changes, and show loading and retry separately. Changing the language selection or leaving the assessment prevents late reads from replacing current results or interfering with review drafts and pending actions.
+
+- Review work queues open without waiting for summaries, show loading separately from empty results, and refresh after relevant project changes. Leaving the queue releases its view wait; a failed page can be retried at its original cursor without replacing captured review work.
+- Review history loads independently of the selected entry and current evidence. Failed history pages have their own retry and first-page recovery, while new review results return to current history without replacing reasons, fixed selections or pending actions.
+
+- Save-and-next retains newer edits and original uncertain save requests, and stops late navigation after leaving the workspace or changing the target language.
+
+- Validate project names and target languages before saving from the leave dialog, keeping invalid drafts available to edit.
+
+- Review reasons, reviewer details, fixed selections and original pending actions survive closing the panel or remounting its view. Late confirmations preserve newer edits, while checks and batches retain their original cancellation controls. Returning to an entry retains the content its reason refers to; changed content can be compared and explicitly accepted without losing the reason. Stale checks remain separate from current evidence, and actual project leave still requires confirmation.
+
+- Review retains reasons and original unknown actions when a target language is removed. It blocks new work for that language, checks the scope again after waiting, and reports unstarted entries when a batch stops. An uncertain request remains reserved for exact reconciliation even after its language is restored.
+
+- Translation drafts and their original save requests belong to the project session. Leaving the editing view keeps newer input and pending confirmations; a late save acknowledgement updates its basis without replacing edits made while saving.
+
+- AI preparation keeps connection settings, selected scope, preview and consent when navigating between workspaces. Source, resource or sharing changes require a fresh preview and consent; late previews cannot restore obsolete preparation.
+
+- Target-language changes recheck the active translation scope. Drafts for removed languages remain available with a return-to-settings recovery action, while new reads and writes for an unavailable language are blocked.
+
+- Ctrl+S and Command+S save the active translation draft from its list or reference panel. Project-name shortcuts use the same required-name validation as the save button and keep invalid input available for correction. Composition, modal dialogs, pending saves and unknown outcomes prevent unintended shortcut mutations; an uncertain translation save can only be checked or retried explicitly.
+- Resuming undispatched work and retrying safe failures retain the original action, selected items and cancellation basis after a lost confirmation. Exact lookup or replay returns the recorded attempt without another enqueue or dispatch. Modified requests conflict; an unrecorded request cannot refresh its cancellation basis. The Tasks view can inspect the original recovery history. Anonymous resume/retry IPC calls are now refused; outcome queries and output validation keep their existing behavior.
+
+- Development runtime bundles pin the current independently built WebVTT and SMAPI packages and their exact SDK snapshot. Existing installed bindings and historical releases keep their original package identities; installing a new selected package remains explicit.
+
+- Resuming undispatched work and retrying safe failures retain the original action, exact selected items and cancellation basis. A recorded request returns the original continuation receipt before fresh eligibility and cannot enqueue or dispatch again. The old anonymous recovery route refuses these actions; consumers must use the typed continuation and history API. New plugin attempts do not inherit the original execution grant.
+
+- Cancellation keeps an uncertain result when its durable request is saved but the following task projection fails, preserving the original error and cancellation request for reconciliation.
 
 - Manual checks rejected before dispatch no longer keep a project active or
   repeatedly read extension settings. Retrying preserves the original consent;
@@ -333,10 +607,6 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Continued AI work plans display the original shared budget, including prior requests and unresolved exposure, rather than only the new child attempt.
 
-- Resuming undispatched work and retrying safe failures retain the original action, selected items and cancellation basis after a lost confirmation. Exact lookup or replay returns the recorded attempt without another enqueue or dispatch. Modified requests conflict; an unrecorded request cannot refresh its cancellation basis. The Tasks view can inspect the original recovery history. Anonymous resume/retry IPC calls are now refused; outcome queries and output validation keep their existing behavior.
-
-- A recorded task cancellation remains unconfirmed if reading a running worker's state fails. Rechecking the original request preserves its cancellation revision and does not cancel explicitly resumed work.
-
 - Unsupported SQLite storage settings now have a distinct refusal instead of being reported as corrupt project data. The original project and its settings are preserved. Core Rust callers with exhaustive error matches must handle `UnsupportedStorage`; the desktop wire uses `unsupported-schema` with `reason: "storage-mode"`.
 
 - IPC validation keeps both primitive integer bounds and narrower declared field constraints.
@@ -357,7 +627,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Review and QA responses retain their complete input evidence; decisions, checks, waivers and fallback confirmations must match the submitted action, unit and language before pending state is cleared.
 
-- Manual translation saves confirm the committed revision and the next edit basis directly, preserve newer input, and keep history refresh separate from save confirmation. Translation counters and history cursors use exact decimal strings across desktop IPC.
+- Manual translation saves confirm the committed revision and the next edit basis directly, preserve newer input, and keep history refresh separate from save confirmation. Translation counters and history cursors use exact decimal strings across desktop IPC. Earlier translations, QA results and review decisions remain readable after source updates remove an entry; removed entries stay excluded from current evaluation, editing and build eligibility.
 - Translation, resource, AI and Arena mutations retain their original action after an unrecognized or disconnected IPC response; diagnostic wording no longer decides whether an action may be retried.
 - Desktop project operations, search, review and export run on a bounded project thread instead of blocking window events. Cancellation remains available while review checks run, and queued requests recheck the active session before accessing project data.
 - Project lifecycle cancellation, retry intent, folder moves, stale recent paths, action feedback, and shutdown while tasks are active.

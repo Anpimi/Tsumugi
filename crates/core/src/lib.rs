@@ -5,6 +5,7 @@
 
 pub mod ai;
 pub mod application;
+pub use persistence::model_connections;
 pub mod content;
 pub mod execution;
 mod persistence;
@@ -42,7 +43,24 @@ pub use persistence::{
     AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
     ComparisonView, MergeBasis,
 };
+pub use persistence::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
+pub use persistence::{
+    MAX_TBX_INPUT_BYTES, MAX_TBX_REPORT_BYTES, MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES,
+    TbxExchangePreview, TbxExchangeRow, TbxLicenseStatus, TbxLossEntry, TbxLossKind, TbxLossSample,
+    TbxRowReason, TbxRowStatus, TbxTermPreview, TbxTermReason, TmxExchangePreview, TmxExchangeRow,
+    TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
+    TmxRowStatus, preview_tbx_exchange, preview_tmx_exchange,
+};
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
+pub use persistence::{
+    SavedBuildArtifact, SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,
+    SelectedSourceContext, SelectedSourceFact, SourceContextAdjacency, SourceContextBlock,
+    SourceContextCapture, SourceContextDirection, SourceContextNeighbor, SourceContextObservations,
+    SourceContextOccurrence, SourceContextOmissionReason, SourceContextOmissionSample,
+    SourceContextOmissions, SourceContextProviderFact, SourceContextProviderNeighbor,
+    SourceContextProviderOrigin, SourceContextProviderProjection, SourceContextRequest,
+    SourceContextSelection, SourceContextView, UnknownSourceBlockSample, select_source_context,
+};
 
 #[cfg(test)]
 pub use persistence::StorageFault;

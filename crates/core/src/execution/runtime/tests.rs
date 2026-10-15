@@ -3,6 +3,7 @@ use crate::ProjectMetadata;
 use serde_json::json;
 use std::sync::mpsc;
 use tsumugi_plugin_sdk as sdk;
+mod package_quiesce;
 
 struct Call {
     request: DispatchRequest,
@@ -449,10 +450,24 @@ fn concurrency_is_bounded_and_quiesce_revokes_late_writes() {
     assert_eq!(runtime.workers.len(), 2);
     let generation = runtime.generation();
     runtime.begin_quiesce(&mut store).unwrap();
-    runtime.finish_quiesce(&mut store).unwrap();
-    assert_ne!(generation, runtime.generation());
-    assert!(!runtime.has_active_work(&store).unwrap());
-    store.close().unwrap();
+    assert_eq!(
+        runtime.finish_quiesce(&mut store).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert_eq!(generation, runtime.generation());
+    assert_eq!(runtime.retired.len(), 2);
+    assert!(runtime.has_active_work(&store).unwrap());
+    let rejected = input(&store);
+    assert_eq!(
+        runtime.submit(&mut store, &rejected).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert!(
+        store
+            .execution_input_if_present(rejected.envelope().attempt_id)
+            .unwrap()
+            .is_none()
+    );
     first.release.send(ExecutionState::Succeeded).unwrap();
     second.release.send(ExecutionState::Succeeded).unwrap();
     assert!(!first.finished.recv_timeout(Duration::from_secs(5)).unwrap());
@@ -462,6 +477,22 @@ fn concurrency_is_bounded_and_quiesce_revokes_late_writes() {
             .recv_timeout(Duration::from_secs(5))
             .unwrap()
     );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match runtime.finish_quiesce(&mut store) {
+            Ok(()) => break,
+            Err(error) => {
+                assert_eq!(error.code, ErrorCode::Busy);
+                assert_eq!(generation, runtime.generation());
+                assert!(Instant::now() < deadline, "owned workers did not drain");
+                std::thread::yield_now();
+            }
+        }
+    }
+    assert_ne!(generation, runtime.generation());
+    assert!(runtime.retired.is_empty());
+    assert!(!runtime.has_active_work(&store).unwrap());
+    store.close().unwrap();
     let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
     let adopted: u32 = inputs
         .iter()
@@ -541,9 +572,19 @@ fn timed_out_producer_remains_unknown_and_holds_its_concurrency_slot() {
         .unwrap()
         .unwrap();
     assert!(matches!(query.run().unwrap(), QueryOutcome::Unavailable));
+    let generation = runtime.generation();
+    runtime.begin_quiesce(&mut store).unwrap();
+    assert_eq!(
+        runtime.finish_quiesce(&mut store).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert_eq!(runtime.generation(), generation);
+    assert!(runtime.has_active_work(&store).unwrap());
     call.release.send(ExecutionState::Succeeded).unwrap();
     assert!(!call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
-    runtime.begin_quiesce(&mut store).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        runtime.retired.is_empty()
+    });
     runtime.finish_quiesce(&mut store).unwrap();
     assert_eq!(
         runtime
@@ -1296,6 +1337,163 @@ fn authorize(runtime: &ExecutionRuntime, store: &mut ProjectStore, input: &Fixed
             },
         )
         .unwrap();
+}
+
+#[test]
+fn fresh_plugin_continuation_keeps_environment_epoch_package_and_grant_boundaries() {
+    let (_temp, mut store, mut original_runtime, _) = setup();
+    let binding = plugin_binding("b");
+    let fixed = plugin_input(&store, binding.clone());
+    let (calls, observed) = mpsc::channel();
+    original_runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, calls.clone())))
+        .unwrap();
+    authorize(&original_runtime, &mut store, &fixed);
+    original_runtime.submit(&mut store, &fixed).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[fixed.envelope().items[0].item_id],
+    );
+    let mut current = ExecutionRuntime::new(&store).unwrap();
+    assert_eq!(
+        original_runtime
+            .resume(&mut store, &action)
+            .unwrap_err()
+            .stage,
+        "plugin-runtime"
+    );
+    let other_environment = plugin_binding("c");
+    current
+        .register(Arc::new(SelectedPlugin::new(
+            &other_environment,
+            calls.clone(),
+        )))
+        .unwrap();
+    assert_eq!(
+        current.resume(&mut store, &action).unwrap_err().stage,
+        "capability"
+    );
+    current
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, calls)))
+        .unwrap();
+    assert_eq!(
+        current.resume(&mut store, &action).unwrap_err().stage,
+        "plugin-grant"
+    );
+    assert_eq!(
+        store
+            .execution_attempt_ids(fixed.envelope().task_id)
+            .unwrap(),
+        vec![fixed.envelope().attempt_id]
+    );
+    assert!(
+        store
+            .execution_continuation(action.action_id)
+            .unwrap()
+            .is_none()
+    );
+    let connection = rusqlite::Connection::open_with_flags(
+        store.directory().join("project.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let grant_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM plugin_execution_grants", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        grant_count, 1,
+        "continuation must not copy or create an execution grant"
+    );
+    current
+        .begin_package_quiesce(
+            &mut store,
+            ExecutionId::new(),
+            &binding.capability.provider.plugin,
+            &binding.capability.provider.package_digest,
+        )
+        .unwrap();
+    let fresh = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[fixed.envelope().items[0].item_id],
+    );
+    assert_eq!(
+        current.resume(&mut store, &fresh).unwrap_err().stage,
+        "quiescing"
+    );
+    assert!(
+        store
+            .execution_continuation(fresh.action_id)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .execution_attempt_ids(fixed.envelope().task_id)
+            .unwrap(),
+        vec![fixed.envelope().attempt_id]
+    );
+    assert!(observed.try_recv().is_err());
+}
+
+#[test]
+fn recorded_plugin_continuation_replays_without_live_grants_runners_or_fresh_admission() {
+    let (temp, mut store, mut runtime, _) = setup();
+    let binding = plugin_binding("b");
+    let fixed = plugin_input(&store, binding.clone());
+    let (calls, observed) = mpsc::channel();
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, calls)))
+        .unwrap();
+    authorize(&runtime, &mut store, &fixed);
+    runtime.submit(&mut store, &fixed).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[fixed.envelope().items[0].item_id],
+    );
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    // A synthetic caller explicitly grants this exact new frame; continuation
+    // registration itself never creates, copies or refreshes this authorization.
+    authorize(&runtime, &mut store, &next);
+    let receipt = store
+        .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+        .unwrap();
+    drop(runtime);
+    assert!(store.plugin_permit(&next).is_err());
+    assert_eq!(
+        store.execution_continuation(action.action_id).unwrap(),
+        Some(receipt.clone())
+    );
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+    assert!(reopened.plugin_permit(&next).is_err());
+    let mut runtime = ExecutionRuntime::new(&reopened).unwrap();
+    runtime.accepting = false;
+    assert_eq!(runtime.resume(&mut reopened, &action).unwrap(), receipt);
+    assert_eq!(
+        reopened
+            .execution_attempt_ids(fixed.envelope().task_id)
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        reopened
+            .execution_input(receipt.attempt_id)
+            .unwrap()
+            .bytes(),
+        next.bytes()
+    );
+    assert!(runtime.runners.is_empty());
+    assert!(runtime.workers.is_empty());
+    assert!(observed.try_recv().is_err());
 }
 
 #[test]

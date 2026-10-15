@@ -65,7 +65,7 @@ pub struct ReviewCheckInput {
 impl ReviewCheckInput {
     pub fn validate(&self) -> Result<(), ContractError> {
         self.source.validate()?;
-        encoded_limit(&self.source, MAX_EXCHANGE_BYTES, "review.source")?;
+        encoded_limit(&self.source, MAX_CONTENT_EXCHANGE_BYTES, "review.source")?;
         language_label(&self.target_language, "review.targetLanguage")?;
         if self.selections.is_empty() || self.selections.len() > MAX_CONTENT_ITEMS {
             return Err(coverage("review.selections"));

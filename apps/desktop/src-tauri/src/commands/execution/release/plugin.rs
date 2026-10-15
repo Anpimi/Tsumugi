@@ -15,6 +15,25 @@ pub(in crate::commands::execution) struct PluginBuildSession {
     last_check_start: Option<PluginStartRequest>,
 }
 impl PluginBuildSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        if self
+            .review
+            .as_ref()
+            .is_some_and(|review| review.request.build.package == *package)
+        {
+            self.review = None;
+        }
+        if self
+            .check
+            .as_ref()
+            .is_some_and(|review| review.request.build.package == *package)
+        {
+            self.check = None;
+        }
+    }
     pub(in crate::commands::execution) fn is_active(&self) -> bool {
         self.job.is_some()
     }
@@ -63,6 +82,44 @@ request!(
         result_id: ExecutionId
     }
 );
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SavedPluginBuildRequest {
+        attempt_id: ExecutionId
+    }
+);
+
+/// A historical projection grants no execution and never consults or repairs
+/// installation state. The Core owner validates original immutable references.
+#[tauri::command]
+pub async fn read_saved_plugin_build(
+    state: State<'_, AppState>,
+    request: SavedPluginBuildRequest,
+) -> Result<tsumugi_core::SavedPluginBuildView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_saved_plugin_build",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let running = active
+                    .execution
+                    .as_ref()
+                    .is_some_and(|host| host.runtime.is_active(request.attempt_id));
+                active
+                    .store
+                    .read_saved_plugin_build(request.project_id, request.attempt_id, running)
+                    .map_err(map_read)
+            },
+        )
+        .await
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -191,19 +248,22 @@ pub async fn prepare_plugin_build(
                     return Err(map_read(ExecutionError::new(ErrorCode::Busy, "input-busy")));
                 }
             }
-            begin_job(active).map(Ok)
+            let work = host.begin_package_work(vec![initial.build.package.clone()])?;
+            begin_job(active).map(|job| Ok((job, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let job = match admitted.await? {
+        let (job, work) = match admitted.await? {
             Ok(job) => job,
             Err(view) => return Ok(view),
         };
         let choice = request.build.clone();
+        let accepted_work = work.clone();
         let loaded = io
             .run(CommandStage::ExecutionRead, move || {
+                accepted_work.check()?;
                 plugins.capture_build(&choice)
             })
             .await;
@@ -220,6 +280,7 @@ pub async fn prepare_plugin_build(
                         CommandStage::ExecutionRead,
                     )?;
                     let (host, store) = active.execution_parts()?;
+                    work.check()?;
                     let environment = loaded?;
                     let input = store
                         .prepare_plugin_build(
@@ -324,19 +385,22 @@ async fn start(
             if input.digest() != initial.input_digest {
                 return Err(stale());
             }
+            let work = host.begin_package_work(vec![choice.package.clone()])?;
             let job = begin_job(active)?;
-            Ok(Some((job, input, choice)))
+            Ok(Some((job, input, choice, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let Some((job, input, choice)) = admitted.await? else {
+        let Some((job, input, choice, work)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
         let fixed = input.clone();
+        let accepted_work = work.clone();
         let loaded = io
             .run(CommandStage::ExecutionRecover, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_build(&choice)?;
                 if checker {
                     if fixed.envelope().plugin.as_ref() != Some(&binding(&environment, true)) {
@@ -376,6 +440,7 @@ async fn start(
                         CommandStage::ExecutionRecover,
                     )?;
                     let (host, store) = active.execution_parts()?;
+                    work.check()?;
                     for (runner, binding) in loaded? {
                         host.register_plugin(runner, binding).map_err(map_recover)?;
                     }
@@ -457,20 +522,23 @@ pub async fn prepare_artifact_check(
             let capture = store
                 .capture_result_validation(initial.build_attempt_id, initial.build_result_id)
                 .map_err(map_read)?;
+            let work = host.begin_package_work(vec![initial.build.package.clone()])?;
             let job = begin_job(active)?;
-            Ok(Ok((job, capture)))
+            Ok(Ok((job, capture, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (job, capture) = match admitted.await? {
+        let (job, capture, work) = match admitted.await? {
             Ok(pair) => pair,
             Err(view) => return Ok(view),
         };
         let preparing = request.clone();
+        let accepted_work = work.clone();
         let prepared = io
             .run(CommandStage::ExecutionRead, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_build(&preparing.build)?;
                 matches_build(capture.input(), &environment)?;
                 let capture = capture
@@ -521,6 +589,7 @@ pub async fn prepare_artifact_check(
                         CommandStage::ExecutionRead,
                     )?;
                     let (host, _) = active.execution_parts()?;
+                    work.check()?;
                     let review = prepared?;
                     let view = review.view.clone();
                     host.release.plugin.check = Some(review);

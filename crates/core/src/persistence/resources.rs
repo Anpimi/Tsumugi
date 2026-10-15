@@ -12,6 +12,38 @@ const MAX_RESOURCE_BYTES: usize = 128 * 1024;
 const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
+mod exchange_xml;
+mod source_context;
+mod source_context_page;
+mod source_context_selection;
+mod tbx_exchange;
+mod tmx_exchange;
+pub(super) use source_context::SourceContextReader;
+pub use source_context::{
+    SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
+    SourceContextOccurrence, SourceContextRequest, SourceContextView,
+};
+pub use source_context_page::{
+    MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry,
+};
+pub use source_context_selection::{
+    SelectedSourceContext, SelectedSourceFact, SourceContextCapture, SourceContextObservations,
+    SourceContextOmissionReason, SourceContextOmissionSample, SourceContextOmissions,
+    SourceContextProviderFact, SourceContextProviderNeighbor, SourceContextProviderOrigin,
+    SourceContextProviderProjection, SourceContextSelection, UnknownSourceBlockSample,
+    select_source_context,
+};
+pub use tbx_exchange::{
+    MAX_TBX_INPUT_BYTES, MAX_TBX_REPORT_BYTES, TbxExchangePreview, TbxExchangeRow,
+    TbxLicenseStatus, TbxLossEntry, TbxLossKind, TbxLossSample, TbxRowReason, TbxRowStatus,
+    TbxTermPreview, TbxTermReason, preview_tbx_exchange,
+};
+pub use tmx_exchange::{
+    MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES, TmxExchangePreview, TmxExchangeRow,
+    TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
+    TmxRowStatus, preview_tmx_exchange,
+};
+
 fn change_targets_source(
     unit: &str,
     text: &str,

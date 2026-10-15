@@ -1,4 +1,5 @@
 use super::*;
+use crate::commands::{CommandOutcome, RecoveryGuidance};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, sync::Arc};
 
 struct Fixture {
@@ -323,6 +324,284 @@ fn unknown_install_retry_keeps_frozen_package_through_source_loss_and_read_failu
 }
 
 #[test]
+fn known_install_failure_after_confirmed_settings_retains_original_until_repaired() {
+    let fixture = Fixture::new();
+    let (request, installed) = fixture.install();
+    let object = fixture
+        .root()
+        .join("objects")
+        .join(&installed.packages[0].package_digest);
+    let receipt = object.join("receipt.json");
+    let worker = object.join("package/worker.mjs");
+    let settings = fixture.root().join("settings.json");
+    let receipt_bytes = fs::read(&receipt).unwrap();
+    let worker_bytes = fs::read(&worker).unwrap();
+    let settings_bytes = fs::read(&settings).unwrap();
+    // Retain the original captured install immediately after settings were
+    // confirmed. The real Store retry must reject corrupt receipt bytes before
+    // promotion, even though that rejection cannot undo the settings action.
+    let desired = {
+        let mut manager = fixture.owner.manager.lock().unwrap();
+        let pending = manager.pending.as_mut().unwrap();
+        assert!(pending.request == MutationRequest::Install(request.clone()));
+        assert!(pending.settings_confirmed);
+        pending.complete = false;
+        pending.unknown = false;
+        pending.packages[0].original = Some(request.action_id.to_string());
+        pending.desired.clone()
+    };
+    fs::remove_dir_all(&fixture.source).unwrap();
+    fs::set_permissions(&receipt, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&receipt, b"invalid original receipt").unwrap();
+    fs::set_permissions(&receipt, fs::Permissions::from_mode(0o400)).unwrap();
+    let error = fixture.owner.install_package(request.clone()).unwrap_err();
+    assert_eq!(error.code, CommandErrorCode::OutputInvalid);
+    assert_eq!(error.outcome, CommandOutcome::Rejected);
+    assert_eq!(error.stage, CommandStage::PluginInstall);
+    assert_eq!(error.reason.as_deref(), Some("plugin-store-corrupt"));
+    assert!(error.recovery_required);
+    assert_eq!(
+        error.recovery_guidance,
+        Some(RecoveryGuidance::ReconcileOriginal)
+    );
+    {
+        let manager = fixture.owner.manager.lock().unwrap();
+        let pending = manager.pending.as_ref().unwrap();
+        assert!(pending.request == MutationRequest::Install(request.clone()));
+        assert_eq!(pending.desired, desired);
+        assert!(pending.settings_confirmed);
+        assert!(!pending.complete);
+        assert!(!pending.unknown);
+        assert!(pending.handoff_complete);
+        assert!(!pending.running.load(Ordering::Acquire));
+        assert_eq!(pending.packages.len(), 1);
+        assert_eq!(
+            pending.packages[0].original.as_deref(),
+            Some(request.action_id.to_string().as_str())
+        );
+        assert_eq!(pending.packages[0].action, request.action_id.to_string());
+        assert_eq!(
+            pending.packages[0].package.plugin(),
+            &installed.packages[0].plugin
+        );
+        assert_eq!(
+            pending.packages[0].package.package_digest(),
+            installed.packages[0].package_digest
+        );
+        assert_eq!(
+            PluginOriginView::from(pending.packages[0].package.origin()),
+            installed.packages[0].origin
+        );
+        assert!(pending.runtime.is_none());
+    }
+    assert_eq!(
+        fixture.owner.begin_picker().err().unwrap().code,
+        CommandErrorCode::Busy
+    );
+    let mut different = request.clone();
+    different.action_id = ExecutionId::new();
+    different.expected_revision = installed.settings_revision;
+    assert_eq!(
+        fixture.owner.install_package(different).unwrap_err().code,
+        CommandErrorCode::Busy
+    );
+    assert_eq!(fs::read(&settings).unwrap(), settings_bytes);
+    assert_eq!(fs::read(&worker).unwrap(), worker_bytes);
+    assert_eq!(fs::read(&receipt).unwrap(), b"invalid original receipt");
+    for file in [&settings, &receipt, &worker] {
+        assert_eq!(
+            fs::metadata(file).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+    }
+    assert_eq!(
+        fs::metadata(&object).unwrap().permissions().mode() & 0o777,
+        0o500
+    );
+
+    fs::set_permissions(&receipt, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&receipt, &receipt_bytes).unwrap();
+    fs::set_permissions(&receipt, fs::Permissions::from_mode(0o400)).unwrap();
+    let recovered = fixture.owner.install_package(request.clone()).unwrap();
+    assert_eq!(recovered, installed);
+    assert_eq!(
+        recovered.last_settings_action,
+        Some(request.action_id.to_string())
+    );
+    assert_eq!(
+        recovered.packages[0].original_install_action,
+        request.action_id.to_string()
+    );
+    assert_eq!(fs::read(&settings).unwrap(), settings_bytes);
+    assert_eq!(fs::read(&receipt).unwrap(), receipt_bytes);
+    assert_eq!(fs::read(&worker).unwrap(), worker_bytes);
+    for file in [&settings, &receipt, &worker] {
+        assert_eq!(
+            fs::metadata(file).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+    }
+    assert_eq!(
+        fs::metadata(&object).unwrap().permissions().mode() & 0o777,
+        0o500
+    );
+    {
+        let manager = fixture.owner.manager.lock().unwrap();
+        let pending = manager.pending.as_ref().unwrap();
+        assert!(pending.request == MutationRequest::Install(request));
+        assert!(pending.settings_confirmed && pending.complete && !pending.unknown);
+    }
+    let picker = fixture.owner.begin_picker().unwrap();
+    assert!(
+        fixture
+            .owner
+            .finish_picker(picker.id, None)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn rejected_unconfirmed_settings_intent_releases_pending_and_preserves_current_decision() {
+    let fixture = Fixture::new();
+    let (_, installed) = fixture.install();
+    let request = Fixture::enable(&installed, true);
+    let external_action = ExecutionId::new();
+    let advanced = {
+        let mut manager = fixture.owner.manager.lock().unwrap();
+        let store = manager.store.as_mut().unwrap();
+        let settings = store.settings(|| true).unwrap();
+        let trusted = PluginSettingsUpdate {
+            packages: settings.packages().to_vec(),
+            runtimes: settings.runtimes().to_vec(),
+        };
+        store.load(&trusted.packages[0].approval, || true).unwrap();
+        let mut desired = trusted.clone();
+        desired.packages[0].enabled = true;
+        // Freeze the full new Enable intent before its first settings CAS.
+        // A different trusted Store action then advances the actual revision.
+        manager.pending = Some(PendingMutation {
+            request: MutationRequest::Enable(request.clone()),
+            desired,
+            packages: Vec::new(),
+            runtime: None,
+            settings_confirmed: false,
+            complete: false,
+            unknown: false,
+            running: Arc::new(AtomicBool::new(false)),
+            handoff_complete: true,
+        });
+        manager
+            .store
+            .as_mut()
+            .unwrap()
+            .update_settings(
+                settings.revision(),
+                &external_action.to_string(),
+                &trusted,
+                || true,
+            )
+            .unwrap()
+    };
+    assert_eq!(advanced.revision(), installed.settings_revision.get() + 1);
+    assert_eq!(
+        advanced.action_id(),
+        Some(external_action.to_string().as_str())
+    );
+    assert!(!advanced.packages()[0].enabled);
+    let object = fixture
+        .root()
+        .join("objects")
+        .join(&installed.packages[0].package_digest);
+    let receipt = object.join("receipt.json");
+    let worker = object.join("package/worker.mjs");
+    let settings = fixture.root().join("settings.json");
+    let receipt_bytes = fs::read(&receipt).unwrap();
+    let worker_bytes = fs::read(&worker).unwrap();
+    let settings_bytes = fs::read(&settings).unwrap();
+    let error = fixture.owner.enable_package(request.clone()).unwrap_err();
+    assert_eq!(error.code, CommandErrorCode::StaleRevision);
+    assert_eq!(error.outcome, CommandOutcome::Rejected);
+    assert_eq!(error.stage, CommandStage::PluginSettings);
+    assert_eq!(error.reason.as_deref(), Some("plugin-settings-changed"));
+    assert!(!error.recovery_required);
+    assert_eq!(
+        error.recovery_guidance,
+        Some(RecoveryGuidance::ReviewCurrent)
+    );
+    {
+        let manager = fixture.owner.manager.lock().unwrap();
+        assert!(manager.pending.is_none());
+        assert_eq!(
+            manager.store.as_ref().unwrap().settings(|| true).unwrap(),
+            advanced
+        );
+    }
+    assert_eq!(fs::read(&settings).unwrap(), settings_bytes);
+    assert_eq!(fs::read(&receipt).unwrap(), receipt_bytes);
+    assert_eq!(fs::read(&worker).unwrap(), worker_bytes);
+    for file in [&settings, &receipt, &worker] {
+        assert_eq!(
+            fs::metadata(file).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+    }
+    assert_eq!(
+        fs::metadata(&object).unwrap().permissions().mode() & 0o777,
+        0o500
+    );
+    let current = fixture.owner.inventory().unwrap();
+    assert_eq!(current.settings_revision.get(), advanced.revision());
+    assert_eq!(
+        current.last_settings_action,
+        Some(external_action.to_string())
+    );
+    assert_eq!(current.packages, installed.packages);
+    assert_eq!(current.package_decisions, installed.package_decisions);
+    let picker = fixture.owner.begin_picker().unwrap();
+    assert!(
+        fixture
+            .owner
+            .finish_picker(picker.id, None)
+            .unwrap()
+            .is_none()
+    );
+    let fresh = Fixture::enable(&current, true);
+    assert_ne!(fresh.action_id, request.action_id);
+    assert_ne!(fresh.action_id, external_action);
+    let enabled = fixture.owner.enable_package(fresh.clone()).unwrap();
+    assert_eq!(enabled.settings_revision.get(), advanced.revision() + 1);
+    assert_eq!(
+        enabled.last_settings_action,
+        Some(fresh.action_id.to_string())
+    );
+    assert!(enabled.package_decisions[0].enabled);
+    assert_eq!(enabled.packages, installed.packages);
+    assert_eq!(fixture.owner.enable_package(fresh).unwrap(), enabled);
+    assert_eq!(
+        fixture
+            .owner
+            .lookup(&Fixture::provider(&enabled))
+            .unwrap()
+            .binding()
+            .provider,
+        Fixture::provider(&enabled)
+    );
+    assert_eq!(fs::read(&receipt).unwrap(), receipt_bytes);
+    assert_eq!(fs::read(&worker).unwrap(), worker_bytes);
+    for file in [&settings, &receipt, &worker] {
+        assert_eq!(
+            fs::metadata(file).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+    }
+    assert_eq!(
+        fs::metadata(&object).unwrap().permissions().mode() & 0o777,
+        0o500
+    );
+}
+
+#[test]
 fn package_wire_fixture_and_requests_refuse_caller_authority() {
     let value: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../../test/fixtures/pluginPackage.contract.json"
@@ -531,6 +810,8 @@ fn settings_epoch_is_revoked_before_a_failed_store_update_and_never_restored() {
             settings_confirmed: false,
             complete: false,
             unknown: false,
+            running: Arc::new(AtomicBool::new(false)),
+            handoff_complete: true,
         });
     }
     fixture.rewrite_settings(b"synthetic invalid settings");

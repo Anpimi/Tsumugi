@@ -29,7 +29,7 @@ pub use artifact_validation::{
 pub use plugin::*;
 pub use plugin_authority::{PluginConsent, PluginPermit};
 pub use runner::*;
-pub use runtime::{ExecutionRuntime, OutcomeQuery};
+pub use runtime::{ExecutionRuntime, OutcomeQuery, PackageQuiescence};
 pub use source_validation::{
     PreparedSourceValidation, SOURCE_CHECK_OPERATION, SourceValidationCapture,
 };

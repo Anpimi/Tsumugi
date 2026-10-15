@@ -158,7 +158,17 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
         domain_blocks: vec![],
     }
 }
-struct FixtureRunner(PluginExecutionBinding);
+type SourceTransform = fn(sdk::ContentExchange) -> sdk::ContentExchange;
+struct FixtureRunner(PluginExecutionBinding, Option<SourceTransform>);
+impl FixtureRunner {
+    fn proposal(&self, source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
+        let proposal = proposal(source);
+        match self.1 {
+            Some(transform) => transform(proposal),
+            None => proposal,
+        }
+    }
+}
 impl Runner for FixtureRunner {
     fn capability_id(&self) -> &str {
         &self.0.capability.declaration.contract.id
@@ -216,16 +226,16 @@ impl Runner for FixtureRunner {
                 .collect();
             serde_json::to_value(checks).unwrap()
         } else if request.input.envelope().operation == tsumugi_core::content::OPERATION {
-            serde_json::to_value(proposal(
-                &SourceBundle::from_input(&request.input)?.source_input(),
-            ))
+            serde_json::to_value(
+                self.proposal(&SourceBundle::from_input(&request.input)?.source_input()),
+            )
             .unwrap()
         } else {
             let check: sdk::SourceExtractionCheckInput =
                 serde_json::from_value(request.input.item(request.item_id)?.payload.clone())
                     .unwrap();
             check.validate().unwrap();
-            assert_eq!(check.proposal, proposal(&check.source));
+            assert_eq!(check.proposal, self.proposal(&check.source));
             let checks: Vec<_> = check
                 .requirements
                 .into_iter()
@@ -239,29 +249,37 @@ impl Runner for FixtureRunner {
                 .collect();
             serde_json::to_value(checks).unwrap()
         };
-        results.send(FixedResult::capture_plugin(
-            &request.input,
-            request.item_id,
-            request.dispatch_token,
-            PluginResultEvidence {
-                authorization_id: permit.grant_id(),
-                channel: channel.clone(),
-                result: sdk::InvocationResult {
-                    context: invocation.context,
-                    provider: channel,
-                    capability: invocation.capability,
-                    profile: invocation.profile,
-                    result_id: ExecutionId::new().to_string(),
-                    outcome: sdk::InvocationOutcome::Succeeded {
-                        output: sdk::EncodedPayload::capture(
-                            invocation.output_schema,
-                            serde_json::to_string(&output).unwrap(),
-                        )
-                        .unwrap(),
+        results.send(
+            FixedResult::capture_plugin(
+                &request.input,
+                request.item_id,
+                request.dispatch_token,
+                PluginResultEvidence {
+                    authorization_id: permit.grant_id(),
+                    channel: channel.clone(),
+                    result: sdk::InvocationResult {
+                        context: invocation.context,
+                        provider: channel,
+                        capability: invocation.capability,
+                        profile: invocation.profile,
+                        result_id: ExecutionId::new().to_string(),
+                        outcome: sdk::InvocationOutcome::Succeeded {
+                            output: sdk::EncodedPayload::capture(
+                                invocation.output_schema,
+                                serde_json::to_string(&output).unwrap(),
+                            )
+                            .unwrap(),
+                        },
                     },
                 },
-            },
-        )?)
+            )
+            .inspect_err(|error| {
+                eprintln!(
+                    "Synthetic result capture refused: {:?} at {}",
+                    error.code, error.stage
+                );
+            })?,
+        )
     }
 }
 #[allow(dead_code)]
@@ -343,7 +361,7 @@ fn source_fixture_with_rules(
     AdoptionAction,
     AdoptionReceipt,
 ) {
-    source_fixture_config(rules, 2, &["zh-CN"])
+    source_fixture_config(rules, 2, &["zh-CN"], None)
 }
 
 #[allow(dead_code)]
@@ -351,7 +369,19 @@ pub fn source_fixture_with_scope(
     count: usize,
     locales: &[&str],
 ) -> (tempfile::TempDir, ProjectStore, Vec<ContentRow>) {
-    let (directory, store, rows, _, _) = source_fixture_config(None, count, locales);
+    let (directory, store, rows, _, _) = source_fixture_config(None, count, locales, None);
+    (directory, store, rows)
+}
+
+/// A synthetic producer/checker pair for generic data plumbing. A transform is
+/// not an independent implementation of any real domain's semantic checks.
+#[allow(dead_code)]
+pub fn source_fixture_with_transform(
+    count: usize,
+    transform: SourceTransform,
+) -> (tempfile::TempDir, ProjectStore, Vec<ContentRow>) {
+    let (directory, store, rows, _, _) =
+        source_fixture_config(None, count, &["zh-CN", "ja"], Some(transform));
     (directory, store, rows)
 }
 
@@ -359,6 +389,7 @@ fn source_fixture_config(
     rules: Option<Vec<sdk::ReviewRuleDeclaration>>,
     count: usize,
     locales: &[&str],
+    transform: Option<SourceTransform>,
 ) -> (
     tempfile::TempDir,
     ProjectStore,
@@ -372,7 +403,13 @@ fn source_fixture_config(
         ProjectMetadata::create("Production content", "en", locales.iter().copied()).unwrap(),
     )
     .unwrap();
-    let mut runtime = source_runtime(&store);
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    let binding = declaration();
+    for capability in [binding.extractor, binding.checker] {
+        runtime
+            .register_read_only(Arc::new(FixtureRunner(selected(capability), transform)))
+            .unwrap();
+    }
     let mut input = if count == 2 {
         source_input(&store)
     } else {
@@ -381,6 +418,24 @@ fn source_fixture_config(
     if let Some(rules) = rules {
         let mut envelope = input.envelope().clone();
         envelope.settings["review"]["declaration"]["rules"] = serde_json::to_value(rules).unwrap();
+        input = FixedInput::capture(envelope).unwrap();
+    }
+    if transform.is_some() {
+        let mut envelope = input.envelope().clone();
+        let mut policy: sdk::SourceRevisionPolicy =
+            serde_json::from_value(envelope.settings["revisionPolicy"].clone()).unwrap();
+        policy
+            .revision_basis
+            .push(sdk::source_context_facts_contract());
+        envelope.settings["revisionPolicy"] = serde_json::to_value(policy).unwrap();
+        envelope
+            .plugin
+            .as_mut()
+            .unwrap()
+            .capability
+            .declaration
+            .limits
+            .max_output_bytes = sdk::MAX_CONTENT_EXCHANGE_BYTES as u32;
         input = FixedInput::capture(envelope).unwrap();
     }
     let (producer_grant, result) = execute(&mut runtime, &mut store, &input);
@@ -441,7 +496,9 @@ fn source_fixture_config(
     assert_eq!(rows.len(), count);
     let identities: std::collections::BTreeSet<_> =
         rows.iter().map(|r| r.unit_id.unwrap()).collect();
-    assert_eq!(identities.len(), count);
+    if transform.is_none() {
+        assert_eq!(identities.len(), count);
+    }
     (directory, store, rows, action, receipt)
 }
 
@@ -456,7 +513,7 @@ pub fn register_source_runners(runtime: &mut ExecutionRuntime) {
     let binding = declaration();
     for capability in [binding.extractor, binding.checker] {
         runtime
-            .register_read_only(Arc::new(FixtureRunner(selected(capability))))
+            .register_read_only(Arc::new(FixtureRunner(selected(capability), None)))
             .unwrap();
     }
 }
@@ -470,6 +527,7 @@ pub fn review_runtime(
     runtime
         .register_read_only(Arc::new(FixtureRunner(
             prepared.plan().unwrap().binding().checker.clone(),
+            None,
         )))
         .unwrap();
     runtime

@@ -36,7 +36,7 @@ fn review_native_environment_wire_is_strict_and_preserves_the_profile_owned_dige
     let mut value = fixture["responses"]["prepareCheck"].clone();
     value["view"]["checkers"][0]["plugin"]["plugin"]["environment"] = native;
     value["view"]["checkers"][0]["plugin"]["plugin"]["environmentDigest"] =
-        serde_json::json!("ba38dd6b1f63b641359cf711154563ce9d1616d4790f250e1718bb5c3f570ddd");
+        serde_json::json!("290f36ac6e522b393ce442c64092a8b08d4e4cca3dbc59fde7b1564a712448f7");
     let received: ReviewCheckPreparation = serde_json::from_value(value.clone()).unwrap();
     let ReviewCheckPreparation::Plugin { view } = &received else {
         panic!("plugin preparation");

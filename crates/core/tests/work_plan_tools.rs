@@ -118,12 +118,19 @@ fn fixture_with_runner(
     limit: u32,
     runner: impl FnOnce(WorkPlanToolSpec) -> Arc<dyn Runner>,
 ) -> Fixture {
+    let selected = tool();
+    fixture_with_tool_runners(limit, vec![selected.clone()], vec![runner(selected)])
+}
+fn fixture_with_tool_runners(
+    limit: u32,
+    tools: Vec<WorkPlanToolSpec>,
+    runners: Vec<Arc<dyn Runner>>,
+) -> Fixture {
     let (temp, mut store, rows) = support::source_fixture();
     let units = rows
         .iter()
         .map(|row| row.unit_id.unwrap())
         .collect::<Vec<_>>();
-    let tool = tool();
     let plan = store
         .prepare_work_plan_with_tools(
             Some(AiConfig {
@@ -136,7 +143,7 @@ fn fixture_with_runner(
             PlanOptions::default(),
             Some(WorkPlanTools {
                 max_invocations: limit,
-                entries: vec![tool.clone()],
+                entries: tools,
             }),
         )
         .unwrap();
@@ -153,7 +160,9 @@ fn fixture_with_runner(
         )
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register(runner(tool)).unwrap();
+    for runner in runners {
+        runtime.register(runner).unwrap();
+    }
     runtime.register(Arc::new(UncalledModel)).unwrap();
     assert!(store.work_plan_agent_scope(grant.lease).is_err());
     let consent = runtime
@@ -359,6 +368,187 @@ fn prepare_source_reimport(f: &mut Fixture) -> AdoptionAction {
             serde_json::to_value(preview.confirmation).unwrap(),
         )
         .unwrap()
+}
+
+#[test]
+fn package_stop_rejects_new_tool_authority_without_stopping_an_independent_tool() {
+    let stopped = tool();
+    let mut other = tool();
+    let mut manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../plugin-sdk/tests/fixtures/tool.manifest.json"
+    ))
+    .unwrap();
+    manifest["plugin"]["id"] = json!("other-reference");
+    let manifest = sdk::parse_manifest(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let declaration = sdk::parse_tool_declaration(include_bytes!(
+        "../../plugin-sdk/tests/fixtures/tool.query.json"
+    ))
+    .unwrap();
+    other.binding = declaration.bind(&manifest, &"d".repeat(64)).unwrap();
+    let (started, observed) = std::sync::mpsc::channel();
+    let mut f = fixture_with_tool_runners(
+        3,
+        vec![stopped.clone(), other.clone()],
+        vec![
+            Arc::new(UncalledPlugin(stopped.clone())),
+            Arc::new(ControlledPlugin {
+                tool: UncalledPlugin(other.clone()),
+                started,
+                wait_for_cancel: false,
+            }),
+        ],
+    );
+    // Leave the root captured but never runnable by this synthetic fixture.
+    // UncalledModel and UncalledPlugin fail if either forbidden path dispatches.
+    let root = f.plan.fixed_input().unwrap();
+    for item in &root.envelope().items {
+        f.store
+            .dispatch_execution_item(root.envelope().attempt_id, item.item_id)
+            .unwrap();
+    }
+    let stopped_request = request(&f, vec![f.units[0]]);
+    let stopped_input = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &stopped_request)
+        .unwrap();
+    let other_request = AgentToolRequest {
+        task_id: ExecutionId::new(),
+        attempt_id: ExecutionId::new(),
+        tool_handle: other.handle,
+        unit_ids: vec![f.units[0]],
+    };
+    let other_input = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &other_request)
+        .unwrap();
+    let before = counts(&f.store);
+    let budget = f
+        .store
+        .provider_budget(f.scope.parent_task())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        f.store.work_plan_tool_invocations(f.plan.plan_id).unwrap(),
+        0
+    );
+    let selected = &stopped.binding.capability.provider;
+    let stop = f
+        .runtime
+        .begin_package_quiesce(
+            &mut f.store,
+            ExecutionId::new(),
+            &selected.plugin,
+            &selected.package_digest,
+        )
+        .unwrap();
+    for _ in 0..2 {
+        let error = f
+            .runtime
+            .submit_work_plan_tool(&mut f.store, &stopped_input, &f.consent, ExecutionId::new())
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+        assert_eq!(error.stage, "plugin-runtime");
+        assert_eq!(counts(&f.store), before);
+        assert!(
+            f.runtime
+                .input_if_present(&f.store, stopped_request.attempt_id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            f.store.work_plan_tool_invocations(f.plan.plan_id).unwrap(),
+            0
+        );
+        assert_eq!(
+            f.store
+                .provider_budget(f.scope.parent_task())
+                .unwrap()
+                .unwrap(),
+            budget
+        );
+        assert!(matches!(
+            observed.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+    }
+    // The original epoch, root scope, consent and shared budget still authorize
+    // this separately selected package; a blanket runtime stop cannot pass.
+    f.runtime
+        .submit_work_plan_tool(&mut f.store, &other_input, &f.consent, ExecutionId::new())
+        .unwrap();
+    assert_eq!(counts(&f.store), (before.0 + 1, before.1 + 1));
+    assert_eq!(
+        f.store.work_plan_tool_invocations(f.plan.plan_id).unwrap(),
+        1
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let result = loop {
+        f.runtime.tick(&mut f.store).unwrap();
+        if !f.runtime.is_active(other_request.attempt_id) {
+            if let Some(result) = f
+                .store
+                .execution_current_result(
+                    other_request.attempt_id,
+                    other_input.input().envelope().items[0].item_id,
+                )
+                .unwrap()
+            {
+                break f
+                    .store
+                    .execution_result(other_request.attempt_id, result)
+                    .unwrap();
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "independent tool completion deadline"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(result.envelope().outcome, ExecutionState::Succeeded);
+    let call = observed.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(call.input.envelope().attempt_id, other_request.attempt_id);
+    assert_eq!(
+        call.input
+            .envelope()
+            .plugin
+            .as_ref()
+            .unwrap()
+            .capability
+            .provider,
+        other.binding.capability.provider
+    );
+    assert!(!call.plugin_permit().unwrap().is_authorized());
+    assert!(matches!(
+        observed.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    ));
+    assert!(
+        f.runtime
+            .input_if_present(&f.store, stopped_request.attempt_id)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        f.store
+            .provider_budget(f.scope.parent_task())
+            .unwrap()
+            .unwrap(),
+        budget
+    );
+    f.runtime
+        .finish_package_quiesce(&mut f.store, &stop)
+        .unwrap();
+    let saved = f
+        .store
+        .execution_result(other_request.attempt_id, result.envelope().result_id)
+        .unwrap();
+    assert_eq!(saved.bytes(), result.bytes());
+    assert!(!call.plugin_permit().unwrap().is_authorized());
+    assert_eq!(
+        f.store.work_plan_tool_invocations(f.plan.plan_id).unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -1033,10 +1223,45 @@ fn unknown_tool_dispatch_keeps_original_reservation_and_cannot_replay() {
         f.store.work_plan_tool_invocations(f.plan.plan_id).unwrap(),
         1
     );
+    let input = prepared.input();
+    let action = ContinuationAction {
+        action_id: ExecutionId::new(),
+        project_id: input.envelope().project_id,
+        source_attempt_id: request.attempt_id,
+        unit_id: input
+            .envelope()
+            .units
+            .iter()
+            .find(|unit| unit.item_ids.contains(&item))
+            .unwrap()
+            .unit_id,
+        kind: ContinuationKind::ResumeUndispatched,
+        item_ids: vec![item],
+        expected_cancellation_revision: f
+            .store
+            .execution_task(input.envelope().task_id)
+            .unwrap()
+            .cancellation_revision,
+    };
+    let attempts = f
+        .store
+        .execution_attempt_ids(input.envelope().task_id)
+        .unwrap();
+    assert_eq!(
+        f.runtime.resume(&mut f.store, &action).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
     assert!(
-        f.runtime
-            .resume(&mut f.store, request.attempt_id, &[item])
-            .is_err()
+        f.store
+            .execution_continuation(action.action_id)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        f.store
+            .execution_attempt_ids(input.envelope().task_id)
+            .unwrap(),
+        attempts
     );
     f.runtime
         .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, grant_id)

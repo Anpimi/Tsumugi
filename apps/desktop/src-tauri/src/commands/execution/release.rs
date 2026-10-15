@@ -24,6 +24,13 @@ pub(super) struct ReleaseSession {
     pub(super) plugin: plugin::PluginBuildSession,
 }
 impl ReleaseSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        self.plugin.stop_package(package);
+        // Delivery of already saved releases does not execute the removed package.
+    }
     #[cfg(test)]
     pub(super) fn select_for_test(
         &mut self,

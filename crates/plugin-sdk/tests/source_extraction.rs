@@ -399,6 +399,16 @@ fn combined_check_budget_is_distinct_from_each_captured_content_budget() {
     request.proposal.domain_blocks[0]
         .payload_utf8
         .push_str(&"x".repeat(400_000));
+    // Content now has its own 4 MiB ceiling. Both individual values can fit
+    // while their combined check still exceeds its independent 4 MiB budget.
+    request.validate().unwrap();
+    let mut additional = request.proposal.domain_blocks[0].clone();
+    additional.schema.id.push_str(".additional");
+    additional.payload_utf8 = "x".repeat(1_200_000);
+    request.proposal.domain_blocks.push(additional);
+    request.source.validate().unwrap();
+    request.proposal.validate().unwrap();
+    assert!(serde_json::to_vec(&request).unwrap().len() > MAX_INVOCATION_PAYLOAD_BYTES);
     assert_eq!(
         request.validate().unwrap_err().code,
         ContractErrorCode::LimitExceeded

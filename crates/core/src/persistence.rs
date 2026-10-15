@@ -22,6 +22,7 @@ pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;
 pub(crate) mod ledger;
+pub mod model_connections;
 mod plugin_execution;
 mod release;
 mod resources;
@@ -42,15 +43,30 @@ pub use release::BuildLocaleChoice;
 pub use release::{
     DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, PluginBuildLocaleChoice,
     ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException, ReleaseExceptionKind,
-    ReleasePlan, ReleaseView, ReleasedArtifact,
+    ReleasePlan, ReleaseView, ReleasedArtifact, SavedBuildArtifact, SavedBuildLocale,
+    SavedBuildResult, SavedPluginBuildView,
 };
 pub use resources::{
     CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision, GlossaryCapture,
     GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind,
     ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence,
     ResourceImpactKind, ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, SaveContext,
-    SaveTerm, TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind,
-    TmSuggestion,
+    SaveTerm, SelectedSourceContext, SelectedSourceFact, SourceContextAdjacency,
+    SourceContextBlock, SourceContextCapture, SourceContextDirection, SourceContextNeighbor,
+    SourceContextObservations, SourceContextOccurrence, SourceContextOmissionReason,
+    SourceContextOmissionSample, SourceContextOmissions, SourceContextProviderFact,
+    SourceContextProviderNeighbor, SourceContextProviderOrigin, SourceContextProviderProjection,
+    SourceContextRequest, SourceContextSelection, SourceContextView, TermOrigin, TermResolution,
+    TermResolutionEntry, TermRevision, TmMatchKind, TmSuggestion, UnknownSourceBlockSample,
+    select_source_context,
+};
+pub use resources::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
+pub use resources::{
+    MAX_TBX_INPUT_BYTES, MAX_TBX_REPORT_BYTES, MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES,
+    TbxExchangePreview, TbxExchangeRow, TbxLicenseStatus, TbxLossEntry, TbxLossKind, TbxLossSample,
+    TbxRowReason, TbxRowStatus, TbxTermPreview, TbxTermReason, TmxExchangePreview, TmxExchangeRow,
+    TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
+    TmxRowStatus, preview_tbx_exchange, preview_tmx_exchange,
 };
 pub(crate) use review::validate_choices;
 pub use review::{
@@ -74,7 +90,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 33;
+pub(crate) const SCHEMA_VERSION: i64 = 36;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -926,8 +942,9 @@ fn backup_current_schema(
     // copy of a possibly active rollback-journal database. This test helper
     // checks a current snapshot; it is not an older-schema opening route.
     // Never replace a previous snapshot.
+    let version = SCHEMA_VERSION;
     let filename = format!(
-        "{DATABASE_FILENAME}.snapshot-{}.backup",
+        "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
         uuid::Uuid::new_v4()
     );
     let path = directory.join(filename);
@@ -942,7 +959,7 @@ fn backup_current_schema(
     let check: String = backup
         .query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if backup_version != SCHEMA_VERSION || check != "ok" {
+    if backup_version != version || check != "ok" {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         });

@@ -1,20 +1,21 @@
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
-import {cleanup,screen,waitFor,within} from "@testing-library/react";
+import {act,cleanup,screen,waitFor,within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {createRef} from "react";
-import {ArenaWorkbench} from "./ArenaWorkbench";
-import type {AiHandle} from "./AiWorkbench";
+import {ArenaWorkbench,type ArenaHandle} from "./ArenaWorkbench";
 import type {ProjectView} from "./projectCommands";
 import {defaultArenaConfig,type ArenaPrepared,type ComparisonView} from "./arenaCommands";
 import {i18n} from "./i18n";
+import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import type {AdoptionAction,PrepareRequest} from "./executionCommands";
 import {fixtureIdentity} from "./testSupport/executionFixture";
 import {aiAttempt,aiTask,arenaViewFixture} from "./testSupport/aiFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 const invoke=vi.hoisted(()=>vi.fn());vi.mock("@tauri-apps/api/core",()=>({invoke}));
-const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:"project",displayName:"Arena test",sourceLocale:"en",targetLocales:["zh-CN","ja"],metadataRevision:"1"}};
-const item={unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302),sourceSnapshotId:fixtureIdentity(300),nativeKey:"first",sourceLocale:"en",sourceText:"Hello {name}",targetLocale:"zh-CN",terms:[],context:null,omissions:["terms-not-shared","context-not-shared"],resourceBaseline:"0"};
-let prepared:ArenaPrepared,comparison:ComparisonView;
+const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:fixtureIdentity(500),displayName:"Arena test",sourceLocale:"en",targetLocales:["zh-CN","ja"],metadataRevision:"1"}};
+const item={unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302),sourceSnapshotId:fixtureIdentity(300),nativeKey:"first",sourceLocale:"en",sourceText:"Hello {name}",targetLocale:"zh-CN",terms:[],context:null,sourceContext:{kind:"not-selected" as const},omissions:["terms-not-shared","context-not-shared"],resourceBaseline:"0"};
+let prepared:ArenaPrepared,comparison:ComparisonView,adoption:AdoptionAction;
 beforeEach(async()=>{await i18n.changeLanguage("en-US");prepared={attemptId:aiAttempt,preview:{config:defaultArenaConfig(),digest:"digest",items:[{slot:0,sourceOrder:0,item},{slot:1,sourceOrder:0,item}]}};
  comparison={comparisonId:fixtureIdentity(330),unitId:fixtureIdentity(301),locale:"zh-CN",sourceRevisionId:fixtureIdentity(302),sourceText:item.sourceText,nativeKey:"first",selectionId:fixtureIdentity(320),selectedRevisionId:fixtureIdentity(321),selectedText:"First {name}",basis:"basis",blind:true,revealed:false,rows:[{revisionId:fixtureIdentity(321),text:"First {name}",sourceRevisionId:fixtureIdentity(302),originKind:"ai",contributors:[],model:null,recipe:null,basisCurrent:true},{revisionId:fixtureIdentity(322),text:"Second {name}",sourceRevisionId:fixtureIdentity(302),originKind:"manual",contributors:[],model:null,recipe:null,basisCurrent:true}]};
  invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
@@ -22,11 +23,14 @@ beforeEach(async()=>{await i18n.changeLanguage("en-US");prepared={attemptId:aiAt
   if(command==="list_arena_comparisons")return[];
   if(command==="preview_arena_translation"){prepared.preview.config=args.request.config as typeof prepared.preview.config;return prepared;}
   if(command==="start_arena_translation")return aiAttempt;
-  if(command==="read_arena_translation")return arenaViewFixture(item);
+  if(command==="read_arena_translation")return arenaViewFixture(item,prepared.preview.config);
   if(command==="read_translation_history")return{unitId:fixtureIdentity(301),locale:"zh-CN",total:"2",current:{eventId:fixtureIdentity(320),revisionId:fixtureIdentity(321),unitId:fixtureIdentity(301),locale:"zh-CN",sequence:"1",actionId:fixtureIdentity(324),previousEventId:null},currentText:"First {name}",rows:comparison.rows.map((r,i)=>({...r,unitId:fixtureIdentity(301),locale:"zh-CN",ordinal:String(i+1),sourceSnapshotId:fixtureIdentity(300),actionId:fixtureIdentity(324+i),attemptId:null,resultId:null,itemId:null,artifactId:null,logicalPath:null,declaredLocale:null,nativeKey:null,fileDigest:null})).map(({model:_model,recipe:_recipe,basisCurrent:_basis,...revision})=>revision),nextOrdinal:null};
-  if(command==="create_arena_comparison"){comparison={...comparison,comparisonId:String(args.request.actionId),blind:Boolean(args.request.blind),rows:(args.request.revisionIds as string[]).map((id,i)=>({...comparison.rows[i],revisionId:id}))};return comparison;}if(command==="read_arena_comparison")return comparison;
+  if(command==="create_arena_comparison"){comparison={...comparison,comparisonId:String(args.request.actionId),blind:Boolean(args.request.blind),revealed:!args.request.blind||comparison.revealed,rows:(args.request.revisionIds as string[]).map((id,i)=>({...comparison.rows[i],revisionId:id}))};return comparison;}if(command==="read_arena_comparison")return comparison;
   if(command==="create_execution_identity")return fixtureIdentity(1);
   if(command==="read_translation_action")return null;
+  if(command==="reveal_arena_identity"){comparison={...comparison,revealed:true};return null;}
+  if(command==="prepare_execution_adoption"){const request=args.request as unknown as PrepareRequest;adoption={...executionFixture.action,projectId:request.projectId,attemptId:request.attemptId,actionId:request.actionId,unitId:request.unitId,operation:"arena-translation",parameters:null,resultIds:[...request.resultIds]};return adoption;}
+  if(command==="adopt_execution")return{...executionFixture.receipt,projectId:adoption.projectId,attemptId:adoption.attemptId,actionId:adoption.actionId,unitId:adoption.unitId,changes:[{kind:"translation-revision",id:fixtureIdentity(990),revision:"1"}]};
   if(command==="save_arena_merge")return{eventId:fixtureIdentity(326),revisionId:fixtureIdentity(327),actionId:args.request.actionId,unitId:args.request.unitId,locale:args.request.locale,sequence:"2",previousEventId:args.request.expectedSelectionId};
   if(command==="select_translation_revision")return{eventId:fixtureIdentity(323),revisionId:args.request.revisionId,actionId:args.request.actionId,unitId:args.request.unitId,locale:args.request.locale,sequence:"2",previousEventId:args.request.expectedSelectionId};
   throw new Error(command);
@@ -67,7 +71,7 @@ it("keeps offline blind preference separate from a confirmed generation preview"
  expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();
 });
 it("invalidates consent when the second scheme changes",async()=>{const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Scheme 2 · Model"}),"different");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="start_arena_translation")).toBe(false);});
-it("preserves stable anonymous labels and does not infer a winner from returned order",async()=>{const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));const a=await screen.findByRole("heading",{name:"Candidate A"});expect(within(a.closest("article")!).getByText("Second output")).toBeInTheDocument();expect(screen.queryByText("alpha-model")).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="select_translation_revision"||c==="adopt_execution")).toBe(false);});
+it("preserves stable anonymous labels and does not infer a winner from returned order",async()=>{const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getAllByRole("checkbox",{name:"Hide candidate identities until revealed"})[0]);await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));const a=await screen.findByRole("heading",{name:"Candidate A"});expect(within(a.closest("article")!).getByText("Second output")).toBeInTheDocument();expect(screen.queryByText("alpha-model")).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="select_translation_revision"||c==="adopt_execution")).toBe(false);});
 
 it("shows exact token totals beyond JavaScript and u64 aggregate limits",async()=>{
  const original=invoke.getMockImplementation()!;
@@ -168,10 +172,35 @@ it("reports a committed save separately from a failed projection refresh",async(
  expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();
  expect(invoke.mock.calls.filter(([c])=>c==="save_arena_merge")).toHaveLength(1);
 });
+it("settles Arena cancellation after consumer unmount and preserves a checked ACK despite read failure",async()=>{
+ const user=userEvent.setup(),ref=createRef<ArenaHandle>();const original=invoke.getMockImplementation()!;
+ let finish!:(value:unknown)=>void,readsFail=false;
+ invoke.mockImplementation(async(command:string,payload:unknown)=>{
+  if(command==="read_arena_translation"){if(readsFail)throw new Error("Read unavailable");const view=await original(command,payload);return {...view,detail:{...view.detail,progress:{...view.detail.progress,queued:1,succeeded:0}}};}
+  if(command==="cancel_execution_task")return new Promise(resolve=>{finish=resolve;});
+  return original(command,payload);
+ });
+ const view=render(<ArenaWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ act(()=>{ref.current!.showAttempt(aiAttempt);});
+ const cancel=await screen.findByRole("button",{name:"Cancel remaining work"});await waitFor(()=>expect(cancel).toBeEnabled());
+ await user.click(cancel);await waitFor(()=>expect(finish).toBeTypeOf("function"));
+ view.rerender(null,project);readsFail=true;
+ await act(async()=>{finish("9");});
+ view.rerender(<ArenaWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ await screen.findByText(/Cancellation request recorded/);
+ expect(screen.queryByRole("button",{name:"Retry the original cancellation"})).not.toBeInTheDocument();
+ expect(invoke.mock.calls.filter(([name])=>name==="cancel_execution_task")).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([name])=>name==="create_execution_identity")).toHaveLength(1);
+ await screen.findByRole("checkbox",{name:/first: Hello/});
+ act(()=>{ref.current!.showAttempt(aiAttempt);});
+ await screen.findByText(/Cancellation request recorded/);
+ await waitFor(()=>expect(screen.getAllByRole("alert").length).toBeGreaterThan(0));
+ expect(screen.queryByRole("button",{name:"Retry the original cancellation"})).not.toBeInTheDocument();
+});
 it("reconciles an uncertain cancellation before allowing another action",async()=>{
  const user=await open();const original=invoke.getMockImplementation()!;let cancelled=false;
  invoke.mockImplementation(async(c:string,a:unknown)=>{
-  if(c==="cancel_execution_task"){cancelled=true;throw {code:"outcome-unknown"};}
+  if(c==="cancel_execution_task"){if(cancelled)return "1";cancelled=true;throw {code:"outcome-unknown"};}
   const value=await original(c,a);
   if(c==="read_arena_translation")return {...value,detail:{...value.detail,
    progress:{...value.detail.progress,queued:cancelled?0:2},
@@ -181,16 +210,86 @@ it("reconciles an uncertain cancellation before allowing another action",async()
  });
  await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
  await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
- await user.click(await screen.findByRole("button",{name:"Cancel remaining work"}));await screen.findByText(/The action may have committed/);
+ await user.click(await screen.findByRole("button",{name:"Cancel remaining work"}));await screen.findByText(/The original cancellation may have been recorded/);
  expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
- await user.click(screen.getByRole("button",{name:"Check saved result"}));await screen.findByText(/The saved action has been confirmed/);
+ await refreshWorkbenchReads();
+ await screen.findByRole("button",{name:"Prepare a new round"});
+ expect(screen.getByRole("button",{name:"Prepare a new round"})).toBeDisabled();
+ expect(screen.queryByText(/The saved action has been confirmed/)).not.toBeInTheDocument();
  expect(invoke.mock.calls.filter(([c])=>c==="cancel_execution_task")).toHaveLength(1);
  expect(invoke.mock.calls.find(([c])=>c==="cancel_execution_task")?.[1].request).toMatchObject({taskId:aiTask,requestId:fixtureIdentity(1)});
+ await user.click(screen.getByRole("button",{name:"Retry the original cancellation"}));
+ await screen.findByText(/Cancellation request recorded/);
+ const requests=invoke.mock.calls.filter(([c])=>c==="cancel_execution_task").map(([,payload])=>payload.request);
+ expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);
+ expect(screen.getByRole("button",{name:"Prepare a new round"})).toBeEnabled();
 });
-it("drops a late preview after the project session is replaced",async()=>{const user=userEvent.setup();const ref=createRef<AiHandle>();const rendered=render(<ArenaWorkbench key="old" ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await user.click(await screen.findByRole("checkbox",{name:/first: Hello/}));let finish:(p:ArenaPrepared)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="preview_arena_translation"?new Promise<ArenaPrepared>(done=>{finish=done;}):original(c,a));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<ArenaWorkbench key="new" ref={ref} project={{...project,sessionToken:"new"}} disabled={false} onOpenTranslation={()=>true}/>);finish(prepared);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await waitFor(()=>expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument());});
+it("drops a late preview after the project session is replaced",async()=>{const user=userEvent.setup();const ref=createRef<ArenaHandle>();const rendered=render(<ArenaWorkbench key="old" ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await user.click(await screen.findByRole("checkbox",{name:/first: Hello/}));let finish:(p:ArenaPrepared)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="preview_arena_translation"?new Promise<ArenaPrepared>(done=>{finish=done;}):original(c,a));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<ArenaWorkbench key="new" ref={ref} project={{...project,sessionToken:"new"}} disabled={false} onOpenTranslation={()=>true}/>);finish(prepared);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await waitFor(()=>expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument());});
 
 it("shows shared durable request exposure and known usage in both languages",async()=>{
  const user=await open();const original=invoke.getMockImplementation()!;
- invoke.mockImplementation((c:string,a:unknown)=>{if(c==="read_arena_translation"){const view=arenaViewFixture(item);view.budget={limit:40,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"9007199254740993",completionTokens:"2"};return Promise.resolve(view);}return original(c,a);});
+ invoke.mockImplementation((c:string,a:unknown)=>{if(c==="read_arena_translation"){const view=arenaViewFixture(item,prepared.preview.config);view.budget={limit:40,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"9007199254740993",completionTokens:"2"};return Promise.resolve(view);}return original(c,a);});
  await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await screen.findByText(/Request limit 40.*awaiting confirmation 1/);expect(screen.getByText(/Saved reported portion: 9007199254740993 input/)).toBeInTheDocument();await i18n.changeLanguage("zh-CN");expect(await screen.findByText(/请求上限 40.*用量未知 1/)).toBeInTheDocument();expect(invoke.mock.calls.filter(([c])=>c==="start_arena_translation")).toHaveLength(1);
+});
+
+
+it.each(["start","compare","select","merge","reveal","adopt"] as const)("keeps original %s through actual ArenaWorkbench removal and remount",async kind=>{
+ const user=userEvent.setup(),ref=createRef<ArenaHandle>();
+ const rendered=render(<ArenaWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ await user.click(screen.getByRole("button",{name:"Arena comparison"}));await screen.findByRole("checkbox",{name:/first: Hello/});
+ if(kind==="start"||kind==="adopt"){
+  await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+  await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));
+  if(kind==="adopt"){await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await screen.findByRole("heading",{name:"Candidate A"});}
+ }else{
+  await user.selectOptions(screen.getByRole("combobox",{name:"Original string"}),item.unitId);
+  await user.click(await screen.findByRole("checkbox",{name:/Revision 1/}));await user.click(screen.getByRole("checkbox",{name:/Revision 2/}));
+  await user.click(screen.getAllByRole("checkbox",{name:"Hide candidate identities until revealed"})[1]);
+  if(kind!=="compare"){await user.click(screen.getByRole("button",{name:"Start comparison"}));await screen.findByRole("button",{name:"Edit a manual merge"});}
+  if(kind==="merge")await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));
+ }
+ const commands={start:"start_arena_translation",compare:"create_arena_comparison",select:"select_translation_revision",merge:"save_arena_merge",reveal:"reveal_arena_identity",adopt:"adopt_execution"};
+ const labels={start:"Send and generate candidates",compare:"Start comparison",select:"Use this translation",merge:"Save merge and select",reveal:"Reveal candidate identities",adopt:"Save candidate"};
+ const original=invoke.getMockImplementation()!;let finish!:(value:unknown)=>void,sent!:unknown;
+ invoke.mockImplementation((command:string,args:unknown)=>command===commands[kind]?new Promise(resolve=>{sent=args;finish=resolve;}):original(command,args));
+ const button=screen.getAllByRole("button",{name:labels[kind]})[0];await waitFor(()=>expect(button).toBeEnabled());await user.click(button);
+ await waitFor(()=>expect(finish).toBeTypeOf("function"));const request=structuredClone(sent);
+ rendered.rerender(null,project);
+ const acknowledgement=await original(commands[kind],sent);await act(async()=>{finish(acknowledgement);});
+ rendered.rerender(<ArenaWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ await waitFor(()=>expect(screen.queryByText(/The action may have committed/)).not.toBeInTheDocument());
+ expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();
+ expect(invoke.mock.calls.filter(([command])=>command===commands[kind]).map(([,payload])=>payload)).toEqual([request]);
+ if(kind==="start")await screen.findByRole("heading",{name:"Candidate A"});
+ if(kind==="compare")await screen.findByRole("button",{name:"Edit a manual merge"});
+ if(kind==="merge"){await screen.findByText(/Merge saved and selected/);expect(screen.queryByRole("textbox",{name:"Merged translation"})).not.toBeInTheDocument();}
+ if(kind==="select")await screen.findByText(/Translation selected; normal review/);
+ if(kind==="adopt")await screen.findByText(/Candidate saved; the current selection is unchanged/);
+});
+it("continues selection after actual consumer removal during identity without replacing its fixed basis",async()=>{
+ const user=userEvent.setup(),ref=createRef<ArenaHandle>();
+ const rendered=render(<ArenaWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ await user.click(screen.getByRole("button",{name:"Arena comparison"}));
+ await user.selectOptions(await screen.findByRole("combobox",{name:"Original string"}),item.unitId);
+ await user.click(await screen.findByRole("checkbox",{name:/Revision 1/}));await user.click(screen.getByRole("checkbox",{name:/Revision 2/}));
+ await user.click(screen.getByRole("button",{name:"Start comparison"}));await screen.findByRole("button",{name:"Edit a manual merge"});
+ const original=invoke.getMockImplementation()!;let identify!:(value:string)=>void;
+ invoke.mockImplementation((command:string,args:unknown)=>command==="create_execution_identity"?new Promise<string>(resolve=>{identify=resolve;}):original(command,args));
+ const use=screen.getAllByRole("button",{name:"Use this translation"})[0];await waitFor(()=>expect(use).toBeEnabled());await user.click(use);
+ await waitFor(()=>expect(identify).toBeTypeOf("function"));rendered.rerender(null,project);
+ await act(async()=>{identify(fixtureIdentity(980));});
+ await waitFor(()=>expect(invoke.mock.calls.filter(([command])=>command==="select_translation_revision")).toHaveLength(1));
+ rendered.rerender(<ArenaWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ await screen.findByText(/Translation selected; normal review/);
+ expect(invoke.mock.calls.find(([command])=>command==="select_translation_revision")?.[1].request).toMatchObject({actionId:fixtureIdentity(980),unitId:item.unitId,
+  locale:item.targetLocale,sourceRevisionId:item.sourceRevisionId,expectedSelectionId:fixtureIdentity(320),revisionId:fixtureIdentity(321)});
+});
+
+it("shows one shared round request budget and only per-request limits in each destination preview",async()=>{
+  const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+  const heading=await screen.findByRole("heading",{name:"Data sharing preview"}),preview=within(heading.closest("section")!);
+  expect(preview.getByText("2 initial requests · 40 maximum requests including retries · concurrency 1")).toBeInTheDocument();
+  expect(preview.getAllByText("Each request: up to 2000 output tokens, 0 retries and 60 seconds. Requests and concurrency share the comparison budget.")).toHaveLength(2);
+  expect(preview.queryByText("40 requests · concurrency 1 · 2000 output tokens · 0 retries")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command])=>command==="start_arena_translation")).toBe(false);
 });

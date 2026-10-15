@@ -669,6 +669,86 @@ These pairings do not prove current-project matching, per-entry adoption,
 installed Mod compatibility or the complete desktop domain cutover. The shared
 harness changes no runtime grants or package approvals for other attempts.
 
+The `joint_review` test uses the same reviewed WebVTT package/runtime variables,
+plus `TSUMUGI_TEST_KNOWLEDGE_PACKAGE` and `TSUMUGI_TEST_KNOWLEDGE_DIGEST` for the
+public `examples/philosophy` package. Its multiple-provider case also requires
+`TSUMUGI_TEST_SECOND_KNOWLEDGE_PACKAGE` and
+`TSUMUGI_TEST_SECOND_KNOWLEDGE_DIGEST` for an independently inspected controlled
+package with plugin ID `philosophy-alternative`.
+
+Prepare the second fixture outside the source checkout from the public philosophy
+example, retaining its public SDK helper selection and original domain engine:
+
+1. Copy the example into an owned temporary example tree with the same relative
+   SDK-cache layout. Prepare and verify that cache using the plugin repository's
+   public `tooling/prepare-sdk.py` recipe.
+2. Set the terminology Resource revision to `independent-editorial-2` and change
+   only the `soundness` concept's Simplified Chinese preference from `可靠性` to
+   `健全性`. Run the original `tooling/prepare.mjs` in that copy to regenerate
+   Resource pins and declarations.
+3. Set the generated manifest's plugin ID to `philosophy-alternative`. Align the
+   expected own-package ID in `components/text-review.mjs` with that identity;
+   retain all provider, version, component, contribution and Resource checks.
+   Do not rerun the unmodified preparer after this identity change.
+4. Materialize that copy using the public `tooling/package-plugin.py` recipe,
+   inspect the resulting directory with `tsumugi-plugin-package inspect`, and
+   supply the reviewed directory and exact digest through the second-package
+   variables. The original package and its digest remain separate.
+
+With those six package variables and the three runtime variables set, run:
+
+```sh
+cargo test -p tsumugi-plugin-host --features core-adapter,javascript-conformance --test joint_review --locked -- --test-threads=1
+```
+
+The tests execute actual query/check workers and ordinary Core QA over synthetic
+project data. They retain mandatory format checks, conflicting advisory findings,
+independent grants and origins, manual protection and exact history after reopen.
+Explicit single-provider and independent-union selection are checked with both
+registration orders; an unchosen ambiguous provider is refused. Automatic
+selection uses a synthetic candidate through the original Core ledger, without a
+model request. The fixture approval metadata is an explicit test decision, not
+authenticated publisher provenance. An external Cargo consumer with normal Core
+features `[]` can use this same test file to exclude legacy execution fixtures.
+This does not establish rendered editor/batch/Agent workflows, behavior-version
+upgrade compatibility or complete release acceptance.
+
+The `knowledge` test's `version_compatibility` module uses the original reviewed
+philosophy package as `TSUMUGI_TEST_PLUGIN_PACKAGE`/`TSUMUGI_TEST_PLUGIN_DIGEST`.
+Prepare three additional controlled copies in the same public example/SDK-cache
+layout described above. Each retains the original plugin ID `philosophy`; set
+its `package.json` version before running the original public preparer:
+
+| Fixture variables | Controlled package version | Independent change |
+| --- | --- | --- |
+| `TSUMUGI_TEST_BEHAVIOR_PACKAGE`/`TSUMUGI_TEST_BEHAVIOR_DIGEST` | `0.1.0-alpha.2` | Set only the query capability's `behaviorVersion` to 2. In the engine's **query** branch, use case-sensitive `row.text.includes(form)` instead of Unicode word-boundary occurrence; describe literal substring matching in that query's `basis.coverage`. Keep the check branch, query input/output schemas and Profile unchanged. |
+| `TSUMUGI_TEST_PROFILE_PACKAGE`/`TSUMUGI_TEST_PROFILE_DIGEST` | `0.1.0-alpha.3` | Set `PROFILE.behaviorVersion` to 2, retaining the original capability/data identities and engine. |
+| `TSUMUGI_TEST_SCHEMA_PACKAGE`/`TSUMUGI_TEST_SCHEMA_DIGEST` | `0.1.0-alpha.4` | Set `schemaVersion` to 2 on the query capability, its input/output schemas and `RESOURCE_SCHEMA`; retain behavior/Profile identities and original JSON field types and engine. |
+
+Make the declaration changes in the copy's `components/definition.mjs`; change
+the query implementation only in the behavior fixture. Regenerate each copy's
+manifest/tool/review Resources using `tooling/prepare.mjs`, materialize it with
+the public package recipe and independently inspect its exact directory/digest.
+These versions identify controlled conformance fixtures, not published releases.
+With all reviewed package and runtime variables set, run:
+
+```sh
+cargo test -p tsumugi-plugin-host --features javascript-conformance --test knowledge --locked -- --test-threads=1
+```
+
+Actual installed/reopened package bytes and real query channels distinguish
+`soundtrack` under the two behaviors despite identical payload field types.
+Old and new versions coexist; explicit contract/Profile selection follows exact
+identities in either registration order. Wrong contract, Profile or input/output
+data versions are refused on the original channel before dispatch, after which
+an exact request still succeeds. Resource schema versions are also exact.
+SDK identity and process protocol are checked separately on the actual captured
+runtime descriptor: a structurally valid unsupported SDK identity or retained
+process-1 identity is diagnosed and refused, without a package-version fallback.
+This proves the current bounded selection/dispatch policy, not execution of an
+arbitrary future SDK artifact, automatic project environment adoption or a
+permanent promise to freeze all future contracts.
+
 ```sh
 cargo test -p tsumugi-plugin-host --features conformance-worker --locked
 ```

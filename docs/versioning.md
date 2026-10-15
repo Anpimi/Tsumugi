@@ -2,12 +2,369 @@
 
 The AI work area now connects the source-ready project action, explicit paged
 scope, manual stage routes and candidate-to-editor drafts through the existing
-workspace, session reads and protection owners. Unsent settings survive workspace
-navigation; project closure and unknown mutations retain their original guards.
+project session, AI preparation, typed navigation, session reads and protection
+owners. Unsent settings survive workspace navigation; project closure and unknown mutations retain their original guards.
 This frontend behavior changes no Core/Host/SDK/IPC contract, stored format or
 dependency. Bilingual Unreleased entries are synchronized, and application
 `0.2.0-alpha.1` remains the same undistributed batch without an additional bump.
 Native input, accessibility and full product acceptance remain separate.
+
+Source recovery clears obsolete preparation failures when returning to current
+content or explicitly discarding preparation. Unrelated input and saved history
+remain intact; a failed cancellation reports its own failure. Comparison labels
+include changes in interpretation as well as original text. These frontend
+corrections change no schema, IPC, SDK/process format, dependency or version
+source. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same
+undistributed batch without an additional bump; both Unreleased changelogs are
+synchronized.
+
+Source failure details are a read-only Desktop projection of the original SDK
+error and captured input. The additive execution-output view is generated from
+Rust; the Core result envelope, generic task status, retry policy and persisted
+bytes are unchanged. There is no project schema 36, SDK/process format,
+dependency, lockfile or version-source change. Application `0.2.0-alpha.1` and
+SDK `0.1.0-alpha.1` remain in the same undistributed batch without another bump
+or release; both Unreleased changelogs are synchronized.
+
+Explicit TMX and TBX file previews survive unchanged native focus checks while
+ordinary current reads still refresh. Actual source/resource changes and session
+resets continue to invalidate the preview and require a new explicit selection.
+This frontend fix changes no stored field, schema 36, IPC, SDK/process format,
+dependency, lockfile or version source. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` stay in the same undistributed batch without an additional bump
+or release; both Unreleased changelogs are synchronized.
+
+Resource updates also include a bounded read-only TBX-Basic DCA subset preview.
+It retains multiple terminology candidates and mapping losses without asserting
+complete standard compliance or adopting a termbase. TMX and TBX share the
+existing XML safety, loss accounting, native file-read and on-demand Query
+lifecycle owners. Rust generates the additive TBX desktop contract. No stored
+field, schema 36, grant, SDK/process format, dependency, lockfile or version
+source changes in this increment. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` stay in the same undistributed batch without another bump or
+release; the resource guide and both Unreleased changelogs are synchronized.
+
+Resource updates adds an explicitly selected read-only restricted TMX 1.4
+plain-text preview, with exact language association and bounded loss reporting.
+Core uses pinned `roxmltree` 0.21.1 for XML document validation; the manifest and
+Cargo lockfile record that runtime dependency. Rust owns the additive desktop
+request/response contract. No project capture, stored field, execution grant,
+SDK/process format or version source changes. Current-only project schema 36,
+application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same
+undistributed batch without an additional bump or release. Both Unreleased
+changelogs and the resource guide describe the restricted preview boundary.
+
+The current editor adds an authorized read-only source-observation page and an
+on-demand References consumer. Whole blocks and neighboring entries use a
+separate 20-entry / 128 KiB read limit, independent of AI selection budgets.
+Rust generates the additive source IPC contract. No stored field, execution
+grant, SDK/process format, dependency or version source changes; current-only
+project schema 36 and application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` remain
+the same undistributed batch. No additional bump, migration or distribution is
+needed; both Unreleased changelogs and the resource guide are synchronized.
+
+AI/Arena configuration and immutable item payloads now require independent
+source-context selection and capture fields. All three source categories default
+off; first authorization uses a fresh checked preview, and accepted execution
+uses the original capture without renewing authority or deadlines. Provider
+projection excludes provenance and omitted material. Rust owns these strict
+fields and the generated desktop contracts. The incompatible stored input
+shape advances the current-only project format to schema 36; older development
+directories are preserved and refused without conversion, rebuild or reset.
+Application `0.2.0-alpha.1`, SDK `0.1.0-alpha.1`, content exchange 2/1, process 2,
+connection store 1, plugin settings 2 and dependencies remain unchanged. This
+same undistributed batch needs no additional SemVer bump or distribution; both
+Unreleased changelogs and current README format statements are synchronized.
+Earlier paragraphs describe intermediate development boundaries.
+
+AI and Arena preparations share one checked source/resource read snapshot across
+all selected units and variants. Original source result, semantic proof and
+project mappings are validated once, and each variant retains its independent
+terminology/manual-context sharing policy. This changes no stored field,
+provider payload, sharing category, IPC, SDK/process, dependency or version
+source; current-only project schema 35 remains unchanged. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no additional SemVer
+bump or distribution; both Unreleased changelogs are synchronized. Source-fact
+selection, immutable capture and desktop sharing remain separate pending work.
+
+Source executions now retain their original SDK content only once, using the
+existing schema/digest projection mechanism for the ledger output. Typed source
+qualification, semantic proof, source mapping and all historical reads still use
+the exact immutable SDK bytes. The stored representation is incompatible, so
+the current-only project boundary advances to schema 35; earlier development
+formats are preserved and refused before application DDL, without migration,
+rebuild or reset. Source request frames account for JSON quoting within the
+existing 8 MiB result ledger; combined input remains 4 MiB. SDK/process/IPC,
+application connection1/plugin settings2 and dependencies do not change.
+The same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch
+requires no further SemVer bump or distribution; both Unreleased changelogs
+and current README format statements are synchronized. Earlier paragraphs
+retain their intermediate development boundaries.
+
+SDK content has independent 4,000-block and 4 MiB encoded ceilings for coexisting
+identity and context extensions across the existing 2,000-item scope. Typed
+content receivers and Review source checks use the same bound. Unit, occurrence,
+order and relation counts, 2 MiB material/artifact/non-content-frame ceilings and
+the 4 MiB combined invocation budget are unchanged; process framing does not
+expand. This receiver capacity extension adds no field or wire version, stored
+data, dependency or migration. Content exchange remains 2/1 and project schema
+34. It stays in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch without an additional SemVer bump or distribution; both
+Unreleased changelogs are synchronized. Actual domain coverage is tested by
+each producing package and its independent checker.
+
+Core adds a read-only source-context projection using the original adopted
+source result, semantic proof and Core/operation mappings in one SQLite read
+snapshot. It preserves explicit fact origins, unsupported/empty observations
+and ordered neighbor provenance. Manual context, operation selection, budgets
+and sharing remain separate responsibilities; AI and Desktop do not consume
+this read yet. This additive Core API changes no stored field, project schema
+34, IPC, SDK/process, dependency or version source. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no additional
+SemVer bump or distribution; both Unreleased changelogs are synchronized.
+
+The experimental SDK adds source-context facts at schema/behavior 1/1 inside
+existing content-exchange domain blocks. Supported blocks require explicit
+extracted/inferred origin, bounded source references and exact text coordinates;
+unknown versions retain the existing preservation/required-interpreter boundary.
+Rust owns the data receiver, generated JavaScript schema/types and frozen limits.
+There is no new stored field, project migration, execution permission or sharing
+grant. Domain collection, application capture and desktop presentation remain
+unimplemented consumers of this data unit. Application `0.2.0-alpha.1`, SDK
+`0.1.0-alpha.1`, project schema 34, content exchange 2/1, process 2 and connection
+store 1/plugin settings 2/dependencies are unchanged. This is the same
+undistributed batch and requires no additional SemVer bump or distribution;
+both Unreleased changelogs are synchronized.
+
+AI and Arena preparation now select named application connection defaults through
+current application reads and their existing project-session draft owners. Only
+four defaults and the exact profile reference are copied; scope, sharing and
+budgets remain independent. Manual edits detach the reference. Semantic changes
+revoke fresh preview/consent while original accepted authorization and deadlines
+remain captured. Model-free plans ignore unused connection defaults. Serialized
+work-plan acknowledgements compare the entire captured configuration. Budget and
+sharing summaries stay visible while advanced fields fold. Arena separates its
+shared round budget from per-request limits; settings dismissal returns focus to
+the preparation opener. This frontend addition
+changes no IPC, project schema 34, connection store 1, plugin settings 2,
+SDK/process, dependency or version source. The same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no additional SemVer bump,
+migration or distribution; both Unreleased changelogs are synchronized. Native
+workflow and complete product acceptance remain separate from this source unit.
+
+AI configuration adds optional non-secret captured connection provenance. Fresh
+Desktop previews and first authorization verify all referenced defaults from one
+application-store snapshot. Exact accepted requests and original authorization
+receipts retain the original configuration, budgets and deadlines; recovery does
+not resolve mutable defaults. Provider request bodies exclude connection IDs.
+This stored input contract advances the current-only project format to schema 34;
+other development formats are preserved and refused, with no conversion/reset.
+Manual one-time configuration omits the reference and needs no connection store.
+AI/Arena profile selection and consent UI remain in development. IPC types and
+validators are regenerated from Rust; connection store format 1, plugin settings
+format 2, SDK/process, dependencies and version sources remain unchanged. The
+whole undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch retains
+its existing target without another SemVer bump or distribution. Both Unreleased
+changelogs and current README format statements are synchronized. Earlier
+paragraphs retain their intermediate development boundaries.
+
+Desktop connection settings use the application read cache and a separate
+application-lived draft/mutation owner. Panel closure and project changes retain
+the draft and exact save identity; window exit waits for current draft decisions
+and refuses unresolved saves. Acknowledgements keep newer input, and current
+reads remain separate from historical receipts. AI/Arena profile selection and
+consent integration remain pending. This frontend addition changes no IPC,
+storage format, SDK/process contract, dependency or version source. It stays in
+the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
+without another bump or migration; both Unreleased changelogs describe it.
+
+Desktop registers application-scoped connection reads, exact changes, receipt
+reads and current-reference resolution. The trusted application location supplies
+the separate store root; IPC cannot choose it or supply a raw credential. One
+Core snapshot supplies its comparison basis and active-profile references, so
+clients do not implement a second digest codec. Rust/Serde generates the new
+connection IPC domain and the additive `model-connections` error stage; shared
+error contracts are regenerated together. AI/Arena preparation UI is still
+pending. Project schema 33, plugin settings format 2, SDK/process and
+version sources remain unchanged; no new dependency or additional bump in the
+same undistributed alpha.1 batch. Both Unreleased changelogs record this API scope.
+
+
+Core exposes a separate application connection store at format 1 for named,
+non-secret model defaults and exact mutation receipts. It reuses the bounded
+execution codec and SQLite transactions, and promotes the existing pinned
+`tempfile` dependency from test-only to runtime use for first publication.
+Project schema 33, plugin settings format 2, SDK/process contracts and the
+application/SDK version sources remain unchanged. Missing-store reads create
+nothing; unsupported connection formats are refused without repair or migration.
+This additive Core API stays in the same undistributed alpha.1 batch, with no
+additional SemVer bump. AI/Arena preparation and consent integration are still
+pending; the storage API alone does not provide a product workflow.
+
+
+The preceding combined development boundary was project schema 33. Its layout
+retains the original application execution associations, work-plan service calls,
+captured chunks, ancestor budgets and exact continuation links. Saved plugin build
+views are read-only projections of the original plans and artifacts. Project
+opening refuses other development formats before application DDL, without an
+upgrade, rebuild, reset or fallback; SQLite may recover its own hot journal.
+Preserve unsupported directories and reimport source files into a new project.
+Regenerate typed execution and plugin IPC from their Rust owners. Historical
+receipts remain readable without restoring grants; fresh dispatch still requires
+current authority and original deadlines. The storage geometry stays the same as
+the current service-call format; adding saved-build reads creates no new schema.
+
+Desktop work-plan controls, plugin source/translation/build actions, reference
+queries and editor protection now use their original stable project-session
+owners when their views unmount. Complete uncertain actions retain their
+original identity, consent and deadline across explicit retry; a later rejection
+does not erase an earlier unknown outcome. Current Query facts remain separate
+from captured requests and checked acknowledgements. Reference-query exit confirms
+the original draft before discarding, then checks the continuing exit intent and
+newer resource inputs after the original action settles. Plugin build discovery
+reads only editable setup; captured execution and original recovery retain their
+existing authority, while returning to setup rereads current package options.
+Independent artifact checks match the existing Core release-build scope to the
+captured source snapshot and selected language; foreign scopes cannot advance
+to checking or release recording. Captured builder and runtime labels display
+the original input; preparation and read failures do not assert package absence.
+Blocked project and window exits show recovery guidance in the relevant workspace,
+while preserving original requests, exit guards and explicit retry.
+This frontend integration
+changes no storage, generated IPC, SDK/process contract, dependency or version
+source. It stays in the same undistributed alpha batch without another bump;
+both Unreleased changelogs describe the behavior. Native and whole-product
+acceptance remain separate.
+
+Translation navigation confirmation retains the original fixed-scope Query,
+its exact data and its semantic change epoch. A routine focus reread of unchanged
+data no longer disables neighboring-entry navigation or Save and next. Changed
+data, semantic notifications, failed or pending reads and replacement Query
+records still revoke confirmation.
+Before an explicit list read, the existing session bridge confirms a current
+change snapshot and delivers queued semantic invalidation; a snapshot already
+in flight before a checked save cannot confirm that save. Unavailable metadata
+refuses dependent confirmation. Editor actions sit outside the content scroll
+area, keeping save and recovery available in the regular and compact layouts.
+Expanded compact references use a bounded share of the panel's available height;
+entry activation brings the focused draft into view without changing its text.
+These frontend corrections change no schema,
+IPC, SDK/process/Store contract, dependency or version source. The same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no
+additional bump or migration; both Unreleased changelogs describe the correction.
+
+Content range selection reuses the existing Core fixed review scope and captures
+the complete membership, original bases and explicit exclusions. Search and page
+changes keep this user intent separate from current Query facts. Transfer to AI
+preparation replaces only the selected IDs and locale, requiring a new preview
+and consent while preserving model setup, saved plans and cumulative budgets.
+It adds no storage, IPC, SDK contract, dependency or version source and stays in
+the same undistributed alpha batch without an additional bump or migration.
+
+Package-scoped shutdown also retains the original sealed calling-package association
+through generation-service model children, active and retired workers, outcome
+queries and later selection effects. Revocation ends admission; cleanup still
+waits for the owned work to leave. Shared model queries from independent packages
+keep their existing authority. This lifetime correction adds no storage layout,
+IPC, SDK contract, grant, deadline renewal or additional version bump.
+
+SDK/process/Store profiles, dependencies and lockfiles have separate identities.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
+batch; this integration needs no additional SemVer bump or publication. Both
+Unreleased changelogs preserve the compatibility and behavior changes. Earlier
+paragraphs retain intermediate development boundaries, rather than alternative
+current formats or migration paths.
+
+The experimental SDK now defines bounded work-plan generation-service input,
+child-identity receipts and finite errors from one Rust source. The new service,
+input, receipt and error contract references each use schema/behavior 1/1.
+The existing generator emits their JavaScript types and standalone validators;
+the SDK's declared text-query payload helper checks exact text, explicit options,
+fixed template paths and complete encoded input bounds. These data helpers do
+not supply application scopes, execution grants, model access or new budgets.
+The SDK data update itself leaves process protocol 2 and shared contracts,
+dependencies and lockfiles unchanged; application integration has its own
+current storage and IPC boundary described above. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` stay in the same undistributed batch,
+without an additional SemVer bump or publication. Regenerate contracts before
+packaging a new fixed SDK snapshot; earlier archives and consumer selections
+remain unchanged until an explicit artifact update. Both Unreleased changelogs
+describe this SDK source alignment.
+
+Experimental Desktop approval-removal and exact-install uninstall IPC are
+additive within the same undistributed application `0.2.0-alpha.1` batch. The
+installation inventory now requires original installation actions and retained
+removal observations; regenerate the plugin IPC bindings and update its fixtures
+with the Rust owner. Earlier experimental inventory shapes are refused without
+conversion. Store receipt format 1, settings format 2, project schema 30 and the
+SDK `0.1.0-alpha.1` / process-2 boundary remain unchanged. No dependency or version
+source changes and no additional bump; both Unreleased changelogs are updated.
+The original accepted operation, runtime drain and Store durability remain
+separate confirmations. Reviewed, localized frontend revocation, removal and
+original-request recovery controls are included in this batch. Retained Busy
+continuations use existing recovery guidance without changing their outcome into
+an unknown Store commit. Ordinary partial installations also retain their original
+request after settings confirmation; a known settings rejection before that
+confirmation ends the proposed pending mutation. Native acceptance is still
+under development.
+
+Desktop execution now retains exact package ownership through accepted capture,
+preparation IO and its session continuation, including abandoned IPC waiters.
+Internal cleanup fences only the selected identity/digest, retires dependent
+owners and actual query threads, and retains the session fence after runtime
+drain until the installation owner verifies its original Store result. Completed
+old controls cannot stop a new registration. Saved projections and release
+exports remain available. No project schema 30, IPC, settings format 2, Store
+receipt, SDK/process contract, dependency or version source changes. This stays
+in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch
+without an additional bump or migration; both Unreleased changelogs are updated.
+An additive Core consent precheck shares the original expiry rules and grants
+no authority. Review refuses invalid consent before retaining a dispatch action;
+actual authorization still checks it again, and uncertain committed grants keep
+their original recovery identities. The separate application lifecycle handoff
+and its localized controls use these owners; full native acceptance remains.
+
+The experimental Core `ExecutionRuntime` adds package-scoped begin/finish
+quiescence. It binds one full plugin identity, package digest, original action
+and runtime generation, revokes only its grants, and retains original task
+cancellation receipts across storage failures. Other independent packages keep
+their generation and permits; descendants still obey existing parent controls.
+Completion waits for owned workers and active query calls, leaves captured query
+callbacks closed and cannot dispose later explicit registrations. This additive
+internal API changes no project schema 30, IPC, settings format 2, Store receipt,
+SDK/process contract, dependency or version source. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no additional bump
+or historical migration; both Unreleased changelogs are synchronized. Desktop
+uses this API to drain captured calls before the installation handoff.
+
+Execution quiescence now waits for actual owned producer and outcome-query
+thread exit, including threads retired after cancellation or timeout. Revoking
+the result channel no longer implies safe cleanup or allows an early runtime
+generation rotation, project close or directory rename. New work stays blocked
+while quiescing; a producer that never exits requires application restart rather
+than a successful unload claim. This lifecycle correction changes no project
+schema, IPC, Store/SDK/process contract, dependency or version source. The same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch and bilingual
+Unreleased entries require no additional bump or historical migration. Desktop
+package removal now uses this drain owner; full native component lifecycle
+acceptance remains separate work.
+
+The experimental Host Store adds explicit removal of an exact sealed package
+installation. Callers first remove its local approval through the existing
+revisioned settings decision and stop/drain its original instances. Disabled
+packages still retain approval and cannot be removed by this API. A bounded
+`uninstalls/` journal records a format-1 removal receipt and retains original
+immutable installation bytes for uncertain-commit recovery; those objects are
+excluded from active inventory and loading. Package/runtime/removal action UUIDs
+remain reserved, and an old completed removal retry cannot remove a reinstall.
+Incomplete removal blocks new installation and reapproval of its target until
+the original action is reconciled. Existing installation/runtime receipts,
+settings format 2, project schema 30, SDK/process profiles and dependencies are
+unchanged. The same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch requires no additional version bump or historical migration;
+both Unreleased changelogs record the Host feature. Desktop removal controls
+and their lifecycle handoff use this Store owner. Full native lifecycle
+acceptance and cache collection remain separate work.
 
 The current combined development format is project schema 33. It retains the
 original six-column application execution associations, work-plan service calls,
@@ -904,3 +1261,9 @@ SDK/process/Store/IPC profiles and application/SDK version sources are unchanged
 This stays in the same undistributed application 0.2.0-alpha.1 / SDK
 0.1.0-alpha.1 batch and needs no extra bump or historical migration. Both
 Unreleased changelogs describe the platform improvement.
+
+The content editor adds read-only project-local translation-memory comparisons.
+It uses existing resource and review reads, with no mutation, execution permission,
+SDK/IPC/data-format or dependency change. Both Unreleased changelogs are synchronized.
+The same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch
+requires no additional bump or historical migration.

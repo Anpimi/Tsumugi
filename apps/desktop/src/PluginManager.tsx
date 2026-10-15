@@ -1,15 +1,17 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { QueryClient, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useApplicationQueryClient } from "./ApplicationReadProvider";
 import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
-import { isCommandError } from "./projectCommands";
-import { pluginCommands, type PluginCandidateView, type PluginInstallRequest, type PluginEnableRequest, type PluginNativeHostApprovalRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
+import { hasUnknownOutcome, isCommandError } from "./projectCommands";
+import { pluginCommands, type PluginCandidateView, type PluginApprovalRemovalRequest, type PluginUninstallRequest, type PluginInstallRequest, type PluginEnableRequest, type PluginNativeHostApprovalRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
 import "./PluginManager.css";
 import type { TranslationKey } from "./i18n/types";
 
 const inventoryKey = ["application", "plugins", "inventory"] as const;
-type Intent = { kind: "native-host"; request: PluginNativeHostApprovalRequest } | { kind: "defaults"; request: PluginDefaultsInstallRequest } | { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
+type CleanupIntent = { kind: "approval-removal"; request: PluginApprovalRemovalRequest } | { kind: "uninstall"; request: PluginUninstallRequest };
+type Intent = CleanupIntent | { kind: "native-host"; request: PluginNativeHostApprovalRequest } | { kind: "defaults"; request: PluginDefaultsInstallRequest } | { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
 const reasonMessages: Partial<Record<string, TranslationKey>> = {
   "plugin-defaults-unavailable": "plugins.defaultsUnavailable",
   "plugin-defaults-changed": "plugins.defaultsChanged",
@@ -49,10 +51,7 @@ export function PluginPermissions({ permissions }: { permissions: PermissionRequ
 export interface PluginManagerHandle { open: () => void }
 export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boolean; onBusyChange: (busy: boolean) => void; ref?: Ref<PluginManagerHandle> }) {
   const { t } = useTranslation();
-  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: {
-    networkMode: "always", retry: false, staleTime: 0, gcTime: 60_000,
-    refetchOnWindowFocus: false, refetchOnReconnect: false,
-  } } }));
+  const client = useApplicationQueryClient();
   const [open, setOpen] = useState(false);
   useImperativeHandle(ref, () => ({ open: () => setOpen(true) }));
   const [busy, setBusy] = useState(false);
@@ -68,23 +67,39 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   const [details, setDetails] = useState<PluginPackageDetailsView | null>(null);
   const [failure, setFailure] = useState<CommandFailure | null>(null);
   const [intent, setIntent] = useState<Intent | null>(null);
-  const [unknown, setUnknown] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [recovery, setRecovery] = useState<"none" | "retained" | "unknown">("none");
+  const unknown = recovery === "unknown";
+  const originalRequired = recovery !== "none";
+  const [saved, setSaved] = useState<TranslationKey | null>(null);
+  const [cleanupSelection, setCleanupSelection] = useState<{ intent: CleanupIntent; consent: boolean; original: boolean } | null>(null);
+  const cleanupFocus = useRef<HTMLHeadingElement>(null);
+  const cleanupTrigger = useRef<HTMLButtonElement | null>(null);
+  const returnCleanupFocus = useRef(false);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const query = useQuery({ queryKey: inventoryKey, enabled: open, queryFn: async ({ signal }) => {
     const result = await pluginCommands.inventory();
     if (signal.aborted) throw new Error("Plugin read cancelled");
     return result;
   } }, client);
-  useEffect(() => { onBusyChange(busy || unknown); }, [busy, unknown, onBusyChange]);
+  useEffect(() => { onBusyChange(busy || originalRequired); }, [busy, originalRequired, onBusyChange]);
+  const cleanupIntent = cleanupSelection?.intent;
+  useEffect(() => {
+    if (cleanupIntent) cleanupFocus.current?.focus();
+    else if (returnCleanupFocus.current) {
+      returnCleanupFocus.current = false;
+      if (cleanupTrigger.current?.isConnected && !cleanupTrigger.current.disabled) cleanupTrigger.current.focus();
+      else closeButton.current?.focus();
+    }
+  }, [cleanupIntent]);
   useEffect(() => { setVerifiedRuntime(null); }, [query.dataUpdatedAt]);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; client.clear(); }; }, [client]);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, [client]);
 
   async function operation(work: () => Promise<void>) {
     if (running.current) return;
     running.current = true;
     setBusy(true);
     setFailure(null);
-    setSaved(false);
+    setSaved(null);
     try { await work(); }
     catch (error) { if (mounted.current) setFailure(commandFailure(error)); }
     finally { running.current = false; if (mounted.current) setBusy(false); }
@@ -94,11 +109,12 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
       setIntent(next);
       await client.cancelQueries({ queryKey: inventoryKey });
       try {
-        const result = next.kind === "defaults" ? await pluginCommands.installDefaults(next.request) : next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : next.kind === "native-host" ? await pluginCommands.nativeHostApproval(next.request) : await pluginCommands.enable(next.request);
+        const result = next.kind === "approval-removal" ? await pluginCommands.removeApproval(next.request) : next.kind === "uninstall" ? await pluginCommands.uninstall(next.request) : next.kind === "defaults" ? await pluginCommands.installDefaults(next.request) : next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : next.kind === "native-host" ? await pluginCommands.nativeHostApproval(next.request) : await pluginCommands.enable(next.request);
         if (!mounted.current) return;
         client.setQueryData(inventoryKey, result);
         setIntent(null);
-        setUnknown(false);
+        setRecovery("none");
+        setCleanupSelection(null);
         setCandidate(null);
         setConsent(false);
         setRuntimeConsent(null);
@@ -106,21 +122,35 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         setDefaultsConsent(null);
         setVerifiedRuntime(null);
         setDetails(null);
-        setSaved(true);
+        setSaved(next.kind === "approval-removal" ? "plugins.approvalRemoved" : next.kind === "uninstall" ? "plugins.installationRemoved" : "plugins.saved");
+        if (next.kind === "approval-removal" || next.kind === "uninstall") closeButton.current?.focus();
       } catch (error) {
-        if (mounted.current) setUnknown(previous => previous || !isCommandError(error) || error.code === "outcome-unknown");
+        if (mounted.current) setRecovery(previous => {
+          if (previous === "unknown" || hasUnknownOutcome(error)) return "unknown";
+          if (previous === "retained" || (isCommandError(error)
+            && error.recoveryRequired && error.recoveryGuidance === "reconcile-original")) return "retained";
+          return "none";
+        });
         throw error;
       }
     });
   }
-  const blocked = busy || unknown || query.isFetching || !query.data || query.isError;
+  function reviewCleanup(next: CleanupIntent, trigger: HTMLButtonElement, original = false) {
+    cleanupTrigger.current = trigger;
+    setCleanupSelection({ intent: next, consent: false, original });
+    setFailure(null);
+    setSaved(null);
+  }
+  const unavailable = busy || originalRequired || query.isFetching || !query.data || query.isError;
+  const blocked = unavailable || cleanupSelection !== null;
   const inventory = query.data;
+  const retainedMessage = intent?.kind === "approval-removal" || intent?.kind === "uninstall" ? "plugins.cleanupPending" : "plugins.pending";
   return <Dialog open={open} onOpenChange={next => { if (!running.current) setOpen(next); }}>
     <DialogTrigger asChild><button type="button" className="secondary-button" disabled={disabled}>{t("plugins.open")}</button></DialogTrigger>
     <DialogPortal><DialogOverlay className="dialog-backdrop"/><DialogContent className="execution-dialog plugin-manager" aria-busy={busy}
       onEscapeKeyDown={event => { if (running.current) event.preventDefault(); }} onInteractOutside={event => { if (running.current) event.preventDefault(); }}>
       <div className="execution-heading"><div><DialogTitle>{t("plugins.title")}</DialogTitle><DialogDescription>{t("plugins.description")}</DialogDescription></div>
-        <button type="button" className="secondary-button" disabled={busy} onClick={() => setOpen(false)}>{t("plugins.close")}</button></div>
+        <button type="button" ref={closeButton} className="secondary-button" disabled={busy} onClick={() => setOpen(false)}>{t("plugins.close")}</button></div>
       <div className="execution-actions"><button type="button" className="primary-button" disabled={blocked} onClick={() => void operation(async () => {
         setConsent(false);
         const selected = await pluginCommands.select();
@@ -129,10 +159,10 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void query.refetch()}>{t("plugins.refresh")}</button></div>
       {busy || query.isFetching ? <p role="status">{t("plugins.loading")}</p> : null}
       {query.isError ? <div role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
-      {saved ? <p role="status">{t("plugins.saved")}</p> : null}
-      {failure ? <div role="alert"><p>{t(failureMessage(failure, unknown))}</p>
+      {saved ? <p role="status">{t(saved)}</p> : null}
+      {failure ? <div role="alert"><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown))}</p>
         <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
-        {!unknown && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCandidate(null); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
+        {!originalRequired && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCleanupSelection(null); setCandidate(null); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
       </div> : null}
       {inventory?.defaultsOffer ? <section className="plugin-section" aria-label={t("plugins.defaultsTitle")}>
         <h3>{t("plugins.defaultsTitle")}</h3><p>{t("plugins.defaultsDescription")}</p>
@@ -161,11 +191,28 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         {candidate.manifest.contributions.map(contribution => contribution.contribution.kind === "capability" ? <div key={contribution.id}><p>{t("plugins.capability", { name: contribution.id })}</p><PluginPermissions permissions={contribution.contribution.declaration.permissions}/></div> : null)}
         <details><summary>{t("plugins.fingerprint")}</summary><p><code>{candidate.packageDigest}</code></p><p>{t("plugins.files", { count: candidate.fileCount, bytes: candidate.byteCount })}</p></details>
         <p>{t("plugins.installEffect")}</p>
-        <label className="plugin-consent"><input type="checkbox" checked={consent} disabled={busy || unknown} onChange={event => setConsent(event.target.checked)}/>{t("plugins.consent")}</label>
+        <label className="plugin-consent"><input type="checkbox" checked={consent} disabled={busy || originalRequired} onChange={event => setConsent(event.target.checked)}/>{t("plugins.consent")}</label>
         <div className="execution-actions"><button type="button" className="primary-button" disabled={blocked || !consent || intent !== null} onClick={() => {
           if (query.data) void submit({ kind: "install", request: { ticket: candidate.ticket, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } });
         }}>{t("plugins.install")}</button>
-          <button type="button" className="secondary-button" disabled={busy || unknown} onClick={() => { setCandidate(null); setConsent(false); }}>{t("plugins.discard")}</button></div>
+          <button type="button" className="secondary-button" disabled={busy || originalRequired} onClick={() => { setCandidate(null); setConsent(false); }}>{t("plugins.discard")}</button></div>
+      </section> : null}
+      {cleanupSelection ? <section className="plugin-section" aria-labelledby="plugin-cleanup-title">
+        <h3 id="plugin-cleanup-title" tabIndex={-1} ref={cleanupFocus}>{t(cleanupSelection.original ? "plugins.originalRemovalTitle" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.revokeTitle" : "plugins.uninstallTitle", {
+          name: cleanupSelection.intent.request.package.plugin.id, version: cleanupSelection.intent.request.package.plugin.version,
+        })}</h3>
+        <p>{t(cleanupSelection.original ? "plugins.originalRemovalEffect" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.revokeEffect" : "plugins.uninstallEffect")}</p>
+        <details><summary>{t("plugins.fingerprint")}</summary><code>{cleanupSelection.intent.request.package.packageDigest}</code>
+          <p>{t("plugins.origin", { source: cleanupSelection.intent.request.origin.sourceId, publisher: cleanupSelection.intent.request.origin.publisherId })}</p>
+          {cleanupSelection.intent.kind === "uninstall" ? <p>{t("plugins.installationReference", { action: cleanupSelection.intent.request.originalInstallAction })}</p> : null}
+        </details>
+        <label className="plugin-consent"><input type="checkbox" checked={cleanupSelection.consent} disabled={busy || originalRequired || intent !== null}
+          onChange={event => setCleanupSelection({ ...cleanupSelection, consent: event.target.checked })}/>{t(cleanupSelection.original ? "plugins.originalRemovalConsent" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.revokeConsent" : "plugins.uninstallConsent")}</label>
+        <div className="execution-actions"><button type="button" className="primary-button" disabled={unavailable || intent !== null || !cleanupSelection.consent}
+          onClick={() => void submit(cleanupSelection.intent)}>{t(cleanupSelection.original ? "plugins.confirmOriginalRemoval" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.confirmRevoke" : "plugins.confirmUninstall")}</button>
+          <button type="button" className="secondary-button" disabled={busy || originalRequired || intent !== null} onClick={() => {
+            returnCleanupFocus.current = true; setCleanupSelection(null);
+          }}>{t("plugins.cancelCleanup")}</button></div>
       </section> : null}
       {inventory ? <section className="plugin-section" aria-label={t("plugins.installed")}><h3>{t("plugins.installed")}</h3>
         {!inventory.packages.length ? <p>{t("plugins.empty")}</p> : <ul className="plugin-list">{inventory.packages.map(record => {
@@ -177,11 +224,38 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
             {decision ? <div className="execution-actions"><button type="button" className="secondary-button" disabled={blocked || intent !== null || (!decision.enabled && record.state !== "sealed")} onClick={() => {
               if (query.data) void submit({ kind: "enable", request: { package: { plugin: record.plugin, packageDigest: record.packageDigest }, enabled: !decision.enabled, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } });
             }}>{t(decision.enabled ? "plugins.disable" : "plugins.enable")}</button>
-              <button type="button" className="text-button" disabled={blocked} onClick={() => void operation(async () => { const view = await pluginCommands.package({ plugin: record.plugin, packageDigest: record.packageDigest }); if (mounted.current) setDetails(view); })}>{t("plugins.details")}</button></div> : null}
+              <button type="button" className="text-button" disabled={blocked} onClick={() => void operation(async () => { const view = await pluginCommands.package({ plugin: record.plugin, packageDigest: record.packageDigest }); if (mounted.current) setDetails(view); })}>{t("plugins.details")}</button>
+              <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "approval-removal", request: {
+                package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, origin: decision.origin,
+                expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
+              } }, event.currentTarget)}>{t("plugins.revoke")}</button></div> : null}
+            <button type="button" className="secondary-button" disabled={blocked || intent !== null || record.state !== "sealed" || inventory.packageDecisions.some(value => value.packageDigest === record.packageDigest
+              || (value.plugin.id === record.plugin.id && value.plugin.publisher === record.plugin.publisher && value.plugin.version === record.plugin.version))}
+              onClick={event => reviewCleanup({ kind: "uninstall", request: { package: { plugin: record.plugin, packageDigest: record.packageDigest }, origin: record.origin,
+                originalInstallAction: record.originalInstallAction, expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
+              } }, event.currentTarget)}>{t("plugins.uninstall")}</button>
+            {inventory.packageDecisions.some(value => value.packageDigest === record.packageDigest
+              || (value.plugin.id === record.plugin.id && value.plugin.publisher === record.plugin.publisher && value.plugin.version === record.plugin.version)) ? <p>{t("plugins.revokeFirst")}</p> : null}
           </li>;
         })}</ul>}
         {inventory.packageDecisions.filter(decision => !inventory.packages.some(record => record.packageDigest === decision.packageDigest)).map(decision => <div key={decision.packageDigest}><p>{t("plugins.approvedMissing", { name: decision.plugin.id, version: decision.plugin.version })}</p>
-          {decision.enabled ? <button type="button" disabled={blocked || intent !== null} onClick={() => { if (query.data) void submit({ kind: "enable", request: { package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, enabled: false, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } }); }}>{t("plugins.disable")}</button> : null}</div>)}
+          {decision.enabled ? <button type="button" disabled={blocked || intent !== null} onClick={() => { if (query.data) void submit({ kind: "enable", request: { package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, enabled: false, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } }); }}>{t("plugins.disable")}</button> : null}
+          <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "approval-removal", request: {
+            package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, origin: decision.origin,
+            expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
+          } }, event.currentTarget)}>{t("plugins.revoke")}</button></div>)}
+      </section> : null}
+      {inventory?.uninstallations.length ? <section className="plugin-section" aria-label={t("plugins.previousRemovals")}>
+        <details><summary>{t("plugins.previousRemovals")}</summary><p>{t("plugins.removalObservation")}</p>
+          <ul className="plugin-list">{inventory.uninstallations.map(record => <li key={record.actionId}>
+            <p><strong>{record.installation.plugin.id}</strong> · {record.installation.plugin.version}</p>
+            <p>{t(record.state === "recovery-required" ? "plugins.removalPending" : "plugins.removalRecorded")}</p>
+            <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "uninstall", request: {
+              package: { plugin: record.installation.plugin, packageDigest: record.installation.packageDigest }, origin: record.installation.origin,
+              originalInstallAction: record.installation.originalInstallAction, expectedRevision: record.settingsRevision, actionId: record.actionId,
+            } }, event.currentTarget, true)}>{t("plugins.confirmRemoval")}</button>
+          </li>)}</ul>
+        </details>
       </section> : null}
       {inventory ? <section className="plugin-section" aria-label={t("plugins.nativeHostTitle")}>
         <h3>{t("plugins.nativeHostTitle")}</h3>

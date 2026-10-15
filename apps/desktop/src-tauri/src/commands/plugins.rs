@@ -21,7 +21,7 @@ mod environment;
 pub(super) mod generation;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(in crate::commands) use environment::test_support::Fixture as InstalledFixture;
-pub(super) mod packages;
+pub(in crate::commands) mod packages;
 pub(super) mod reviews;
 pub(super) mod runtimes;
 pub(super) mod sources;
@@ -33,8 +33,8 @@ pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
 pub(in crate::commands) use environment::test_support::Fixture as InstalledPluginFixture;
 pub use generation::{PluginGenerationComponentRequest, PluginGenerationComponentView};
 pub use packages::{
-    PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
-    PluginPackageDetailsView, PluginPackageRequest,
+    PluginApprovalRemovalRequest, PluginCandidateView, PluginEnableRequest, PluginInstallRequest,
+    PluginLookupRequest, PluginPackageDetailsView, PluginPackageRequest, PluginUninstallRequest,
 };
 pub use reviews::{
     PluginTextReviewAvailability, PluginTextReviewListEntry, PluginTextReviewListView,
@@ -89,6 +89,7 @@ impl From<InstalledObjectState> for PluginObjectState {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct PluginPackageView {
+    pub original_install_action: String,
     pub plugin: sdk::PluginIdentity,
     pub package_digest: String,
     pub origin: PluginOriginView,
@@ -124,6 +125,18 @@ pub struct PluginRuntimeDecisionView {
     pub origin: PluginOriginView,
 }
 
+/// An observation of the original retained removal journal. Sealed metadata is
+/// not confirmation of an uncertain command's filesystem durability.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginUninstallView {
+    pub action_id: String,
+    pub settings_revision: UnsignedDecimal,
+    pub installation: PluginPackageView,
+    pub state: PluginObjectState,
+}
+
 /// Installation and approval remain separate even when only one exists. These
 /// are metadata observations; Sealed and enabled are not runnable assertions.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -136,6 +149,8 @@ pub struct PluginInventoryView {
     pub packages: Vec<PluginPackageView>,
     #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_RUNTIMES)))]
     pub runtimes: Vec<PluginRuntimeView>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_PACKAGES)))]
+    pub uninstallations: Vec<PluginUninstallView>,
     #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_PACKAGES)))]
     pub package_decisions: Vec<PluginPackageDecisionView>,
     #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_RUNTIMES)))]
@@ -372,6 +387,7 @@ impl ApplicationPlugins {
                 .packages
                 .into_iter()
                 .map(|record| PluginPackageView {
+                    original_install_action: record.receipt.action_id().into(),
                     plugin: record.receipt.plugin().clone(),
                     package_digest: record.receipt.package_digest().into(),
                     origin: record.receipt.origin().into(),
@@ -395,6 +411,26 @@ impl ApplicationPlugins {
                     })
                 })
                 .collect::<Result<Vec<_>, CommandError>>()?,
+            uninstallations: store
+                .uninstallations(allowed)
+                .map_err(map_store_error)?
+                .into_iter()
+                .map(|record| {
+                    let installation = record.receipt.installation();
+                    PluginUninstallView {
+                        action_id: record.receipt.action_id().into(),
+                        settings_revision: record.receipt.settings_revision().into(),
+                        installation: PluginPackageView {
+                            original_install_action: installation.action_id().into(),
+                            plugin: installation.plugin().clone(),
+                            package_digest: installation.package_digest().into(),
+                            origin: installation.origin().into(),
+                            state: record.state.into(),
+                        },
+                        state: record.state.into(),
+                    }
+                })
+                .collect(),
             package_decisions: settings
                 .packages()
                 .iter()

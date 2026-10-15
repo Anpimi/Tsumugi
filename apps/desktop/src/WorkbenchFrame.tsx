@@ -1,15 +1,100 @@
-import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import { Folder, FileInput, Languages, BookOpen, CheckCheck, PackageCheck, Sparkles, Columns3, ListTodo } from "lucide-react";
+import { useSessionReads } from "./SessionReadProvider";
+import type { ChangeScope } from "./sessionReads";
+
+export interface AttemptWorkbenchHandle {
+  allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>;
+  showAttempt: (id: string) => void;
+}
 
 export type WorkspaceArea = "overview" | "source" | "translation" | "resources" | "review" | "release" | "ai" | "arena" | "tasks";
+/** Project-scoped view inputs only. Query results and business drafts keep their existing owners. */
+export class WorkspaceViewMemory {
+  private inputs = new Map<string, unknown>();
+  private listeners = new Map<string, Set<() => void>>();
+  read<T>(area: WorkspaceArea, key: string): T | undefined { return this.inputs.get(`${area}:${key}`) as T | undefined; }
+  write<T>(area: WorkspaceArea, key: string, value: T) {
+    const identity = `${area}:${key}`;
+    if (this.inputs.has(identity) && Object.is(this.inputs.get(identity), value)) return;
+    this.inputs.set(identity, value); this.listeners.get(identity)?.forEach(notify => notify());
+  }
+  subscribe(area: WorkspaceArea, key: string, notify: () => void) {
+    const identity = `${area}:${key}`, listeners = this.listeners.get(identity) ?? new Set<() => void>();
+    this.listeners.set(identity, listeners); listeners.add(notify);
+    return () => { listeners.delete(notify); if (!listeners.size) this.listeners.delete(identity); };
+  }
+  clear() { this.inputs.clear(); this.listeners.forEach(listeners => listeners.forEach(notify => notify())); }
+  observeChanges(scopes: readonly ChangeScope[]) {
+    if (scopes.includes("review") || scopes.includes("project")) {
+      const cursor = this.read<{ unitId: string; locale: string; offset: number }>("review", "historyCursor");
+      if (cursor && cursor.offset !== 0) this.write("review", "historyCursor", { ...cursor, offset: 0 });
+    }
+    if (scopes.includes("source")) {
+      for (const key of ["history.offset", "historyOffset"]) {
+        const cursor = this.read<number | null>("source", key);
+        if (cursor != null && cursor !== 0) this.write("source", key, 0);
+      }
+    }
+  }
+}
 interface WorkspaceView {
   area: WorkspaceArea;
   activate: (area: WorkspaceArea) => void;
   deactivate: (area: WorkspaceArea) => void;
+  memory: WorkspaceViewMemory;
 }
 const WorkspaceViewContext = createContext<WorkspaceView | null>(null);
 export const WorkspaceViewProvider = WorkspaceViewContext.Provider;
+
+export function useWorkspaceView() {
+  const view = useContext(WorkspaceViewContext);
+  if (!view) throw new Error("Workbenches require a workspace view owner");
+  return view;
+}
+
+/** Semantic cursor changes survive consumer unmount; Query facts remain in SessionReads. */
+export function useWorkspaceViewChanges() {
+  const { memory } = useWorkspaceView(), reads = useSessionReads();
+  useEffect(() => reads.subscribeChanges(scopes => memory.observeChanges(scopes)), [reads, memory]);
+}
+
+export function useWorkbenchState<T>(area: WorkspaceArea, key: string, initial: T | (() => T)): [T, (value: SetStateAction<T>) => void] {
+  const { memory } = useWorkspaceView();
+  const [initialValue] = useState<T>(() => {
+    const retained = memory.read<T>(area, key);
+    return retained === undefined ? typeof initial === "function" ? (initial as () => T)() : initial : retained;
+  });
+  const snapshot = useCallback(() => {
+    const retained = memory.read<T>(area, key); return retained === undefined ? initialValue : retained;
+  }, [memory, area, key, initialValue]);
+  const subscribe = useCallback((notify: () => void) => memory.subscribe(area, key, notify), [memory, area, key]);
+  const value = useSyncExternalStore(subscribe, snapshot, snapshot), alive = useRef(false);
+  useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useLayoutEffect(() => { memory.write(area, key, value); }, [memory, area, key, value]);
+  const update = useCallback((next: SetStateAction<T>) => {
+    if (!alive.current) return;
+    const result = typeof next === "function" ? (next as (before: T) => T)(snapshot()) : next;
+    memory.write(area, key, result);
+  }, [memory, area, key, snapshot]);
+  return [value, update];
+}
+
+/** Retain request cursors/tokens without retaining the read snapshots they address. */
+export function useWorkbenchRef<T>(area: WorkspaceArea, key: string, initial: T): { current: T } {
+  const { memory } = useWorkspaceView();
+  const local = useRef(initial), alive = useRef(false);
+  useLayoutEffect(() => {
+    alive.current = true;
+    if (memory.read<T>(area, key) === undefined) memory.write(area, key, local.current);
+    return () => { alive.current = false; };
+  }, [memory, area, key]);
+  return useMemo(() => ({
+    get current() { const retained = memory.read<T>(area, key); return retained === undefined ? local.current : retained; },
+    set current(value: T) { if (alive.current) { local.current = value; memory.write(area, key, value); } },
+  }), [memory, area, key]);
+}
 
 export function useWorkbenchView(area: WorkspaceArea): [boolean, (open: boolean) => void] {
   const view = useContext(WorkspaceViewContext);
@@ -48,7 +133,7 @@ export function WorkbenchNavigation({ area, onNavigate, disabled, hasProject }: 
   </nav>;
 }
 
-/** Views stay mounted; changing the visible area never owns or discards business drafts. */
+/** Panel visibility never owns or discards business drafts. */
 export function WorkbenchPanel({ open, title, description, onBack, backDisabled = false, className = "", children }: {
   open: boolean; title: string; description: string; onBack: () => void; backDisabled?: boolean; className?: string; children: ReactNode;
 }) {

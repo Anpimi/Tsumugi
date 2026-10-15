@@ -9,9 +9,15 @@ Nothing in this unit loads plugins or changes project persistence.
 check-results body. Rust/Serde is the source of the generated
 [`content-exchange.schema.json`](../schemas/content-exchange.schema.json).
 `parse_exchange` rejects unsupported protocol, unknown/duplicate envelope fields,
-malformed references and semantic integrity errors. The whole encoded UTF-8 frame
-is limited to 2 MiB, including escaping and framing, with bounded collections.
+malformed references and semantic integrity errors. Complete encoded content
+frames allow 4 MiB, including escaping and framing; other exchange frames retain
+their 2 MiB limit. Combined invocation inputs retain their separate 4 MiB budget.
 These transport ceilings do not enlarge any domain profile's smaller limits.
+Content units, occurrences, order entries and relations retain their 2,000-item
+limits. Domain blocks have a separate 4,000-item limit so identity and context
+extensions can coexist for every item. Collection counts do not bypass the
+complete content byte ceiling. Captured material and build artifacts retain
+their independent 2 MiB limits.
 
 ## Three layers of content
 

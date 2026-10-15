@@ -2,12 +2,128 @@
 
 export type ExecutionId = string;
 export type UnsignedDecimal = string;
+export type SourceContextCapture =
+  | {
+      kind: "not-selected";
+    }
+  | {
+      kind: "selected";
+      value: SelectedSourceContext;
+    };
+export type Revision = string;
+/**
+ * Classification for presentation, without interpreting a format's syntax or
+ * normalizing its literal text. Other source-associated information uses Note.
+ */
+export type SourceContextFactKind = "speaker" | "role" | "scene" | "time" | "location" | "note";
+/**
+ * References are observations in captured source, not proof of an inference.
+ * Human project decisions remain in the project's independent revision owner.
+ */
+export type SourceContextFactOrigin =
+  | {
+      kind: "extracted";
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    }
+  | {
+      kind: "inferred";
+      rationale: string;
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    };
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+export type ExtensionHandling = "required" | "preserve" | "optional";
+export type ContentTarget =
+  | {
+      kind: "snapshot";
+    }
+  | {
+      id: string;
+      kind: "unit";
+    }
+  | {
+      id: string;
+      kind: "occurrence";
+    };
+export type SourceContextDirection = "before" | "after";
+/**
+ * A pointer only; omitted text and rationale never enter the capture.
+ */
+export type SourceContextOmissionSample =
+  | {
+      blockIndex: number;
+      factIndex: number;
+      kind: "fact";
+      reason: SourceContextOmissionReason;
+    }
+  | {
+      kind: "neighbor";
+      occurrenceId: ExecutionId;
+      reason: SourceContextOmissionReason;
+    };
+export type SourceContextOmissionReason = "not-selected" | "byte-budget" | "item-limit";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
-export type Revision = string;
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -110,6 +226,7 @@ export type CommandStage =
   | "close"
   | "plugin-install"
   | "plugin-settings"
+  | "model-connections"
   | "execution-read"
   | "execution-cancel"
   | "execution-recover"
@@ -190,7 +307,6 @@ export type CheckImplementation =
       provider: ProviderSelectionBinding;
     };
 export type TextReviewField = "source" | "translation";
-export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type ReviewInvocationOutcome = "succeeded" | "failed" | "unknown";
 export type CheckOutcome =
   | {
@@ -275,6 +391,11 @@ export interface AiPreviewView {
 }
 export interface AiConfig {
   concurrency: number;
+  /**
+   * Captured non-secret profile identity. Accepted execution keeps this
+   * provenance and the original defaults; it never resolves mutable settings.
+   */
+  connectionProfile?: ModelConnectionReference | null;
   credentialEnv: string;
   endpoint: string;
   maxItems: number;
@@ -284,14 +405,32 @@ export interface AiConfig {
   model: string;
   shareContext: boolean;
   shareTerms: boolean;
+  sourceContext: SourceContextSelection;
   timeoutSeconds: number;
   tokenField: string;
+}
+/**
+ * A persistent data identity, never a credential, execution grant or consent.
+ */
+export interface ModelConnectionReference {
+  digest: string;
+  profileId: ExecutionId;
+  revision: UnsignedDecimal;
+  storeId: ExecutionId;
+}
+export interface SourceContextSelection {
+  extracted: boolean;
+  inferred: boolean;
+  maxBytes: number;
+  maxItems: number;
+  neighbors: boolean;
 }
 export interface AiItemView {
   context: ContextRevision | null;
   nativeKey: string;
   omissions: string[];
   resourceBaseline: UnsignedDecimal;
+  sourceContext: SourceContextCapture;
   sourceLocale: string;
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
@@ -306,6 +445,116 @@ export interface ContextRevision {
   reason: string;
   revisionId: ExecutionId;
   text: string;
+  unitId: ExecutionId;
+}
+export interface SelectedSourceContext {
+  contentRevision: Revision;
+  facts: SelectedSourceFact[];
+  localUnitId: string;
+  neighbors: SourceContextNeighbor[];
+  observations: SourceContextObservations;
+  omissions: SourceContextOmissions;
+  scope: SourceContextRequest;
+  selection: SourceContextSelection;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+/**
+ * One whole fact, with the original block target and source references.
+ */
+export interface SelectedSourceFact {
+  blockIndex: number;
+  fact: SourceContextFact;
+  factIndex: number;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextFact {
+  /**
+   * Unique only inside this block; it is not a project revision or entity ID.
+   */
+  id: string;
+  kind: SourceContextFactKind;
+  origin: SourceContextFactOrigin;
+  text: string;
+}
+export interface SourceReference {
+  artifactId: string;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface SourceContextNeighbor {
+  adjacentTo: SourceContextAdjacency[];
+  occurrence: SourceContextOccurrence;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface SourceContextAdjacency {
+  /**
+   * The neighbor's position relative to this selected occurrence.
+   */
+  direction: SourceContextDirection;
+  occurrenceId: ExecutionId;
+}
+export interface SourceContextOccurrence {
+  localOccurrenceId: string;
+  occurrenceId: ExecutionId;
+  source: SourceReference;
+}
+/**
+ * Missing, explicitly empty and unknown schema observations are distinct.
+ */
+export interface SourceContextObservations {
+  emptyBlocks: number;
+  knownBlocks: number;
+  knownFacts: number;
+  missingBlocks: boolean;
+  neighborOccurrences: number;
+  unknownBlocks: number;
+  unknownRequiredBlocks: number;
+  unknownSamples: UnknownSourceBlockSample[];
+}
+export interface UnknownSourceBlockSample {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextOmissions {
+  byteBudget: number;
+  extracted: number;
+  inferred: number;
+  itemLimit: number;
+  neighbors: number;
+  notSelected: number;
+  samples: SourceContextOmissionSample[];
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface SharedTerm {
@@ -484,15 +733,6 @@ export interface CapabilityDeclaration {
   profiles: ContractRef[];
 }
 /**
- * Schema and behavior are separate exact-match compatibility identities.
- * Matching JSON field types or a package SemVer is not behavioral compatibility.
- */
-export interface ContractRef {
-  behaviorVersion: number;
-  id: string;
-  schemaVersion: number;
-}
-/**
  * Requested upper bounds. The host must also enforce its own current limits.
  */
 export interface CapabilityLimits {
@@ -616,14 +856,6 @@ export interface CheckKey {
 export interface TextReviewLocation {
   field: TextReviewField;
   range: TextRange;
-}
-/**
- * Half-open offsets into one exact string, never between different strings.
- */
-export interface TextRange {
-  encoding: TextEncoding;
-  end: number;
-  start: number;
 }
 export interface TextReviewResourceEntry {
   contributionId: string;

@@ -61,6 +61,7 @@ struct Attempt {
     items: BTreeMap<ExecutionId, Item>,
     consent: Option<work_plans::CheckerConsent>,
     service_origin: ServiceOriginState,
+    service_package: Option<crate::commands::plugins::PluginPackageRequest>,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ServiceOriginState {
@@ -208,6 +209,86 @@ pub(in crate::commands::execution) fn commit_candidate(
     }
 }
 impl Automation {
+    fn depends_on(
+        attempt: &Attempt,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        package_lifecycle::matches_input(package, &attempt.input)
+            || attempt.service_package.as_ref() == Some(package)
+            || attempt.consent.as_ref().is_some_and(|consent| {
+                consent
+                    .bindings
+                    .iter()
+                    .any(|checker| package_lifecycle::binding_package(&checker.binding) == *package)
+            })
+            || attempt.items.values().any(|item| {
+                item.checker.as_ref().is_some_and(|checker| {
+                    checker
+                        .channels
+                        .iter()
+                        .any(|channel| package_lifecycle::matches_input(package, &channel.input))
+                })
+            })
+    }
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        let ids: Vec<_> = self
+            .attempts
+            .iter()
+            .filter(|(_, attempt)| Self::depends_on(attempt, package))
+            .map(|(id, _)| *id)
+            .collect();
+        for job in self.jobs.iter().filter(|job| ids.contains(&job.attempt)) {
+            job.cancellation.request();
+        }
+        for id in ids {
+            for item in self
+                .attempts
+                .get_mut(&id)
+                .expect("captured attempt")
+                .items
+                .values_mut()
+            {
+                if let Some(checker) = &item.checker {
+                    checker.cancellation.request();
+                }
+                if matches!(
+                    item.view.phase,
+                    EffectPhase::Waiting | EffectPhase::SavingCandidate | EffectPhase::Checking
+                ) || (item.view.phase == EffectPhase::Failed
+                    && item.view.retryable
+                    && item.view.receipt.is_none())
+                {
+                    item.view.phase = EffectPhase::Cancelled;
+                    item.view.retryable = false;
+                }
+            }
+        }
+    }
+    pub(super) fn package_active(
+        &self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        let owns = |id: ExecutionId| {
+            self.attempts
+                .get(&id)
+                .is_some_and(|attempt| Self::depends_on(attempt, package))
+        };
+        self.jobs.iter().any(|job| owns(job.attempt))
+            || self.retired.iter().any(|(id, _)| owns(*id))
+            || self
+                .attempts
+                .values()
+                .filter(|attempt| Self::depends_on(attempt, package))
+                .any(|attempt| {
+                    attempt.items.values().any(|item| {
+                        item.view.phase == EffectPhase::Waiting
+                            || item.checker.as_ref().is_some_and(|checker| checker.pending)
+                    })
+                })
+    }
     pub(super) fn track(
         &mut self,
         store: &ProjectStore,
@@ -243,6 +324,27 @@ impl Automation {
         })?;
         if let Some((_, attempt)) = &mut tracking.pending {
             attempt.service_origin = ServiceOriginState::Retained;
+            let (plugin, digest) = prepared.original_caller_package();
+            attempt.service_package = Some(crate::commands::plugins::PluginPackageRequest {
+                plugin: plugin.clone(),
+                package_digest: digest.into(),
+            });
+        } else if let Some(attempt) = tracking
+            .automation
+            .attempts
+            .get(&prepared.input().envelope().attempt_id)
+        {
+            let (plugin, digest) = prepared.original_caller_package();
+            if attempt
+                .service_package
+                .as_ref()
+                .is_none_or(|package| &package.plugin != plugin || package.package_digest != digest)
+            {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "service-call-association",
+                ));
+            }
         }
         Ok(tracking)
     }
@@ -296,6 +398,7 @@ impl Automation {
                     input: input.clone(),
                     consent,
                     service_origin: ServiceOriginState::Untracked,
+                    service_package: None,
                     items: input
                         .envelope()
                         .items
@@ -560,7 +663,15 @@ impl Automation {
         Ok(dispatch_consent)
     }
     pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
-        self.retired.retain(|(_, thread)| !thread.is_finished());
+        let mut remaining = Vec::new();
+        for (id, thread) in self.retired.drain(..) {
+            if thread.is_finished() {
+                let _ = thread.join();
+            } else {
+                remaining.push((id, thread));
+            }
+        }
+        self.retired = remaining;
         // Control is checked before accepting results or dispatching another checker.
         for (id, attempt) in &mut self.attempts {
             if attempt.service_origin == ServiceOriginState::Released {

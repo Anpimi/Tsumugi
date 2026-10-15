@@ -31,7 +31,7 @@ beforeEach(async () => {
 afterEach(cleanup);
 function addAlternative() {
   const provider = alternativeView.binding.capability.provider;
-  inventory.packages.push({ plugin: provider.plugin, packageDigest: provider.packageDigest, origin: alternativeView.packageOrigin, state: "sealed" });
+  inventory.packages.push({ originalInstallAction: "00000000-0000-4000-8000-000000000002", plugin: provider.plugin, packageDigest: provider.packageDigest, origin: alternativeView.packageOrigin, state: "sealed" });
   inventory.packageDecisions.push({ plugin: provider.plugin, packageDigest: provider.packageDigest, origin: alternativeView.packageOrigin, enabled: true });
 }
 function Choice({ refProp, open = true, disabled = false }: { refProp: Ref<PlanToolChoiceHandle>; open?: boolean; disabled?: boolean }) {
@@ -82,8 +82,8 @@ it("captures independent providers and per-provider options under one total limi
   await user.clear(limit); await user.type(limit, "3");
   const captured = ref.current?.capture();
   expect(captured).toEqual({ maxInvocations: 3, entries: [
-    { tool: { package: { plugin: toolQueryPackage.manifest.plugin, packageDigest: toolQueryPackage.packageDigest }, resourceId: toolQueryView.resourceId, environmentDigest: toolQueryView.environmentDigest }, target: "zh-CN", selections: ["term"], view: toolQueryView },
-    { tool: { package: { plugin: alternativePackage.manifest.plugin, packageDigest: alternativePackage.packageDigest }, resourceId: alternativeView.resourceId, environmentDigest: alternativeView.environmentDigest }, target: "ja", selections: ["other"], view: alternativeView },
+    { tool: { package: { plugin: toolQueryPackage.manifest.plugin, packageDigest: toolQueryPackage.packageDigest }, resourceId: toolQueryView.resourceId, environmentDigest: toolQueryView.environmentDigest }, target: "zh-CN", selections: ["term"], view: toolQueryView, readKey: expect.arrayContaining(["tool-query-environment"]) },
+    { tool: { package: { plugin: alternativePackage.manifest.plugin, packageDigest: alternativePackage.packageDigest }, resourceId: alternativeView.resourceId, environmentDigest: alternativeView.environmentDigest }, target: "ja", selections: ["other"], view: alternativeView, readKey: expect.arrayContaining(["tool-query-environment"]) },
   ] });
   expect(screen.getAllByRole("spinbutton", { name: "Total tool-call limit" })).toHaveLength(1);
   if (!captured) throw new Error("Expected captured references");

@@ -154,11 +154,11 @@ fn real_tool_ipc_captures_single_and_batch_inputs_and_reuses_original_authority(
     }
     let temporary = tempfile::tempdir().unwrap();
     let path = PathBuf::from(
-        std::env::var_os("TSUMUGI_TEST_PLUGIN_PACKAGE")
+        std::env::var_os("TSUMUGI_TEST_KNOWLEDGE_PACKAGE")
             .expect("explicit captured package required"),
     );
     let digest =
-        std::env::var("TSUMUGI_TEST_PLUGIN_DIGEST").expect("independent package digest required");
+        std::env::var("TSUMUGI_TEST_KNOWLEDGE_DIGEST").expect("independent package digest required");
     let image = PackageImage::capture_directory(&path, &digest, || true).unwrap();
     let approval = PackageApproval {
         plugin: image.manifest().manifest().plugin.clone(),

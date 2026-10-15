@@ -1,7 +1,10 @@
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { WorkPlanControls } from "./WorkPlanControls";
+import { WorkPlanControls as ProductionWorkPlanControls, useWorkPlanControlSession } from "./WorkPlanControls";
+import { useLayoutEffect, useState } from "react";
+import { SessionReadProvider, useSessionReads } from "./SessionReadProvider";
+import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
 import { workPlanCommands, type WorkPlanView, type WorkPlanStatusView } from "./workPlanCommands";
 import wire from "../test/fixtures/workPlanCommands.contract.json";
 import { validateResponseWorkPlan, validateResponseWorkPlanReceipt } from "./generated/ai.validators";
@@ -9,6 +12,22 @@ import { formatReviewSlotFixture, textReviewSlotFixture, textReviewViewFixture }
 import { i18n } from "./i18n";
 import { executionCommands } from "./executionCommands";
 import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
+
+type ControlProps = Omit<Parameters<typeof ProductionWorkPlanControls>[0], "session" | "editSeq" | "open" | "canFresh" | "ownerBusy" | "run" | "onOpenTranslation"> & {
+  run: (work: (current: () => boolean) => Promise<void>) => Promise<void>;
+  onOpenTranslation: (...arguments_: Parameters<Parameters<typeof ProductionWorkPlanControls>[0]["onOpenTranslation"]>) => unknown;
+};
+function ControlBody(props: ControlProps) {
+  const session=useWorkPlanControlSession(()=>true), reads=useSessionReads();
+  useLayoutEffect(()=>{if(props.status)reads.client.setQueryData(reads.key(["workPlan",props.status.lease.planId]),props.status);},[props.status,reads]);
+  return <ProductionWorkPlanControls {...props} session={session} editSeq={0} open ownerBusy={()=>false} canFresh={()=>true}
+    run={work=>props.run(current=>work(Object.assign(()=>current(),{fresh:()=>current(),acceptPlan:()=>current()})))}
+    onOpenTranslation={async(target,locale)=>{await props.onOpenTranslation(target,locale);return true;}}/>;
+}
+function WorkPlanControls(props: ControlProps) {
+  const [commands]=useState(()=>new WorkbenchCommands());
+  return <WorkbenchCommandsProvider commands={commands}><SessionReadProvider context={props.context} bridge={false}><ControlBody {...props}/></SessionReadProvider></WorkbenchCommandsProvider>;
+}
 
 function planFixture(): WorkPlanView {
   const base = wire.responses.plan;

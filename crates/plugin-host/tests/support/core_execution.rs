@@ -57,7 +57,14 @@ pub fn execute_all(
                     let result = store
                         .execution_result(input.envelope().attempt_id, id)
                         .unwrap();
-                    assert_eq!(result.envelope().outcome, ExecutionState::Succeeded);
+                    assert_eq!(
+                        result.envelope().outcome,
+                        ExecutionState::Succeeded,
+                        "actual captured execution failed: capability={} provider={:?} diagnostic={:?}",
+                        input.envelope().capability_id,
+                        input.envelope().plugin.as_ref().map(|p| &p.capability.provider),
+                        result.envelope().diagnostic
+                    );
                     result
                 })
                 .collect();

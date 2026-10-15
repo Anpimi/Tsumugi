@@ -130,6 +130,94 @@ proof and per-entry adoption in temporary application/project directories. The
 interactive picker uses an owned native handle fixture; rendered workbench
 acceptance remains separate.
 
+The desktop read-only tool IPC test uses the independently prepared terminology
+package selected by `TSUMUGI_TEST_KNOWLEDGE_PACKAGE` and
+`TSUMUGI_TEST_KNOWLEDGE_DIGEST`. The source and joint-review tests independently
+select their format package with `TSUMUGI_TEST_PLUGIN_PACKAGE` and
+`TSUMUGI_TEST_PLUGIN_DIGEST`. Keep these selections separate when running the
+desktop execution group. Its actual component workflows require `bundled-runtime`
+and a prepared runtime matching the current process protocol; the
+`execution-test-host` group alone does not exercise those bundled workflows.
+
+On macOS, the opt-in desktop package-cleanup process test selects the independently
+fingerprinted Node tool tree, current built Host tree and matching environment
+descriptor with `TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST` and
+`TSUMUGI_TEST_RUNTIME_APPROVAL`. Prepare those artifacts using the
+[JavaScript Host build and checks](runtimes/javascript-host/README.md#build-and-checks).
+It uses temporary installations and projects and does not require the desktop
+runtime bundle or run a graphical application:
+
+```text
+cargo test -p tsumugi-desktop --features execution-test-host package_cleanup_process -- --ignored --test-threads=1
+```
+
+The test exercises actual Node component processes through the registered
+uninstall command. Target removal must preserve an independent in-flight process
+and its original Core authorization. After explicit reinstallation and project
+reopen, confirming a completed original removal must preserve the new instance.
+Native GUI and other platform acceptance remain separate checks.
+
+On macOS arm64, with the same three runtime variables, the opt-in missing-package
+workflow tests each install one pinned included package, SMAPI or WebVTT, in a
+temporary Store and run its actual source extraction, independent checks,
+translation QA, build and release:
+
+```text
+cargo test -p tsumugi-desktop missing_package -- --ignored --test-threads=1
+```
+
+For each format, one case revokes approval and uninstalls that exact installation
+through the registered commands. A second case retains approval while moving
+only its temporary installation object after the original workers have drained.
+Reopening the project must preserve stored source, translation history and
+execution provenance, allow manual revisions, reject new package-dependent QA
+and builds with the exact approval or missing-package error, and export the
+original saved release bytes. The missing-object cases verify physical fixture
+restoration; they do not implement application recovery.
+
+The same approved runtime variables also enable a two-version synthetic source
+upgrade journey on macOS arm64:
+
+```text
+cargo test -p tsumugi-desktop actual_two_version_identity_upgrade -- --ignored --test-threads=1
+```
+
+It installs two complete package versions whose separately versioned native-key
+policy changes from ASCII folding to exact case. Installation and reopen cannot
+adopt a new interpretation. The checked comparison shows the added and removed
+identities, refuses an incompatible continuation, and changes current content
+only after explicit adoption. Earlier translation and review histories remain
+readable, and the original independently checked release retains its exact bytes
+through export and reopen. The stable synthetic records profile preserves
+captured references and bytes; this test does not establish upgrade compatibility
+for an included real format or native GUI acceptance.
+
+
+An additional synthetic source test keeps an actual old-version invocation in
+flight while installing and independently enabling the new version through the
+registered package commands:
+
+```text
+cargo test -p tsumugi-desktop actual_live_version_update -- --ignored --test-threads=1
+```
+
+It checks the original channel, authorization and deadline while the new version
+starts independently. Exact old-version approval removal terminates and reaps
+only its worker without accepting a result; cooperative JavaScript cleanup is
+not required before termination. Repeating its original cleanup callbacks and
+registered request leaves the new instance and its independent grant intact.
+After owner drain and project reopen, a fresh new-version invocation is compared
+with the live-update result, while original source and translation history remain
+unchanged. The original two-version journey above also covers shared fixture
+helpers. These are temporary, complete synthetic packages and actual Node
+processes, separate from included-format upgrade and native GUI acceptance.
+
+The JavaScript Host lifecycle suite separately runs two actual channels. A
+cooperatively cancelled old callback resolves after cancellation, emits no
+result, and cannot register from its disposed facade while the new channel is
+still invoking. The new channel then returns its own exactly bound result.
+This protocol check is separate from Desktop grant and installation checks.
+
 The experimental, standalone [plugin SDK](crates/plugin-sdk) provides
 data contracts and a schema/validation harness without depending on Core. It
 validates declarations, content/execution frames and captured check coverage;
@@ -162,7 +250,7 @@ Run the normal Core content regressions separately:
 cargo test -p tsumugi-core --test source_production --test translation_production --test build_production
 ```
 
-This checks production source/translation/build input rejection, schema 23 refusal of
+This checks production source/translation/build input rejection, schema 32 refusal of
 previous formats, manual history and original save receipts.
 Workspace tests enable the explicit `execution-test-host` fixture through
 development dependencies; this focused command uses normal Core features.
@@ -190,6 +278,49 @@ The desktop shell supports creating, opening, renaming, closing, and reconciling
 
 The global **Extensions** panel reviews a locally selected plugin folder, its declared publisher, requested permissions and exact fingerprint. Explicit manual approval saves trust before installing fixed bytes; a new package starts disabled. Enablement is a separate action, and selected capabilities require exact current approval and verified installed bytes. If a change has an uncertain result, read current state and retry the original operation; this preserves its original action and request. Reopening the panel retains that request. Interrupted installation can also recover after explicitly reviewing and approving the matching package again. An [opt-in Apple silicon macOS build](runtimes/javascript-host/README.md#opt-into-the-desktop-runtime-bundle) includes a fixed Node and Host environment requiring macOS 13.5. Runtime approval and installation are separate from package approval and execution permission; exact installed files can be verified from the panel. Ordinary builds explicitly report that no runtime is bundled. These controls do not authenticate a publisher or start plugin code; production plugin execution remains under development.
 
+The experimental Rust `ExecutionRuntime::begin_package_quiesce` API stops one
+full plugin identity and package digest across its registered environments.
+Retain its original action ID and opaque `PackageQuiescence` token; retry the
+same action after a storage failure and poll `finish_package_quiesce` until the
+original workers and active query calls drain. Completion removes only the
+target registrations, preserves unrelated packages' generation and permits,
+and never renews permission. Descendants still obey existing parent controls.
+Captured old query callbacks stay closed; completed old controls cannot remove
+later explicit registrations. Hosts must additionally drain their own pending
+calls, query threads and lifecycle resources before changing installation bytes.
+These runtime controls do not revoke installed approval or uninstall a package.
+
+The experimental Rust `PackageStore::uninstall` API removes an exact installation
+after a separate settings decision has removed its approval. Disabled approval
+still blocks removal. The application must stop new dispatch and drain or legally
+cancel its original execution instances before calling it; the Store does not
+unload a worker. `uninstallations` observes original receipts and incomplete
+removals. Once an intent is recorded, any failure requires the exact original
+action, expected initial settings revision and approval for recovery. A resumed
+incomplete action checks current settings again and refuses an approved target.
+A completed retry observes the original result even after a new install or
+settings revision, without altering that new installation. Recovery bytes remain
+immutable outside active inventory and loading, and package/runtime/removal
+action UUIDs cannot be reused. The journal retains at most 128 removals and
+performs no automatic cache collection. It never modifies projects or restores
+execution permission.
+
+The experimental **Extensions** panel exposes **Revoke approval** separately
+from **Uninstall this installation**. Review the target and its effects, then
+explicitly confirm each action. Revocation stops new selection and dependent
+work while retaining installation files. Uninstall waits for the original
+installation's dependent work to exit before removing it; disabling a package
+alone does not remove approval. Saved project content, results, history and
+exports remain. An uncooperative worker prevents confirmed removal.
+
+Accepted cleanup retains its original request through a lost waiter or a Busy
+continuation. Closing or refreshing the panel preserves that request; use
+**Retry original operation** to continue it. **Previous installation removals**
+also offers explicit original-action confirmation. Those observations alone do
+not confirm filesystem durability; a completed original replay preserves a
+later installation and its work. Full native lifecycle acceptance is still in
+progress.
+
 The sidebar opens each working area in the main workspace. Returning to another area preserves its project-local position and drafts; leaving an unsaved translation first offers save, keep editing, or discard. The project overview shows import or continue-editing actions according to the current source. Translations opens the editor by default, with a searchable paged list alongside source text, translation and revision controls. Search covers native keys, source text and selected translations across the complete current source, including entries beyond the displayed page. Terms, context and history are available in a collapsible reference area.
 
 The experimental `read_plugin_source` command accepts an exact package identity/fingerprint, source Resource ID and environment digest. It reads the installed package's fixed material recipe, resolves its independent extractor/checker declarations and captures the independently approved installed Node environment under one current settings revision. Disabled packages, missing files or changed choices are refused. The generated IPC adapter preserves this read-only snapshot; native directory selection, fixed capture and per-attempt execution are separate operations. The Source content workbench now uses installed source Resources, explicitly consents to the extractor and independent checker separately, and records mandatory check validation before Core adoption. Normal builds do not register the former built-in source preflight/start commands. Child processes run with the OS user's permissions; they are not an OS sandbox. Translation/build migration, authenticated updates and default domain-package distribution remain incomplete.
@@ -206,7 +337,7 @@ AI translation supports an editable OpenAI-compatible Chat Completions endpoint,
 
 Arena comparison generates two to four schemes under a shared round budget or compares saved revisions offline. Optional blind comparison keeps fixed anonymous labels until an explicit reveal. Save candidates, select a revision or edit an atomic manual merge with contributing provenance, then continue normal Review and QA. See [AI translation and Arena comparison](docs/ai-translation.md).
 
-New projects use database schema 33. Only the current schema is supported; other development snapshots are refused before application schema changes. Tsumugi preserves their directories without upgrading or rebuilding them; SQLite may complete its own hot-journal recovery when opening a database. Keep those directories and create a new project to reimport the original source files. Current project reopening verifies the complete layout and persisted associations; it never resets the directory. The application is in the unreleased `0.2.0-alpha.1` development batch. See the [changelog](CHANGELOG.md) and [versioning policy](docs/versioning.md) for changes, compatibility and future version decisions.
+New projects use database schema 36. Only the current schema is supported; other development snapshots are refused before application schema changes. Tsumugi preserves their directories without upgrading or rebuilding them; SQLite may complete its own hot-journal recovery when opening a database. Keep those directories and create a new project to reimport the original source files. Current project reopening verifies the complete layout and persisted associations; it never resets the directory. The application is in the unreleased `0.2.0-alpha.1` development batch. See the [changelog](CHANGELOG.md) and [versioning policy](docs/versioning.md) for changes, compatibility and future version decisions.
 
 Current projects use SQLite DELETE journaling and FULL synchronization. Unsupported storage settings are refused separately from corrupt schemas, broken references or altered artifacts; Tsumugi preserves the directory and does not convert the storage mode or reset its contents. Keep a refused directory intact and select another supported project in the opening dialog to continue. Do not change SQLite settings manually as a substitute for a supported storage profile. Saved releases remain available after a failed delivery and export uses their verified original bytes. Uncertain deliveries must be reconciled before another delivery to the same destination; explicit retries use the existing action identity, or a fresh confirmed destination preview for a new delivery.
 

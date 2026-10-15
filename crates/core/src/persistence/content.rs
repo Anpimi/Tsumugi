@@ -89,13 +89,30 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(LINEAGE_EVIDENCE_TABLE)?;
     Ok(())
 }
+
+/// Durable ownership remains valid when a unit leaves the current source scope.
+pub(super) fn unit_owned_by_project(
+    connection: &Connection,
+    project: ExecutionId,
+    unit: ExecutionId,
+) -> Result<bool, ExecutionError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM source_units WHERE unit_id=?1 AND project_id=?2
+             AND project_id=(SELECT project_id FROM project_metadata WHERE row_id=1))",
+            params![unit.to_string(), project.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(sql_error)
+}
+
 fn corrupt() -> ExecutionError {
     failure(ErrorCode::CorruptLedger, "source-corrupt")
 }
 fn id(raw: String) -> Result<ExecutionId, ExecutionError> {
     ExecutionId::parse(&raw).map_err(|_| corrupt())
 }
-fn scope(connection: &Connection) -> Result<ContentScope, ExecutionError> {
+pub(super) fn scope(connection: &Connection) -> Result<ContentScope, ExecutionError> {
     let (revision, current): (i64, Option<String>) = connection
         .query_row(
             "SELECT revision,current_snapshot FROM content_scope WHERE row_id=1",

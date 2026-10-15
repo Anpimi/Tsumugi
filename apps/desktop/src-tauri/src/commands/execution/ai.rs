@@ -1,5 +1,6 @@
 use super::ai_wire::{AiItemView, AiOutputView, AiPreviewView};
 use super::*;
+use crate::commands::connections;
 use tsumugi_core::ai::{AiConfig, AiPreview};
 mod automation;
 pub(super) use automation::PreparedTracking;
@@ -12,6 +13,18 @@ pub(super) struct AiSession {
     automation: automation::Automation,
 }
 impl AiSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        self.automation.stop_package(package);
+    }
+    pub(super) fn package_active(
+        &self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        self.automation.package_active(package)
+    }
     #[cfg(test)]
     pub(super) fn pause_check_computation(&mut self, probe: review::ComputeProbe) {
         self.automation.compute_probe = Some(probe);
@@ -158,6 +171,7 @@ pub async fn preview_ai_translation(
     state: State<'_, AppState>,
     request: AiPreviewRequest,
 ) -> Result<AiPrepared, CommandError> {
+    let connections = connections::captured_store(&state);
     state
         .sessions
         .run(
@@ -172,6 +186,7 @@ pub async fn preview_ai_translation(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
+                connections::verify_configs(connections.as_ref(), std::slice::from_ref(&request.config))?;
                 let preview = store
                     .preview_ai(request.config, &request.locale, &request.unit_ids)
                     .map_err(map_ai)?;
@@ -198,6 +213,7 @@ pub async fn start_ai_translation(
     state: State<'_, AppState>,
     request: AiStartRequest,
 ) -> Result<ExecutionId, CommandError> {
+    let connections = connections::captured_store(&state);
     state
         .sessions
         .run(
@@ -275,6 +291,7 @@ pub async fn start_ai_translation(
                         "ai-preview",
                     )));
                 }
+                connections::verify_configs(connections.as_ref(), std::slice::from_ref(&preview.config))?;
                 host.runtime.submit(store, &input).map_err(map_ai)?;
                 Ok(request.attempt_id)
             },

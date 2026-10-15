@@ -1,5 +1,6 @@
 //! Session-local revocation handles for grants owned by the project ledger.
 //! A handle cannot create, renew, or restore a durable authorization.
+pub(crate) use super::runtime::PackageKey;
 use super::{Cancellation, ErrorCode, ExecutionError, ExecutionId, FixedInput};
 use std::{
     collections::BTreeMap,
@@ -18,6 +19,34 @@ pub struct PluginConsent {
     /// Acknowledge native execution with the current user's OS privileges;
     /// this execution profile does not provide a filesystem or network sandbox.
     pub unsandboxed_execution: bool,
+}
+
+impl PluginConsent {
+    /// Validate a proposed consent before retaining a request for dispatch.
+    /// This neither creates authority nor proves that a grant was persisted.
+    pub fn validate(&self, input: &FixedInput, expires_at_ms: u64) -> Result<(), ExecutionError> {
+        if !self.allows(input) {
+            return Err(denied());
+        }
+        plugin_grant_deadline(expires_at_ms).map(|_| ())
+    }
+
+    pub(crate) fn allows(&self, input: &FixedInput) -> bool {
+        input.envelope().plugin.is_some()
+            && input.envelope().automation.is_none()
+            && self.unsandboxed_execution
+    }
+}
+
+pub(crate) fn plugin_grant_deadline(expires_at_ms: u64) -> Result<Instant, ExecutionError> {
+    let remaining = expires_at_ms
+        .checked_sub(plugin_now_ms()?)
+        .filter(|remaining| *remaining > 0 && *remaining <= MAX_PLUGIN_GRANT_LIFETIME_MS)
+        .filter(|_| expires_at_ms <= i64::MAX as u64)
+        .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-grant-expiry"))?;
+    Instant::now()
+        .checked_add(std::time::Duration::from_millis(remaining))
+        .ok_or_else(denied)
 }
 
 fn denied() -> ExecutionError {
@@ -39,6 +68,7 @@ struct GrantState {
     attempt_id: ExecutionId,
     task_id: ExecutionId,
     input_digest: String,
+    package: super::runtime::PackageKey,
     generation: ExecutionId,
     expires_at_ms: u64,
     deadline: Instant,
@@ -80,6 +110,9 @@ pub struct PluginPermit {
     grant: Arc<GrantState>,
 }
 impl PluginPermit {
+    pub(crate) fn original_package(&self) -> &super::runtime::PackageKey {
+        &self.grant.package
+    }
     pub(crate) fn original_deadline(&self) -> Instant {
         self.grant.deadline
     }
@@ -169,6 +202,20 @@ impl ServiceOriginGuard {
     }
 }
 impl PluginEpoch {
+    pub(crate) fn revoke_package(
+        &self,
+        package: &super::runtime::PackageKey,
+    ) -> Result<Vec<ExecutionId>, ExecutionError> {
+        let grants = self.grants()?;
+        Ok(grants
+            .values()
+            .filter(|grant| &grant.package == package)
+            .map(|grant| {
+                grant.revoked.store(true, Ordering::Release);
+                grant.grant_id
+            })
+            .collect())
+    }
     pub(crate) fn generation(&self) -> ExecutionId {
         self.generation
     }
@@ -321,11 +368,13 @@ impl PluginAuthority {
         delegation: Option<crate::application::WorkPlanToolDelegation>,
     ) -> Result<PluginPermit, ExecutionError> {
         let epoch = self.require_generation(generation)?;
-        let now = plugin_now_ms()?;
-        expires_at_ms
-            .checked_sub(now)
-            .filter(|remaining| *remaining > 0 && *remaining <= MAX_PLUGIN_GRANT_LIFETIME_MS)
-            .ok_or_else(denied)?;
+        plugin_grant_deadline(expires_at_ms).map_err(|error| {
+            if error.stage == "plugin-grant-expiry" {
+                denied()
+            } else {
+                error
+            }
+        })?;
         if Instant::now() >= deadline {
             return Err(denied());
         }
@@ -349,6 +398,15 @@ impl PluginAuthority {
             attempt_id: input.envelope().attempt_id,
             task_id: input.envelope().task_id,
             input_digest: input.digest().into(),
+            package: super::runtime::PackageKey::from_provider(
+                &input
+                    .envelope()
+                    .plugin
+                    .as_ref()
+                    .ok_or_else(denied)?
+                    .capability
+                    .provider,
+            ),
             generation,
             expires_at_ms,
             deadline,
@@ -435,6 +493,18 @@ impl PluginAuthority {
         &self,
         child: ExecutionId,
     ) -> Result<Option<Arc<ServiceOriginGuard>>, ExecutionError> {
+        let origin = self.retained_service_origin(child)?;
+        if origin.as_ref().is_some_and(|origin| !origin.live()) {
+            return Err(denied());
+        }
+        Ok(origin)
+    }
+
+    /// Attribution survives revocation; this does not check or grant dispatch.
+    pub(crate) fn retained_service_origin(
+        &self,
+        child: ExecutionId,
+    ) -> Result<Option<Arc<ServiceOriginGuard>>, ExecutionError> {
         let current = self.current_lock()?;
         let Some(epoch) = current.as_ref() else {
             return Ok(None);
@@ -445,9 +515,6 @@ impl PluginAuthority {
             .map_err(|_| denied())?
             .get(&child)
             .cloned();
-        if origin.as_ref().is_some_and(|origin| !origin.live()) {
-            return Err(denied());
-        }
         Ok(origin)
     }
 

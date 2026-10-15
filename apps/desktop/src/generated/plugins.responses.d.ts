@@ -190,6 +190,7 @@ export type CommandStage =
   | "close"
   | "plugin-install"
   | "plugin-settings"
+  | "model-connections"
   | "execution-read"
   | "execution-cancel"
   | "execution-recover"
@@ -465,6 +466,10 @@ export interface PluginInventoryView {
    */
   runtimes: PluginRuntimeView[];
   settingsRevision: UnsignedDecimal;
+  /**
+   * @maxItems 128
+   */
+  uninstallations: PluginUninstallView[];
 }
 export interface PluginDefaultsOfferView {
   availability: DefaultsAvailability;
@@ -491,6 +496,7 @@ export interface PluginPackageDecisionView {
 }
 export interface PluginPackageView {
   origin: PluginOriginView;
+  originalInstallAction: string;
   packageDigest: string;
   plugin: PluginIdentity;
   state: PluginObjectState;
@@ -514,6 +520,16 @@ export interface PluginRuntimeView {
   environment: RuntimeEnvironmentDescriptor;
   environmentDigest: string;
   origin: PluginOriginView;
+  state: PluginObjectState;
+}
+/**
+ * An observation of the original retained removal journal. Sealed metadata is
+ * not confirmation of an uncertain command's filesystem durability.
+ */
+export interface PluginUninstallView {
+  actionId: string;
+  installation: PluginPackageView;
+  settingsRevision: UnsignedDecimal;
   state: PluginObjectState;
 }
 export interface PluginPackageDetailsView {

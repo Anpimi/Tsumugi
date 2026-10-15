@@ -111,6 +111,20 @@ pub(crate) fn open_optional_file(parent: &File, name: &OsStr) -> io::Result<Opti
     Ok(Some(file))
 }
 
+/// Only ENOENT is absence; links and non-directory entries are errors.
+pub(crate) fn open_optional_directory(parent: &File, name: &OsStr) -> io::Result<Option<File>> {
+    child_name(name)?;
+    let file = match open_readonly(parent, name) {
+        Ok(file) => file,
+        Err(error) if error.raw_os_error() == Some(libc::ENOENT) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !file.metadata()?.is_dir() {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
+    Ok(Some(file))
+}
+
 /// Atomic namespace replacement under one held application-owned directory.
 /// The caller checks the old entry and its candidate immediately beforehand.
 pub(crate) fn replace_file(parent: &File, source: &OsStr, destination: &OsStr) -> io::Result<()> {

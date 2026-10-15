@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceContextFacts",
+  "description": "The surrounding DomainBlock supplies Snapshot/Unit/Occurrence applicability.\nEmpty facts report an explicit empty observation; absence is not that report.",
+  "type": "object",
+  "properties": {
+    "facts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceContextFact"
+      },
+      "maxItems": 32
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "facts"
+  ],
+  "$defs": {
+    "SourceContextFact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique only inside this block; it is not a project revision or entity ID.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])"
+        },
+        "kind": {
+          "$ref": "#/$defs/SourceContextFactKind"
+        },
+        "origin": {
+          "$ref": "#/$defs/SourceContextFactOrigin"
+        },
+        "text": {
+          "type": "string",
+          "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "origin"
+      ]
+    },
+    "SourceContextFactKind": {
+      "description": "Classification for presentation, without interpreting a format's syntax or\nnormalizing its literal text. Other source-associated information uses Note.",
+      "type": "string",
+      "enum": [
+        "speaker",
+        "role",
+        "scene",
+        "time",
+        "location",
+        "note"
+      ]
+    },
+    "SourceContextFactOrigin": {
+      "description": "References are observations in captured source, not proof of an inference.\nHuman project decisions remain in the project's independent revision owner.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "extracted"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SourceReference"
+              },
+              "maxItems": 8,
+              "minItems": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "sources"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "inferred"
+            },
+            "rationale": {
+              "type": "string",
+              "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SourceReference"
+              },
+              "maxItems": 8,
+              "minItems": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "rationale",
+            "sources"
+          ]
+        }
+      ]
+    },
+    "SourceReference": {
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/TextRange"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "range"
+      ]
+    },
+    "TextEncoding": {
+      "type": "string",
+      "enum": [
+        "utf8-byte",
+        "utf16",
+        "grapheme"
+      ]
+    },
+    "TextRange": {
+      "description": "Half-open offsets into one exact string, never between different strings.",
+      "type": "object",
+      "properties": {
+        "encoding": {
+          "$ref": "#/$defs/TextEncoding"
+        },
+        "end": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "start",
+        "end"
+      ]
+    }
+  }
+}

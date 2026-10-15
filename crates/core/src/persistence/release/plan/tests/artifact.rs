@@ -5,6 +5,364 @@ use crate::execution::*;
 
 mod release;
 
+#[test]
+fn saved_build_projection_is_read_only_and_preserves_unchecked_results_after_revoke_and_reopen() {
+    let (_directory, mut store, generation, input) = fixture_build(&["zh-CN", "fr-FR"]);
+    let project = input.envelope().project_id;
+    let attempt = input.envelope().attempt_id;
+    let result = builder_result(&mut store, &input, input.envelope().items[0].item_id);
+    let before = store.connection().unwrap().total_changes();
+    let sequence = store.execution_sequence().unwrap();
+    let saved = store
+        .read_saved_plugin_build(project, attempt, false)
+        .unwrap();
+    assert_eq!(saved.attempt_id, attempt);
+    assert_eq!(saved.task_id, input.envelope().task_id);
+    assert_eq!(saved.input_digest, input.digest());
+    assert_eq!(saved.locales.len(), 2);
+    assert!(saved.locales.iter().all(|locale| locale.target_count == 2));
+    let available = saved
+        .locales
+        .iter()
+        .find(|locale| locale.item_id == result.envelope().item_id)
+        .unwrap();
+    assert_eq!(available.status.validation, ValidationState::Pending);
+    let output = available.result.as_ref().unwrap();
+    assert_eq!(output.result_id, result.envelope().result_id);
+    assert_eq!(output.result_digest, result.digest());
+    assert_eq!(output.artifacts.len(), 2);
+    let plan = ReleasePlan::from_input(&input).unwrap();
+    let actual = plan.artifact_set(&result).unwrap();
+    for (summary, artifact) in output.artifacts.iter().zip(&actual.artifacts) {
+        assert_eq!(summary.logical_path, artifact.logical_path);
+        assert_eq!(summary.role, artifact.role);
+        assert_eq!(summary.sha256, artifact.sha256);
+        assert_eq!(summary.byte_length as usize, artifact.utf8.len());
+    }
+    assert!(saved.locales.iter().any(|locale| locale.result.is_none()));
+    let recovery = store.execution_recovery(attempt, false).unwrap();
+    assert_eq!(
+        recovery.units[0].blocked_reason.as_deref(),
+        Some("external-new-consent")
+    );
+    assert!(
+        !recovery.units[0]
+            .actions
+            .contains(&RecoveryAction::ValidateOutput)
+    );
+    assert_eq!(
+        store
+            .validate_execution_result(attempt, result.envelope().result_id)
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert!(
+        store
+            .read_saved_plugin_build(ExecutionId::new(), attempt, false)
+            .is_err()
+    );
+    assert!(
+        store
+            .read_saved_plugin_build(project, ExecutionId::new(), false)
+            .is_err()
+    );
+    assert_eq!(store.execution_sequence().unwrap(), sequence);
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    // Removing a current target changes new-build eligibility, not the saved
+    // plan's historical language or immutable source/result references.
+    let revision = store.metadata().unwrap().metadata_revision();
+    store
+        .set_target_locales(revision, &["fr-FR".into()])
+        .unwrap();
+    let before = store.connection().unwrap().total_changes();
+    assert_eq!(
+        store
+            .read_saved_plugin_build(project, attempt, false)
+            .unwrap(),
+        saved
+    );
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    store
+        .revoke_plugin_grant(
+            generation,
+            result.envelope().plugin.as_ref().unwrap().authorization_id,
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .read_saved_plugin_build(project, attempt, false)
+            .unwrap(),
+        saved
+    );
+    assert!(
+        store
+            .capture_artifact_validation(attempt, result.envelope().result_id)
+            .is_err()
+    );
+    let directory = store.directory().to_owned();
+    drop(store);
+    let reopened = ProjectStore::open(directory).unwrap();
+    let before = reopened.connection().unwrap().total_changes();
+    assert_eq!(
+        reopened
+            .read_saved_plugin_build(project, attempt, false)
+            .unwrap(),
+        saved
+    );
+    assert!(reopened.check_plugin_input(&input).is_err());
+    assert_eq!(
+        reopened.execution_input(attempt).unwrap().bytes(),
+        input.bytes()
+    );
+    assert_eq!(
+        reopened
+            .execution_result(attempt, result.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+    assert_eq!(reopened.connection().unwrap().total_changes(), before);
+}
+
+#[test]
+fn saved_build_projection_refuses_an_associated_but_wrong_locale_artifact_set() {
+    let (_directory, mut store, _generation, input) = fixture_build(&["zh-CN"]);
+    let request = store
+        .dispatch_execution_item(
+            input.envelope().attempt_id,
+            input.envelope().items[0].item_id,
+        )
+        .unwrap();
+    let plan = ReleasePlan::from_input(&input).unwrap();
+    let fixed = plan.plugin_input("zh-CN").unwrap();
+    let output = sdk::ArtifactSet {
+        profile: fixed.source.profile,
+        source_set_id: fixed.source.source_set_id,
+        target_language: "fr-FR".into(),
+        artifacts: fixed
+            .output_paths
+            .into_iter()
+            .enumerate()
+            .map(|(index, logical_path)| {
+                let utf8 = "Saved wrong-language bytes".to_owned();
+                sdk::CapturedTextArtifact {
+                    id: format!("output-{index}"),
+                    logical_path,
+                    role: "deliverable".into(),
+                    sha256: codec::digest(utf8.as_bytes()),
+                    utf8,
+                }
+            })
+            .collect(),
+    };
+    let result = sdk_result(&request, serde_json::to_value(output).unwrap());
+    store.save_execution_result(&result).unwrap();
+    let before = store.connection().unwrap().total_changes();
+    assert!(
+        store
+            .read_saved_plugin_build(
+                input.envelope().project_id,
+                input.envelope().attempt_id,
+                false
+            )
+            .is_err()
+    );
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    assert_eq!(
+        store
+            .execution_result(input.envelope().attempt_id, result.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+}
+
+#[test]
+fn saved_build_projection_preserves_a_failed_result_without_successful_artifacts() {
+    let (_directory, mut store, _generation, input) = fixture_build(&["zh-CN"]);
+    let request = store
+        .dispatch_execution_item(
+            input.envelope().attempt_id,
+            input.envelope().items[0].item_id,
+        )
+        .unwrap();
+    let result = sdk_result_with_outcome(&request, |invocation| sdk::InvocationOutcome::Failed {
+        error: sdk::EncodedPayload::capture(
+            invocation.error_schema.clone(),
+            "{\"code\":\"synthetic-build-failed\"}".into(),
+        )
+        .unwrap(),
+    });
+    store.save_execution_result(&result).unwrap();
+    let before = store.connection().unwrap().total_changes();
+    let saved = store
+        .read_saved_plugin_build(
+            input.envelope().project_id,
+            input.envelope().attempt_id,
+            false,
+        )
+        .unwrap();
+    let locale = &saved.locales[0];
+    assert_eq!(locale.status.execution, ExecutionState::Failed);
+    let summary = locale.result.as_ref().unwrap();
+    assert_eq!(summary.result_id, result.envelope().result_id);
+    assert_eq!(summary.result_digest, result.digest());
+    assert_eq!(summary.outcome, ExecutionState::Failed);
+    assert!(summary.artifacts.is_empty());
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+}
+
+#[test]
+fn saved_build_projection_reads_reused_result_associations_without_restoring_original_authority() {
+    // This existing trusted fixture permits replay of pure computation. The
+    // historical read itself never selects a new policy or authorizes a retry.
+    let (_directory, mut store, generation, input) =
+        fixture_build_policy(&["zh-CN", "fr-FR"], 131072, RecoveryPolicy::ReadOnly);
+    let first = input.envelope().items[0].item_id;
+    let second = input.envelope().items[1].item_id;
+    let result = builder_result(&mut store, &input, first);
+    let capture = store
+        .capture_artifact_validation(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let checked = passing_results(&capture);
+    let (checked, checker_grant) = checker_result(&mut store, generation, &capture, checked);
+    store
+        .commit_artifact_validation(capture.prepare(checked).unwrap())
+        .unwrap();
+    let original = store
+        .read_saved_plugin_build(
+            input.envelope().project_id,
+            input.envelope().attempt_id,
+            false,
+        )
+        .unwrap();
+    let retry = store
+        .execution_retry_input(input.envelope().attempt_id, &[second])
+        .unwrap();
+    assert_eq!(retry.envelope().reused_results.len(), 1);
+    let reference = &retry.envelope().reused_results[0];
+    assert_eq!(reference.source_attempt_id, input.envelope().attempt_id);
+    assert_eq!(reference.result_id, result.envelope().result_id);
+    let retry_grant = authorize_policy(&mut store, generation, &retry, RecoveryPolicy::ReadOnly);
+    let before = store.connection().unwrap().total_changes();
+    let sequence = store.execution_sequence().unwrap();
+    let saved = store
+        .read_saved_plugin_build(
+            input.envelope().project_id,
+            retry.envelope().attempt_id,
+            false,
+        )
+        .unwrap();
+    assert_ne!(saved.attempt_id, original.attempt_id);
+    assert_eq!(saved.attempt_id, retry.envelope().attempt_id);
+    assert_eq!(saved.task_id, original.task_id);
+    assert_eq!(saved.input_digest, retry.digest());
+    let reused = saved
+        .locales
+        .iter()
+        .find(|locale| locale.item_id == first)
+        .unwrap();
+    assert_eq!(reused.status.validation, ValidationState::Valid);
+    assert_eq!(
+        reused.result,
+        original
+            .locales
+            .iter()
+            .find(|locale| locale.item_id == first)
+            .unwrap()
+            .result
+    );
+    let raw = store
+        .execution_result(retry.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    assert_eq!(raw.envelope().attempt_id, original.attempt_id);
+    assert_eq!(raw.bytes(), result.bytes());
+    assert!(
+        saved
+            .locales
+            .iter()
+            .find(|locale| locale.item_id == second)
+            .unwrap()
+            .result
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .execution_attempt(retry.envelope().attempt_id, false)
+            .unwrap()
+            .progress
+            .queued,
+        1
+    );
+    assert!(
+        store
+            .execution_dispatch(retry.envelope().attempt_id, first)
+            .is_err()
+    );
+    assert!(
+        store
+            .list_releases(input.envelope().project_id)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.execution_sequence().unwrap(), sequence);
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    for grant in [
+        result.envelope().plugin.as_ref().unwrap().authorization_id,
+        checker_grant,
+        retry_grant,
+    ] {
+        store.revoke_plugin_grant(generation, grant).unwrap();
+    }
+    let before = store.connection().unwrap().total_changes();
+    assert_eq!(
+        store
+            .read_saved_plugin_build(
+                input.envelope().project_id,
+                retry.envelope().attempt_id,
+                false
+            )
+            .unwrap(),
+        saved
+    );
+    assert!(
+        store
+            .capture_artifact_validation(input.envelope().attempt_id, result.envelope().result_id)
+            .is_err()
+    );
+    assert!(
+        store
+            .capture_artifact_validation(retry.envelope().attempt_id, result.envelope().result_id)
+            .is_err()
+    );
+    assert!(store.check_plugin_input(&retry).is_err());
+    assert_eq!(store.connection().unwrap().total_changes(), before);
+    let directory = store.directory().to_owned();
+    drop(store);
+    let reopened = ProjectStore::open(directory).unwrap();
+    let before = reopened.connection().unwrap().total_changes();
+    assert_eq!(
+        reopened
+            .read_saved_plugin_build(
+                input.envelope().project_id,
+                retry.envelope().attempt_id,
+                false
+            )
+            .unwrap(),
+        saved
+    );
+    assert!(reopened.check_plugin_input(&retry).is_err());
+    assert_eq!(
+        reopened
+            .execution_result(retry.envelope().attempt_id, result.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+    assert_eq!(reopened.connection().unwrap().total_changes(), before);
+}
+
 fn fixture_build(locales: &[&str]) -> (tempfile::TempDir, ProjectStore, ExecutionId, FixedInput) {
     fixture_build_limit(locales, 131072)
 }
@@ -93,6 +451,18 @@ fn authorize_policy(
     grant
 }
 fn sdk_result(request: &DispatchRequest, value: serde_json::Value) -> FixedResult {
+    sdk_result_with_outcome(request, |invocation| sdk::InvocationOutcome::Succeeded {
+        output: sdk::EncodedPayload::capture(
+            invocation.output_schema.clone(),
+            serde_json::to_string(&value).unwrap(),
+        )
+        .unwrap(),
+    })
+}
+fn sdk_result_with_outcome(
+    request: &DispatchRequest,
+    outcome: impl FnOnce(&sdk::InvocationRequest) -> sdk::InvocationOutcome,
+) -> FixedResult {
     let binding = request.input.envelope().plugin.as_ref().unwrap();
     let selection = &binding.capability.provider;
     let channel = sdk::ProviderBinding {
@@ -107,6 +477,7 @@ fn sdk_result(request: &DispatchRequest, value: serde_json::Value) -> FixedResul
         .input
         .plugin_request(request.item_id, request.dispatch_token, &channel)
         .unwrap();
+    let outcome = outcome(&invocation);
     FixedResult::capture_plugin(
         &request.input,
         request.item_id,
@@ -120,13 +491,7 @@ fn sdk_result(request: &DispatchRequest, value: serde_json::Value) -> FixedResul
                 capability: invocation.capability,
                 profile: invocation.profile,
                 result_id: ExecutionId::new().to_string(),
-                outcome: sdk::InvocationOutcome::Succeeded {
-                    output: sdk::EncodedPayload::capture(
-                        invocation.output_schema,
-                        serde_json::to_string(&value).unwrap(),
-                    )
-                    .unwrap(),
-                },
+                outcome,
             },
         },
     )

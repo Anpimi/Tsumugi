@@ -14,9 +14,9 @@ export const generationPackage: PluginPackageDetailsView = { enabled: true, pack
       dependencies: [{ contract: { id: "tsumugi.work-plan-generation", schemaVersion: 1, behaviorVersion: 1 }, required: true, selection: "single" }],
       exit: { stopTimeoutMs: 300, cleanupTimeoutMs: 500 } }],
     contributions: [{ id: provider.contributionId, componentId: provider.componentId, contribution: { kind: "capability", declaration: component.binding.declaration } }] } };
-export const generationInventory: PluginInventoryView = { settingsRevision: component.settingsRevision, lastSettingsAction: null,
+export const generationInventory: PluginInventoryView = { uninstallations: [], settingsRevision: component.settingsRevision, lastSettingsAction: null,
   defaultsOffer: null, runtimeOffers: [], nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
-  packages: [{ plugin: provider.plugin, packageDigest: provider.packageDigest, origin: component.packageOrigin, state: "sealed" }],
+  packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", plugin: provider.plugin, packageDigest: provider.packageDigest, origin: component.packageOrigin, state: "sealed" }],
   packageDecisions: [{ plugin: provider.plugin, packageDigest: provider.packageDigest, origin: component.packageOrigin, enabled: true }],
   runtimes: [{ environment, environmentDigest: component.environmentDigest, origin: component.runtimeOrigin, state: "sealed" }],
   runtimeDecisions: [{ environment, environmentDigest: component.environmentDigest, origin: component.runtimeOrigin }] };

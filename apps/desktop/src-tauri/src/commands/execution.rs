@@ -6,6 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 use tsumugi_core::{RecoveryPlan, TaskView, execution::*};
+use tsumugi_plugin_sdk as sdk;
+mod package_lifecycle;
+use package_lifecycle::{PackageControl, PackageWork, PackageWorkState, RetiredQuery};
 
 #[cfg(all(test, target_os = "macos"))]
 mod test_fixtures;
@@ -14,9 +17,14 @@ macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
+        super::connections::read_model_connections,
+        super::connections::change_model_connections,
+        super::connections::read_model_connection_action,
+        super::connections::resolve_model_connection,
         super::plugins::read_plugin_inventory,
         super::plugins::defaults::install_plugin_defaults,
         super::plugins::packages::select_plugin_package, super::plugins::packages::install_plugin_package,
+        super::plugins::packages::cleanup::remove_plugin_approval, super::plugins::packages::cleanup::uninstall_plugin_package,
         super::plugins::packages::set_plugin_enabled, super::plugins::packages::read_plugin_package,
         super::plugins::packages::lookup_plugin_capability,
         super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build,
@@ -33,7 +41,7 @@ macro_rules! handlers {
         source::plugin::select_plugin_source,source::plugin::preflight_plugin_source,source::plugin::start_plugin_source,
         source::plugin::prepare_source_check,source::plugin::start_source_check,source::plugin::finish_source_check,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
-        source::read_content_scope,source::prepare_source_adoption,
+        source::read_content_scope,source::read_source_context,source::prepare_source_adoption,
         source::read_source_history,source::read_source_history_content,source::read_source_lineage,
         source::estimate_source_update,source::read_source_impact,
         source::plugin_translation::read_plugin_translation_source,source::plugin_translation::select_plugin_translation,
@@ -45,7 +53,7 @@ macro_rules! handlers {
         source::translation::prepare_translation_adoption,source::translation::read_translation_history,
         source::translation::read_translation_action,
         source::translation::save_translation_revision,source::translation::select_translation_revision,
-        resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
+        resource::preview_tmx_exchange,resource::preview_tbx_exchange,resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
         resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
         resource::read_context_revision,resource::save_context,resource::capture_context,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
@@ -57,6 +65,7 @@ macro_rules! handlers {
         release::preview_delivery,release::export_release,release::list_deliveries,
         release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::retry_work_plan_effect,
         release::plugin::prepare_plugin_build,release::plugin::start_plugin_build,
+        release::plugin::read_saved_plugin_build,
         release::plugin::prepare_artifact_check,release::plugin::start_artifact_check,
         release::plugin::finish_artifact_check,release::plugin::cancel_plugin_build_preparation,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
@@ -170,7 +179,9 @@ pub(super) struct ExecutionHost {
     runtime: ExecutionRuntime,
     handlers: BTreeMap<String, Arc<dyn AdoptionHandler>>,
     queries: Vec<QueryJob>,
-    retired_queries: Vec<JoinHandle<()>>,
+    retired_queries: Vec<RetiredQuery>,
+    package_controls: BTreeMap<ExecutionId, PackageControl>,
+    package_work: Vec<std::sync::Weak<PackageWorkState>>,
     quiescing: bool,
     last_error: Option<CommandError>,
     source: source::SourceSession,
@@ -198,6 +209,8 @@ impl ExecutionHost {
             handlers: BTreeMap::new(),
             queries: Vec::new(),
             retired_queries: Vec::new(),
+            package_controls: BTreeMap::new(),
+            package_work: Vec::new(),
             quiescing: false,
             last_error: None,
             source: source::SourceSession::default(),
@@ -284,6 +297,8 @@ impl ExecutionHost {
     }
     fn active(&self, store: &ProjectStore) -> Result<bool, CommandError> {
         Ok(self.quiescing
+            || self.package_lifecycle_active()
+            || self.package_work_active()
             || self.source.is_active()
             || self.release.is_active()
             || self.ai.active()
@@ -291,9 +306,22 @@ impl ExecutionHost {
             || self.tools.active()
             || self.work_plans.generation_preparation_active()
             || !self.queries.is_empty()
+            || !self.retired_queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
     fn finish_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
+        if self.package_lifecycle_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-lifecycle-active",
+            ));
+        }
+        if self.package_work_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-work-draining",
+            ));
+        }
         if self.release.delivery_is_active() {
             return Err(ExecutionError::new(ErrorCode::Busy, "delivery-active"));
         }
@@ -303,7 +331,16 @@ impl ExecutionHost {
         if self.ai.active() {
             return Err(ExecutionError::new(ErrorCode::Busy, "work-effect-active"));
         }
+        // Retiring a query revokes its reply path, not its runner/file lifetime.
+        // Never rotate the runtime or permit project close while it still runs.
+        if !self.retired_queries.is_empty() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "outcome-query-draining",
+            ));
+        }
         self.runtime.finish_quiesce(store)?;
+        self.package_controls.clear();
         self.quiescing = false;
         Ok(())
     }
@@ -340,7 +377,17 @@ impl ExecutionHost {
         Ok(())
     }
     fn poll_queries(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
-        self.retired_queries.retain(|thread| !thread.is_finished());
+        let mut remaining = Vec::new();
+        for query in self.retired_queries.drain(..) {
+            if query.thread.is_finished() {
+                // Join completes the thread's cleanup; dropping a finished
+                // handle alone would detach its final lifetime boundary.
+                let _ = query.thread.join();
+            } else {
+                remaining.push(query);
+            }
+        }
+        self.retired_queries = remaining;
         let mut index = 0;
         while index < self.queries.len() {
             if let Some(outcome) = self.queries[index].pending_outcome.as_ref() {
@@ -359,7 +406,7 @@ impl ExecutionHost {
                     }
                 }
                 let job = self.queries.remove(index);
-                self.retired_queries.push(job.thread);
+                self.retired_queries.push(RetiredQuery::new(job));
                 result.map_err(map_recover)?;
                 continue;
             }
@@ -371,17 +418,17 @@ impl ExecutionHost {
                 }
                 Ok(Err(error)) => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(map_recover(error));
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(CommandError::unknown(CommandStage::ExecutionRecover));
                 }
                 Err(mpsc::TryRecvError::Empty) if expired => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(CommandError::unknown(CommandStage::ExecutionRecover));
                 }
                 Err(mpsc::TryRecvError::Empty) => index += 1,
@@ -390,10 +437,23 @@ impl ExecutionHost {
         Ok(())
     }
     fn begin_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
+        if self.package_lifecycle_active() {
+            return Err(map_recover(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-lifecycle-active",
+            )));
+        }
         // Persist already received evidence before revoking late callbacks.
         // Storage failure retains the session and pending evidence for retry.
         self.poll_queries(store)?;
         self.quiescing = true;
+        for work in self
+            .package_work
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+        {
+            work.stop();
+        }
         self.source.stop();
         self.tools.stop();
         self.review.stop();
@@ -405,7 +465,7 @@ impl ExecutionHost {
         self.review.prepare_runtime_tick(store, &mut self.runtime)?;
         self.ai.prepare_runtime_tick(store, &mut self.runtime)?;
         for job in self.queries.drain(..) {
-            self.retired_queries.push(job.thread);
+            self.retired_queries.push(RetiredQuery::new(job));
         }
         match self.runtime.begin_quiesce(store) {
             Ok(()) => Ok(()),
@@ -428,6 +488,7 @@ impl ExecutionHost {
         runner: Arc<tsumugi_plugin_host::core::RunnerProxy>,
         binding: PluginExecutionBinding,
     ) -> Result<(), ExecutionError> {
+        self.allow_package(&package_lifecycle::binding_package(&binding))?;
         // One capability/environment registration serves request profiles.
         // Core validates each fixed request's profile independently.
         if self.plugin_registrations.iter().any(|previous| {
@@ -457,6 +518,44 @@ impl ExecutionHost {
         Ok(())
     }
 }
+impl SessionManager {
+    pub(super) fn begin_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+        package: plugins::PluginPackageRequest,
+    ) -> Result<(), CommandError> {
+        if let Some(active) = self.active.as_mut() {
+            let (host, store) = active.execution_parts()?;
+            host.begin_package_cleanup(store, action, package)?;
+        }
+        Ok(())
+    }
+    pub(super) fn finish_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+    ) -> Result<(), CommandError> {
+        if let Some(active) = self.active.as_mut() {
+            let (host, store) = active.execution_parts()?;
+            host.finish_package_cleanup(store, action)?;
+        }
+        Ok(())
+    }
+    pub(super) fn complete_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+        package: &plugins::PluginPackageRequest,
+    ) -> Result<(), CommandError> {
+        if let Some(host) = self
+            .active
+            .as_mut()
+            .and_then(|active| active.execution.as_mut())
+        {
+            host.complete_package_cleanup_if_present(action, package)?;
+        }
+        Ok(())
+    }
+}
+
 impl ActiveSession {
     pub(super) fn execution_status_view(&mut self) -> Result<RuntimeStatus, CommandError> {
         let (host, store) = self.execution_parts()?;
@@ -529,7 +628,7 @@ pub(super) fn tick_sessions(sessions: &mut SessionManager) {
     }
 }
 
-fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
+pub(super) fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
     let code = match error.code {
         ErrorCode::InvalidInput => CommandErrorCode::InvalidInput,
         ErrorCode::LimitExceeded => CommandErrorCode::LimitExceeded,
@@ -628,6 +727,17 @@ request!(
         result_id: ExecutionId
     }
 );
+
+/// Read-only display projection. The stored ResultEnvelope remains unchanged.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionOutputView {
+    #[serde(flatten)]
+    pub result: ResultEnvelope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_failure: Option<sdk::SourceExtractionError>,
+}
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     CancelRequest {
@@ -988,11 +1098,92 @@ fn attempt_detail(
         next_offset: ((end as usize) < total).then_some(end),
     })
 }
+fn source_failure(
+    store: &ProjectStore,
+    result: &ResultEnvelope,
+) -> Result<Option<sdk::SourceExtractionError>, ExecutionError> {
+    let Some(evidence) = &result.plugin else {
+        return Ok(None);
+    };
+    let sdk::InvocationOutcome::Failed { error } = &evidence.result.outcome else {
+        return Ok(None);
+    };
+    if result.outcome != ExecutionState::Failed
+        || error.schema != sdk::source_extraction_error_contract()
+    {
+        return Ok(None);
+    }
+    // A reused result belongs to its original attempt, not the request that
+    // selected it. Read that immutable input to bind any reported artifact.
+    let input = store.execution_input(result.attempt_id)?;
+    let envelope = input.envelope();
+    let Some(binding) = &envelope.plugin else {
+        return Ok(None);
+    };
+    let [item] = envelope.items.as_slice() else {
+        return Ok(None);
+    };
+    if item.item_id != result.item_id || binding.capability.declaration.error_schema != error.schema
+    {
+        return Ok(None);
+    }
+    let artifacts = match envelope.operation.as_str() {
+        tsumugi_core::content::OPERATION
+            if binding.capability.declaration.input_schema
+                == sdk::source_extraction_input_contract() =>
+        {
+            let Ok(source) =
+                serde_json::from_value::<sdk::SourceExtractionInput>(item.payload.clone())
+            else {
+                return Ok(None);
+            };
+            if source.validate().is_err() {
+                return Ok(None);
+            }
+            source.artifacts
+        }
+        SOURCE_CHECK_OPERATION
+            if binding.capability.declaration.input_schema
+                == sdk::source_extraction_check_input_contract() =>
+        {
+            let Ok(check) =
+                serde_json::from_value::<sdk::SourceExtractionCheckInput>(item.payload.clone())
+            else {
+                return Ok(None);
+            };
+            if check.validate().is_err() {
+                return Ok(None);
+            }
+            check.source.artifacts
+        }
+        _ => return Ok(None),
+    };
+    Ok(parse_public_source_failure(error, &artifacts))
+}
+
+fn parse_public_source_failure(
+    error: &sdk::EncodedPayload,
+    artifacts: &[sdk::CapturedTextArtifact],
+) -> Option<sdk::SourceExtractionError> {
+    if error.schema != sdk::source_extraction_error_contract() {
+        return None;
+    }
+    let failure = sdk::parse_source_extraction_error(error.utf8.as_bytes()).ok()?;
+    if failure
+        .artifact_id
+        .as_ref()
+        .is_some_and(|id| !artifacts.iter().any(|artifact| &artifact.id == id))
+    {
+        return None;
+    }
+    Some(failure)
+}
+
 #[tauri::command]
 pub async fn read_execution_output(
     state: State<'_, AppState>,
     request: OutputRequest,
-) -> Result<ResultEnvelope, CommandError> {
+) -> Result<ExecutionOutputView, CommandError> {
     state
         .sessions
         .run(
@@ -1005,11 +1196,16 @@ pub async fn read_execution_output(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                active
+                let result = active
                     .store
                     .execution_result(request.attempt_id, request.result_id)
-                    .map(|result| result.envelope().clone())
-                    .map_err(map_read)
+                    .map_err(map_read)?;
+                let result = result.envelope().clone();
+                let source_failure = source_failure(&active.store, &result).map_err(map_read)?;
+                Ok(ExecutionOutputView {
+                    result,
+                    source_failure,
+                })
             },
         )
         .await

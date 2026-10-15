@@ -47,6 +47,8 @@ Limits are cumulative: 16 KiB manifest, 128 KiB combined input, at most 256 dire
 
 The former SMAPI source fixture remains available for isolated regression checks through `execution-test-host`; it is not the normal Source content path or a fallback for unavailable plugins.
 
+Saved tasks and original receipts remain readable after reopening. New plugin execution still requires its original explicit preparation and current authorization; a saved result or continuation receipt does not restore a grant. Old anonymous resume/retry is refused. See the [execution test-host guide](execution-test-host.md#continuation-identity-and-current-storage) for the exact continuation boundary and the [README](../README.md#development) for current development compatibility.
+
 ## Native fault checks
 
 The explicit `execution-test-host` feature reads one-shot controls from `source-fixture-control/` beside its executable. Normal builds do not contain these hooks. JSON files named `estimate.json`, `prepare.json`, `adopt-before.json` or `adopt-after.json` are consumed at that boundary. `{"wait":true}` writes a `.reached` marker and waits up to 60 seconds for the matching `.release` file. `{"fail":true}` returns an unconfirmed response. A `source` object with `manifest`, `strings` and `language` captures and commits a competing complete source through the real runner and adoption handler. Use only synthetic projects. The post-adoption failure is delivered after the real commit and returns `outcome-unknown`; the original action remains available for receipt lookup, which must find exactly one saved snapshot.

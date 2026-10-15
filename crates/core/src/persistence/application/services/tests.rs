@@ -1,6 +1,7 @@
 use super::*;
 use crate::ai::{AiConfig, AiOutput};
 use serde_json::json;
+use std::sync::{Mutex, mpsc};
 
 fn contract(id: &str) -> sdk::ContractRef {
     sdk::ContractRef {
@@ -115,6 +116,9 @@ impl Fixture {
         Self::with_endpoint("http://127.0.0.1:9/v1/chat/completions".into())
     }
     fn with_endpoint(endpoint: String) -> Self {
+        Self::with_model(endpoint, Arc::new(Registered { plugin: None }))
+    }
+    fn with_model(endpoint: String, model: Arc<dyn Runner>) -> Self {
         let (directory, mut store, _) =
             crate::persistence::review::tests::current_release_fixture(false);
         let units = store
@@ -182,9 +186,7 @@ impl Fixture {
                 plugin: Some(plugin.clone()),
             }))
             .unwrap();
-        runtime
-            .register(Arc::new(Registered { plugin: None }))
-            .unwrap();
+        runtime.register(model).unwrap();
         runtime
             .authorize_plugin(
                 &mut store,
@@ -325,6 +327,553 @@ impl Fixture {
             ExecutionState::Succeeded
         );
     }
+
+    fn park_root(&mut self) {
+        let plan = self
+            .store
+            .work_plan(self.origin.scope.lease.plan_id)
+            .unwrap();
+        let attempt = plan.execution_input().unwrap().attempt_id;
+        let root = self
+            .store
+            .execution_input_if_present(attempt)
+            .unwrap()
+            .unwrap();
+        for item in &root.envelope().items {
+            self.store
+                .dispatch_execution_item(attempt, item.item_id)
+                .unwrap();
+        }
+    }
+
+    fn submit_peer(&mut self) -> (PreparedWorkPlanServiceGeneration, WorkPlanServiceCall) {
+        let mut plugin = binding();
+        plugin.capability.provider.plugin.id = "example.independent".into();
+        plugin.capability.provider.package_digest = "e".repeat(64);
+        self.runtime
+            .register(Arc::new(Registered {
+                plugin: Some(plugin.clone()),
+            }))
+            .unwrap();
+        let mut envelope = InputEnvelope::new(
+            self.store.metadata().unwrap().project_id(),
+            "fixture",
+            &plugin.capability.declaration.contract.id,
+            &plugin.capability_version(),
+            vec![InputItem::new(
+                Scope {
+                    kind: "fixture".into(),
+                    id: "independent caller".into(),
+                    locale: None,
+                },
+                json!({"captured":true}),
+                vec![],
+            )],
+        )
+        .unwrap();
+        envelope.plugin = Some(plugin.clone());
+        let outer = FixedInput::capture(envelope).unwrap();
+        self.runtime
+            .authorize_plugin(
+                &mut self.store,
+                ExecutionId::new(),
+                &outer,
+                plugin_now_ms().unwrap() + 60_000,
+                PluginConsent {
+                    unsandboxed_execution: true,
+                },
+            )
+            .unwrap();
+        self.runtime.submit(&mut self.store, &outer).unwrap();
+        let dispatch = self
+            .store
+            .dispatch_execution_item(
+                outer.envelope().attempt_id,
+                outer.envelope().items[0].item_id,
+            )
+            .unwrap();
+        let selected = &plugin.capability.provider;
+        let provider = sdk::ProviderBinding {
+            plugin: selected.plugin.clone(),
+            component_id: selected.component_id.clone(),
+            contribution_id: selected.contribution_id.clone(),
+            package_digest: selected.package_digest.clone(),
+            instance_id: "independent-channel".into(),
+            activation_generation: 1,
+        };
+        let invocation = outer
+            .plugin_request(dispatch.item_id, dispatch.dispatch_token, &provider)
+            .unwrap();
+        let service = sdk::ServiceBinding {
+            project_id: invocation.context.project_id.clone(),
+            scope_id: invocation.context.scope_id.clone(),
+            ..self.origin.record.service.clone()
+        };
+        let origin = self
+            .store
+            .capture_work_plan_service_origin(
+                &self.origin.scope,
+                &dispatch,
+                &invocation,
+                &service,
+                dispatch.deadline().unwrap(),
+                &Cancellation::default(),
+                &Cancellation::default(),
+            )
+            .unwrap();
+        let mut generation = self
+            .call
+            .validate(
+                &self.origin.record.service,
+                &self.origin.record.invocation.context,
+            )
+            .unwrap();
+        generation.task_id = ExecutionId::new();
+        generation.attempt_id = ExecutionId::new();
+        let call = WorkPlanServiceCall {
+            call_id: "independent-call".into(),
+            handle_id: service.handle_id.clone(),
+            input: sdk::EncodedPayload::capture(
+                sdk::generation_service_input_contract(),
+                serde_json::to_string(&generation).unwrap(),
+            )
+            .unwrap(),
+        };
+        let prepared = self
+            .store
+            .prepare_work_plan_service_generation(&origin, &call)
+            .unwrap();
+        self.runtime
+            .submit_work_plan_service_child(&mut self.store, &prepared)
+            .unwrap();
+        (prepared, call)
+    }
+}
+
+struct HeldServiceCall {
+    request: DispatchRequest,
+    cancellation: Cancellation,
+    release: mpsc::Sender<()>,
+}
+#[derive(Default)]
+struct ServiceQueryObservation {
+    held: Option<ExecutionId>,
+    entered: Vec<ExecutionId>,
+}
+struct HeldServiceModel {
+    calls: mpsc::Sender<HeldServiceCall>,
+    held_query: Arc<Mutex<ServiceQueryObservation>>,
+}
+impl HeldServiceModel {
+    fn hold(&self, request: DispatchRequest, cancellation: Cancellation) {
+        let (release, wait) = mpsc::channel();
+        self.calls
+            .send(HeldServiceCall {
+                request,
+                cancellation,
+                release,
+            })
+            .unwrap();
+        // This owned runner deliberately ignores cancellation until released.
+        // Dropping the receiver's release handle also ends a failed test's wait.
+        let _ = wait.recv_timeout(std::time::Duration::from_secs(15));
+    }
+}
+impl Runner for HeldServiceModel {
+    fn capability_id(&self) -> &str {
+        crate::ai::CAPABILITY
+    }
+    fn capability_version(&self) -> &str {
+        "1"
+    }
+    fn run(
+        &self,
+        request: DispatchRequest,
+        cancellation: Cancellation,
+        _: ResultSender,
+    ) -> Result<(), ExecutionError> {
+        self.hold(request, cancellation);
+        Err(ExecutionError::new(
+            ErrorCode::OutcomeUnknown,
+            "held-service-model-ended",
+        ))
+    }
+    fn query(&self, request: &DispatchRequest) -> Result<QueryOutcome, ExecutionError> {
+        let held = {
+            let mut observation = self.held_query.lock().unwrap();
+            let attempt = request.input.envelope().attempt_id;
+            observation.entered.push(attempt);
+            observation.held == Some(attempt)
+        };
+        if held {
+            self.hold(request.clone(), Cancellation::default());
+        }
+        Ok(QueryOutcome::Pending)
+    }
+}
+fn held_service_fixture() -> (
+    Fixture,
+    mpsc::Receiver<HeldServiceCall>,
+    Arc<Mutex<ServiceQueryObservation>>,
+) {
+    let (calls, observed) = mpsc::channel();
+    let held_query = Arc::new(Mutex::new(ServiceQueryObservation::default()));
+    let mut fixture = Fixture::with_model(
+        "http://127.0.0.1:9/v1/chat/completions".into(),
+        Arc::new(HeldServiceModel {
+            calls,
+            held_query: held_query.clone(),
+        }),
+    );
+    fixture.park_root();
+    (fixture, observed, held_query)
+}
+fn finish_original_package(fixture: &mut Fixture, stop: &crate::execution::PackageQuiescence) {
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match fixture
+            .runtime
+            .finish_package_quiesce(&mut fixture.store, stop)
+        {
+            Ok(()) => return,
+            Err(error) if error.code == ErrorCode::Busy => {
+                assert!(Instant::now() < deadline, "original package did not drain");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            Err(error) => panic!("unexpected original package drain error: {error:?}"),
+        }
+    }
+}
+fn assert_held_service_child_drains(retired: bool) {
+    let (mut fixture, observed, _) = held_service_fixture();
+    let (prepared, receipt) = fixture.submit();
+    let original_input = prepared.input().bytes().to_vec();
+    let budget = fixture
+        .store
+        .provider_budget(receipt.parent_task)
+        .unwrap()
+        .unwrap();
+    fixture.runtime.tick(&mut fixture.store).unwrap();
+    let held = observed
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(held.request.input.envelope().attempt_id, receipt.attempt_id);
+    assert!(held.request.input.envelope().plugin.is_none());
+    fixture.complete_outer();
+    let selected = fixture.origin.record.invocation.provider.clone();
+    let stop = fixture
+        .runtime
+        .begin_package_quiesce(
+            &mut fixture.store,
+            ExecutionId::new(),
+            &selected.plugin,
+            &selected.package_digest,
+        )
+        .unwrap();
+    if retired {
+        let deadline = Instant::now() + std::time::Duration::from_secs(8);
+        loop {
+            fixture.runtime.tick(&mut fixture.store).unwrap();
+            let state = fixture
+                .store
+                .execution_attempt(receipt.attempt_id, false)
+                .unwrap();
+            if !fixture.runtime.is_active(receipt.attempt_id)
+                && state.items[0].execution == ExecutionState::Unknown
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "service child did not retire after cancellation wait"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            fixture
+                .runtime
+                .has_unsettled_attempt(&fixture.store, receipt.attempt_id)
+                .unwrap()
+        );
+    }
+    let unfinished = fixture
+        .runtime
+        .finish_package_quiesce(&mut fixture.store, &stop);
+    assert!(
+        matches!(unfinished, Err(ref error) if error.code == ErrorCode::Busy),
+        "held service child must block its original package drain: {unfinished:?}"
+    );
+    assert!(held.cancellation.is_requested());
+    assert_eq!(
+        fixture
+            .runtime
+            .submit_work_plan_service_child(&mut fixture.store, &prepared)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        fixture
+            .store
+            .provider_budget(receipt.parent_task)
+            .unwrap()
+            .unwrap(),
+        budget
+    );
+    held.release.send(()).unwrap();
+    finish_original_package(&mut fixture, &stop);
+    assert_eq!(
+        fixture
+            .store
+            .work_plan_service_receipt(&receipt.identity, &fixture.call)
+            .unwrap(),
+        Some(receipt.clone())
+    );
+    assert_eq!(
+        fixture
+            .store
+            .execution_input_if_present(receipt.attempt_id)
+            .unwrap()
+            .unwrap()
+            .bytes(),
+        original_input
+    );
+    assert_eq!(
+        fixture
+            .store
+            .provider_budget(receipt.parent_task)
+            .unwrap()
+            .unwrap(),
+        budget
+    );
+}
+
+#[test]
+fn package_stop_waits_for_active_service_child_before_completing() {
+    assert_held_service_child_drains(false);
+}
+
+#[test]
+fn package_stop_waits_for_retired_service_child_before_completing() {
+    assert_held_service_child_drains(true);
+}
+
+#[test]
+fn package_stop_cancels_queued_service_child_without_changing_original_receipt_or_budget() {
+    let (mut fixture, observed, _) = held_service_fixture();
+    let (prepared, receipt) = fixture.submit();
+    fixture.complete_outer();
+    let budget = fixture
+        .store
+        .provider_budget(receipt.parent_task)
+        .unwrap()
+        .unwrap();
+    let selected = fixture.origin.record.invocation.provider.clone();
+    let stop = fixture
+        .runtime
+        .begin_package_quiesce(
+            &mut fixture.store,
+            ExecutionId::new(),
+            &selected.plugin,
+            &selected.package_digest,
+        )
+        .unwrap();
+    finish_original_package(&mut fixture, &stop);
+    let state = fixture
+        .store
+        .execution_attempt(receipt.attempt_id, false)
+        .unwrap();
+    assert!(
+        state.items.iter().all(
+            |item| item.execution == ExecutionState::CancelledBeforeDispatch
+                && item.cancellation_requested
+        ),
+        "queued service child must retain its original package cancellation: {state:?}"
+    );
+    assert!(matches!(
+        observed.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(
+        fixture
+            .runtime
+            .submit_work_plan_service_child(&mut fixture.store, &prepared)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        fixture
+            .store
+            .provider_budget(receipt.parent_task)
+            .unwrap()
+            .unwrap(),
+        budget
+    );
+}
+
+#[test]
+fn package_stop_waits_for_service_outcome_query_without_stopping_shared_model_peer() {
+    let (mut fixture, observed, held_query) = held_service_fixture();
+    let (prepared, receipt) = fixture.submit();
+    let (peer, _) = fixture.submit_peer();
+    for input in [prepared.input(), peer.input()] {
+        let dispatch = fixture
+            .store
+            .dispatch_execution_item(
+                input.envelope().attempt_id,
+                input.envelope().items[0].item_id,
+            )
+            .unwrap();
+        fixture
+            .store
+            .note_execution_unknown(
+                dispatch.input.envelope().attempt_id,
+                dispatch.item_id,
+                "original-query-outcome",
+            )
+            .unwrap();
+    }
+    fixture.complete_outer();
+    held_query.lock().unwrap().held = Some(receipt.attempt_id);
+    let query = fixture
+        .runtime
+        .outcome_query(
+            &fixture.store,
+            receipt.attempt_id,
+            prepared.input().envelope().items[0].item_id,
+        )
+        .unwrap()
+        .unwrap();
+    let peer_query = fixture
+        .runtime
+        .outcome_query(
+            &fixture.store,
+            peer.input().envelope().attempt_id,
+            peer.input().envelope().items[0].item_id,
+        )
+        .unwrap()
+        .unwrap();
+    let worker = std::thread::spawn(move || query.run());
+    let held = observed
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(held.request.input.envelope().attempt_id, receipt.attempt_id);
+    let selected = fixture.origin.record.invocation.provider.clone();
+    let stop = fixture
+        .runtime
+        .begin_package_quiesce(
+            &mut fixture.store,
+            ExecutionId::new(),
+            &selected.plugin,
+            &selected.package_digest,
+        )
+        .unwrap();
+    assert!(matches!(peer_query.run(), Ok(QueryOutcome::Pending)));
+    let unfinished = fixture
+        .runtime
+        .finish_package_quiesce(&mut fixture.store, &stop);
+    assert!(
+        matches!(unfinished, Err(ref error) if error.code == ErrorCode::Busy),
+        "running service query must block only its original package: {unfinished:?}"
+    );
+    held.release.send(()).unwrap();
+    assert!(matches!(worker.join().unwrap(), Ok(QueryOutcome::Pending)));
+    finish_original_package(&mut fixture, &stop);
+    assert!(matches!(peer_query.run(), Ok(QueryOutcome::Pending)));
+    assert_eq!(
+        fixture
+            .store
+            .work_plan_service_receipt(&receipt.identity, &fixture.call)
+            .unwrap(),
+        Some(receipt)
+    );
+}
+
+#[test]
+fn cached_service_outcome_query_cannot_start_after_its_original_package_stops() {
+    let (mut fixture, observed, query_observation) = held_service_fixture();
+    let (prepared, receipt) = fixture.submit();
+    let budget = fixture
+        .store
+        .provider_budget(receipt.parent_task)
+        .unwrap()
+        .unwrap();
+    let dispatch = fixture
+        .store
+        .dispatch_execution_item(
+            receipt.attempt_id,
+            prepared.input().envelope().items[0].item_id,
+        )
+        .unwrap();
+    fixture
+        .store
+        .note_execution_unknown(
+            receipt.attempt_id,
+            dispatch.item_id,
+            "original-query-outcome",
+        )
+        .unwrap();
+    let query = fixture
+        .runtime
+        .outcome_query(&fixture.store, receipt.attempt_id, dispatch.item_id)
+        .unwrap()
+        .unwrap();
+    fixture.complete_outer();
+    let selected = fixture.origin.record.invocation.provider.clone();
+    let stop = fixture
+        .runtime
+        .begin_package_quiesce(
+            &mut fixture.store,
+            ExecutionId::new(),
+            &selected.plugin,
+            &selected.package_digest,
+        )
+        .unwrap();
+    finish_original_package(&mut fixture, &stop);
+    let before = query_observation.lock().unwrap().entered.clone();
+    assert_eq!(
+        before
+            .iter()
+            .filter(|attempt| **attempt == receipt.attempt_id)
+            .count(),
+        0
+    );
+    let outcome = query.run();
+    let after = query_observation.lock().unwrap().entered.clone();
+    assert_eq!(
+        after
+            .iter()
+            .filter(|attempt| **attempt == receipt.attempt_id)
+            .count(),
+        0,
+        "the stopped original query must never enter Runner.query, even before returning an error"
+    );
+    assert_eq!(
+        after, before,
+        "the captured query must not perform runner I/O before rejection"
+    );
+    assert!(
+        outcome.is_err(),
+        "the captured service query must not renew its original caller permission"
+    );
+    assert!(matches!(
+        observed.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(
+        fixture
+            .store
+            .work_plan_service_receipt(&receipt.identity, &fixture.call)
+            .unwrap(),
+        Some(receipt.clone())
+    );
+    assert_eq!(
+        fixture
+            .store
+            .provider_budget(receipt.parent_task)
+            .unwrap()
+            .unwrap(),
+        budget
+    );
 }
 
 #[test]

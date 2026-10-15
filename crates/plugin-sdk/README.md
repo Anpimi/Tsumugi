@@ -58,8 +58,14 @@ current authorization and manual/batch/Agent journeys remain separate consumers.
 source-subset request, child-identity acknowledgement and finite errors for the
 original authorized generator. Model, sharing, effects and budgets stay with the
 application. The service requires an External component grant; metadata and
-read-only tool consent cannot authorize generation. Production Desktop component
-selection remains separate integration work.
+read-only tool consent cannot authorize generation. Application integration and
+its runtime acceptance remain separate from these SDK data contracts.
+
+[Source context facts](docs/source-context.md) add an optional typed domain block
+with explicit extracted/inferred origin and captured source references. The
+existing content receiver verifies its scope and Unicode coordinates. Bounded
+JavaScript encoding and Rust data checks grant no project, sharing or execution
+authority; domain collection and application capture remain separate consumers.
 
 From the repository root:
 

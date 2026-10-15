@@ -1,4 +1,7 @@
 use super::*;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod package_cleanup_process;
+mod package_lifecycle;
 use serde_json::{Value, json};
 use tauri::{
     Manager,
@@ -120,6 +123,9 @@ fn execution_wire_fixture_matches_rust_types() {
     round_trip::<TaskViewRequest>(&fixture["taskViewRequest"]);
     round_trip::<ContinuationReceipt>(&fixture["continuationReceipt"]);
     round_trip::<ContinuationPage>(&fixture["continuations"]);
+    let mut zero = fixture["continuation"].clone();
+    zero["action"]["expectedCancellationRevision"] = json!("0");
+    round_trip::<ContinuationRequest>(&zero);
     round_trip::<PrepareRequest>(&fixture["prepare"]);
     round_trip::<AttemptDetail>(&fixture["detail"]);
     round_trip::<RuntimeStatus>(&fixture["status"]);
@@ -127,6 +133,15 @@ fn execution_wire_fixture_matches_rust_types() {
     round_trip::<AdoptionReceipt>(&fixture["receipt"]);
     round_trip::<AdoptionAction>(&fixture["action"]);
     round_trip::<ResultEnvelope>(&fixture["output"]);
+    let result: ResultEnvelope = serde_json::from_value(fixture["output"].clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(ExecutionOutputView {
+            result,
+            source_failure: None
+        })
+        .unwrap(),
+        fixture["output"],
+    );
     round_trip::<TaskView>(&fixture["task"]);
     round_trip::<AttemptSummary>(&fixture["summary"]);
     round_trip::<RecoveryView>(&fixture["recovery"]);
@@ -144,6 +159,98 @@ fn execution_wire_fixture_matches_rust_types() {
     let mut unknown = fixture["detail"].clone();
     unknown["items"][0]["status"]["execution"] = json!("future-state");
     assert!(serde_json::from_value::<AttemptDetail>(unknown).is_err());
+}
+
+#[test]
+fn source_failure_projection_requires_valid_public_payload_and_captured_artifact() {
+    let artifacts = [sdk::CapturedTextArtifact {
+        id: "captured-1".into(),
+        logical_path: "manifest.json".into(),
+        role: "source".into(),
+        sha256: "a".repeat(64),
+        utf8: "{}".into(),
+    }];
+    let encoded =
+        |schema, value: Value| sdk::EncodedPayload::capture(schema, value.to_string()).unwrap();
+    let valid = json!({"code":"unsupported-structure","artifactId":"captured-1","detail":"The Name value must be a string."});
+    let payload = encoded(sdk::source_extraction_error_contract(), valid.clone());
+    let projected = parse_public_source_failure(&payload, &artifacts).unwrap();
+    assert_eq!(projected.detail, "The Name value must be a string.");
+    assert_eq!(projected.artifact_id.as_deref(), Some("captured-1"));
+    assert!(
+        parse_public_source_failure(
+            &encoded(sdk::source_extraction_input_contract(), valid.clone()),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"future","artifactId":"captured-1","detail":"x"})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"invalid-source","artifactId":"not-captured","detail":"x"})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"invalid-source","artifactId":null,"detail":""})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn source_failure_output_keeps_generic_shape_and_rejects_cross_project_read() {
+    let (_directory, _app, webview, context) = setup();
+    let attempt = call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"partial","delayMs":1,"grouped":true}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    let record = detail(&webview, &context, &attempt);
+    let failed = record["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["status"]["execution"] == "failed" && item["resultId"].is_string())
+        .expect("saved failed result");
+    let selected = request(
+        &context,
+        json!({"attemptId":attempt,"resultId":failed["resultId"]}),
+    );
+    let output = call(&webview, "read_execution_output", selected.clone()).unwrap();
+    assert_eq!(output["projectId"], context["projectId"]);
+    assert_eq!(output["resultId"], failed["resultId"]);
+    assert_eq!(output["itemId"], failed["status"]["itemId"]);
+    assert!(output.get("sourceFailure").is_none());
+    let mut foreign = selected;
+    foreign["projectId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&webview, "read_execution_output", foreign).unwrap_err()["code"],
+        "session-invalid"
+    );
 }
 
 #[test]
@@ -269,6 +376,142 @@ fn setup() -> (
     let context =
         json!({"sessionToken":view["sessionToken"],"projectId":view["metadata"]["projectId"]});
     (temp, app, webview, context)
+}
+
+#[test]
+fn retired_query_blocks_session_close_and_generation_rotation_until_thread_exit() {
+    let (_directory, app, webview, context) = setup();
+    let (release, generation, attempt, before) =
+        app.state::<AppState>().sessions.with(|sessions| {
+            let active = sessions.active.as_mut().unwrap();
+            let (host, store) = active.execution_parts().unwrap();
+            let input =
+                test_support::input(store, test_support::FixtureMode::Unknown, 0, false).unwrap();
+            host.runtime.submit(store, &input).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while host.runtime.has_active_work(store).unwrap() {
+                host.runtime.tick(store).unwrap();
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            let attempt = input.envelope().attempt_id;
+            let query = Arc::new(
+                host.runtime
+                    .outcome_query(store, attempt, input.envelope().items[0].item_id)
+                    .unwrap()
+                    .unwrap(),
+            );
+            let (release, wait) = mpsc::sync_channel(1);
+            let (sender, receiver) = mpsc::channel();
+            let held = query.clone();
+            let thread = std::thread::spawn(move || {
+                if wait.recv().is_ok() {
+                    // The real query owns its original runner, never the project store.
+                    let _ = sender.send(held.run());
+                }
+            });
+            host.queries.push(QueryJob {
+                query,
+                receiver,
+                thread,
+                started: Instant::now() - Duration::from_secs(61),
+                pending_outcome: None,
+            });
+            assert_eq!(
+                host.poll_queries(store).unwrap_err().code,
+                CommandErrorCode::OutcomeUnknown
+            );
+            assert!(host.queries.is_empty());
+            assert_eq!(host.retired_queries.len(), 1);
+            (
+                release,
+                host.runtime.generation(),
+                attempt,
+                store.execution_attempt(attempt, false).unwrap(),
+            )
+        });
+    assert_eq!(
+        call(&webview, "execution_status", context.clone()).unwrap()["active"],
+        true
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "close_project",
+            json!({"sessionToken":context["sessionToken"]})
+        )
+        .unwrap_err()["code"],
+        "busy"
+    );
+    assert_eq!(call(&webview, "rename_project", json!({"sessionToken":context["sessionToken"],"expectedRevision":"1","displayName":"Moved","directoryName":"moved"})).unwrap_err()["code"], "busy");
+    let status = call(&webview, "quiesce_execution", context.clone()).unwrap();
+    assert_eq!(status["active"], true);
+    assert_eq!(status["quiescing"], true);
+    assert_eq!(
+        call(
+            &webview,
+            "seed_execution_fixture",
+            request(
+                &context,
+                json!({"mode":"unknown","delayMs":0,"grouped":false})
+            )
+        )
+        .unwrap_err()["code"],
+        "busy"
+    );
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        assert_eq!(
+            active.execution.as_ref().unwrap().runtime.generation(),
+            generation
+        );
+        assert_eq!(
+            serde_json::to_value(active.store.execution_attempt(attempt, false).unwrap()).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
+    });
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while call(&webview, "execution_status", context.clone()).unwrap()["active"] == true {
+        assert!(
+            Instant::now() < deadline,
+            "original query thread did not drain"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        let host = active.execution.as_ref().unwrap();
+        assert_ne!(host.runtime.generation(), generation);
+        assert!(host.retired_queries.is_empty());
+        assert!(!host.quiescing);
+        assert_eq!(
+            active
+                .store
+                .execution_attempt(attempt, false)
+                .unwrap()
+                .progress
+                .succeeded,
+            0
+        );
+    });
+    // New explicit work is admitted only after real cleanup; it gains no old result.
+    call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"unknown","delayMs":0,"grouped":false}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    call(
+        &webview,
+        "close_project",
+        json!({"sessionToken":context["sessionToken"]}),
+    )
+    .unwrap();
 }
 
 fn call_when_ready(
@@ -1286,6 +1529,127 @@ fn invoke_recovers_grouped_partial_work_and_receipt_survives_reopen() {
             .unwrap(),
         4
     );
+}
+
+#[test]
+fn invoke_continuation_history_reads_and_exact_replay_preserve_reopened_execution_inactivity() {
+    let (temp, app, webview, context) = setup();
+    let attempt = call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"partial","delayMs":1,"grouped":true}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    let before = detail(&webview, &context, &attempt);
+    let task_id = before["taskId"].clone();
+    let unit = &before["recovery"]["units"][0];
+    let task = call(
+        &webview,
+        "read_execution_task_view",
+        request(&context, json!({"taskId":task_id})),
+    )
+    .unwrap();
+    assert_eq!(task["cancellationRevision"], "0");
+    let action = json!({"actionId":ExecutionId::new(),"projectId":context["projectId"],"sourceAttemptId":attempt,
+        "unitId":unit["unitId"],"kind":"retry-safe-failure","itemIds":unit["remainingItemIds"],"expectedCancellationRevision":"0"});
+    let saved = call(
+        &webview,
+        "continue_execution",
+        request(&context, json!({"action":action})),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    call(
+        &webview,
+        "close_project",
+        json!({"sessionToken":context["sessionToken"]}),
+    )
+    .unwrap();
+    let opened = call(
+        &webview,
+        "open_project",
+        json!({"locator":temp.path().join("project")}),
+    )
+    .unwrap();
+    let reopened =
+        json!({"sessionToken":opened["sessionToken"],"projectId":opened["metadata"]["projectId"]});
+    let attempts_request = request(&reopened, json!({"taskId":task_id,"after":"0","limit":100}));
+    let attempts = call(&webview, "read_execution_task", attempts_request.clone()).unwrap();
+    app.state::<AppState>()
+        .sessions
+        .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    let exact = request(&reopened, json!({"actionId":action["actionId"]}));
+    let history = request(
+        &reopened,
+        json!({"sourceAttemptId":attempt,"after":"0","limit":1}),
+    );
+    assert_eq!(
+        call(&webview, "read_execution_continuation", exact.clone()).unwrap(),
+        saved
+    );
+    assert_eq!(
+        call(&webview, "read_execution_continuations", history.clone()).unwrap(),
+        json!({"receipts":[saved],"next":saved["sequence"]})
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "continue_execution",
+            request(&reopened, json!({"action":action}))
+        )
+        .unwrap(),
+        saved
+    );
+    assert!(
+        call(
+            &webview,
+            "read_execution_continuation",
+            request(&reopened, json!({"actionId":ExecutionId::new()}))
+        )
+        .unwrap()
+        .is_null()
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "read_execution_task_view",
+            request(&reopened, json!({"taskId":task_id}))
+        )
+        .unwrap(),
+        task
+    );
+    for (command, valid) in [
+        ("read_execution_continuation", exact),
+        ("read_execution_continuations", history),
+        (
+            "read_execution_task_view",
+            request(&reopened, json!({"taskId":task_id})),
+        ),
+    ] {
+        let mut wrong_session = valid.clone();
+        wrong_session["sessionToken"] = context["sessionToken"].clone();
+        assert_eq!(
+            call(&webview, command, wrong_session).unwrap_err()["code"],
+            "session-invalid"
+        );
+        let mut wrong_project = valid;
+        wrong_project["projectId"] = json!(ExecutionId::new());
+        assert_eq!(
+            call(&webview, command, wrong_project).unwrap_err()["code"],
+            "session-invalid"
+        );
+    }
+    assert_eq!(
+        call(&webview, "read_execution_task", attempts_request).unwrap(),
+        attempts
+    );
+    app.state::<AppState>()
+        .sessions
+        .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
 }
 
 #[test]

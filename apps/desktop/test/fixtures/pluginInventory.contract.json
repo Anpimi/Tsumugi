@@ -12,7 +12,8 @@
     "nativeHostOffer": {
       "availability": "unavailable",
       "reason": "identity-unavailable"
-    }
+    },
+    "uninstallations": []
   },
   "rich": {
     "settingsRevision": "18446744073709551615",
@@ -29,7 +30,8 @@
           "sourceId": "synthetic-approved-source",
           "publisherId": "synthetic-approved-key"
         },
-        "state": "sealed"
+        "state": "sealed",
+        "originalInstallAction": "00000000-0000-4000-8000-000000000001"
       }
     ],
     "runtimes": [
@@ -109,6 +111,27 @@
     "nativeHostOffer": {
       "availability": "unavailable",
       "reason": "identity-unavailable"
-    }
+    },
+    "uninstallations": [
+      {
+        "actionId": "00000000-0000-4000-8000-000000000003",
+        "settingsRevision": "18446744073709551615",
+        "installation": {
+          "plugin": {
+            "publisher": "example",
+            "id": "inventory-only",
+            "version": "0.1.0"
+          },
+          "packageDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "origin": {
+            "sourceId": "synthetic-approved-source",
+            "publisherId": "synthetic-approved-key"
+          },
+          "state": "recovery-required",
+          "originalInstallAction": "00000000-0000-4000-8000-000000000001"
+        },
+        "state": "recovery-required"
+      }
+    ]
   }
 }

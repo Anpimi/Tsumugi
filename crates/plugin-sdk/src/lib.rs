@@ -20,6 +20,7 @@ mod process;
 mod resolution;
 mod review;
 mod service;
+mod source_context;
 mod source_extraction;
 mod source_import;
 mod text;
@@ -41,6 +42,7 @@ pub use process::*;
 pub use resolution::{DeclaredProvider, ProviderKey, resolve_declarations};
 pub use review::*;
 pub use service::*;
+pub use source_context::*;
 pub use source_extraction::*;
 pub use source_import::*;
 pub use text::*;
@@ -78,12 +80,18 @@ fn positive_u16_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars:
 /// The current experimental content/invocation/check wire protocol.
 pub const EXCHANGE_PROTOCOL: u32 = 1;
 pub const MAX_EXCHANGE_BYTES: usize = 2 * 1024 * 1024;
+/// Content can carry separate identity and context extensions for every item.
+/// Captured material, artifacts and non-content frames retain their own limits.
+pub const MAX_CONTENT_EXCHANGE_BYTES: usize = 4 * 1024 * 1024;
 /// Combined invocation data may contain both captured material and a proposal.
 pub const MAX_INVOCATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 /// Any UTF-8 payload byte can expand to six JSON bytes. Metadata is separately
 /// bounded by the typed context/provider/contracts and fits the reserved 64 KiB.
 pub const MAX_PROCESS_FRAME_BYTES: usize = 6 * MAX_INVOCATION_PAYLOAD_BYTES + 64 * 1024;
 pub const MAX_CONTENT_ITEMS: usize = 2000;
+/// Separate identity and context extensions can accompany each content item.
+/// The complete exchange still has its independent encoded-byte ceiling.
+pub const MAX_CONTENT_DOMAIN_BLOCKS: usize = 4000;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 
 /// Length-prefixed local process messages, independent of content protocols.

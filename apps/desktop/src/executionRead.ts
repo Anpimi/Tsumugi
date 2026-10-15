@@ -9,7 +9,7 @@ export async function readCompleteAttempt(context: ReturnType<typeof executionCo
   for (;;) {
     const page = await executionCommands.attempt({ ...context, attemptId, offset, limit: 100 });
     if (!page) { if (detail) throw new Error("Missing execution page"); return null; }
-    if (page.attemptId !== attemptId || page.operation !== operation || (detail && (page.taskId !== detail.taskId || page.progress.total !== detail.progress.total))) throw new Error("Execution page identity changed");
+    if (page.attemptId !== attemptId || page.recovery.attemptId !== attemptId || page.operation !== operation || (detail && (page.taskId !== detail.taskId || page.progress.total !== detail.progress.total))) throw new Error("Execution page identity changed");
     for (const item of page.items) {
       if (ids.has(item.status.itemId)) throw new Error("Duplicate execution item");
       ids.add(item.status.itemId);

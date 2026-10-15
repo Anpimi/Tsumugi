@@ -29,10 +29,31 @@ struct Responses {
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
+struct ConnectionRequests {
+    snapshot: connections::ConnectionSnapshotRequest,
+    change: tsumugi_core::model_connections::ModelConnectionChange,
+    action: connections::ConnectionActionRequest,
+    resolve: connections::ConnectionResolveRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ConnectionResponses {
+    snapshot: connections::ConnectionReadView,
+    receipt: tsumugi_core::model_connections::ModelConnectionReceipt,
+    action: Option<tsumugi_core::model_connections::ModelConnectionReceipt>,
+    connection: tsumugi_core::ai::AiConnection,
+    error: CommandError,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct PluginRequests {
     inventory: plugins::PluginInventoryRequest,
     install: plugins::PluginInstallRequest,
     enable: plugins::PluginEnableRequest,
+    approval_removal: plugins::PluginApprovalRemovalRequest,
+    uninstall: plugins::PluginUninstallRequest,
     package: plugins::PluginPackageRequest,
     lookup: plugins::PluginLookupRequest,
     runtime_install: plugins::PluginRuntimeInstallRequest,
@@ -94,7 +115,7 @@ struct ExecutionResponses {
     tasks: Vec<tsumugi_core::TaskView>,
     attempts: Vec<execution::AttemptSummary>,
     attempt: execution::AttemptDetail,
-    output: tsumugi_core::execution::ResultEnvelope,
+    output: execution::ExecutionOutputView,
     cancellation: tsumugi_core::execution::Revision,
     recovery: execution::RecoveryView,
     continuation: tsumugi_core::execution::ContinuationReceipt,
@@ -114,6 +135,7 @@ struct SourceRequests {
     session: execution::SessionRequest,
     preview: execution::source::PreviewRequest,
     content: execution::source::ContentRequest,
+    source_context: execution::source::SourceContextReadRequest,
     comparison: execution::source::ComparisonRequest,
     history: execution::source::HistoryRequest,
     history_content: execution::source::HistoryContentRequest,
@@ -134,6 +156,7 @@ struct SourceResponses {
     cancelled: (),
     scope: tsumugi_core::content::ContentScope,
     page: tsumugi_core::content::ContentPage,
+    source_context: tsumugi_core::SourceContextPage,
     comparison: tsumugi_core::content::SourceChangePage,
     history: tsumugi_core::content::SourceHistory,
     lineage: Vec<tsumugi_core::content::LineageEvidence>,
@@ -190,6 +213,8 @@ struct TranslationResponses {
 #[allow(dead_code)]
 struct ResourceRequests {
     session: execution::SessionRequest,
+    tmx_preview: execution::resource::TmxPreviewRequest,
+    tbx_preview: execution::resource::TbxPreviewRequest,
     captures: execution::resource::CaptureListRequest,
     capture: execution::resource::CaptureRequest,
     term: execution::resource::TermRequest,
@@ -206,6 +231,8 @@ struct ResourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceResponses {
+    tmx_preview: Option<execution::resource::TmxFilePreview>,
+    tbx_preview: Option<execution::resource::TbxFilePreview>,
     captures: Vec<tsumugi_core::GlossaryCapture>,
     capture: Option<tsumugi_core::GlossaryCapture>,
     preview: tsumugi_core::ResourcePreview,
@@ -265,6 +292,7 @@ struct ReviewResponses {
 #[allow(dead_code)]
 struct ReleaseRequests {
     session: execution::SessionRequest,
+    saved_plugin_build: execution::release::plugin::SavedPluginBuildRequest,
     plugin_build: execution::release::plugin::PluginBuildPrepareRequest,
     plugin_start: execution::PluginStartRequest,
     artifact_check: execution::release::plugin::ArtifactCheckPrepareRequest,
@@ -278,6 +306,7 @@ struct ReleaseRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReleaseResponses {
+    saved_plugin_build: tsumugi_core::SavedPluginBuildView,
     plugin_build: execution::release::plugin::PluginBuildReview,
     artifact_check: execution::release::plugin::ArtifactCheckReview,
     finish_artifact_check: (),
@@ -445,6 +474,7 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         path,
         serde_json::to_string_pretty(&serde_json::json!({
             "project": schemas::<Requests, Responses>(),
+            "connections": schemas::<ConnectionRequests, ConnectionResponses>(),
             "plugins": schemas::<PluginRequests, PluginResponses>(),
             "execution": schemas::<ExecutionRequests, ExecutionResponses>(),
             "source": schemas::<SourceRequests, SourceResponses>(),

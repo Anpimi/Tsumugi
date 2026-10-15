@@ -21,7 +21,8 @@ fn print<T: serde::Serialize>(value: &T) -> Result<(), Box<dyn std::error::Error
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let data_schemas: [(&str, fn() -> schemars::Schema); 25] = [
+    let data_schemas: [(&str, fn() -> schemars::Schema); 26] = [
+        ("source-context-facts", source_context_facts_schema),
         ("generation-service-input", generation_service_input_schema),
         (
             "generation-service-receipt",
@@ -60,6 +61,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ),
         ("translation-types", translation_types_schema),
     ];
+    if args.len() == 1 && args[0] == "profile-source-context" {
+        return print(&source_context_facts_profile());
+    }
     for (kind, schema) in data_schemas {
         if args.len() == 1 && args[0] == format!("schema-{kind}").as_str() {
             return print(&schema());
@@ -75,6 +79,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if args.len() == 2 {
+        if args[0] == "validate-source-context-facts" {
+            return print(&parse_source_context_facts(&read(
+                &args[1],
+                MAX_SOURCE_CONTEXT_FACTS_BYTES,
+            )?)?);
+        }
         let bytes = |limit| read(&args[1], limit);
         if args[0] == "validate-generation-service-input" {
             return print(&parse_generation_service_input(&bytes(
@@ -241,7 +251,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return print(parse_manifest(&read(&args[1], MAX_MANIFEST_BYTES)?)?.manifest());
     }
     if args.len() == 2 && args[0] == "validate-exchange" {
-        return print(parse_exchange(&read(&args[1], MAX_EXCHANGE_BYTES)?)?.document());
+        return print(parse_exchange(&read(&args[1], MAX_CONTENT_EXCHANGE_BYTES)?)?.document());
     }
     if args.len() == 2 && args[0] == "validate-source-extraction-input" {
         return print(&parse_source_extraction_input(&read(
@@ -284,7 +294,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.len() == 3 && args[0] == "match-source-extraction" {
         let input = parse_source_extraction_input(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
-        let exchange = parse_exchange(&read(&args[2], MAX_EXCHANGE_BYTES)?)?;
+        let exchange = parse_exchange(&read(&args[2], MAX_CONTENT_EXCHANGE_BYTES)?)?;
         let ExchangeBody::Content(content) = &exchange.document().body else {
             return Err("expected content exchange fixture".into());
         };

@@ -5,6 +5,7 @@ pub(crate) mod generation;
 use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
+    connections,
     dispatch::BlockingExecutor,
     plugins::{ApplicationPlugins, reviews::PluginTextReviewSelection},
 };
@@ -33,6 +34,39 @@ pub(super) struct WorkPlanSession {
     tool_intents: BTreeMap<ExecutionId, broker::HumanToolIntent>,
 }
 impl WorkPlanSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        let affected: Vec<_> = self
+            .environments
+            .iter()
+            .filter(|(_, (_, environments))| {
+                environments.iter().any(|environment| {
+                    environment.key().is_ok_and(|key| {
+                        package_lifecycle::provider_package(&key.provider) == *package
+                    })
+                })
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        if self
+            .prepared
+            .as_ref()
+            .is_some_and(|plan| affected.contains(&plan.plan_id))
+        {
+            self.prepared = None;
+        }
+        for id in affected {
+            self.environments.remove(&id);
+        }
+        self.checker_consents.retain(|_, consent| {
+            !consent
+                .bindings
+                .iter()
+                .any(|checker| package_lifecycle::binding_package(&checker.binding) == *package)
+        });
+    }
     pub(super) fn generation_preparation_active(&self) -> bool {
         self.generation.active()
     }
@@ -144,8 +178,10 @@ async fn load_checkers(
     checkers: Vec<ReviewChecker>,
     advisory: Vec<AdvisoryReviewCheck>,
     cached: Option<Vec<CheckerEnvironment>>,
+    work: package_lifecycle::PackageWork,
 ) -> Result<(Vec<CheckerEnvironment>, Vec<WorkPlanCheckerView>), CommandError> {
     io.run(CommandStage::ExecutionRead, move || {
+        work.check()?;
         let mut environments = Vec::new();
         let mut views = Vec::new();
         for checker in checkers {
@@ -225,6 +261,7 @@ async fn checker_runners(
     io: BlockingExecutor,
     plugins: Arc<ApplicationPlugins>,
     environments: Vec<(CheckerEnvironment, ReviewChecker)>,
+    work: Option<PackageWork>,
 ) -> Result<
     (
         Option<UnsignedDecimal>,
@@ -233,6 +270,9 @@ async fn checker_runners(
     CommandError,
 > {
     io.run(CommandStage::ExecutionRecover, move || {
+        if let Some(work) = &work {
+            work.check()?;
+        }
         let mut revision = None;
         let runners = environments
             .into_iter()
@@ -432,23 +472,63 @@ impl WorkPlanStatusView {
     }
 }
 
+fn verify_plan_connections(
+    connections_store: Option<&tsumugi_core::model_connections::ModelConnectionStore>,
+    plan: &WorkPlan,
+) -> Result<(), CommandError> {
+    if plan.input.is_some() {
+        let input = plan.fixed_input().map_err(map_read)?;
+        let config = ai::settings(&input).map_err(map_read)?.config;
+        connections::verify_configs(connections_store, std::slice::from_ref(&config))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn prepare_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanPrepareRequest,
 ) -> Result<WorkPlanView, CommandError> {
+    let connection_store = connections::captured_store(&state);
+    let initial_connections = connection_store.clone();
     if !request.options.advisory_checks.is_empty() {
         return Err(super::review::checkers::stale());
     }
     let plugins = state.plugins.clone();
     let selections = request.advisory_checks.clone();
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let selected_work = lease
+        .run(
+            "prepare_work_plan.advisory_capture",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, _) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.begin_package_work(
+                    initial
+                        .advisory_checks
+                        .iter()
+                        .map(|choice| choice.package.clone())
+                        .collect(),
+                )
+            },
+        )
+        .await?;
+    let accepted_work = selected_work.clone();
     let advisory = state
         .io
         .run(CommandStage::ExecutionRead, move || {
+            accepted_work.check()?;
             capture_advisory(&plugins, &selections)
         })
         .await?;
-    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let mut initial = request.clone();
     initial.options.advisory_checks = advisory;
     let captured = lease.submit(
@@ -463,6 +543,10 @@ pub async fn prepare_work_plan(
             )?;
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
+            selected_work.check()?;
+            if let Some(config) = &initial.config {
+                connections::verify_configs(initial_connections.as_ref(), std::slice::from_ref(config))?;
+            }
             let plan = store
                 .prepare_work_plan(
                     initial.config,
@@ -473,13 +557,19 @@ pub async fn prepare_work_plan(
                 .map_err(map_read)?;
             let source = store.work_plan_review_binding(&plan).map_err(map_read)?;
             let checkers = store.work_plan_review_checkers(&plan).map_err(map_read)?;
-            Ok((plan, source, checkers, host.runtime.generation()))
+            let work = host.begin_package_work(
+                checkers
+                    .iter()
+                    .map(|checker| package_lifecycle::binding_package(&checker.binding))
+                    .collect(),
+            )?;
+            Ok((plan, source, checkers, work, host.runtime.generation()))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, source, checkers, generation) = captured.await?;
+        let (plan, source, checkers, work, generation) = captured.await?;
         let selected = request.tool_selection.clone();
         let current_plugins = plugins.clone();
         let tools = io
@@ -495,6 +585,7 @@ pub async fn prepare_work_plan(
             checkers,
             plan.options.advisory_checks.clone(),
             None,
+            work.clone(),
         )
         .await?;
         let checker_revision = checker_environment_revision(&environments)?;
@@ -511,6 +602,7 @@ pub async fn prepare_work_plan(
                     )?;
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
+                    work.check()?;
                     if host.runtime.generation() != generation {
                         return Err(map_read(ExecutionError::new(
                             ErrorCode::DependencyConflict,
@@ -532,6 +624,7 @@ pub async fn prepare_work_plan(
                         plan
                     };
                     with_plan_environment_revision(&plugins, &plan, checker_revision, || {
+                        verify_plan_connections(connection_store.as_ref(), &plan)?;
                         let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
                         view.checkers = views;
                         if !environments.is_empty() {
@@ -560,6 +653,8 @@ pub async fn authorize_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanAuthorizeRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
+    let connection_store = connections::captured_store(&state);
+    let initial_connections = connection_store.clone();
     let lease = state.sessions.lease(CommandStage::ExecutionRecover)?;
     let captured_plugins = state.plugins.clone();
     let initial = request.clone();
@@ -610,6 +705,7 @@ pub async fn authorize_work_plan(
                 .filter(|plan| plan.plan_id == initial.plan_id && plan.digest == initial.digest)
                 .cloned();
             if let Some(plan) = prepared {
+                verify_plan_connections(initial_connections.as_ref(), &plan)?;
                 broker::require_consent(&plan, initial.tool_execution, Some(&initial.effects))?;
                 broker::capture_human_intent(
                     host,
@@ -618,11 +714,15 @@ pub async fn authorize_work_plan(
                     initial.expires_at.get(),
                     &initial,
                 )?;
-                Ok(Ok((
-                    plan.clone(),
-                    consent_environments(host, store, &plan, &initial.checker_executions)?,
-                    host.runtime.generation(),
-                )))
+                let environments =
+                    consent_environments(host, store, &plan, &initial.checker_executions)?;
+                let work = host.begin_package_work(
+                    environments
+                        .iter()
+                        .map(|(_, checker)| package_lifecycle::binding_package(&checker.binding))
+                        .collect(),
+                )?;
+                Ok(Ok((plan, environments, work, host.runtime.generation())))
             } else {
                 // Read-only replay returns historical authority without recreating local consent.
                 let receipt = store
@@ -657,12 +757,12 @@ pub async fn authorize_work_plan(
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, environment, generation) = match captured.await? {
+        let (plan, environment, work, generation) = match captured.await? {
             Ok(value) => value,
             Err(receipt) => return Ok(receipt),
         };
         let (settings_revision, runners) =
-            checker_runners(io, plugins.clone(), environment).await?;
+            checker_runners(io, plugins.clone(), environment, Some(work.clone())).await?;
         lease
             .run(
                 "authorize_work_plan.finish",
@@ -676,6 +776,7 @@ pub async fn authorize_work_plan(
                     )?;
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
+                    work.check()?;
                     if host.runtime.generation() != generation {
                         return Err(map_recover(ExecutionError::new(
                             ErrorCode::Unauthorized,
@@ -684,6 +785,9 @@ pub async fn authorize_work_plan(
                     }
                     let finish = || {
                         store.verify_work_plan(&plan).map_err(map_recover)?;
+                        if store.work_plan_receipt(request.action_id).map_err(map_recover)?.is_none() {
+                            verify_plan_connections(connection_store.as_ref(), &plan)?;
+                        }
                         let mut bindings = Vec::new();
                         for (runner, checker) in runners {
                             host.register_plugin(runner, checker.binding.clone())
@@ -878,7 +982,7 @@ pub async fn control_work_plan(
                 return Ok(Err(WorkPlanReceiptView::from(receipt)));
             }
             if initial.command != WorkPlanCommand::Continue {
-                return Ok(Ok((None, Vec::new(), None)));
+                return Ok(Ok((None, Vec::new(), None, None)));
             }
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
@@ -898,9 +1002,16 @@ pub async fn control_work_plan(
             }
             let environments =
                 consent_environments(host, store, &plan, &initial.checker_executions)?;
+            let work = host.begin_package_work(
+                environments
+                    .iter()
+                    .map(|(_, checker)| package_lifecycle::binding_package(&checker.binding))
+                    .collect(),
+            )?;
             Ok(Ok((
                 Some(plan),
                 environments,
+                Some(work),
                 Some(host.runtime.generation()),
             )))
         },
@@ -908,12 +1019,12 @@ pub async fn control_work_plan(
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, environment, generation) = match captured.await? {
+        let (plan, environment, work, generation) = match captured.await? {
             Ok(environment) => environment,
             Err(receipt) => return Ok(receipt),
         };
         let (settings_revision, runners) =
-            checker_runners(io, plugins.clone(), environment).await?;
+            checker_runners(io, plugins.clone(), environment, work.clone()).await?;
         lease
             .run(
                 "control_work_plan.finish",
@@ -925,6 +1036,9 @@ pub async fn control_work_plan(
                         request.project_id,
                         CommandStage::ExecutionCancel,
                     )?;
+                    if let Some(work) = &work {
+                        work.check()?;
+                    }
                     let finish = || {
                         if let Some(generation) = generation {
                             let (host, _) = active.execution_parts()?;
@@ -1035,13 +1149,20 @@ pub async fn read_work_plan_status(
                 .store
                 .work_plan_review_checkers(&plan)
                 .map_err(map_read)?;
-            Ok((plan, binding, checkers, cached))
+            let (host, _) = active.execution_parts()?;
+            let work = host.begin_package_work(
+                checkers
+                    .iter()
+                    .map(|checker| package_lifecycle::binding_package(&checker.binding))
+                    .collect(),
+            )?;
+            Ok((plan, binding, checkers, cached, work))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, binding, checkers, cached) = captured.await?;
+        let (plan, binding, checkers, cached, work) = captured.await?;
         let (environments, views) = load_checkers(
             io,
             plugins,
@@ -1049,6 +1170,7 @@ pub async fn read_work_plan_status(
             checkers,
             plan.options.advisory_checks.clone(),
             cached,
+            work.clone(),
         )
         .await?;
         lease
@@ -1063,6 +1185,7 @@ pub async fn read_work_plan_status(
                         CommandStage::ExecutionRead,
                     )?;
                     let (host, store) = active.execution_parts()?;
+                    work.check()?;
                     let status = store.work_plan_status(request.plan_id).map_err(map_read)?;
                     let mut view = WorkPlanStatusView::capture(&plan, status).map_err(map_read)?;
                     if let Some(tools) = &plan.tools {
@@ -1187,6 +1310,7 @@ pub async fn set_work_protection(
 mod tests {
     mod broker_tests;
     mod generation_tests;
+    mod model_connection_admission;
     mod settings;
     use super::*;
     use serde_json::{Value, json};

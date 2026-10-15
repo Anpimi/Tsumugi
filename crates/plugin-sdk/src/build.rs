@@ -294,6 +294,7 @@ pub struct BuildDeclaration {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BuildBinding {
     pub declaration: BuildDeclaration,
     pub builder: CapabilityBinding,

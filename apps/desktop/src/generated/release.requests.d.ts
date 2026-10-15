@@ -12,6 +12,7 @@ export interface Requests {
   preview: PreviewRequest;
   reconcile: ReconcileRequest;
   release: ReleaseRequest;
+  savedPluginBuild: SavedPluginBuildRequest;
   session: SessionRequest;
 }
 export interface ArtifactCheckPrepareRequest {
@@ -109,6 +110,11 @@ export interface ReconcileRequest {
 export interface ReleaseRequest {
   projectId: ExecutionId;
   releaseId: ExecutionId;
+  sessionToken: string;
+}
+export interface SavedPluginBuildRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
   sessionToken: string;
 }
 export interface SessionRequest {

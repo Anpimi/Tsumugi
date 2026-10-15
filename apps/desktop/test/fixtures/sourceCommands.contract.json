@@ -490,5 +490,159 @@
       "actionId": "00000000-0000-4000-8000-000000000006",
       "appliedRelation": "continued"
     }
-  ]
+  ],
+  "sourceContextRequest": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "sourceSnapshotId": "00000000-0000-4000-8000-000000000005",
+    "unitId": "00000000-0000-4000-8000-000000000002",
+    "sourceRevisionId": "00000000-0000-4000-8000-000000000003",
+    "locale": "zh-CN",
+    "after": 0,
+    "limit": 4
+  },
+  "sourceContext": {
+    "scope": {
+      "projectId": "00000000-0000-4000-8000-000000000001",
+      "sourceSnapshotId": "00000000-0000-4000-8000-000000000005",
+      "unitId": "00000000-0000-4000-8000-000000000002",
+      "sourceRevisionId": "00000000-0000-4000-8000-000000000003",
+      "locale": "zh-CN"
+    },
+    "contentRevision": "9007199254740993",
+    "sourceAttemptId": "00000000-0000-4000-8000-000000000014",
+    "sourceResultId": "00000000-0000-4000-8000-000000000015",
+    "sourceResultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceLocale": "en",
+    "localUnitId": "fixture-unit-0",
+    "occurrenceCount": 1,
+    "observations": {
+      "missingBlocks": false,
+      "knownBlocks": 2,
+      "knownFacts": 1,
+      "emptyBlocks": 1,
+      "unknownBlocks": 1,
+      "unknownRequiredBlocks": 1,
+      "neighborOccurrences": 1,
+      "unknownSamples": [
+        {
+          "blockIndex": 5,
+          "target": {
+            "kind": "snapshot"
+          },
+          "schema": {
+            "id": "tsumugi.source-context-facts",
+            "schemaVersion": 2,
+            "behaviorVersion": 1
+          },
+          "handling": "required"
+        }
+      ]
+    },
+    "entries": [
+      {
+        "kind": "block",
+        "value": {
+          "blockIndex": 1,
+          "target": {
+            "kind": "snapshot"
+          },
+          "schema": {
+            "id": "tsumugi.source-context-facts",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "handling": "preserve",
+          "inRevisionBasis": false,
+          "facts": {
+            "facts": [
+              {
+                "id": "source-note",
+                "kind": "note",
+                "text": "Hello {{name}} 世界",
+                "origin": {
+                  "kind": "extracted",
+                  "sources": [
+                    {
+                      "artifactId": "00000000-0000-4000-8000-000000000007",
+                      "range": {
+                        "encoding": "utf8-byte",
+                        "start": 9,
+                        "end": 34
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "block",
+        "value": {
+          "blockIndex": 3,
+          "target": {
+            "kind": "snapshot"
+          },
+          "schema": {
+            "id": "tsumugi.source-context-facts",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "handling": "preserve",
+          "inRevisionBasis": false,
+          "facts": {
+            "facts": []
+          }
+        }
+      },
+      {
+        "kind": "block",
+        "value": {
+          "blockIndex": 5,
+          "target": {
+            "kind": "snapshot"
+          },
+          "schema": {
+            "id": "tsumugi.source-context-facts",
+            "schemaVersion": 2,
+            "behaviorVersion": 1
+          },
+          "handling": "required",
+          "inRevisionBasis": false,
+          "facts": null
+        }
+      },
+      {
+        "kind": "neighbor",
+        "value": {
+          "unitId": "00000000-0000-4000-8000-000000000010",
+          "sourceRevisionId": "00000000-0000-4000-8000-000000000011",
+          "text": "Adjacent original 👩🏽‍💻 é",
+          "occurrence": {
+            "occurrenceId": "00000000-0000-4000-8000-000000000012",
+            "localOccurrenceId": "neighbor",
+            "source": {
+              "artifactId": "00000000-0000-4000-8000-000000000007",
+              "range": {
+                "encoding": "utf8-byte",
+                "start": 9,
+                "end": 34
+              }
+            }
+          },
+          "adjacentTo": [
+            {
+              "occurrenceId": "00000000-0000-4000-8000-000000000013",
+              "direction": "after"
+            }
+          ]
+        }
+      }
+    ],
+    "after": 0,
+    "nextAfter": null,
+    "totalEntries": 4
+  }
 }

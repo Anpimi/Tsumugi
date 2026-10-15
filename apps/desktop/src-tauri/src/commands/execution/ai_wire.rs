@@ -1,7 +1,7 @@
 //! Display projections preserve full counters without changing fixed payloads.
 use super::*;
 use tsumugi_core::{
-    ContextRevision,
+    ContextRevision, SourceContextCapture,
     ai::{
         AiConfig, AiItem, AiOutput, AiPreview, SharedTerm, Usage,
         arena::{ArenaConfig, ArenaItem, ArenaPreview},
@@ -22,6 +22,7 @@ pub struct AiItemView {
     pub target_locale: String,
     pub terms: Vec<SharedTerm>,
     pub context: Option<ContextRevision>,
+    pub source_context: SourceContextCapture,
     pub omissions: Vec<String>,
     pub resource_baseline: UnsignedDecimal,
 }
@@ -37,6 +38,7 @@ impl From<AiItem> for AiItemView {
             target_locale,
             terms,
             context,
+            source_context,
             omissions,
             resource_baseline,
         } = item;
@@ -50,6 +52,7 @@ impl From<AiItem> for AiItemView {
             target_locale,
             terms,
             context,
+            source_context,
             omissions,
             resource_baseline: resource_baseline.into(),
         }
@@ -231,5 +234,57 @@ mod tests {
         if usize::BITS > 32 {
             assert!(index(u32::MAX as usize + 1).is_err());
         }
+    }
+
+    #[test]
+    fn source_capture_wire_keeps_exact_revision_and_requires_explicit_selection() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/aiCommands.contract.json"
+        ))
+        .unwrap();
+        let mut wire = fixture["responses"]["view"]["rows"][0]["item"].clone();
+        let selection = serde_json::json!({
+            "extracted": false, "inferred": false, "neighbors": true,
+            "maxBytes": 16384, "maxItems": 128
+        });
+        wire["sourceContext"] = serde_json::json!({"kind":"selected","value":{
+            "scope": {
+                "projectId": fixture["requests"]["read"]["projectId"],
+                "sourceSnapshotId": wire["sourceSnapshotId"], "unitId": wire["unitId"],
+                "sourceRevisionId": wire["sourceRevisionId"], "locale": wire["targetLocale"]
+            },
+            "contentRevision": "9223372036854775807",
+            "sourceAttemptId": ExecutionId::new(), "sourceResultId": ExecutionId::new(),
+            "sourceResultDigest": "a".repeat(64), "sourceLocale": "en", "localUnitId": "barrel",
+            "selection": selection, "facts": [], "neighbors": [],
+            "observations": {"missingBlocks": true, "knownBlocks": 0, "knownFacts": 0,
+                "emptyBlocks": 0, "unknownBlocks": 0, "unknownRequiredBlocks": 0,
+                "neighborOccurrences": 0, "unknownSamples": []},
+            "omissions": {"extracted": 0, "inferred": 0, "neighbors": 0,
+                "notSelected": 0, "byteBudget": 0, "itemLimit": 0, "samples": []}
+        }});
+        let mut stored = wire.clone();
+        stored["resourceBaseline"] = serde_json::json!(u64::MAX);
+        let item: AiItem = serde_json::from_value(stored.clone()).unwrap();
+        let SourceContextCapture::Selected { value } = &item.source_context else {
+            panic!("selected capture required");
+        };
+        item.source_context
+            .validate_against(&value.selection, &value.scope)
+            .unwrap();
+        assert_eq!(serde_json::to_value(&item).unwrap(), stored);
+        assert_eq!(serde_json::to_value(AiItemView::from(item)).unwrap(), wire);
+
+        let mut numeric = wire.clone();
+        numeric["sourceContext"]["value"]["contentRevision"] = serde_json::json!(u64::MAX);
+        assert!(serde_json::from_value::<AiItemView>(numeric).is_err());
+        let mut overflow = wire.clone();
+        overflow["sourceContext"]["value"]["contentRevision"] = serde_json::json!("9223372036854775808");
+        assert!(serde_json::from_value::<AiItemView>(overflow).is_err());
+        wire.as_object_mut().unwrap().remove("sourceContext");
+        assert!(serde_json::from_value::<AiItemView>(wire).is_err());
+        let mut config = fixture["requests"]["preview"]["config"].clone();
+        config.as_object_mut().unwrap().remove("sourceContext");
+        assert!(serde_json::from_value::<AiConfig>(config).is_err());
     }
 }

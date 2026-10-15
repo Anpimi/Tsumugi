@@ -1,7 +1,10 @@
+import type { AdoptionAction, Receipt } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationFilesRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
 import type { TranslationSaveReceipt } from "./generated/translation.responses";
-import { validateResponseCheckReview, validateResponseProjectionReview, validateResponseChecked, validateResponseSource, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseFiles, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
+import type { PluginTranslationRequest, PluginTranslationView } from "./pluginCommands";
+import { validateRequestAdopt, validateResponseCheckReview, validateResponseProjectionReview, validateResponseChecked, validateResponseSource, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseFiles, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
+import { validateResponseAdoption } from "./generated/execution.validators";
 
 export type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
 export type { TranslationCheckReview, TranslationProjectionReview, TranslationSourceContext, PluginTranslationSelection, PluginTranslationPreflight, TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
@@ -27,8 +30,60 @@ export const translationCommands = {
   history: (request: TranslationHistoryRequest) => checkedInvoke("read_translation_history", request, validateResponseHistory),
   action: (request: TranslationActionRequest) => checkedInvoke("read_translation_action", request, validateResponseAction),
   save: async (request: TranslationSaveRequest) => validateSaveReceipt(await checkedInvoke("save_translation_revision", request, validateResponseSaved), request),
-  select: (request: TranslationSelectRequest) => checkedInvoke("select_translation_revision", request, validateResponseSelected),
+  select: async (request: TranslationSelectRequest) => confirmTranslationSelection(request, await checkedInvoke("select_translation_revision", request, validateResponseSelected)),
 };
+
+export function matchesTranslationEnvironment(view: PluginTranslationView, request: PluginTranslationRequest) {
+  return view.resourceId === request.resourceId && view.environmentDigest === request.environmentDigest
+    && [view.extractor.provider, view.checker.provider].every(provider => provider.packageDigest === request.package.packageDigest
+      && provider.plugin.id === request.package.plugin.id && provider.plugin.version === request.package.plugin.version
+      && provider.plugin.publisher === request.package.plugin.publisher);
+}
+export function translationRequest(view: PluginTranslationView): PluginTranslationRequest {
+  return { package: { plugin: view.extractor.provider.plugin, packageDigest: view.extractor.provider.packageDigest },
+    resourceId: view.resourceId, environmentDigest: view.environmentDigest };
+}
+
+function invalidImportReceipt() {
+  return Object.assign(new Error("Invalid translation import acknowledgement"), { outcome: "unknown", reason: "invalid-import-receipt" });
+}
+function normalizedConfirmation(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const fields = value as Record<string, unknown>;
+  return { resultDigest: fields.resultDigest, sourceSnapshotId: fields.sourceSnapshotId, occurrenceId: fields.occurrenceId,
+    sourceRevisionId: fields.sourceRevisionId, targetUnitId: fields.targetUnitId,
+    expectedSelectionId: fields.expectedSelectionId ?? null, decision: fields.decision };
+}
+export function sameTranslationConfirmation(left: unknown, right: unknown) {
+  return normalizedConfirmation(left) !== null && JSON.stringify(normalizedConfirmation(left)) === JSON.stringify(normalizedConfirmation(right));
+}
+/** The execution adoption unit is distinct from the business target unit. */
+export function confirmTranslationAction(request: TranslationAdoptRequest, recoveryUnitId: string, action: AdoptionAction) {
+  if (!validateResponsePrepared(action) || action.projectId !== request.projectId || action.attemptId !== request.attemptId
+    || action.actionId !== request.actionId || action.operation !== "translation-import" || action.unitId !== recoveryUnitId
+    || action.resultIds.length !== 1 || action.resultIds[0] !== request.resultId
+    || !validateRequestAdopt({ ...request, confirmation: action.parameters })
+    || !sameTranslationConfirmation(action.parameters, request.confirmation)) throw invalidImportReceipt();
+}
+export function confirmTranslationReceipt(request: TranslationAdoptRequest, recoveryUnitId: string, receipt: Receipt, previousSelectionSequence: string | null) {
+  if (!validateResponseAdoption(receipt) || receipt.projectId !== request.projectId || receipt.attemptId !== request.attemptId
+    || receipt.actionId !== request.actionId || receipt.unitId !== recoveryUnitId || !/^[a-f0-9]{64}$/.test(receipt.requestDigest)) throw invalidImportReceipt();
+  const revision = receipt.changes.filter(change => change.kind === "translation-revision");
+  const selection = receipt.changes.filter(change => change.kind === "translation-selection");
+  const selects = request.confirmation.decision !== "candidate-only";
+  if (receipt.changes.length !== (selects ? 2 : 1) || receipt.changes[0]?.kind !== "translation-revision"
+    || (selects && receipt.changes[1]?.kind !== "translation-selection") || revision.length !== 1 || selection.length !== (selects ? 1 : 0)
+    || !validateResponseAttempt(revision[0].id) || BigInt(revision[0].revision) === 0n
+    || (selects && (!validateResponseAttempt(selection[0].id) || selection[0].revision !== (BigInt(previousSelectionSequence ?? "0") + 1n).toString()))) throw invalidImportReceipt();
+  return receipt;
+}
+export function confirmTranslationSelection(request: TranslationSelectRequest, value: unknown) {
+  if (!validateResponseSelected(value) || value.actionId !== request.actionId || value.unitId !== request.unitId
+    || value.locale !== request.locale || value.revisionId !== request.revisionId
+    || value.previousEventId !== (request.expectedSelectionId ?? null) || BigInt(value.sequence) === 0n
+    || (value.sequence === "1") !== (value.previousEventId === null)) throw invalidSaveReceipt();
+  return value;
+}
 
 function invalidSaveReceipt() {
   return Object.assign(new Error("Invalid save receipt"), { outcome: "unknown", reason: "invalid-save-receipt" });

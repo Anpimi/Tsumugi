@@ -6,6 +6,18 @@ fn start_component(fixture: &Fixture, component: Value, grant: &Value) -> Compon
 }
 
 fn wait_outer_closed(fixture: &Fixture, action: &ComponentAction) {
+    wait_outer_closed_observed(
+        fixture,
+        action,
+        &fixture.directory.path().join("component-observer.txt"),
+    );
+}
+
+fn wait_outer_closed_observed(
+    fixture: &Fixture,
+    action: &ComponentAction,
+    observer: &std::path::Path,
+) {
     let outer = action.outer;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -38,11 +50,7 @@ fn wait_outer_closed(fixture: &Fixture, action: &ComponentAction) {
                     .iter()
                     .all(|item| item.execution == ExecutionState::Succeeded)
             );
-            assert_eq!(
-                std::fs::read_to_string(fixture.directory.path().join("component-observer.txt"))
-                    .unwrap(),
-                "disposed"
-            );
+            assert_eq!(std::fs::read_to_string(observer).unwrap(), "disposed");
             return;
         }
         assert!(
@@ -137,6 +145,274 @@ fn assert_preserved(
             action.outer.to_string(),
             action.generation["attemptId"].as_str().unwrap().into()
         )
+    );
+}
+
+fn finish_original_package_cleanup(fixture: &Fixture, action: ExecutionId) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let result = fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+                host.finish_package_cleanup(store, action)
+            });
+        match result {
+            Ok(()) => return,
+            Err(error) if error.code == CommandErrorCode::Busy => {
+                assert!(
+                    Instant::now() < deadline,
+                    "original component package did not drain"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("unexpected original package cleanup error: {error:?}"),
+        }
+    }
+}
+
+#[test]
+fn generation_component_package_cleanup_waits_for_its_closed_channels_held_child() {
+    let fixture = Fixture::create();
+    let (component, _installed, _approval) = install_generation(&fixture);
+    let (started, waiting) = mpsc::channel();
+    let (release, hold) = mpsc::channel();
+    let (mut config, provider) = local_provider_sequence_at_request(
+        vec!["original saved candidate", "held service child response"],
+        Some((1, (started, hold))),
+        None,
+        Duration::from_secs(30),
+        Duration::from_secs(10),
+    );
+    config.timeout_seconds = 10;
+    let (plan, grant) = fixture.start_candidates(config);
+    let root = fixture.wait_saved(&plan["attemptId"]);
+    let action = start_component(&fixture, component.clone(), &grant);
+    waiting.recv_timeout(Duration::from_secs(15)).unwrap();
+    wait_outer_closed(&fixture, &action);
+    let package: crate::commands::plugins::PluginPackageRequest = serde_json::from_value(json!({
+        "plugin":component["provider"]["plugin"], "packageDigest":component["provider"]["packageDigest"]
+    })).unwrap();
+    let cleanup = ExecutionId::new();
+    let child: ExecutionId =
+        serde_json::from_value(action.generation["attemptId"].clone()).unwrap();
+    let unfinished = fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            assert!(
+                host.runtime.is_active(child),
+                "the real child HTTP request must still be owned"
+            );
+            host.begin_package_cleanup(store, cleanup, package).unwrap();
+            host.finish_package_cleanup(store, cleanup)
+        });
+    // Always release this owned synthetic HTTP request before the red assertion.
+    release.send(()).unwrap();
+    assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
+    assert!(
+        matches!(unfinished, Err(ref error) if error.code == CommandErrorCode::Busy),
+        "a closed caller channel must not complete cleanup before its held service child: {unfinished:?}"
+    );
+    finish_original_package_cleanup(&fixture, cleanup);
+    let child = wait_child_failed(&fixture, &action);
+    assert_preserved(&fixture, &plan, &root, &action, &child);
+}
+
+#[test]
+fn generation_component_package_cleanup_waits_for_its_held_selection_effect() {
+    use crate::commands::execution::test_fixtures::{
+        OwnedDirectory, approved_runtime, provision_packages, selected_package,
+    };
+    use tsumugi_core::application::SelectionPolicy;
+    use tsumugi_plugin_host::{
+        RuntimeApproval,
+        catalog::{PackageApproval, PackageOrigin},
+    };
+
+    let installation = OwnedDirectory(tempfile::tempdir().unwrap());
+    let observer = installation.0.path().join("component-observer.txt");
+    let generation_image = generation_package_observed(Some(&observer));
+    let generation_approval = PackageApproval {
+        plugin: generation_image.manifest().manifest().plugin.clone(),
+        package_digest: generation_image.package_digest().into(),
+        origin: PackageOrigin {
+            source_id: "synthetic-generation-source".into(),
+            publisher_id: "synthetic-generation-publisher".into(),
+        },
+    };
+    let generation_binding = sdk::bind_capability(
+        generation_image.manifest(),
+        &generation_image.manifest().manifest().contributions[0].id,
+        generation_image.package_digest(),
+    )
+    .unwrap();
+    let (format, format_approval) = selected_package(
+        "TSUMUGI_TEST_PLUGIN_PACKAGE",
+        "TSUMUGI_TEST_PLUGIN_DIGEST",
+        "webvtt",
+    );
+    let source_binding = format.source_import("source-profile").unwrap();
+    let runtime = approved_runtime();
+    let runtime_approval = RuntimeApproval {
+        environment: runtime.descriptor().clone().into(),
+        origin: crate::runtime_bundle::bundled_origin(),
+    };
+    let environment = runtime_approval.environment.digest().unwrap();
+    let component = json!({"provider":generation_binding.provider,"profile":generation_binding.declaration.profiles.first(),"environmentDigest":environment});
+    provision_packages(
+        installation.0.path(),
+        &[
+            (format, format_approval.clone()),
+            (generation_image, generation_approval),
+        ],
+        &runtime,
+        &runtime_approval,
+    );
+    drop(runtime);
+    let fixture = super::checks::declared_fixture(
+        &installation.0.path().join("application"),
+        &format_approval,
+        &environment,
+        &source_binding,
+    );
+    // The original root loses its synthetic HTTP ACK. It must not select a
+    // translation before this child exercises the still-captured empty basis.
+    let (mut config, provider) = local_provider_responses_at_request(
+        2,
+        |ordinal, _| (ordinal == 1).then_some("held selection effect candidate"),
+        None,
+        None,
+        Duration::from_secs(45),
+        Duration::from_secs(3),
+    );
+    config.max_retries = 0;
+    let mut options = PlanOptions {
+        selection_policy: SelectionPolicy::MissingOnly,
+        ..PlanOptions::default()
+    };
+    options
+        .stages
+        .iter_mut()
+        .find(|stage| stage.stage == WorkStage::Checks)
+        .unwrap()
+        .mode = StageMode::Assisted;
+    let plan = fixture.call("prepare_work_plan", json!({"config":config,"locale":"zh-CN","unitIds":[fixture.unit],"options":options,"advisoryChecks":[],"toolSelection":null})).unwrap();
+    assert_eq!(
+        checker_keys(&plan).len(),
+        1,
+        "the actual format checker must be captured"
+    );
+    let grant = fixture.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,
+        "checkerExecutions":checker_keys(&plan),"toolExecution":false,"effects":["save-candidate","run-checks","select-missing"],"expiresAt":expiry()})).unwrap();
+    fixture.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap();
+    let root = fixture.wait_effect(&plan);
+    assert!(root["rows"][0]["savedRevisionId"].is_null());
+    assert_eq!(root["budget"]["dispatched"], 1);
+    let scope = fixture
+        .call(
+            "open_work_plan_agent_scope",
+            json!({"lease":grant["lease"]}),
+        )
+        .unwrap();
+    let child = ExecutionId::new();
+    let generation =
+        json!({"taskId":ExecutionId::new(),"attemptId":child,"unitIds":[fixture.unit]});
+    let outer = ExecutionId::new();
+    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+    let preflight = fixture
+        .call("prepare_work_plan_generation_component", preparing.clone())
+        .unwrap();
+    let (reached, captured) = mpsc::channel();
+    let (release, paused) = mpsc::channel();
+    fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            host.ai.pause_check_computation(review::ComputeProbe {
+                action: child,
+                reached,
+                release: paused,
+            });
+        });
+    let starting = json!({"scopeId":scope["scopeId"],"attemptId":outer,"inputDigest":preflight["inputDigest"],"grantId":ExecutionId::new(),
+        "expiresAtMs":(SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()+60_000).to_string(),"unsandboxedExecution":true});
+    assert_eq!(
+        fixture
+            .call("start_work_plan_generation_component", starting.clone())
+            .unwrap(),
+        json!(outer)
+    );
+    let action = ComponentAction {
+        scope,
+        preparing,
+        generation,
+        outer,
+        preflight,
+        starting,
+    };
+    assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let view = fixture
+            .call("read_ai_translation", json!({"attemptId":child}))
+            .unwrap();
+        if captured.try_recv().is_ok() {
+            assert_eq!(view["rows"][0]["automation"]["phase"], "checking");
+            assert!(view["rows"][0]["savedRevisionId"].is_string());
+            assert!(view["rows"][0]["automation"]["receipt"].is_null());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "actual checker result did not reach held computation: {view}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    wait_outer_closed_observed(&fixture, &action, &observer);
+    let package: crate::commands::plugins::PluginPackageRequest = serde_json::from_value(json!({"plugin":component["provider"]["plugin"],"packageDigest":component["provider"]["packageDigest"]})).unwrap();
+    let cleanup = ExecutionId::new();
+    let unfinished = fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            assert!(
+                !host.runtime.has_unsettled_attempt(store, child).unwrap(),
+                "the held owner must be the effect thread after model completion"
+            );
+            host.begin_package_cleanup(store, cleanup, package).unwrap();
+            host.finish_package_cleanup(store, cleanup)
+        });
+    release.send(()).unwrap();
+    assert!(
+        matches!(unfinished, Err(ref error) if error.code == CommandErrorCode::Busy),
+        "the original service caller package must wait for its held selection effect: {unfinished:?}"
+    );
+    finish_original_package_cleanup(&fixture, cleanup);
+    let stopped = wait_child_failed(&fixture, &action);
+    assert!(stopped["rows"][0]["automation"]["receipt"].is_null());
+    assert_eq!(stopped["rows"][0]["automation"]["retryable"], false);
+    assert_eq!(
+        stopped["budget"]["dispatched"], 2,
+        "the unknown root dispatch is never refunded"
+    );
+    let target = fixture
+        .call(
+            "read_review_target",
+            json!({"unitId":fixture.unit,"locale":"zh-CN"}),
+        )
+        .unwrap();
+    assert!(
+        target["selectionId"].is_null(),
+        "stopped effect must not publish a late selection"
     );
 }
 

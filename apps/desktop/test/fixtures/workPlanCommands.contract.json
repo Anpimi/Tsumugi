@@ -19,7 +19,14 @@
         "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
         "maxOutputTokens": 2000,
         "credentialEnv": "",
-        "maxRetries": 0
+        "maxRetries": 0,
+        "sourceContext": {
+          "extracted": false,
+          "inferred": false,
+          "neighbors": false,
+          "maxBytes": 16384,
+          "maxItems": 128
+        }
       },
       "options": {
         "stages": [
@@ -153,7 +160,10 @@
               }
             ],
             "sourceText": "Barrel {name}",
-            "sourceLocale": "en"
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            }
           }
         ],
         "config": {
@@ -168,7 +178,14 @@
           "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
           "maxOutputTokens": 2000,
           "credentialEnv": "",
-          "maxRetries": 0
+          "maxRetries": 0,
+          "sourceContext": {
+            "extracted": false,
+            "inferred": false,
+            "neighbors": false,
+            "maxBytes": 16384,
+            "maxItems": 128
+          }
         },
         "recipe": "direct-translation-1"
       },
@@ -249,7 +266,10 @@
                 }
               ],
               "sourceText": "Barrel {name}",
-              "sourceLocale": "en"
+              "sourceLocale": "en",
+              "sourceContext": {
+                "kind": "not-selected"
+              }
             }
           ],
           "config": {
@@ -264,7 +284,14 @@
             "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
             "maxOutputTokens": 2000,
             "credentialEnv": "",
-            "maxRetries": 0
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            }
           },
           "recipe": "direct-translation-1"
         },

@@ -31,6 +31,16 @@ impl DispatchRequest {
     pub fn plugin_permit(&self) -> Option<&PluginPermit> {
         self.plugin_permit.as_ref()
     }
+    /// The sealed original caller's package is lifetime attribution only.
+    /// It remains readable after revocation and never grants execution.
+    pub fn originating_service_package(
+        &self,
+    ) -> Option<(&tsumugi_plugin_sdk::PluginIdentity, &str)> {
+        self.service_origin.as_ref().map(|origin| {
+            let package = origin.permit.original_package();
+            (package.plugin(), package.digest())
+        })
+    }
     /// The original dispatch limit, never reconstructed by an outcome query.
     pub fn deadline(&self) -> Option<std::time::Instant> {
         self.original_deadline.as_ref().map(|value| value.instant)

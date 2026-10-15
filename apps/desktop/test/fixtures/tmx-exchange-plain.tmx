@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4"><header creationtool="Synthetic export" creationtoolversion="1"
+segtype="sentence" o-tmf="synthetic" adminlang="en" srclang="en" datatype="plaintext"/>
+<body><tu tuid="first"><tuv xml:lang="en"><seg>Hello 👩🏽‍💻 é</seg></tuv>
+<tuv xml:lang="zh-CN"><seg>你好 👩🏽‍💻 é</seg></tuv></tu></body></tmx>

@@ -9,9 +9,11 @@ export declare function validateRequestDecision(value: unknown): value is Reques
 export declare function validateRequestImpacts(value: unknown): value is Requests["impacts"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateRequestSuggestions(value: unknown): value is Requests["suggestions"];
+export declare function validateRequestTbxPreview(value: unknown): value is Requests["tbxPreview"];
 export declare function validateRequestTerm(value: unknown): value is Requests["term"];
 export declare function validateRequestTermHistory(value: unknown): value is Requests["termHistory"];
 export declare function validateRequestTerms(value: unknown): value is Requests["terms"];
+export declare function validateRequestTmxPreview(value: unknown): value is Requests["tmxPreview"];
 export declare function validateRequestUnitLocale(value: unknown): value is Requests["unitLocale"];
 export declare function validateResponseCapture(value: unknown): value is Responses["capture"];
 export declare function validateResponseCaptures(value: unknown): value is Responses["captures"];
@@ -23,5 +25,7 @@ export declare function validateResponsePreview(value: unknown): value is Respon
 export declare function validateResponseResolution(value: unknown): value is Responses["resolution"];
 export declare function validateResponseSavedContext(value: unknown): value is Responses["savedContext"];
 export declare function validateResponseSuggestions(value: unknown): value is Responses["suggestions"];
+export declare function validateResponseTbxPreview(value: unknown): value is Responses["tbxPreview"];
 export declare function validateResponseTerm(value: unknown): value is Responses["term"];
 export declare function validateResponseTerms(value: unknown): value is Responses["terms"];
+export declare function validateResponseTmxPreview(value: unknown): value is Responses["tmxPreview"];

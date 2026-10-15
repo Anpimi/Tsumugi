@@ -1,9 +1,11 @@
-import { type ReactNode } from "react";
-import { cleanup, render as renderUi, screen, waitFor } from "@testing-library/react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { act, cleanup, render as renderUi, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { WorkPlanAgentControls } from "./WorkPlanAgentControls";
-import { SessionReadProvider, useSessionReads } from "./SessionReadProvider";
+import { WorkPlanAgentControls as ProductionAgentControls, useWorkPlanAgentSession } from "./WorkPlanAgentControls";
+import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
+import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
+import { SessionReadProvider, useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import type { SessionReads } from "./sessionReads";
 import { i18n } from "./i18n";
 import { generationComponent, generationInventory, generationPackage } from "./testSupport/pluginGenerationFixture";
@@ -22,7 +24,16 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const context = { projectId: generationFixture.prepare.projectId, sessionToken: generationFixture.prepare.sessionToken };
 let reader: SessionReads;
 function ReadOwnerProbe() { reader = useSessionReads(); return null; }
-function render(ui: ReactNode) { return renderUi(ui, { wrapper: ({ children }) => <SessionReadProvider context={context} bridge={false}><ReadOwnerProbe />{children}</SessionReadProvider> }); }
+function render(ui: ReactNode) { const commands=new WorkbenchCommands(); return renderUi(ui, { wrapper: ({ children }) => <WorkbenchCommandsProvider commands={commands}><SessionReadProvider context={context} bridge={false}><ReadOwnerProbe />{children}</SessionReadProvider></WorkbenchCommandsProvider> }); }
+type AgentProps=Omit<Parameters<typeof ProductionAgentControls>[0],"session"|"component"|"ownerBusy"|"run"> & {
+  run:(work:(current:()=>boolean)=>Promise<void>)=>Promise<void>;
+};
+function WorkPlanAgentControls(props:AgentProps) {
+  const session=useWorkPlanAgentSession(()=>true), component=useWorkPlanGenerationSession(()=>true), reads=useSessionReads();
+  useLayoutEffect(()=>{reads.client.setQueryData(reads.key(["workPlan",props.status.lease.planId]),props.status);},[props.status,reads]);
+  return <ProductionAgentControls {...props} session={session} component={component} ownerBusy={()=>false}
+    run={work=>props.run(current=>work(Object.assign(()=>current(),{fresh:()=>current(),acceptPlan:()=>current()})))}/>;
+}
 let identity: number, original: WorkPlanGenerationPrepareRequest | null, outer: AttemptDetail | null, child: AttemptDetail | null;
 let startOutcome: "accepted" | "unknown" | "rejected", discardOutcome: boolean, installed: typeof generationPackage;
 function execution(state: "queued" | "succeeded" | "unknown", isChild: boolean): AttemptDetail {
@@ -298,4 +309,73 @@ it("can confirm an uncertain discard with the same original preparation identity
   const discarded = invoke.mock.calls.filter(([command]) => command === "discard_work_plan_generation_component").map(([, args]) => args.request);
   expect(discarded).toHaveLength(2); expect(discarded[0]).toEqual(discarded[1]);
   expect(invoke.mock.calls.some(([command]) => command === "start_work_plan_generation_component")).toBe(false);
+});
+
+
+let stableComponent:ReturnType<typeof useWorkPlanGenerationSession>;
+function StableComponentConsumer({mounted=true}:{mounted?:boolean}) {
+  const reads=useSessionReads(),alive=useSessionAlive(),flight=useRef(false),[busy,setBusy]=useState(false);
+  useLayoutEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
+  const agent=useWorkPlanAgentSession(()=>alive.current),component=useWorkPlanGenerationSession(()=>alive.current);
+  useLayoutEffect(()=>{stableComponent=component;reads.client.setQueryData(reads.key(["workPlan",workPlanToolStatus.lease.planId]),workPlanToolStatus);},[reads]);
+  async function run(work:Parameters<Parameters<typeof ProductionAgentControls>[0]["run"]>[0]) {
+    if(!alive.current||flight.current)return;
+    flight.current=true;setBusy(true);
+    try{await work(Object.assign(()=>alive.current,{fresh:()=>alive.current,acceptPlan:()=>alive.current}));}
+    catch(error){failures.push(error);}
+    finally{flight.current=false;if(alive.current)setBusy(false);}
+  }
+  return mounted?<ProductionAgentControls context={context} status={workPlanToolStatus} open disabled={false} busy={busy}
+    session={agent} component={component} ownerBusy={()=>flight.current} run={run} onBlockedChange={()=>{}} onGenerated={()=>{}}/>:null;
+}
+async function chooseComponent() {
+  const user=userEvent.setup();
+  await user.click(screen.getByRole("checkbox",{name:"barrel"}));
+  await user.click(screen.getByRole("button",{name:"Generate with an installed component"}));
+  await screen.findByRole("option",{name:"example/generation 0.1.0 · generation.call"});
+  await user.selectOptions(screen.getByRole("combobox",{name:"Generation component"}),`${installed.packageDigest}:generation.call`);
+  await user.selectOptions(screen.getByRole("combobox",{name:"Component profile"}),jsonIdentity(generationComponent.profile)!);
+  await user.selectOptions(screen.getByRole("combobox",{name:"Execution environment"}),generationComponent.environmentDigest);
+  await waitFor(()=>expect(screen.getByRole("button",{name:"Prepare component generation"})).toBeEnabled());
+  return user;
+}
+it.each(["eviction","error","contradiction","destroyed"] as const)("keeps component metadata witness ownership through %s during identity",async phase=>{
+  const ui=render(<StableComponentConsumer/>),user=await chooseComponent(),originalInvoke=invoke.getMockImplementation()!;
+  const cache=reader.client.getQueryCache(),inventory=reader.client.getQueryState(reader.key(["generation-component-inventory",0]));
+  if(inventory?.status!=="success")throw new Error("Expected original component inventory");
+  const queryKey=reader.key(["generation-component-environment",`${installed.packageDigest}:generation.call`,jsonIdentity(generationComponent.profile),generationComponent.environmentDigest,0,inventory.dataUpdatedAt]);
+  const record=cache.find({queryKey,exact:true});
+  if(!record)throw new Error("Expected exact component metadata read");
+  expect(record.queryKey).toEqual(queryKey);expect(record.state.status).toBe("success");expect(record.state.fetchStatus).toBe("idle");
+  const originalMetadata=record.state.data;
+  expect(originalMetadata).toEqual(generationComponent);
+  const counts={subscribed:0,disposed:0},subscribe=cache.subscribe;
+  vi.spyOn(cache,"subscribe").mockImplementation(listener=>{counts.subscribed++;const release=subscribe(listener);return()=>{counts.disposed++;release();};});
+  let resolve!:(id:string)=>void,identities=0;
+  invoke.mockImplementation((command,args)=>command==="create_execution_identity"&&++identities===1?new Promise<string>(done=>{resolve=done;}):originalInvoke(command,args));
+  await user.click(screen.getByRole("button",{name:"Prepare component generation"}));
+  await waitFor(()=>expect(resolve).toBeTypeOf("function"));
+  expect(counts.subscribed).toBe(2);
+  if(phase==="destroyed")ui.unmount();
+  else ui.rerender(<StableComponentConsumer mounted={false}/>);
+  act(()=>reader.client.removeQueries({queryKey,exact:true}));
+  if(phase==="error")await act(async()=>{await expect(reader.client.fetchQuery({queryKey,retry:false,queryFn:async()=>{throw new Error("Replacement component unavailable");}})).rejects.toThrow("Replacement component unavailable");});
+  if(phase==="contradiction")await act(async()=>{await reader.client.fetchQuery({queryKey,retry:false,queryFn:async()=>({...generationComponent,runtimeOrigin:{...generationComponent.runtimeOrigin,sourceId:"different-runtime"}})});});
+  act(()=>reader.client.removeQueries({queryKey,exact:true}));
+  if(phase==="destroyed")expect(counts.disposed).toBe(2);
+  await act(async()=>resolve(fixtureIdentity(980)));
+  await waitFor(()=>expect(counts.disposed).toBe(2));
+  expect(invoke.mock.calls.filter(([name])=>name==="prepare_work_plan_generation_component")).toHaveLength(phase==="eviction"?1:0);
+  expect(invoke.mock.calls.some(([name])=>name==="start_work_plan_generation_component")).toBe(false);
+  if(phase==="eviction") {
+    ui.rerender(<StableComponentConsumer/>);
+    const review=await screen.findByRole("region",{name:"Review component generation"});
+    expect(review).toBeInTheDocument();
+    expect(within(review).getByText(`${generationComponent.binding.provider.plugin.publisher}/${generationComponent.binding.provider.plugin.id} ${generationComponent.binding.provider.plugin.version} · ${generationComponent.binding.provider.contributionId}`)).toBeInTheDocument();
+    expect(stableComponent.current().operation?.prepared.generation.unitIds).toEqual([workPlanToolStatus.plan.scope[0].unitId]);
+    expect(screen.getByRole("button",{name:"Start component generation"})).toBeDisabled();
+  } else expect(stableComponent.current().operation).toBeNull();
+  const subscriptions=counts.subscribed;
+  act(()=>reader.client.setQueryData(queryKey,originalMetadata));
+  expect(counts.subscribed).toBe(subscriptions);expect(counts.disposed).toBe(2);
 });

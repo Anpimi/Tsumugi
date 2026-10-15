@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/pluginInventory.contract.json";
 import candidate from "../test/fixtures/pluginPackage.contract.json";
-import { validateRequestNativeHostApproval, validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource, validateRequestBuild, validateResponseBuild, validateRequestTranslation, validateResponseTranslation } from "./generated/plugins.validators";
+import { validateRequestApprovalRemoval, validateRequestUninstall, validateRequestNativeHostApproval, validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource, validateRequestBuild, validateResponseBuild, validateRequestTranslation, validateResponseTranslation } from "./generated/plugins.validators";
 import { pluginCommands } from "./pluginCommands";
 import runtime from "../test/fixtures/pluginRuntime.contract.json";
 import source from "../test/fixtures/pluginSource.contract.json";
@@ -233,4 +233,57 @@ it("uses the strict Native approval request and existing inventory decoder", asy
   expect(invoke).toHaveBeenLastCalledWith("set_plugin_native_host_approval", { request });
   invoke.mockResolvedValueOnce({ ...fixture.empty, nativeHostOffer: undefined });
   await expect(pluginCommands.nativeHostApproval(request)).rejects.toThrow("Invalid IPC response: set_plugin_native_host_approval");
+});
+
+it("requires the complete original installation and confirms only its exact removal receipt", async () => {
+  invoke.mockReset();
+  const installation = fixture.rich.packages[0];
+  const original = fixture.rich.uninstallations[0];
+  const request = { package: { plugin: installation.plugin, packageDigest: installation.packageDigest },
+    origin: installation.origin, originalInstallAction: installation.originalInstallAction,
+    expectedRevision: original.settingsRevision, actionId: original.actionId };
+  expect(validateRequestUninstall(request)).toBe(true);
+  const { originalInstallAction: _omitted, ...incomplete } = request;
+  expect(validateRequestUninstall(incomplete)).toBe(false);
+  expect(validateRequestUninstall({ ...request, expectedRevision: 0 })).toBe(false);
+  expect(validateRequestUninstall({ ...request, approved: true })).toBe(false);
+  const sealed = { ...original, state: "sealed", installation: { ...original.installation, state: "sealed" } };
+  const confirmed = { ...fixture.rich, uninstallations: [sealed] };
+  invoke.mockResolvedValueOnce(confirmed);
+  await expect(pluginCommands.uninstall(request)).resolves.toEqual(confirmed);
+  for (const wrong of [
+    { ...sealed, actionId: "00000000-0000-4000-8000-000000000004" },
+    { ...sealed, settingsRevision: "0" },
+    { ...sealed, state: "recovery-required" },
+    { ...sealed, installation: { ...sealed.installation, state: "recovery-required" } },
+    { ...sealed, installation: { ...sealed.installation, originalInstallAction: sealed.actionId } },
+    { ...sealed, installation: { ...sealed.installation, origin: { ...installation.origin, publisherId: "different-source" } } },
+    { ...sealed, installation: { ...sealed.installation, packageDigest: "4".repeat(64) } },
+    { ...sealed, installation: { ...sealed.installation, plugin: { ...installation.plugin, version: "0.2.0" } } },
+  ]) {
+    invoke.mockResolvedValueOnce({ ...confirmed, uninstallations: [wrong] });
+    await expect(pluginCommands.uninstall(request)).rejects.toThrow("Invalid IPC acknowledgement: uninstall");
+  }
+  invoke.mockResolvedValueOnce({ ...confirmed, uninstallations: [] });
+  await expect(pluginCommands.uninstall(request)).rejects.toThrow("Invalid IPC acknowledgement: uninstall");
+});
+
+it("confirms approval withdrawal separately from installation removal", async () => {
+  invoke.mockReset();
+  const installation = fixture.rich.packages[0];
+  const request = { package: { plugin: installation.plugin, packageDigest: installation.packageDigest },
+    origin: installation.origin, expectedRevision: "0", actionId: "00000000-0000-4000-8000-000000000004" };
+  expect(validateRequestApprovalRemoval(request)).toBe(true);
+  expect(validateRequestApprovalRemoval({ ...request, enabled: false })).toBe(false);
+  const confirmed = { ...fixture.empty, packages: [installation], settingsRevision: "1", lastSettingsAction: request.actionId };
+  invoke.mockResolvedValueOnce(confirmed);
+  await expect(pluginCommands.removeApproval(request)).resolves.toEqual(confirmed);
+  for (const wrong of [
+    { ...confirmed, settingsRevision: "2" },
+    { ...confirmed, lastSettingsAction: null },
+    { ...confirmed, packageDecisions: [{ ...request.package, origin: request.origin, enabled: false }] },
+  ]) {
+    invoke.mockResolvedValueOnce(wrong);
+    await expect(pluginCommands.removeApproval(request)).rejects.toThrow("Invalid IPC acknowledgement: approval removal");
+  }
 });

@@ -1,18 +1,14 @@
 # Work-plan generation service data
 
 The experimental `tsumugi.work-plan-generation` service uses schema/behavior
-`1/1`. It delegates to an already authorized application WorkPlan. The SDK owns
-the public data shapes and parsers; it has no Core, project database, model,
-credential, queue or authorization dependency. Desktop can observe an installed
-generation component through a read-only, explicit provider/profile/environment
-selection. Its experimental trusted Desktop prepare/start commands use a separate
-ordinary component grant and a scope-neutral factory captured for each actual
-Host dispatch. The original project service enqueues sealed AI children through
-the existing ledger, budget and candidate owner; child execution and effects must
-both settle before releasing their original caller association. End-to-end
-workbench/native product acceptance remains separate integration work.
+`1/1`. Its data interface refers to an already authorized application WorkPlan.
+The SDK owns the public data shapes and parsers; it has no Core, project database,
+model, credential, queue or authorization dependency. An application adapter owns
+actual component selection, per-dispatch service scope, child execution and its
+authorized effects. These data contracts do not establish that adapter's runtime
+or native product acceptance.
 
-The Host selects the exact service provider, handle, project, scope, activation
+A Host adapter must select the exact service provider, handle, project, scope, activation
 generation and configuration digest in the existing `ServiceBinding`. The
 descriptor's input, output and error references must be:
 
@@ -40,9 +36,9 @@ valid payload grants no permission, opens no plan scope and renews no authority.
 ```
 
 The SDK bounds identifiers to 128 ASCII bytes and requires 1–100 distinct source
-unit IDs. The actual input, including whitespace, is at most 16 KiB. The Host
-resolves these identities against the exact original project and plan; SDK
-syntax validation cannot prove membership. The Host derives source text, model,
+unit IDs. The actual input, including whitespace, is at most 16 KiB. A Host adapter must
+resolve these identities against the exact original project and plan; SDK
+syntax validation cannot prove membership. The adapter must derive source text, model,
 configuration, destination, sharing, effects, current authority and cumulative
 ancestor budget from that original plan. Extra fields, including payload,
 configuration, lease, consent or budget overrides, are refused.
@@ -70,12 +66,13 @@ reply or an uncertain enqueue is not proof that nothing happened. Reconcile the
 original call identity against the original ledger; do not automatically submit
 a new call or replace its child identities.
 
-The short service callback returns after bounded enqueue/receipt work, without
-waiting for model completion. The application retains the actual caller,
+An application service callback must return after bounded enqueue/receipt work,
+without waiting for model completion. Its adapter must retain the actual caller,
 original ordinary grant, WorkPlan scope, installed-settings revocation and
 original absolute deadline through child execution and authorized effects.
-Closing the component channel releases channel registrations, not that durable
-authority association. Historical receipts cannot reconstruct live authority.
+Closing the component channel cannot discard that authority association while
+its children or effects remain unsettled. Historical receipts cannot reconstruct
+live authority.
 
 Rust consumers use `parse_generation_service_input`,
 `parse_generation_service_receipt`, `parse_generation_service_error` and

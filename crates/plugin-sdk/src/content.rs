@@ -166,9 +166,14 @@ impl ContentExchange {
             (self.units.len(), "content.units"),
             (self.order.len(), "content.order"),
             (self.relations.len(), "content.relations"),
-            (self.domain_blocks.len(), "content.domainBlocks"),
         ] {
             count(len, field)?;
+        }
+        if self.domain_blocks.len() > MAX_CONTENT_DOMAIN_BLOCKS {
+            return Err(ContractError::at(
+                ContractErrorCode::LimitExceeded,
+                "content.domainBlocks",
+            ));
         }
         unique(self.units.iter().map(|u| &u.id), "content.units.id")?;
         let mut occurrences = BTreeSet::new();
@@ -255,8 +260,11 @@ impl ContentExchange {
                     "content.domainBlocks.target",
                 ));
             }
+            if block.schema == source_context_facts_contract() {
+                parse_source_context_block(block, &self.artifacts)?;
+            }
         }
-        encoded_limit(self, MAX_EXCHANGE_BYTES, "contentExchange")
+        encoded_limit(self, MAX_CONTENT_EXCHANGE_BYTES, "contentExchange")
     }
 
     /// Use before an operation that needs domain interpretation. Reading stored
