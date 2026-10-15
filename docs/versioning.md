@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+Context editing navigation transfers an exact checked entry and language to the
+existing resource draft owner, then returns to the retained translation editor.
+Opening and returning have no business write or AI sharing effect; explicit
+saves keep the original resource revision, CAS and receipt contract. This changes
+only Desktop interaction and frontend target types, without a Core/Host/IPC,
+persisted format, schema, SDK/process, dependency or lockfile change. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same undistributed batch
+without an additional SemVer bump. Both Unreleased changelogs are synchronized.
+
 Finite maintenance assessments reuse current source impact, resource impact,
 review and protection facts without writing a queue or granting execution.
 Captured choices enter the original immutable WorkPlan as a required nullable

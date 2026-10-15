@@ -156,7 +156,7 @@ it("registers import and content row commands and confirms an ordered complete m
   preview=translationPreviewFixture([translationRowFixture(0),translationRowFixture(1),translationRowFixture(2)]);const {user}=await readyImport(),dispatch=vi.spyOn(registry,"dispatch");
   expect(registry.list(scope).filter(value=>value.payloadKind?.startsWith("translation-")).map(value=>value.id).sort()).toEqual([
     "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-candidate-decision","translation.check-import-receipt","translation.check-selection",
-    "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.decide-candidate","translation.inspect-import","translation.open-comparison","translation.retry-candidate-decision","translation.retry-import-action",
+    "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.decide-candidate","translation.edit-context","translation.inspect-import","translation.open-comparison","translation.retry-candidate-decision","translation.retry-import-action",
     "translation.retry-import-start","translation.retry-selection","translation.select-revision","translation.start-import","translation.toggle-content-selection",
     "translation.prepare-import-check","translation.start-import-check","translation.finish-import-check","translation.prepare-import-projection","translation.start-import-projection","translation.retry-import-plugin",
   ].sort());

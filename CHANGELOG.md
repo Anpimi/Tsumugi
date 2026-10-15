@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Open the current entry's human context directly from the translation editor
+  and return to the retained translation draft. Navigation rechecks source and
+  context evidence, preserves newer resource edits and unconfirmed actions, and
+  saves only through the existing explicit context revision flow. Extracted
+  facts and AI inferences are unchanged.
+
 - Current development projects use current-only schema 40 and internal immutable
   WorkPlan format 3. Captured component scope and maintenance fields have no
   implicit defaults. Other development project formats are refused before

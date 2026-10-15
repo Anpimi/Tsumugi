@@ -20,6 +20,18 @@ function setup() {
 }
 
 describe("project session navigation", () => {
+  it("freezes the original editor context capture and returns through the same navigation guard",async()=>{
+    const test=setup();test.setArea("translation");const answer=deferred<boolean>();
+    test.presentation.allowNavigate.mockImplementationOnce(()=>answer.promise);
+    const capture={target:{unitId:"unit",sourceRevisionId:"source",key:"Original key",sourceText:"Original"},locale:"zh-CN",sourceSnapshotId:"snapshot",contextRevisionId:null,readVersion:"view",editSeq:4};
+    const moving=test.navigation.navigate({kind:"resource-context",capture});capture.target.key="Later key";capture.editSeq=5;answer.resolve(true);
+    expect(await moving).toBe(true);expect(test.area()).toBe("resources");
+    const accepted=test.ports.accept as ReturnType<typeof vi.fn>,original=accepted.mock.calls[0][0];
+    expect(original.capture.target.key).toBe("Original key");expect(original.capture.editSeq).toBe(4);
+    test.presentation.allowNavigate.mockResolvedValueOnce(false);
+    expect(await test.navigation.navigate({kind:"resource-context-return",capture:original.capture})).toBe(false);expect(test.area()).toBe("resources");
+    expect(await test.navigation.navigate({kind:"resource-context-return",capture:original.capture})).toBe(true);expect(test.area()).toBe("translation");
+  });
   it("routes a task dock entry through the same current-work guard", async () => {
     const test = setup(); test.setArea("translation");
     test.presentation.allowNavigate.mockResolvedValueOnce(false);

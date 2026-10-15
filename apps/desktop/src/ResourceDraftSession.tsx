@@ -20,6 +20,10 @@ export type ResourcePending =
   | (PendingBase & { kind: "capture"; request: CaptureContext });
 export type ResourceNotice = "saved" | "savedNewer" | "decisionSaved" | "previewReady" | "captureSaved" | "unknown" | "pickerUnknown" | "error" | null;
 export interface ResourceSourceBasis { revision: string; snapshotId: string }
+/** Only the checked editing target belongs to a context draft, not a source page. */
+export interface ResourceContextTarget {
+  unitId: string; sourceRevisionId: string; occurrence: { key: string; text: string };
+}
 export interface ResourceDraftState {
   locale: string;
   selectedTerm: TermRevision | null;
@@ -27,7 +31,7 @@ export interface ResourceDraftState {
   aliasInput: string;
   termSeq: number;
   newerTerm: boolean;
-  selectedUnit: ContentRow | null;
+  selectedUnit: ResourceContextTarget | null;
   contextRevision: ContextRevision | null;
   contextDraft: string;
   contextReason: string;
@@ -59,6 +63,8 @@ interface ResourceSession {
   editTerm: (draft: ResourceTermDraft, aliases?: string) => void;
   discardTerm: () => void;
   beginContext: (row: ContentRow, revision: ContextRevision | null) => boolean;
+  canReceiveContext: (locale: string) => boolean;
+  receiveContext: (target: ResourceContextTarget, locale: string, revision: ContextRevision | null, before: ResourceDraftState, currentRead: () => boolean) => boolean;
   adoptContext: (revision: ContextRevision | null, expectedRevisionId: string | null, editSeq: number) => boolean;
   editContext: (text: string) => void;
   editContextReason: (reason: string) => void;
@@ -132,7 +138,21 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     const locale = current().locale;
     if (reserved() || contextDirty() || !localeAvailable(locale) || !row.unitId || !row.sourceRevisionId
       || (revision && (revision.unitId !== row.unitId || revision.locale !== locale))) return false;
-    update(before => ({ ...before, selectedUnit: row, contextRevision: revision, contextDraft: revision?.text ?? "", contextReason: revision?.reason ?? "", contextSeq: before.contextSeq + 1, newerContext: false, fixedContext: null })); return true;
+    const target:ResourceContextTarget={unitId:row.unitId,sourceRevisionId:row.sourceRevisionId,occurrence:{key:row.occurrence.key,text:row.occurrence.text}};
+    update(before => ({ ...before, selectedUnit: target, contextRevision: revision, contextDraft: revision?.text ?? "", contextReason: revision?.reason ?? "", contextSeq: before.contextSeq + 1, newerContext: false, fixedContext: null })); return true;
+  }
+  function canReceiveContext(locale: string) {
+    const before=current();
+    return localeAvailable(locale) && !reserved() && !contextDirty() && !tool.blocked() && !tool.hasDraft()
+      && (before.locale===locale || (!termDirty() && !before.previewCapture && !before.fixedContext));
+  }
+  function receiveContext(target:ResourceContextTarget, locale:string, revision:ContextRevision|null, before:ResourceDraftState, currentRead:()=>boolean) {
+    if (current()!==before || !canReceiveContext(locale) || !currentRead() || !target.unitId || !target.sourceRevisionId
+      || (revision && (revision.unitId!==target.unitId || revision.locale!==locale))) return false;
+    const retained=before.locale===locale ? before : resetLocale(before,locale);
+    update(()=>({...retained,selectedUnit:structuredClone(target),contextRevision:revision&&structuredClone(revision),
+      contextDraft:revision?.text??"",contextReason:revision?.reason??"",contextSeq:retained.contextSeq+1,newerContext:false,fixedContext:null,notice:null,failure:null}));
+    return true;
   }
   function editContext(contextDraft: string) { update(before => ({ ...before, contextDraft, contextSeq: before.contextSeq + 1, newerContext: false })); }
   function adoptContext(revision: ContextRevision | null, expectedRevisionId: string | null, editSeq: number) {
@@ -290,7 +310,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     finally { release(); }
   }
   return <ResourceContext.Provider value={{ tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
-    setLocale, beginTerm, editTerm, discardTerm, beginContext, adoptContext, editContext, editContextReason, discardContext, discard,
+    setLocale, beginTerm, editTerm, discardTerm, beginContext, canReceiveContext, receiveContext, adoptContext, editContext, editContextReason, discardContext, discard,
     saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
     decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;
 }

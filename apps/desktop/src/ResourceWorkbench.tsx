@@ -15,7 +15,7 @@ import { resourceReads } from "./resourceQueries";
 import { useWorkbenchCommands, type ResourceTermCommandPayload, type ResourceContextCommandPayload,
   type ResourceContextBasisCommandPayload,
   type ResourceCaptureCommandPayload, type ResourceDecisionCommandPayload, type ResourcePendingCommandPayload,
-  type ResourceTranslationCommandPayload, type CommandAvailability } from "./workbenchCommands";
+  type ResourceTranslationCommandPayload, type CommandAvailability, type ContextEditorTarget } from "./workbenchCommands";
 import type { QueryKey } from "@tanstack/react-query";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { PluginToolQueries, type ToolQueryHandle, type ToolQueryState } from "./PluginToolQueries";
@@ -24,9 +24,11 @@ type Tab = "terms" | "updates" | "context" | "impact" | "queries";
 export interface ResourceHandle { allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean>; addQueryText: (text: string) => boolean }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
-export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }: {
+export function ResourceWorkbench({ project, disabled, onOpenTranslation, contextEditorReturn, onReturnToEditor, ref }: {
   project: ProjectView; disabled: boolean;
   onOpenTranslation: (target: EditorTarget, locale: string, suggestedText?: string) => boolean | Promise<boolean>;
+  contextEditorReturn?: ContextEditorTarget | null;
+  onReturnToEditor?: (capture: ContextEditorTarget) => Promise<boolean>;
   ref?: Ref<ResourceHandle>;
 }) {
   const { t } = useTranslation();
@@ -348,6 +350,9 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
           {notice ? <p role="status">{t(notice === "saved" ? "resource.saved" : notice === "savedNewer" ? "resource.saved" : notice === "decisionSaved" ? "resource.decisionSaved" : notice === "previewReady" ? "resource.previewReady" : notice === "captureSaved" ? "resource.captureSaved" : notice === "pickerUnknown" ? "resource.pickerUnknown" : notice === "unknown" ? "resource.uncertainAction" : "resource.actionFailed")}</p> : null}
           {notice === "savedNewer" ? <p role="status">{t("resource.savedNewer")}</p> : null}
           {readFailure ? <div role="alert"><p>{t("resource.readFailed", { reason: t(`resource.errors.${failureReason(readFailure)}`, { defaultValue: failureReason(readFailure) ?? "" }) })}</p><CommandFailureDetails failure={readFailure} /></div> : null}
+          {contextEditorReturn && onReturnToEditor ? <><p>{t("resource.contextEditorHelp")}</p><button type="button" className="secondary-button"
+            disabled={disabled||owner.inFlight()||!!pending||owner.tool.blocked()||owner.tool.hasDraft()}
+            onClick={()=>{if(contextEditorReturn&&!owner.inFlight()&&!owner.current().pending)void onReturnToEditor(contextEditorReturn);}}>{t("resource.returnToEditor",{key:contextEditorReturn.target.key,locale:contextEditorReturn.locale})}</button></>:null}
           {!targetAvailable && locale ? <p role="status">{t("resource.removedTarget", { locale })} <button className="text-button" onClick={requestClose}>{t("resource.returnSettings")}</button></p> : null}
           {previewCapture && previewCapture.targetLocale !== locale && !owner.localeAvailable(previewCapture.targetLocale) ? <p role="status">{t("resource.removedPreviewTarget", { locale: previewCapture.targetLocale })} <button className="text-button" onClick={requestClose}>{t("resource.returnSettings")}</button></p> : null}
           {pending && (pending.kind === "capture" || (pending.kind === "term" && tab !== "terms") || (pending.kind === "context" && tab !== "context") || (pending.kind === "decision" && tab !== "updates")) ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button></div> : null}
