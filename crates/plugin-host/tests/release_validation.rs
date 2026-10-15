@@ -82,6 +82,7 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
                         &source.review,
                         &tsumugi_core::execution::PluginExecutionBinding {
                             component_scope: sdk::ComponentScope::Project,
+                            application_scope: None,
                             capability: (&source.review).checker.clone(),
                             profile: Some((&source.review).declaration.profile.clone()),
                             environment: (*(environment.descriptor())).clone().into(),

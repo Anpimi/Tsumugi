@@ -1217,7 +1217,8 @@
               "schemaVersion": 1,
               "behaviorVersion": 1
             },
-            "componentScope": "project"
+            "componentScope": "project",
+            "applicationScope": null
           }
         },
         "advisoryChecks": [],

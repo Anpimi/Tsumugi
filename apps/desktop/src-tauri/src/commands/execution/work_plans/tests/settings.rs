@@ -156,6 +156,7 @@ fn declared_options(store: &ProjectStore, unit: ExecutionId, advisory: bool) -> 
                 &binding,
                 &tsumugi_core::execution::PluginExecutionBinding {
                     component_scope: sdk::ComponentScope::Project,
+                    application_scope: None,
                     capability: binding.checker.clone(),
                     profile: Some(binding.declaration.profile.clone()),
                     environment: format.binding().checker.environment.clone(),
@@ -194,6 +195,7 @@ fn declared_tool(
         selections: vec!["term".into()],
         execution: PluginExecutionBinding {
             component_scope: sdk::ComponentScope::Project,
+            application_scope: None,
             capability: binding.capability.clone(),
             profile: binding.declaration.profile.clone(),
             environment,

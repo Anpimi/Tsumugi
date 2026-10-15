@@ -14,6 +14,55 @@ use crate::{
     CapturedNativeRuntime, CapturedRuntime, HostError, HostLimits, LaunchOptions, PackageImage,
     ProcessSession, ProjectServiceBroker, ReceivedResult, RuntimeLauncher, ScopeBinding,
 };
+mod application;
+pub use application::ApplicationInstance;
+
+fn validate_application_selection(
+    image: &PackageImage,
+    capability: &sdk::CapabilityBinding,
+    runtime: &RunnerRuntime,
+) -> Result<(), ExecutionError> {
+    let component = image
+        .manifest()
+        .manifest()
+        .components
+        .iter()
+        .find(|component| component.id == capability.provider.component_id)
+        .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-component-scope"))?;
+    if component.scope != sdk::ComponentScope::Application
+        || !matches!(runtime, RunnerRuntime::JavaScript(_))
+        || capability.declaration.effect != sdk::EffectKind::ReadOnly
+        || component
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.required)
+        || capability
+            .declaration
+            .permissions
+            .iter()
+            .any(|permission| matches!(permission, sdk::PermissionRequest::ProjectService { .. }))
+        || image
+            .manifest()
+            .manifest()
+            .contributions
+            .iter()
+            .filter(|candidate| {
+                candidate.component_id == component.id
+                    && matches!(
+                        candidate.contribution,
+                        sdk::ContributionKind::Capability { .. }
+                    )
+            })
+            .count()
+            != 1
+    {
+        return Err(ExecutionError::new(
+            ErrorCode::InvalidInput,
+            "plugin-component-scope",
+        ));
+    }
+    Ok(())
+}
 
 pub type ProjectServiceSelectionFuture =
     Pin<Box<dyn Future<Output = Result<Arc<dyn ProjectServiceBroker>, ExecutionError>> + Send>>;
@@ -83,6 +132,8 @@ pub struct RunnerProxy {
     staging_parent: PathBuf,
     limits: HostLimits,
     service_factory: Option<Arc<dyn ProjectServiceFactory>>,
+    application: Option<Arc<ApplicationInstance>>,
+    application_basis: Option<tsumugi_core::execution::ApplicationScopeBasis>,
 }
 
 impl RunnerProxy {
@@ -93,9 +144,24 @@ impl RunnerProxy {
         staging_parent: impl Into<PathBuf>,
         limits: HostLimits,
     ) -> Result<Self, ExecutionError> {
-        let contribution_id = contribution_id.into();
-        let staging_parent = staging_parent.into();
-        let runtime = runtime.into();
+        Self::new_inner(
+            image,
+            contribution_id.into(),
+            runtime.into(),
+            staging_parent.into(),
+            limits,
+            None,
+        )
+    }
+
+    fn new_inner(
+        image: PackageImage,
+        contribution_id: String,
+        runtime: RunnerRuntime,
+        staging_parent: PathBuf,
+        limits: HostLimits,
+        application: Option<tsumugi_core::execution::ApplicationScopeBasis>,
+    ) -> Result<Self, ExecutionError> {
         if !staging_parent.is_absolute() {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
@@ -129,6 +195,20 @@ impl RunnerProxy {
             })?;
         }
         let environment = runtime.environment();
+        if component.scope == sdk::ComponentScope::Application {
+            if application.is_none() {
+                return Err(ExecutionError::new(
+                    ErrorCode::InvalidInput,
+                    "plugin-component-scope",
+                ));
+            }
+            validate_application_selection(&image, &capability, &runtime)?;
+        } else if application.is_some() {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "plugin-component-scope",
+            ));
+        }
         if component.scope == sdk::ComponentScope::Attempt
             && component
                 .dependencies
@@ -149,6 +229,7 @@ impl RunnerProxy {
             profile: capability.declaration.profiles.first().cloned(),
             capability: capability.clone(),
             component_scope,
+            application_scope: application.clone(),
             environment: environment.clone(),
         };
         checked.validate()?;
@@ -162,6 +243,8 @@ impl RunnerProxy {
             staging_parent,
             limits,
             service_factory: None,
+            application: None,
+            application_basis: application,
         })
     }
 
@@ -215,6 +298,7 @@ impl RunnerProxy {
         let binding = PluginExecutionBinding {
             capability: self.capability.clone(),
             component_scope: self.component_scope,
+            application_scope: self.application_basis.clone(),
             profile,
             environment: self.environment.clone(),
         };
@@ -258,7 +342,7 @@ impl RunnerProxy {
         let services = self.capture_services(request, permit, cancellation).await?;
         let project_id = request.input.envelope().project_id.to_string();
         let options = LaunchOptions {
-            scope: ScopeBinding {
+            scope: crate::SessionScope::Bound(ScopeBinding {
                 project_id: project_id.clone(),
                 scope_id: request
                     .input
@@ -270,7 +354,7 @@ impl RunnerProxy {
                         request.input.envelope().project_id,
                         request.input.envelope().attempt_id,
                     )?,
-            },
+            }),
             // Only a matching Core permit can reach this call. The durable
             // grant owner checked consent before issuing the read-only handle.
             allow_unsandboxed_execution: true,
@@ -370,8 +454,10 @@ impl RunnerProxy {
         // from the result's claimed identity.
         if actual.provider != channel.provider
             || actual.child_pid != channel.child_pid
-            || actual.scope.project_id != invocation.context.project_id
-            || actual.scope.scope_id != invocation.context.scope_id
+            || actual.scope != channel.scope
+            || !actual.scope.matches_invocation(&invocation.context)
+            || received.invocation_scope().project_id != invocation.context.project_id
+            || received.invocation_scope().scope_id != invocation.context.scope_id
         {
             return Err(ExecutionError::new(
                 ErrorCode::ResultMismatch,
@@ -397,6 +483,9 @@ impl Runner for RunnerProxy {
     fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
         Some(&self.environment)
     }
+    fn plugin_application_scope(&self) -> Option<&tsumugi_core::execution::ApplicationScopeBasis> {
+        self.application_basis.as_ref()
+    }
 
     fn run(
         &self,
@@ -413,16 +502,27 @@ impl Runner for RunnerProxy {
             .map_err(|error| error.for_item(request.item_id))?;
         // Core invokes Runner on its worker thread. All process IO and child
         // cleanup stay on the runtime owned by this dispatch.
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| {
-                ExecutionError::new(ErrorCode::StorageFailed, "plugin-runtime")
-                    .for_item(request.item_id)
-            })?;
-        let result = runtime
-            .block_on(self.execute(&request, &permit, &cancellation))
-            .map_err(|error| error.for_item(request.item_id))?;
+        let result = if let Some(instance) = &self.application {
+            if self.service_factory.is_some() {
+                return Err(ExecutionError::new(
+                    ErrorCode::DependencyConflict,
+                    "plugin-application-service",
+                ));
+            }
+            instance.dispatch(request.clone(), cancellation.clone())?
+        } else {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|_| {
+                    ExecutionError::new(ErrorCode::StorageFailed, "plugin-runtime")
+                        .for_item(request.item_id)
+                })?;
+            let result = runtime
+                .block_on(self.execute(&request, &permit, &cancellation))
+                .map_err(|error| error.for_item(request.item_id))?;
+            result
+        };
         require_live(&request, &permit, &cancellation)
             .map_err(|error| error.for_item(request.item_id))?;
         // Core checks current authority again at durable acceptance. This send

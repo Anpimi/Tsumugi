@@ -183,6 +183,7 @@ fn spec(
         execution: PluginExecutionBinding {
             capability: view.binding.capability.clone(),
             component_scope: view.component_scope,
+            application_scope: None,
             profile: view.binding.declaration.profile.clone(),
             environment: view.environment,
         },
@@ -324,6 +325,7 @@ pub(super) fn save_consent(
             deadline,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .map_err(map_recover)?;

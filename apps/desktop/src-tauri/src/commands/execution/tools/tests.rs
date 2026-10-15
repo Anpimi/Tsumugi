@@ -17,7 +17,7 @@ fn tool_wire_keeps_selection_fixed_queries_and_consent_separate() {
     round::<PluginToolView>(&fixture["view"]);
     round::<PluginToolPrepareRequest>(&fixture["prepare"]);
     round::<PluginToolPreflight>(&fixture["preflight"]);
-    round::<PluginStartRequest>(&fixture["start"]);
+    round::<PluginToolStartRequest>(&fixture["start"]);
     round::<PluginToolDiscardRequest>(&fixture["discard"]);
     for property in [
         "directory",
@@ -42,6 +42,18 @@ fn tool_wire_keeps_selection_fixed_queries_and_consent_separate() {
         forged[property] = json!(true);
         assert!(serde_json::from_value::<PluginToolRequest>(forged).is_err());
     }
+    let mut missing_application = fixture["preflight"].clone();
+    missing_application
+        .as_object_mut()
+        .unwrap()
+        .remove("applicationScope");
+    assert!(serde_json::from_value::<PluginToolPreflight>(missing_application).is_err());
+    let mut missing_consent = fixture["start"].clone();
+    missing_consent
+        .as_object_mut()
+        .unwrap()
+        .remove("applicationExecution");
+    assert!(serde_json::from_value::<PluginToolStartRequest>(missing_consent).is_err());
     let mut missing_scope = fixture["view"].clone();
     missing_scope
         .as_object_mut()
@@ -77,9 +89,17 @@ fn tool_pending_preparation_is_exclusive_and_stop_revokes_its_ticket() {
     target_os = "macos",
     target_arch = "aarch64"
 ))]
+#[path = "../../../../../../../crates/plugin-host/tests/support/scoped_package.rs"]
+mod scoped_package;
+
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
 #[test]
 fn real_tool_ipc_captures_single_and_batch_inputs_and_reuses_original_authority() {
-    real_scoped_tool_ipc(false);
+    real_scoped_tool_ipc(tsumugi_plugin_sdk::ComponentScope::Project);
 }
 
 #[cfg(all(
@@ -89,7 +109,7 @@ fn real_tool_ipc_captures_single_and_batch_inputs_and_reuses_original_authority(
 ))]
 #[test]
 fn real_attempt_tool_ipc_captures_scope_and_reuses_only_original_authority() {
-    real_scoped_tool_ipc(true);
+    real_scoped_tool_ipc(tsumugi_plugin_sdk::ComponentScope::Attempt);
 }
 
 #[cfg(all(
@@ -97,7 +117,18 @@ fn real_attempt_tool_ipc_captures_scope_and_reuses_only_original_authority() {
     target_os = "macos",
     target_arch = "aarch64"
 ))]
-fn real_scoped_tool_ipc(attempt_scope: bool) {
+#[test]
+fn real_application_tool_ipc_keeps_instance_lifetime_and_project_grants_independent() {
+    real_scoped_tool_ipc(tsumugi_plugin_sdk::ComponentScope::Application);
+}
+
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
+    let application = component_scope == tsumugi_plugin_sdk::ComponentScope::Application;
     use crate::commands::plugins::InstalledPluginFixture;
     use std::{
         fs,
@@ -140,6 +171,7 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
         request["inputDigest"] = view["inputDigest"].clone();
         request["grantId"] = json!(ExecutionId::new());
         request["unsandboxedExecution"] = json!(true);
+        request["applicationExecution"] = json!(view["applicationScope"].is_object());
         request["expiresAtMs"] = json!(
             (SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -149,6 +181,26 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
                 .to_string()
         );
         request
+    }
+    fn close(window: &tauri::WebviewWindow<tauri::test::MockRuntime>, context: &Value) {
+        let until = Instant::now() + Duration::from_secs(10);
+        loop {
+            match call(
+                window,
+                "close_project",
+                json!({"sessionToken":context["sessionToken"]}),
+            ) {
+                Ok(value) => {
+                    assert_eq!(value["closed"], true);
+                    break;
+                }
+                Err(error) => {
+                    assert_eq!(error["code"], "busy", "{error}");
+                    assert!(Instant::now() < until);
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
     }
     fn results(
         window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
@@ -191,7 +243,8 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
     let digest = std::env::var("TSUMUGI_TEST_KNOWLEDGE_DIGEST")
         .expect("independent package digest required");
     let image = PackageImage::capture_directory(&path, &digest, || true).unwrap();
-    let image = if attempt_scope {
+    let mut refused_application = None;
+    let image = if component_scope != tsumugi_plugin_sdk::ComponentScope::Project {
         fn files(
             root: &std::path::Path,
             directory: &std::path::Path,
@@ -234,14 +287,39 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
             digest
         );
         let mut manifest = image.manifest().manifest().clone();
+        let selected = image
+            .capability_tool("agent-query-tool")
+            .unwrap()
+            .capability
+            .provider;
         for component in &mut manifest.components {
-            if component.runtime != tsumugi_plugin_sdk::RuntimeKind::Data {
-                component.scope = tsumugi_plugin_sdk::ComponentScope::Attempt;
+            if component.runtime != tsumugi_plugin_sdk::RuntimeKind::Data
+                && (!application || component.id == selected.component_id)
+            {
+                component.scope = component_scope;
             }
         }
         let bytes = serde_json::to_vec(&manifest).unwrap();
         let digest = PackageImage::digest(&bytes, &captured).unwrap();
-        PackageImage::capture(bytes, captured, &digest).unwrap()
+        let adapted = PackageImage::capture(bytes, captured, &digest).unwrap();
+        if application {
+            refused_application = Some(adapted);
+            // Reuse the reviewed fixture owner: split exact capabilities and
+            // adapt strict Worker identity comparisons, never bypass them.
+            scoped_package::capture(
+                &path,
+                &std::env::var("TSUMUGI_TEST_KNOWLEDGE_DIGEST").unwrap(),
+                |contribution| {
+                    if contribution == selected.contribution_id {
+                        tsumugi_plugin_sdk::ComponentScope::Application
+                    } else {
+                        tsumugi_plugin_sdk::ComponentScope::Project
+                    }
+                },
+            )
+        } else {
+            adapted
+        }
     } else {
         image
     };
@@ -272,6 +350,17 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
         || true,
     )
     .unwrap();
+    if let Some(multiple) = refused_application {
+        assert!(
+            tsumugi_plugin_host::core::ApplicationInstance::validate_selection(
+                &multiple,
+                "agent-query-tool",
+                &runtime.clone().into(),
+            )
+            .is_err(),
+            "the original multi-callable component cannot opt into Application execution"
+        );
+    }
     let runtime_approval = RuntimeApproval {
         environment: descriptor.into(),
         origin: crate::runtime_bundle::bundled_origin(),
@@ -323,7 +412,11 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
     let view = call(&window, "read_plugin_tool", json!(tool)).unwrap();
     assert_eq!(
         view["componentScope"],
-        if attempt_scope { "attempt" } else { "project" }
+        match component_scope {
+            tsumugi_plugin_sdk::ComponentScope::Project => "project",
+            tsumugi_plugin_sdk::ComponentScope::Attempt => "attempt",
+            tsumugi_plugin_sdk::ComponentScope::Application => "application",
+        }
     );
     assert_eq!(
         view["binding"],
@@ -422,6 +515,26 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
     let current = call(&window, "prepare_plugin_tool", prepare.clone()).unwrap();
     assert_eq!(current["tool"]["settingsRevision"], "3");
     let start = consent(&context, &current);
+    if application {
+        let basis = current["applicationScope"].clone();
+        assert_eq!(
+            call(
+                &window,
+                "read_application_plugin_instance",
+                json!({"basis":basis})
+            )
+            .unwrap()["state"],
+            "reserved"
+        );
+        let mut without_lifetime = start.clone();
+        without_lifetime["applicationExecution"] = json!(false);
+        assert!(call(&window, "start_plugin_tool", without_lifetime).is_err());
+        let current_attempt = serde_json::from_value(current["attemptId"].clone()).unwrap();
+        state.sessions.with(move |sessions| {
+            let (_, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            assert!(store.execution_input(current_attempt).is_err());
+        });
+    }
     let attempt = call(&window, "start_plugin_tool", start.clone()).unwrap();
     assert_eq!(
         call(&window, "start_plugin_tool", start.clone()).unwrap(),
@@ -432,10 +545,11 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
     assert_eq!(single[0]["plugin"]["authorizationId"], start["grantId"]);
     assert_eq!(
         single[0]["plugin"]["result"]["context"]["scopeId"],
-        if attempt_scope {
-            attempt.clone()
-        } else {
-            context["projectId"].clone()
+        match component_scope {
+            tsumugi_plugin_sdk::ComponentScope::Attempt => attempt.clone(),
+            tsumugi_plugin_sdk::ComponentScope::Application =>
+                current["applicationScope"]["instanceId"].clone(),
+            tsumugi_plugin_sdk::ComponentScope::Project => context["projectId"].clone(),
         }
     );
     let output: Value = serde_json::from_str(
@@ -506,10 +620,18 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
     wrong["resource"]["revision"] = json!("substituted");
     prepare["attemptId"] = json!(ExecutionId::new());
     prepare["payloads"] = json!([query, empty, wrong]);
-    let batch = call(&window, "prepare_plugin_tool", prepare).unwrap();
+    let batch = call(&window, "prepare_plugin_tool", prepare.clone()).unwrap();
     let start = consent(&context, &batch);
     let batch_attempt = call(&window, "start_plugin_tool", start.clone()).unwrap();
     let batch_results = results(&window, &context, &batch_attempt, 3);
+    if application {
+        assert_eq!(current["applicationScope"], batch["applicationScope"]);
+        assert!(
+            batch_results
+                .iter()
+                .all(|result| result["plugin"]["channel"] == single[0]["plugin"]["channel"])
+        );
+    }
     assert_eq!(
         batch_results
             .iter()
@@ -552,6 +674,253 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
         .unwrap(),
         json!({"code":"resource-mismatch"})
     );
+    if application {
+        // Closing a project retires only its per-project authority, not the
+        // separately consented application instance or its exact identity.
+        let basis = batch["applicationScope"].clone();
+        close(&window, &context);
+        assert_eq!(
+            call(
+                &window,
+                "read_application_plugin_instance",
+                json!({"basis":basis})
+            )
+            .unwrap()["state"],
+            "active"
+        );
+        let second = call(&window, "create_project", json!({"destination":temporary.path().join("second"), "displayName":"Independent second project", "sourceLocale":"en", "targetLocales":["zh-CN"]})).unwrap();
+        let second_context = json!({"sessionToken":second["sessionToken"],"projectId":second["metadata"]["projectId"]});
+        let mut second_prepare = second_context.clone();
+        second_prepare["tool"] = json!(tool);
+        second_prepare["attemptId"] = json!(ExecutionId::new());
+        second_prepare["payloads"] = json!([batch["items"][0]["payload"]]);
+        let second_preflight =
+            call(&window, "prepare_plugin_tool", second_prepare.clone()).unwrap();
+        assert_eq!(second_preflight["applicationScope"], basis);
+        let mut second_start = consent(&second_context, &second_preflight);
+        second_start["applicationExecution"] = json!(false); // existing lease only; new project consent remains mandatory
+        let mut wrong_project = start.clone();
+        wrong_project["sessionToken"] = second_context["sessionToken"].clone();
+        wrong_project["projectId"] = second_context["projectId"].clone();
+        assert!(call(&window, "start_plugin_tool", wrong_project).is_err());
+        let second_attempt = call(&window, "start_plugin_tool", second_start.clone()).unwrap();
+        let second_results = results(&window, &second_context, &second_attempt, 1);
+        assert_eq!(
+            second_results[0]["plugin"]["channel"],
+            single[0]["plugin"]["channel"]
+        );
+        assert_eq!(
+            second_results[0]["plugin"]["authorizationId"],
+            second_start["grantId"]
+        );
+        assert_ne!(second_start["grantId"], start["grantId"]);
+        assert_eq!(
+            second_results[0]["plugin"]["result"]["context"]["projectId"],
+            second_context["projectId"]
+        );
+        assert_eq!(
+            second_results[0]["plugin"]["result"]["context"]["scopeId"],
+            basis["instanceId"]
+        );
+        let stop = json!({"actionId":ExecutionId::new(),"basis":basis});
+        let until = Instant::now() + Duration::from_secs(10);
+        loop {
+            let stopped = call(&window, "stop_application_plugin_instance", stop.clone()).unwrap();
+            if stopped["state"] == "stopped" {
+                break;
+            }
+            assert_eq!(stopped["state"], "stopping");
+            assert!(Instant::now() < until, "original activation was not reaped");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Exact historical ACK is data only. It never restarts the old process.
+        assert_eq!(
+            call(&window, "start_plugin_tool", second_start.clone()).unwrap(),
+            second_attempt
+        );
+        assert_eq!(
+            call(
+                &window,
+                "read_application_plugin_instance",
+                json!({"basis":basis})
+            )
+            .unwrap()["state"],
+            "stopped"
+        );
+        second_prepare["attemptId"] = json!(ExecutionId::new());
+        let replacement = call(&window, "prepare_plugin_tool", second_prepare).unwrap();
+        assert_ne!(replacement["applicationScope"], basis);
+        let fresh_basis = replacement["applicationScope"].clone();
+        assert_eq!(
+            call(&window, "stop_application_plugin_instance", stop).unwrap()["state"],
+            "stopped"
+        );
+        assert_eq!(
+            call(
+                &window,
+                "read_application_plugin_instance",
+                json!({"basis":fresh_basis})
+            )
+            .unwrap()["state"],
+            "reserved"
+        );
+        let mut no_new_lease = consent(&second_context, &replacement);
+        no_new_lease["applicationExecution"] = json!(false);
+        assert!(call(&window, "start_plugin_tool", no_new_lease).is_err());
+        let shutdown = json!({"actionId":ExecutionId::new()});
+        assert_eq!(
+            call(
+                &window,
+                "stop_application_plugin_instances",
+                shutdown.clone()
+            )
+            .unwrap()["state"],
+            "stopped"
+        );
+        assert_eq!(
+            call(
+                &window,
+                "stop_application_plugin_instances",
+                shutdown.clone()
+            )
+            .unwrap()["actionId"],
+            shutdown["actionId"]
+        );
+        assert!(
+            call(
+                &window,
+                "stop_application_plugin_instances",
+                json!({"actionId":ExecutionId::new()})
+            )
+            .is_err()
+        );
+        assert!(
+            call(&window, "prepare_plugin_tool", {
+                let mut denied = second_context.clone();
+                denied["tool"] = json!(tool);
+                denied["attemptId"] = json!(ExecutionId::new());
+                denied["payloads"] = json!([batch["items"][0]["payload"]]);
+                denied
+            })
+            .is_err()
+        );
+        assert_eq!(
+            call(
+                &window,
+                "resume_application_plugin_instances",
+                shutdown.clone()
+            )
+            .unwrap()["state"],
+            "resumed"
+        );
+        let mut after_resume = second_context.clone();
+        after_resume["tool"] = json!(tool);
+        after_resume["attemptId"] = json!(ExecutionId::new());
+        after_resume["payloads"] = json!([batch["items"][0]["payload"]]);
+        let restored_preflight =
+            call(&window, "prepare_plugin_tool", after_resume.clone()).unwrap();
+        let restored_basis = restored_preflight["applicationScope"].clone();
+        assert_ne!(restored_basis, fresh_basis);
+        let restored_start = consent(&second_context, &restored_preflight);
+        let restored_attempt = call(&window, "start_plugin_tool", restored_start).unwrap();
+        let restored_results = results(&window, &second_context, &restored_attempt, 1);
+        assert_ne!(
+            restored_results[0]["plugin"]["channel"]["instanceId"],
+            single[0]["plugin"]["channel"]["instanceId"]
+        );
+        assert_eq!(
+            call(
+                &window,
+                "stop_application_plugin_instances",
+                shutdown.clone()
+            )
+            .unwrap()["state"],
+            "resumed"
+        );
+        assert_eq!(
+            call(
+                &window,
+                "read_application_plugin_instance",
+                json!({"basis":restored_basis})
+            )
+            .unwrap()["state"],
+            "active"
+        );
+        let next_shutdown = json!({"actionId":ExecutionId::new()});
+        assert_eq!(
+            call(
+                &window,
+                "stop_application_plugin_instances",
+                next_shutdown.clone()
+            )
+            .unwrap()["state"],
+            "stopped"
+        );
+        assert_eq!(
+            call(&window, "resume_application_plugin_instances", shutdown).unwrap()["state"],
+            "resumed"
+        );
+        after_resume["attemptId"] = json!(ExecutionId::new());
+        assert!(
+            call(&window, "prepare_plugin_tool", after_resume).is_err(),
+            "old resume cannot clear the newer exit fence"
+        );
+        fixture.decide(false, vec![runtime_approval]);
+        assert_eq!(
+            results(&window, &second_context, &second_attempt, 1),
+            second_results
+        );
+        let before_history = state.sessions.with(|sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            assert!(!host.runtime.has_active_work(store).unwrap());
+            (
+                host.plugin_registrations.clone(),
+                host.tools.last_start.clone(),
+            )
+        });
+        for (field, value) in [
+            ("applicationExecution", json!(true)),
+            ("grantId", json!(ExecutionId::new())),
+            ("expiresAtMs", json!("1")),
+            ("inputDigest", json!("f".repeat(64))),
+            ("unsandboxedExecution", json!(false)),
+        ] {
+            let mut changed = second_start.clone();
+            changed[field] = value;
+            assert!(call(&window, "start_plugin_tool", changed).is_err());
+        }
+        assert_eq!(
+            call(&window, "start_plugin_tool", second_start.clone()).unwrap(),
+            second_attempt
+        );
+        assert_eq!(
+            results(&window, &second_context, &second_attempt, 1),
+            second_results
+        );
+        assert_eq!(
+            call(
+                &window,
+                "read_application_plugin_instance",
+                json!({"basis":restored_basis})
+            )
+            .unwrap()["state"],
+            "stopped"
+        );
+        state.sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            assert!(!host.runtime.has_active_work(store).unwrap());
+            assert!(host.plugin_registrations == before_history.0);
+            assert!(
+                host.tools.last_start == before_history.1,
+                "historical ACK does not replace current admission or resurrect its lease"
+            );
+        });
+        close(&window, &second_context);
+        return;
+    }
+    prepare["attemptId"] = json!(ExecutionId::new());
+    let unqueued = call(&window, "prepare_plugin_tool", prepare).unwrap();
+    let unqueued_start = consent(&context, &unqueued);
     // Historical output is readable after disabling a provider. No new grant
     // or resource adoption is needed to read its original captured evidence.
     fixture.decide(false, vec![runtime_approval]);
@@ -584,7 +953,16 @@ fn real_scoped_tool_ipc(attempt_scope: bool) {
             .0;
         assert!(host.tools.prepared.is_none() && host.tools.last_start.is_none());
     });
-    assert!(call(&window, "start_plugin_tool", start).is_err());
+    assert_eq!(
+        call(&window, "start_plugin_tool", start).unwrap(),
+        batch_attempt
+    );
+    assert!(call(&window, "start_plugin_tool", unqueued_start).is_err());
+    state.sessions.with(|sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        assert!(!host.runtime.has_active_work(store).unwrap());
+        assert!(host.tools.prepared.is_none() && host.tools.last_start.is_none());
+    });
     call(
         &window,
         "close_project",

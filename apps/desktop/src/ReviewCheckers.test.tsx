@@ -30,7 +30,7 @@ function diagnosticFixture() {
   evidence.requiredChecks.requirements.push({ key: structuredClone(key), inputDigest: "e".repeat(64), scopeDigest: "e".repeat(64),
     targets: ["cue-0"], mandatory: false, waivable: false, notApplicable: null });
   evidence.advisoryChecks.push({ binding: text.binding, declarationResourceId: text.resourceId,
-    execution: { capability: text.binding.checker, componentScope: "project",
+    execution: { capability: text.binding.checker, componentScope: "project", applicationScope: null,
       profile: text.binding.declaration.profile, environment: text.environment },
     resourcePins: text.resourcePins, rules: text.rules });
   evidence.origins.push({ checker: { provider: text.binding.checker.provider, profile: text.binding.declaration.profile },

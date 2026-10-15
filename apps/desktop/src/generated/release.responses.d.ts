@@ -363,6 +363,7 @@ export interface BuildBinding {
   declaration: BuildDeclaration;
 }
 export interface PluginExecutionBinding {
+  applicationScope: ApplicationScopeBasis | null;
   capability: CapabilityBinding;
   /**
    * Captured from the selected component, never inferred from a result.
@@ -374,6 +375,14 @@ export interface PluginExecutionBinding {
    */
   environment: ExecutionEnvironmentDescriptor;
   profile: ContractRef | null;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
 }
 export interface SavedBuildLocale {
   choice: PluginBuildLocaleChoice;

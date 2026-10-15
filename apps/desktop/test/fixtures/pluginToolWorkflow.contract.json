@@ -271,7 +271,8 @@
           "queryId": "query-1"
         }
       }
-    ]
+    ],
+    "applicationScope": null
   },
   "start": {
     "sessionToken": "session-1",
@@ -280,7 +281,8 @@
     "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "grantId": "00000000-0000-4000-8000-000000000703",
     "expiresAtMs": "18446744073709551615",
-    "unsandboxedExecution": true
+    "unsandboxedExecution": true,
+    "applicationExecution": false
   },
   "discard": {
     "sessionToken": "session-1",

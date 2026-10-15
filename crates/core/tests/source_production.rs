@@ -114,6 +114,7 @@ fn production_source_requires_an_independent_checker_without_writes() {
             expires,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();

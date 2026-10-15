@@ -6,15 +6,27 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Manual JavaScript reference tools can explicitly consent to one shared
+  application instance and stop it from the original query preview. Every
+  project query retains separate input, permission, grant, cancellation and
+  deadline. The shared unsandboxed process may retain previously supplied input
+  in memory until stopped; saved output and uncertain original actions remain
+  available. Unsupported Application compositions remain refused.
+- Repeating an accepted tool start returns its original acknowledgement after
+  later queries, stopping, revocation or reopening. The exact persisted grant,
+  expiry and both consent decisions must match; this read restores no execution
+  permission or shared instance. An unqueued grant cannot acknowledge a start.
+
 - Open the current entry's human context directly from the translation editor
   and return to the retained translation draft. Navigation rechecks source and
   context evidence, preserves newer resource edits and unconfirmed actions, and
   saves only through the existing explicit context revision flow. Extracted
   facts and AI inferences are unchanged.
 
-- Current development projects use current-only schema 40 and internal immutable
-  WorkPlan format 3. Captured component scope and maintenance fields have no
-  implicit defaults. Other development project formats are refused before
+- Current development projects use current-only schema 41 and internal immutable
+  WorkPlan format 3. Captured component scope, application instance, original
+  grant consent and maintenance fields have no implicit defaults. Other
+  development project formats are refused before
   application schema changes, with directories preserved without conversion,
   migration, rebuild or reset. Keep them and reimport source files into a new
   project. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same

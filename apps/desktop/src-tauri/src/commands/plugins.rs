@@ -15,6 +15,7 @@ use tsumugi_plugin_host::{
     HostError, InstallError, InstalledObjectState, PackageStore, catalog::PackageOrigin,
 };
 use tsumugi_plugin_sdk as sdk;
+pub(in crate::commands) mod application;
 pub(super) mod builds;
 pub(super) mod defaults;
 mod environment;
@@ -231,9 +232,11 @@ pub(super) struct ApplicationPlugins {
     manager: Mutex<PluginManager>,
     open: AtomicBool,
     // Publication contains one ephemeral settings epoch, never Store data or
-    // execution grants. Lock order is manager -> publication. Close only takes
-    // publication, so it can withdraw authority without waiting for Store IO.
+    // execution grants. Lock order is manager -> publication. Close takes
+    // publication after releasing instance control records, so shutdown never
+    // waits for Store IO or holds the inverse publication/instance lock order.
     environment_epoch: Mutex<Option<EnvironmentEpoch>>,
+    application_instances: Mutex<application::Instances>,
 }
 impl Default for ApplicationPlugins {
     fn default() -> Self {
@@ -241,6 +244,7 @@ impl Default for ApplicationPlugins {
             manager: Mutex::default(),
             open: AtomicBool::new(true),
             environment_epoch: Mutex::default(),
+            application_instances: Mutex::default(),
         }
     }
 }
@@ -267,6 +271,7 @@ impl ApplicationPlugins {
 
     pub(super) fn close(&self) {
         self.open.store(false, Ordering::Release);
+        self.stop_application_instances();
         // A poisoned publication still owns the original token. Withdraw it
         // rather than leaving in-flight work authorized during shutdown.
         let epoch = self
@@ -279,6 +284,7 @@ impl ApplicationPlugins {
     }
 
     fn revoke_environment_authority(&self) -> Result<(), CommandError> {
+        self.stop_application_instances();
         match self.environment_epoch.lock() {
             Ok(epoch) => {
                 if let Some(epoch) = epoch.as_ref() {

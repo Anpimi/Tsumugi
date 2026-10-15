@@ -442,7 +442,9 @@ fn authorize_policy(
             crate::execution::plugin_authority::plugin_now_ms().unwrap() + 60_000,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
+            None,
         )
         .unwrap();
     store

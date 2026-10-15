@@ -10,10 +10,10 @@ use native::{contract, image};
 
 fn options() -> LaunchOptions {
     LaunchOptions {
-        scope: ScopeBinding {
+        scope: tsumugi_plugin_host::SessionScope::Bound(ScopeBinding {
             project_id: "project-a".into(),
             scope_id: "scope-a".into(),
-        },
+        }),
         allow_unsandboxed_execution: true,
         limits: HostLimits {
             handshake_timeout_ms: 3000,

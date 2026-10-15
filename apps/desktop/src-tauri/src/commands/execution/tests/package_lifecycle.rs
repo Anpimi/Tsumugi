@@ -21,6 +21,7 @@ fn binding(package: &PluginPackageRequest) -> PluginExecutionBinding {
     };
     PluginExecutionBinding {
         component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
         capability: sdk::CapabilityBinding {
             provider: sdk::ProviderSelectionBinding {
                 plugin: package.plugin.clone(),
@@ -179,6 +180,7 @@ fn package_queries_drain_independently_and_installation_handoff_keeps_session_fe
                     now + 60_000,
                     PluginConsent {
                         unsandboxed_execution: true,
+                        application_execution: false,
                     },
                 )
                 .unwrap();
@@ -405,6 +407,7 @@ fn storage_busy_keeps_original_action_fence_and_global_stop_waits_for_accepted_i
                 now + 60_000,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap();
@@ -636,6 +639,7 @@ fn registered_uninstall_waits_for_original_target_query_without_stopping_indepen
                     now + 60_000,
                     PluginConsent {
                         unsandboxed_execution: true,
+                        application_execution: false,
                     },
                 )
                 .unwrap();

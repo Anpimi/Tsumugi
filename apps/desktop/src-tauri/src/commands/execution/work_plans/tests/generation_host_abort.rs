@@ -153,7 +153,10 @@ pub(super) fn kill(
     assert!(!channel.provider.instance_id.is_empty());
     assert!(channel.provider.activation_generation > 0);
     assert_eq!(context.attempt_id, action.outer.to_string());
-    assert_eq!(channel.scope.project_id, fixture.context["projectId"]);
+    let tsumugi_plugin_host::SessionScope::Bound(scope) = &channel.scope else {
+        panic!("generation component must retain its bound invocation scope");
+    };
+    assert_eq!(scope.project_id, fixture.context["projectId"]);
     assert_eq!(marker["stage"], "holding");
     assert_eq!(marker["childAttempt"], action.generation["attemptId"]);
     assert_eq!(marker["pid"], channel.child_pid);

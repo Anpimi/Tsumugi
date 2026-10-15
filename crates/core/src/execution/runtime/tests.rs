@@ -3,6 +3,7 @@ use crate::ProjectMetadata;
 use serde_json::json;
 use std::sync::mpsc;
 use tsumugi_plugin_sdk as sdk;
+mod application_lifecycle;
 mod package_quiesce;
 
 struct Call {
@@ -1093,6 +1094,7 @@ fn plugin_binding(host_digest: &str) -> PluginExecutionBinding {
     };
     PluginExecutionBinding {
         component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
         capability: sdk::CapabilityBinding {
             provider: sdk::ProviderSelectionBinding {
                 plugin: sdk::PluginIdentity {
@@ -1278,6 +1280,7 @@ struct SelectedPlugin {
     provider: Option<sdk::ProviderSelectionBinding>,
     environment: Option<sdk::ExecutionEnvironmentDescriptor>,
     calls: mpsc::Sender<PluginCall>,
+    application: Option<ApplicationScopeBasis>,
 }
 impl SelectedPlugin {
     fn new(binding: &PluginExecutionBinding, calls: mpsc::Sender<PluginCall>) -> Self {
@@ -1285,6 +1288,7 @@ impl SelectedPlugin {
             provider: Some(binding.capability.provider.clone()),
             environment: Some(binding.environment.clone()),
             calls,
+            application: binding.application_scope.clone(),
         }
     }
     fn record(&self, request: &DispatchRequest, query: bool) {
@@ -1309,6 +1313,9 @@ impl Runner for SelectedPlugin {
     }
     fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
         self.environment.as_ref()
+    }
+    fn plugin_application_scope(&self) -> Option<&ApplicationScopeBasis> {
+        self.application.as_ref()
     }
     fn run(
         &self,
@@ -1335,6 +1342,7 @@ fn authorize(runtime: &ExecutionRuntime, store: &mut ProjectStore, input: &Fixed
             plugin_authority::plugin_now_ms().unwrap() + 60_000,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
@@ -1539,6 +1547,7 @@ fn same_plugin_provider_retains_both_environments_and_their_host_policies() {
                 plugin_authority::plugin_now_ms().unwrap() + 60_000,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false
                 },
             )
             .unwrap_err()

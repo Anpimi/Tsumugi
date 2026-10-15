@@ -13,7 +13,7 @@ use std::sync::Arc;
 // to a row that does not yet exist.
 pub(super) const TABLES: &[(&str, &str)] = &[(
     "plugin_execution_grants",
-    "CREATE TABLE plugin_execution_grants (grant_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL UNIQUE, task_id TEXT NOT NULL, input_digest TEXT NOT NULL CHECK(length(input_digest)=64), generation TEXT NOT NULL, expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0), unsandboxed_execution INTEGER NOT NULL CHECK(unsandboxed_execution=1), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 4096))",
+    "CREATE TABLE plugin_execution_grants (grant_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL UNIQUE, task_id TEXT NOT NULL, input_digest TEXT NOT NULL CHECK(length(input_digest)=64), generation TEXT NOT NULL, expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0), unsandboxed_execution INTEGER NOT NULL CHECK(unsandboxed_execution=1), application_execution INTEGER NOT NULL CHECK(application_execution IN (0,1)), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 4096))",
 )];
 
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
@@ -42,6 +42,7 @@ struct GrantRecord {
     generation: ExecutionId,
     expires_at_ms: u64,
     unsandboxed_execution: bool,
+    application_execution: bool,
     revoked: bool,
     delegation: Option<crate::application::WorkPlanToolDelegation>,
 }
@@ -51,6 +52,7 @@ type RawRecord = (
     String,
     String,
     String,
+    i64,
     i64,
     i64,
     i64,
@@ -68,6 +70,7 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRecord> {
         row.get(6)?,
         row.get(7)?,
         row.get(8)?,
+        row.get(9)?,
     ))
 }
 fn decode(raw: RawRecord) -> Result<GrantRecord, ExecutionError> {
@@ -86,6 +89,8 @@ fn decode(raw: RawRecord) -> Result<GrantRecord, ExecutionError> {
         || raw.5 <= 0
         || raw.6 != 1
         || ![0, 1].contains(&raw.7)
+        || ![0, 1].contains(&raw.8)
+        || (raw.7 == 1 && raw.9.is_some())
     {
         return Err(corrupt());
     }
@@ -97,9 +102,10 @@ fn decode(raw: RawRecord) -> Result<GrantRecord, ExecutionError> {
         generation: id(&raw.4)?,
         expires_at_ms: raw.5 as u64,
         unsandboxed_execution: true,
-        revoked: raw.7 == 1,
+        application_execution: raw.7 == 1,
+        revoked: raw.8 == 1,
         delegation: raw
-            .8
+            .9
             .map(|bytes| crate::execution::codec::decode(&bytes, 4096))
             .transpose()?,
     })
@@ -109,7 +115,7 @@ fn for_attempt(
     attempt: ExecutionId,
 ) -> Result<Option<GrantRecord>, ExecutionError> {
     connection.query_row(
-        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation FROM plugin_execution_grants WHERE attempt_id=?1",
+        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation FROM plugin_execution_grants WHERE attempt_id=?1",
         [attempt.to_string()], row,
     ).optional().map_err(sql)?.map(decode).transpose()
 }
@@ -118,7 +124,7 @@ fn for_grant(
     grant: ExecutionId,
 ) -> Result<Option<GrantRecord>, ExecutionError> {
     connection.query_row(
-        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation FROM plugin_execution_grants WHERE grant_id=?1",
+        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation FROM plugin_execution_grants WHERE grant_id=?1",
         [grant.to_string()], row,
     ).optional().map_err(sql)?.map(decode).transpose()
 }
@@ -163,6 +169,12 @@ fn check_record(record: &GrantRecord, input: &FixedInput) -> Result<(), Executio
     if record.attempt_id != input.envelope().attempt_id
         || record.task_id != input.envelope().task_id
         || record.input_digest != input.digest()
+        || (record.application_execution
+            && !input
+                .envelope()
+                .plugin
+                .as_ref()
+                .is_some_and(|binding| binding.application_scope.is_some()))
     {
         return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-input"));
     }
@@ -229,6 +241,7 @@ pub(super) fn check_input_in(
         record.grant_id,
         record.generation,
         record.expires_at_ms,
+        record.application_execution,
     ) {
         return Err(denied());
     }
@@ -250,7 +263,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         }
     }
     let mut statement = connection.prepare(
-        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation FROM plugin_execution_grants",
+        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation FROM plugin_execution_grants",
     ).map_err(sql)?;
     let records = statement.query_map([], row).map_err(sql)?;
     for record in records {
@@ -316,6 +329,69 @@ pub(super) fn validate_associated_input(
 }
 
 impl ProjectStore {
+    /// Reconcile only an original, durably enqueued direct plugin start. This
+    /// reads the original input and consent even after revocation or reopening;
+    /// it never restores a permit, application lease or runtime admission.
+    pub fn reconcile_plugin_start(
+        &self,
+        grant_id: ExecutionId,
+        attempt_id: ExecutionId,
+        input_digest: &str,
+        expires_at_ms: u64,
+        consent: PluginConsent,
+    ) -> Result<Option<FixedInput>, ExecutionError> {
+        if self.is_reconciling() {
+            return Err(failure(ErrorCode::OutcomeUnknown, "plugin-session"));
+        }
+        if !consent.unsandboxed_execution
+            || expires_at_ms == 0
+            || expires_at_ms > i64::MAX as u64
+            || tsumugi_plugin_sdk::validate_package_digest(input_digest).is_err()
+        {
+            return Err(denied());
+        }
+        let connection = self.connection().map_err(|_| denied())?;
+        let tx = connection.unchecked_transaction().map_err(sql)?;
+        let record = for_attempt(&tx, attempt_id)?;
+        if let Some(record) = &record {
+            if record.grant_id != grant_id
+                || record.input_digest != input_digest
+                || record.expires_at_ms != expires_at_ms
+                || record.unsandboxed_execution != consent.unsandboxed_execution
+                || record.application_execution != consent.application_execution
+                || record.delegation.is_some()
+            {
+                return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
+            }
+            not_delegated(&tx, record.task_id)?;
+        } else if for_grant(&tx, grant_id)?.is_some() {
+            return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
+        }
+        let enqueued: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                [attempt_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(sql)?;
+        let input = if enqueued {
+            let record = record.ok_or_else(denied)?;
+            let input = ledger::load_input(&tx, attempt_id)?;
+            check_project(&tx, &input)?;
+            check_record(&record, &input)?;
+            if !consent.allows(&input) {
+                return Err(denied());
+            }
+            Some(input)
+        } else {
+            // Consent may precede enqueue. Its row alone is not an accepted
+            // start and must continue through the caller's original admission.
+            None
+        };
+        tx.rollback().map_err(sql)?;
+        Ok(input)
+    }
+
     pub(crate) fn check_plugin_epoch_owner(
         &self,
         expected: &Arc<PluginEpoch>,
@@ -355,8 +431,22 @@ impl ProjectStore {
         input: &FixedInput,
         expires_at_ms: u64,
         consent: PluginConsent,
+        application_revocation: Option<crate::execution::ApplicationExecutionLease>,
     ) -> Result<(), ExecutionError> {
         if !consent.allows(input) {
+            return Err(denied());
+        }
+        let application = input
+            .envelope()
+            .plugin
+            .as_ref()
+            .and_then(|binding| binding.application_scope.as_ref())
+            .is_some();
+        if application != application_revocation.is_some()
+            || application_revocation
+                .as_ref()
+                .is_some_and(|lease| !lease.matches(input))
+        {
             return Err(denied());
         }
         let authority = Arc::clone(&self.plugin_authority);
@@ -376,6 +466,7 @@ impl ProjectStore {
                 || record.generation != generation
                 || record.expires_at_ms != expires_at_ms
                 || !record.unsandboxed_execution
+                || record.application_execution != consent.application_execution
                 || record.delegation.is_some()
             {
                 return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
@@ -401,11 +492,19 @@ impl ProjectStore {
             return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-input"));
         }
         tx.execute(
-            "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked) VALUES (?1,?2,?3,?4,?5,?6,1,0)",
-            params![grant_id.to_string(), input.envelope().attempt_id.to_string(), input.envelope().task_id.to_string(), input.digest(), generation.to_string(), expires_at_ms as i64],
+            "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked) VALUES (?1,?2,?3,?4,?5,?6,1,?7,0)",
+            params![grant_id.to_string(), input.envelope().attempt_id.to_string(), input.envelope().task_id.to_string(), input.digest(), generation.to_string(), expires_at_ms as i64, i64::from(consent.application_execution)],
         ).map_err(sql)?;
         ledger::commit(tx)?;
-        authority.activate(generation, grant_id, input, expires_at_ms, deadline)?;
+        authority.activate(
+            generation,
+            grant_id,
+            input,
+            expires_at_ms,
+            deadline,
+            consent,
+            application_revocation,
+        )?;
         Ok(())
     }
 
@@ -495,6 +594,7 @@ pub(super) fn record_delegated_grant_in(
             || record.generation != generation
             || record.expires_at_ms != expires_at_ms
             || record.delegation.as_ref() != Some(delegation)
+            || record.application_execution
             || record.revoked
         {
             return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
@@ -515,7 +615,7 @@ pub(super) fn record_delegated_grant_in(
         return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-task"));
     }
     c.execute(
-        "INSERT INTO plugin_execution_grants VALUES (?1,?2,?3,?4,?5,?6,1,0,?7)",
+        "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation) VALUES (?1,?2,?3,?4,?5,?6,1,0,0,?7)",
         params![
             grant_id.to_string(),
             input.envelope().attempt_id.to_string(),

@@ -1512,6 +1512,7 @@ fn forged_coverage_locations_identity_and_required_fields_are_rejected() {
 fn generic_source_binding(checker: bool) -> PluginExecutionBinding {
     PluginExecutionBinding {
         component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
         capability: sdk::CapabilityBinding {
             provider: sdk::ProviderSelectionBinding {
                 plugin: sdk::PluginIdentity {
@@ -1651,6 +1652,7 @@ fn source_import_declared_capture_preserves_material_without_domain_interpretati
     let environment = generic_source_binding(false).environment;
     let selected = |capability| PluginExecutionBinding {
         component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
         capability,
         profile: Some(declaration.profile.clone()),
         environment: environment.clone(),
@@ -1668,6 +1670,7 @@ fn source_import_declared_capture_preserves_material_without_domain_interpretati
                         &binding.review,
                         &PluginExecutionBinding {
                             component_scope: sdk::ComponentScope::Project,
+                            application_scope: None,
                             capability: (&binding.review).checker.clone(),
                             profile: Some((&binding.review).declaration.profile.clone()),
                             environment: (*(&environment)).clone().into(),
@@ -1888,6 +1891,7 @@ fn run_generic_source(
             now + 60_000,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
@@ -2970,4 +2974,38 @@ fn current_source_s1_reopens_and_current_layout_tagged_schema_eight_is_refused_w
     connection.pragma_update(None, "user_version", 8).unwrap();
     drop(connection);
     assert_unsupported_source_snapshot_unchanged(&path);
+}
+
+#[test]
+fn source_composition_rejects_valid_application_basis_for_producer_and_checker() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = create(&temp.path().join("project"));
+    let original = generic_source_input(&store, 1, 1, "CaseKey", false);
+    for producer in [true, false] {
+        let mut envelope = original.envelope().clone();
+        if producer {
+            let binding = envelope.plugin.as_mut().unwrap();
+            binding.component_scope = sdk::ComponentScope::Application;
+            binding.application_scope = Some(crate::execution::ApplicationScopeBasis {
+                instance_id: ExecutionId::new(),
+                activation_generation: 1,
+            });
+            binding.validate().unwrap();
+        } else {
+            let mut settings = SourceSettings::from_input(&original).unwrap();
+            let binding = settings.checker.as_mut().unwrap();
+            binding.component_scope = sdk::ComponentScope::Application;
+            binding.application_scope = Some(crate::execution::ApplicationScopeBasis {
+                instance_id: ExecutionId::new(),
+                activation_generation: 1,
+            });
+            binding.validate().unwrap();
+            envelope.settings = serde_json::to_value(settings).unwrap();
+        }
+        let input = FixedInput::capture(envelope).unwrap();
+        assert_eq!(
+            SourceBundle::from_input(&input).unwrap_err().stage,
+            "plugin-composition-scope"
+        );
+    }
 }

@@ -210,6 +210,7 @@ fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
         .unwrap();
     let checker = PluginExecutionBinding {
         component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
         capability: source.binding.checker.clone(),
         profile: Some(source.binding.declaration.profile.clone()),
         environment: source.runtime.environment(),
@@ -236,6 +237,7 @@ fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
                                 &source.binding.review,
                                 &tsumugi_core::execution::PluginExecutionBinding {
                                     component_scope: sdk::ComponentScope::Project,
+                                    application_scope: None,
                                     capability: (&source.binding.review).checker.clone(),
                                     profile: Some(
                                         (&source.binding.review).declaration.profile.clone(),
@@ -265,6 +267,7 @@ fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
                     + 600_000) as u64,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap();

@@ -150,6 +150,7 @@ fn authorize(
             expiry(),
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
@@ -640,6 +641,7 @@ fn grant_identity_expiry_epoch_and_reopen_never_renew_execution() {
     let expires = expiry();
     let consent = PluginConsent {
         unsandboxed_execution: true,
+        application_execution: false,
     };
     assert_eq!(
         runtime
@@ -649,7 +651,8 @@ fn grant_identity_expiry_epoch_and_reopen_never_renew_execution() {
                 &input,
                 expires,
                 PluginConsent {
-                    unsandboxed_execution: false
+                    unsandboxed_execution: false,
+                    application_execution: false
                 }
             )
             .unwrap_err()
@@ -726,6 +729,7 @@ fn expired_or_revoked_queued_grant_never_stages_a_process() {
                 deadline,
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false,
                 },
             )
             .unwrap();
@@ -935,7 +939,8 @@ fn altered_installer_environment_is_rejected_before_staging() {
                 &input,
                 expiry(),
                 PluginConsent {
-                    unsandboxed_execution: true
+                    unsandboxed_execution: true,
+                    application_execution: false
                 }
             )
             .unwrap_err()
@@ -1165,6 +1170,7 @@ fn approved_runtime_installation_reopens_and_runs_without_acquisition_paths() {
                 expiry(),
                 PluginConsent {
                     unsandboxed_execution: true,
+                    application_execution: false
                 },
             )
             .unwrap_err()

@@ -86,6 +86,7 @@ fn maximum_complete_translation_transport_preserves_sdk_bytes_and_fixed_budgets(
                         &source_resource.review,
                         &tsumugi_core::execution::PluginExecutionBinding {
                             component_scope: sdk::ComponentScope::Project,
+                            application_scope: None,
                             capability: (&source_resource.review).checker.clone(),
                             profile: Some((&source_resource.review).declaration.profile.clone()),
                             environment: (*(&source_producer

@@ -3,6 +3,27 @@
 use super::*;
 use tsumugi_plugin_sdk as sdk;
 
+/// Identity allocated by the application instance owner before consent. This
+/// persisted fact never recreates the owner's session-local execution lease.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ApplicationScopeBasis {
+    pub instance_id: ExecutionId,
+    pub activation_generation: u32,
+}
+
+pub fn required_application_scope<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ApplicationScopeBasis>, D::Error> {
+    Option::deserialize(deserializer)
+}
+
+#[cfg(feature = "wire-schema")]
+pub fn application_scope_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    <Option<ApplicationScopeBasis> as schemars::JsonSchema>::json_schema(generator)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -10,6 +31,12 @@ pub struct PluginExecutionBinding {
     pub capability: sdk::CapabilityBinding,
     /// Captured from the selected component, never inferred from a result.
     pub component_scope: sdk::ComponentScope,
+    #[serde(deserialize_with = "required_application_scope")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "application_scope_schema")
+    )]
+    pub application_scope: Option<ApplicationScopeBasis>,
     pub profile: Option<sdk::ContractRef>,
     /// Exact captured Node artifacts or actual native application Host identity.
     /// This data value does not authenticate its source or grant execution.
@@ -26,11 +53,29 @@ impl PluginExecutionBinding {
         match self.component_scope {
             sdk::ComponentScope::Project => Ok(project.to_string()),
             sdk::ComponentScope::Attempt => Ok(attempt.to_string()),
-            sdk::ComponentScope::Application => Err(ExecutionError::new(
-                ErrorCode::InvalidInput,
-                "plugin-component-scope",
-            )),
+            sdk::ComponentScope::Application => self
+                .application_scope
+                .as_ref()
+                .filter(|basis| basis.activation_generation > 0)
+                .map(|basis| basis.instance_id.to_string())
+                .ok_or_else(|| {
+                    ExecutionError::new(ErrorCode::InvalidInput, "plugin-component-scope")
+                }),
         }
+    }
+
+    /// Composition owners without an application-lifetime consent path must
+    /// retain their explicit supported boundary even though generic Tool calls
+    /// can now capture an independently authorized application instance.
+    pub fn validate_project_or_attempt(&self) -> Result<(), ExecutionError> {
+        self.validate()?;
+        if self.component_scope == sdk::ComponentScope::Application {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "plugin-composition-scope",
+            ));
+        }
+        Ok(())
     }
 
     pub fn capability_version(&self) -> String {
@@ -43,7 +88,12 @@ impl PluginExecutionBinding {
     pub fn validate(&self) -> Result<(), ExecutionError> {
         self.capability.validate().map_err(contract_error)?;
         self.environment.validate().map_err(environment_error)?;
-        if self.component_scope == sdk::ComponentScope::Application {
+        if match (&self.component_scope, &self.application_scope) {
+            (sdk::ComponentScope::Application, Some(basis)) => basis.activation_generation == 0,
+            (sdk::ComponentScope::Application, None) => true,
+            (_, Some(_)) => true,
+            (_, None) => false,
+        } {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
                 "plugin-component-scope",
@@ -111,6 +161,15 @@ impl FixedInput {
             return Err(ExecutionError::new(
                 ErrorCode::ResultMismatch,
                 "plugin-provider",
+            ));
+        }
+        if binding.application_scope.as_ref().is_some_and(|basis| {
+            channel.instance_id != basis.instance_id.to_string()
+                || channel.activation_generation != basis.activation_generation
+        }) {
+            return Err(ExecutionError::new(
+                ErrorCode::ResultMismatch,
+                "plugin-application-instance",
             ));
         }
         let declaration = &binding.capability.declaration;

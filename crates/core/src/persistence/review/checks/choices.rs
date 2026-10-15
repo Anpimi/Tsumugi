@@ -83,7 +83,7 @@ impl AdvisoryReviewCheck {
     pub fn validate(&self) -> Result<(), ExecutionError> {
         let invalid = || failure(ErrorCode::InvalidInput, "advisory-review-choice");
         self.binding.validate().map_err(|_| invalid())?;
-        self.checker().binding.validate()?;
+        self.checker().binding.validate_project_or_attempt()?;
         if self.execution.capability != self.binding.checker
             || self.execution.profile.as_ref() != Some(&self.binding.declaration.profile)
             || sdk::validate_contribution_id(&self.declaration_resource_id).is_err()

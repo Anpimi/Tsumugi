@@ -104,8 +104,11 @@ struct ExecutionRequests {
     prepare: execution::PrepareRequest,
     adopt: execution::AdoptRequest,
     tool_prepare: execution::tools::PluginToolPrepareRequest,
-    tool_start: execution::PluginStartRequest,
+    tool_start: execution::tools::PluginToolStartRequest,
     tool_discard: execution::tools::PluginToolDiscardRequest,
+    application_instance: plugins::application::ApplicationInstanceRequest,
+    application_instance_stop: plugins::application::StopApplicationInstanceRequest,
+    application_shutdown: plugins::application::ApplicationShutdownRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -129,6 +132,8 @@ struct ExecutionResponses {
     receipt: Option<tsumugi_core::execution::AdoptionReceipt>,
     tool_preflight: execution::tools::PluginToolPreflight,
     tool_discarded: bool,
+    application_instance: plugins::application::ApplicationInstanceView,
+    application_shutdown: plugins::application::ApplicationShutdownView,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]

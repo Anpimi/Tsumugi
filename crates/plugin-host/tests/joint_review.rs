@@ -310,6 +310,7 @@ fn exercise_joint_review_scoped(multiple: bool, reverse: bool, attempt_advisory:
                     &source.review,
                     &tsumugi_core::execution::PluginExecutionBinding {
                         component_scope: sdk::ComponentScope::Project,
+                        application_scope: None,
                         capability: (&source.review).checker.clone(),
                         profile: Some((&source.review).declaration.profile.clone()),
                         environment: (*(&producer.environment)).clone().into(),

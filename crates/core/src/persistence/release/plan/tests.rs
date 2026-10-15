@@ -149,6 +149,7 @@ fn environment(store: &ProjectStore) -> ReleaseBuildEnvironment {
     .into();
     let selected = |capability| PluginExecutionBinding {
         component_scope: sdk::ComponentScope::Project,
+        application_scope: None,
         capability,
         profile: Some(binding.declaration.profile.clone()),
         environment: environment.clone(),
@@ -202,7 +203,9 @@ fn enqueue_fixture(store: &mut ProjectStore, input: &FixedInput) {
             crate::execution::plugin_authority::plugin_now_ms().unwrap() + 60_000,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
+            None,
         )
         .unwrap();
     store.enqueue_execution(input).unwrap();
@@ -445,7 +448,9 @@ fn ledger_rechecks_qualified_plan_even_when_forged_payload_matches_it() {
             crate::execution::plugin_authority::plugin_now_ms().unwrap() + 60_000,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
+            None,
         )
         .unwrap();
     assert_eq!(
@@ -617,4 +622,27 @@ fn build_environment_requires_complete_independent_role_bindings() {
     changed = build.clone();
     changed.checker_execution.component_scope = sdk::ComponentScope::Application;
     assert!(changed.validate().is_err());
+}
+
+#[test]
+fn build_composition_rejects_valid_application_basis_for_either_role() {
+    let (_directory, store, _, _) = fixture();
+    let selected = environment(&store);
+    for builder in [true, false] {
+        let mut producer = selected.builder();
+        let mut checker = selected.checker().clone();
+        let binding = if builder { &mut producer } else { &mut checker };
+        binding.component_scope = sdk::ComponentScope::Application;
+        binding.application_scope = Some(crate::execution::ApplicationScopeBasis {
+            instance_id: ExecutionId::new(),
+            activation_generation: 1,
+        });
+        binding.validate().unwrap();
+        assert_eq!(
+            ReleaseBuildEnvironment::new(selected.binding().clone(), producer, checker)
+                .unwrap_err()
+                .stage,
+            "plugin-composition-scope"
+        );
+    }
 }

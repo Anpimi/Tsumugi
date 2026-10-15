@@ -681,6 +681,7 @@ pub async fn start_work_plan_generation_component(
                                     request.expires_at_ms.get(),
                                     PluginConsent {
                                         unsandboxed_execution: request.unsandboxed_execution,
+                                        application_execution: false,
                                     },
                                 );
                                 if let Err(error) = authorized {

@@ -18,7 +18,7 @@ import { aiAttempt, aiViewFixture, aiWorkPlanFixture, arenaViewFixture } from ".
 import type { WorkPlanView, WorkPlanStatusView, WorkPlanReceiptView, WorkProtection } from "./workPlanCommands";
 import { validateRequestWorkPlanPrepare, validateRequestWorkPlanAuthorize, validateRequestWorkPlanStart, validateRequestWorkProtectionRead, validateRequestWorkProtectionSet } from "./generated/ai.validators";
 import { validateRequestPluginBuild } from "./generated/release.validators";
-import { validateRequestActivity } from "./generated/execution.validators";
+import { validateRequestActivity, validateRequestApplicationShutdown } from "./generated/execution.validators";
 import type { PluginBuildPrepareRequest } from "./releaseCommands";
 import type { ArenaConfig, ArenaPrepared, ArenaView } from "./arenaCommands";
 import type { SessionReads } from "./sessionReads";
@@ -1779,7 +1779,10 @@ describe("project lifecycle workbench", () => {
     await waitFor(() => expect(mocks.destroy).toHaveBeenCalledOnce());
     expect(event.preventDefault).toHaveBeenCalled();
     expect(mocks.close).not.toHaveBeenCalled();
-    expect(mocks.invoke).toHaveBeenLastCalledWith("close_project", { request: { sessionToken: "session-1" } });
+    expect(mocks.invoke).toHaveBeenCalledWith("close_project", { request: { sessionToken: "session-1" } });
+    const closedAt = mocks.invoke.mock.calls.findIndex(([command]) => command === "close_project");
+    const stoppedAt = mocks.invoke.mock.calls.findIndex(([command]) => command === "stop_application_plugin_instances");
+    expect(stoppedAt).toBeGreaterThan(closedAt);
     expect(localStorage.getItem(LAST_OPEN_PROJECT_STORAGE_KEY)).not.toBeNull();
   });
 
@@ -1854,7 +1857,7 @@ describe("project lifecycle workbench", () => {
     await user.clear(screen.getByRole("textbox", { name: "Project name" }));
     await user.type(screen.getByRole("textbox", { name: "Project name" }), "Committed");
     let reads = 0;
-    mocks.invoke.mockImplementation(async (command: string) => {
+    mocks.invoke.mockImplementation(async (command: string, args?: { request?: unknown }) => {
       if (command === "rename_project") throw { code: "outcome-unknown", outcome: "unknown", stage: "rename", recoveryRequired: true };
       if (command === "read_project") {
         reads += 1;
@@ -1862,6 +1865,7 @@ describe("project lifecycle workbench", () => {
         return reads === 2 ? projectView("Unrelated", "3") : projectView("Committed", "2");
       }
       if (command === "close_project") return { closed: true };
+      if (command === "stop_application_plugin_instances") return { actionId: (args?.request as { actionId: string }).actionId, state: "stopped" };
       return projectView();
     });
     await user.click(screen.getByRole("button", { name: "Close project" }));
@@ -1879,6 +1883,130 @@ describe("project lifecycle workbench", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1);
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(1);
+  });
+
+  it("keeps the same application stop action through pending and unknown exit acknowledgements", async () => {
+    await renderApp();
+    const original = mocks.invoke.getMockImplementation()!;
+    let stops = 0;
+    mocks.invoke.mockImplementation(async (command: string, args: { request: { actionId: string } }) => {
+      if (command !== "stop_application_plugin_instances") return original(command, args);
+      stops++;
+      if (stops === 1) return { actionId: args.request.actionId, state: "stopping" };
+      if (stops === 2) throw new Error("Original shutdown acknowledgement lost");
+      return { actionId: args.request.actionId, state: "stopped" };
+    });
+    for (const notice of ["errors.applicationStopPending", "errors.applicationStopUnknown"] as const) {
+      await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+      await screen.findByText(i18n.t(notice));
+      expect(mocks.destroy).not.toHaveBeenCalled();
+    }
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    expect(mocks.destroy).toHaveBeenCalledOnce();
+    const requests = mocks.invoke.mock.calls.filter(([command]) => command === "stop_application_plugin_instances").map(([, args]) => args.request);
+    expect(requests).toHaveLength(3);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[2]).toEqual(requests[0]);
+  });
+
+  it("awaits application cleanup after project close before destroying the window", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const original = mocks.invoke.getMockImplementation()!;
+    let finish!: () => void;
+    const held = new Promise<void>(resolve => { finish = resolve; });
+    mocks.invoke.mockImplementation(async (command: string, args: { request: { actionId: string } }) => {
+      if (command !== "stop_application_plugin_instances") return original(command, args);
+      await held; return { actionId: args.request.actionId, state: "stopped" };
+    });
+    let closing!: Promise<unknown>;
+    act(() => { closing = mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    await waitFor(() => expect(mocks.invoke.mock.calls.some(([command]) => command === "stop_application_plugin_instances")).toBe(true));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(1);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+    await act(async () => { finish(); await closing; });
+    expect(mocks.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("locks metadata during application stop-all and preserves later B through admission recovery and another exit", async () => {
+    const user = userEvent.setup(); await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    const input = screen.getByRole("textbox", { name: /Project name/ });
+    expect(input).toBeEnabled();
+    expect(input).toHaveValue("");
+    const original = mocks.invoke.getMockImplementation()!;
+    let finish!: () => void;
+    const held = new Promise<void>(resolve => { finish = resolve; });
+    mocks.invoke.mockImplementation(async (command: string, args: { request: { actionId: string } }) => {
+      if (command === "resume_application_plugin_instances") {
+        if (!validateRequestApplicationShutdown(args.request)) throw new Error("Invalid application admission recovery request");
+        return { actionId: args.request.actionId, state: "resumed" };
+      }
+      if (command !== "stop_application_plugin_instances") return original(command, args);
+      if (!validateRequestApplicationShutdown(args.request)) throw new Error("Invalid application shutdown request");
+      await held; return { actionId: args.request.actionId, state: "stopped" };
+    });
+    mocks.destroy.mockRejectedValueOnce(new Error("native destroy rejected"));
+    let closing!: Promise<unknown>;
+    act(() => { closing = mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    await waitFor(() => expect(mocks.invoke.mock.calls.some(([command]) => command === "stop_application_plugin_instances")).toBe(true));
+    expect(input).toBeDisabled();
+    await user.type(input, "Blocked while closing");
+    expect(input).toHaveValue("");
+    expect(mocks.destroy).not.toHaveBeenCalled();
+    await act(async () => { finish(); await closing; });
+    await screen.findByText(i18n.t("errors.windowCloseFailed"));
+    expect(mocks.destroy).toHaveBeenCalledOnce();
+    expect(input).toBeEnabled();
+    await user.type(input, "Newer metadata B");
+    expect(input).toHaveValue("Newer metadata B");
+    await user.click(screen.getByRole("button", { name: "Allow new shared instances" }));
+    await screen.findByText(i18n.t("feedback.applicationAdmissionRestored"));
+    expect(input).toHaveValue("Newer metadata B");
+    expect(input).toBeEnabled();
+    const stops = mocks.invoke.mock.calls.filter(([command]) => command === "stop_application_plugin_instances");
+    const recoveries = mocks.invoke.mock.calls.filter(([command]) => command === "resume_application_plugin_instances");
+    expect(stops).toHaveLength(1);
+    expect(recoveries).toHaveLength(1);
+    expect(recoveries[0][1]).toEqual(stops[0][1]);
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    const blocker = await screen.findByRole("dialog", { name: i18n.t("dialog.createTitle") });
+    expect(within(blocker).getByText(i18n.t("dialog.createWindowCloseMessage"))).toBeInTheDocument();
+    expect(mocks.destroy).toHaveBeenCalledOnce();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "stop_application_plugin_instances")).toHaveLength(1);
+    await user.click(within(blocker).getByRole("button", { name: "Keep editing" }));
+    expect(input).toHaveValue("Newer metadata B");
+    expect(input).toBeEnabled();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "create_project")).toHaveLength(0);
+  });
+
+  it("explicitly restores admission with its original uncertain action before a new exit", async () => {
+    await renderApp();
+    mocks.destroy.mockRejectedValueOnce(new Error("native destroy rejected"));
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    const original = mocks.invoke.getMockImplementation()!;
+    let resumes = 0;
+    mocks.invoke.mockImplementation(async (command: string, args: { request: { actionId: string } }) => {
+      if (command !== "resume_application_plugin_instances") return original(command, args);
+      resumes++;
+      if (resumes === 1) throw new Error("Admission recovery acknowledgement lost");
+      return { actionId: args.request.actionId, state: "resumed" };
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Allow new shared instances" }));
+    const retry = await screen.findByRole("button", { name: "Check original admission recovery" });
+    const stopCount = mocks.invoke.mock.calls.filter(([command]) => command === "stop_application_plugin_instances").length;
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "stop_application_plugin_instances")).toHaveLength(stopCount);
+    expect(mocks.destroy).toHaveBeenCalledOnce();
+    await user.click(retry);
+    await screen.findByText(i18n.t("feedback.applicationAdmissionRestored"));
+    expect(screen.queryByRole("button", { name: "Allow new shared instances" })).toBeNull();
+    const recoveries = mocks.invoke.mock.calls.filter(([command]) => command === "resume_application_plugin_instances");
+    expect(recoveries).toHaveLength(2); expect(recoveries[1][1]).toEqual(recoveries[0][1]);
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    const stops = mocks.invoke.mock.calls.filter(([command]) => command === "stop_application_plugin_instances");
+    expect(stops).toHaveLength(2); expect(stops[1][1].request.actionId).not.toBe(stops[0][1].request.actionId);
+    expect(mocks.destroy).toHaveBeenCalledTimes(2);
   });
 
   it("reports native close failures and permits a subsequent close request", async () => {
@@ -2073,13 +2201,14 @@ describe("project lifecycle workbench", () => {
     const input = screen.getByRole("textbox", { name: "Project name" });
     await user.clear(input);
     await user.type(input, "Hidden draft");
-    mocks.invoke.mockImplementation(async (command: string) => {
+    mocks.invoke.mockImplementation(async (command: string, args?: { request?: unknown }) => {
       if (command === "list_execution_tasks") return [];
       if (command === "rename_project") return {
         sessionToken: "session-1", locator: "C:\\Projects\\demo",
         metadata: metadata("Hidden draft", "2"), outcome: "changed", directoryChanged: false,
       };
       if (command === "close_project") return { closed: true };
+      if (command === "stop_application_plugin_instances") return { actionId: (args?.request as { actionId: string }).actionId, state: "stopped" };
       return projectView();
     });
     await user.click(screen.getByRole("button", { name: "Tasks" }));
@@ -2177,6 +2306,7 @@ describe("project lifecycle workbench", () => {
       if (command === "read_execution_task_activity") return emptyTaskActivity(args?.request);
       if (command === "create_project") return projectView();
       if (command === "close_project") return { closed: true };
+      if (command === "stop_application_plugin_instances") return { actionId: (args?.request as { actionId: string }).actionId, state: "stopped" };
       return projectView();
     });
   });
@@ -2546,15 +2676,25 @@ describe("project lifecycle workbench", () => {
     expect(mocks.invoke.mock.calls.filter(([command])=>command === "change_model_connections")).toHaveLength(0);
   });
   it("connection window exit waits for a checked application-draft decision without a project", async () => {
-    const user=userEvent.setup();await renderApp();mocks.invoke.mockImplementation(async command=>{if(command === "read_model_connections")return {snapshot:{storeId:null,revision:"0",lastActionId:null,profiles:[]},basis:{storeId:null,revision:"0",digest:"a".repeat(64)},references:[]};throw new Error(command);});
+    const user=userEvent.setup();await renderApp();mocks.invoke.mockImplementation(async (command: string, args?: { request?: unknown })=>{
+      if(command === "read_model_connections")return {snapshot:{storeId:null,revision:"0",lastActionId:null,profiles:[]},basis:{storeId:null,revision:"0",digest:"a".repeat(64)},references:[]};
+      if(command === "stop_application_plugin_instances") {
+        const request = args?.request;
+        if (!validateRequestApplicationShutdown(request)) throw new Error("Invalid application shutdown request");
+        return { actionId: request.actionId, state: "stopped" };
+      }
+      throw new Error(command);
+    });
     await user.click(screen.getByRole("button",{name:i18n.t("connections.open")}));await screen.findByText(i18n.t("connections.empty"));
     await user.type(screen.getByLabelText(i18n.t("connections.name")),"Unsaved A");await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));
     let close!:Promise<unknown>;act(()=>{close=mocks.onCloseRequested.mock.calls.at(-1)![0]({preventDefault:vi.fn()});});
     await screen.findByRole("heading",{name:i18n.t("connections.exitTitle")});expect(mocks.destroy).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button",{name:i18n.t("connections.continueEditing")}));await close;expect(screen.getByLabelText(i18n.t("connections.name"))).toHaveValue("Unsaved A");
+    expect(mocks.invoke.mock.calls.filter(([command])=>command === "stop_application_plugin_instances")).toHaveLength(0);
     await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));act(()=>{close=mocks.onCloseRequested.mock.calls.at(-1)![0]({preventDefault:vi.fn()});});
     await screen.findByRole("heading",{name:i18n.t("connections.exitTitle")});await user.click(screen.getByRole("button",{name:i18n.t("connections.discardAndExit")}));await close;
     await waitFor(()=>expect(mocks.destroy).toHaveBeenCalledOnce());
+    expect(mocks.invoke.mock.calls.filter(([command])=>command === "stop_application_plugin_instances")).toHaveLength(1);
   });
   it("connection discard permission also protects the actual project close before native destroy", async () => {
     const user=userEvent.setup();await renderApp();await createProject(user);const original=mocks.invoke.getMockImplementation()!;

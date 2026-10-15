@@ -40,6 +40,7 @@ fn declaration() -> sdk::SourceImportBinding {
 fn selected(capability: sdk::CapabilityBinding) -> PluginExecutionBinding {
     PluginExecutionBinding {
         component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
         capability,
         profile: Some(declaration().declaration.profile),
         environment: sdk::RuntimeEnvironmentDescriptor {
@@ -96,6 +97,7 @@ pub fn source_input_with_texts(store: &ProjectStore, texts: &[&str]) -> FixedInp
                         &binding.review,
                         &tsumugi_core::execution::PluginExecutionBinding {
                             component_scope: sdk::ComponentScope::Project,
+                            application_scope: None,
                             capability: (&binding.review).checker.clone(),
                             profile: Some((&binding.review).declaration.profile.clone()),
                             environment: (*(&selected(binding.review.checker.clone()).environment))
@@ -310,6 +312,7 @@ pub fn execute(
             expires,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();

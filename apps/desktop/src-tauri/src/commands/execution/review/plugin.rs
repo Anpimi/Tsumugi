@@ -732,6 +732,7 @@ pub async fn run_review_checks(
                 if slot.start.is_none() {
                     PluginConsent {
                         unsandboxed_execution: execution.unsandboxed_execution,
+                        application_execution: false,
                     }
                     .validate(&slot.input, execution.expires_at_ms.get())
                     .map_err(map_adopt)?;
@@ -890,6 +891,7 @@ pub async fn run_review_checks(
                                                 execution.expires_at_ms.get(),
                                                 PluginConsent {
                                                     unsandboxed_execution: true,
+                                                    application_execution: false,
                                                 },
                                             )
                                             .map_err(map_adopt)?;

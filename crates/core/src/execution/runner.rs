@@ -101,6 +101,9 @@ pub trait Runner: Send + Sync + 'static {
     fn plugin_environment(&self) -> Option<&tsumugi_plugin_sdk::ExecutionEnvironmentDescriptor> {
         None
     }
+    fn plugin_application_scope(&self) -> Option<&ApplicationScopeBasis> {
+        None
+    }
     fn concurrency_limit(&self, _input: &FixedInput) -> usize {
         1
     }

@@ -31,12 +31,12 @@ fn assert_corrupt_on_reopen(project: &Path) {
 
 fn insert_grant(connection: &Connection, attempt: ExecutionId, task: ExecutionId, digest: &str) {
     connection.execute(
-        "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked) VALUES (?1,?2,?3,?4,?5,1,1,1)",
+        "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked) VALUES (?1,?2,?3,?4,?5,1,1,0,1)",
         params![ExecutionId::new().to_string(), attempt.to_string(), task.to_string(), digest, ExecutionId::new().to_string()],
     ).unwrap();
 }
 
-const GRANT_SCAN: &str = "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation FROM plugin_execution_grants";
+const GRANT_SCAN: &str = "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation FROM plugin_execution_grants";
 
 thread_local! {
     // The extension is process-global, but only this test's thread and one
@@ -266,6 +266,83 @@ fn revoked_grant_still_checks_exact_input_digest_and_task() {
 }
 
 #[test]
+fn application_lifetime_fact_is_strict_and_cannot_belong_to_a_project_input() {
+    for value in [1, 2] {
+        let (directory, store, _) = support::source_fixture();
+        store.close().unwrap();
+        let project = directory.path().join("project");
+        let connection = database(&project);
+        // Exercise both an invalid boolean and a valid boolean attached to the
+        // wrong captured scope, independently of SQLite's CHECK constraint.
+        connection
+            .pragma_update(None, "ignore_check_constraints", true)
+            .unwrap();
+        assert!(
+            connection
+                .execute(
+                    "UPDATE plugin_execution_grants SET application_execution=?1",
+                    [value]
+                )
+                .unwrap()
+                > 0
+        );
+        drop(connection);
+        assert_corrupt_on_reopen(&project);
+    }
+}
+
+#[test]
+fn expired_revoked_start_ack_uses_the_original_persisted_identity_after_reopen() {
+    let (directory, store, _) = support::source_fixture();
+    store.close().unwrap();
+    let project = directory.path().join("project");
+    let connection = database(&project);
+    // A synthetic historical grant has an already elapsed original expiry.
+    // No runtime is asked to authorize or execute this expired fixture.
+    connection
+        .execute("UPDATE plugin_execution_grants SET expires_at_ms=1", [])
+        .unwrap();
+    let (grant, attempt, digest, revoked): (String, String, String, bool) = connection
+        .query_row(
+            "SELECT grant_id,attempt_id,input_digest,revoked FROM plugin_execution_grants LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert!(revoked);
+    drop(connection);
+    let reopened = ProjectStore::open(&project).unwrap();
+    let before = std::fs::read(project.join("project.sqlite3")).unwrap();
+    let receipt = reopened
+        .reconcile_plugin_start(
+            ExecutionId::parse(&grant).unwrap(),
+            ExecutionId::parse(&attempt).unwrap(),
+            &digest,
+            1,
+            PluginConsent {
+                unsandboxed_execution: true,
+                application_execution: false,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.digest(), digest);
+    assert_eq!(receipt.envelope().attempt_id.to_string(), attempt);
+    assert!(
+        reopened
+            .execution_dispatch(
+                receipt.envelope().attempt_id,
+                receipt.envelope().items[0].item_id
+            )
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(project.join("project.sqlite3")).unwrap(),
+        before
+    );
+}
+
+#[test]
 fn missing_grant_for_queued_plugin_input_and_orphan_grant_remain_valid() {
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("project");
@@ -289,6 +366,7 @@ fn missing_grant_for_queued_plugin_input_and_orphan_grant_remain_valid() {
             expiry,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();

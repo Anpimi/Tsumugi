@@ -207,6 +207,8 @@ describe("resource command payloads", () => {
   it.each([
     ["resource.prepare-tool", { kind: "resource-tool-preparation", editSeq: 1, tool: toolWorkflow.request, view: toolQueryView }, [{ tool: {} }, { view: {} }, { editSeq: -1 }]],
     ["resource.start-tool", { kind: "resource-tool-capture", editSeq: 1, attemptId: toolWorkflow.start.attemptId, inputDigest: toolWorkflow.start.inputDigest }, [{ inputDigest: null }, { editSeq: NaN }]],
+    ["resource.stop-tool-instance", { kind: "resource-tool-capture", editSeq: 1, attemptId: toolWorkflow.start.attemptId, inputDigest: toolWorkflow.start.inputDigest }, [{ inputDigest: null }, { attemptId: "" }]],
+    ["resource.retry-tool", { kind: "resource-tool-pending", intent: { kind: "stop-instance", request: { actionId: toolWorkflow.start.grantId, basis: { instanceId: toolWorkflow.start.attemptId, activationGeneration: 1 } } } }, [{ intent: { kind: "stop-instance", request: { actionId: toolWorkflow.start.grantId, basis: {} } } }]],
     ["resource.discard-tool", { kind: "resource-tool-capture", editSeq: 1, attemptId: toolWorkflow.discard.attemptId, inputDigest: toolWorkflow.start.inputDigest }, [{ attemptId: "" }]],
     ["resource.retry-tool", { kind: "resource-tool-pending", intent: { kind: "prepare", request: toolWorkflow.prepare, view: toolQueryView, sequence: 1 } }, [{ intent: {} }, { intent: { kind: "prepare", request: {}, view: toolQueryView, sequence: 1 } }]],
     ["resource.retry-tool", { kind: "resource-tool-pending", intent: { kind: "start", request: toolWorkflow.start, review: toolWorkflow.preflight, sequence: 1 } }, [{ intent: { kind: "start", request: {}, review: toolWorkflow.preflight, sequence: 1 } }]],

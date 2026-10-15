@@ -7,7 +7,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { createToolQuery, ToolQueryError, type ToolQueryPresentation } from "../../../crates/plugin-sdk/javascript/tool-query.mjs";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { executionCommands, executionContext, type PluginToolPrepareRequest, type PluginToolPreflight, type PluginStartRequest, type PluginToolDiscardRequest, type CancelRequest } from "./executionCommands";
+import { executionCommands, executionContext, type PluginToolPrepareRequest, type PluginToolPreflight, type PluginToolDiscardRequest, type CancelRequest } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
 import { pluginCommands, type PluginToolRequest, type PluginToolView } from "./pluginCommands";
 import { matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
@@ -34,7 +34,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
   const { t } = useTranslation(), context = executionContext(project), reads = useSessionReads(), registry = useWorkbenchCommands();
   const commandScope = { ...context, area: "resources" as const };
   const { choiceKey, runtimeKey, refresh, rows, target, selections, capture, run, consent, submittedSequence, pending, busy, failure, inputFailure } = session.state;
-  const { setChoiceKey, setRuntimeKey, setRefresh, setRows, setTarget, setSelections, setCapture, setConsent, setFailure,
+  const { setChoiceKey, setRuntimeKey, setRefresh, setRows, setTarget, setSelections, setCapture, setConsent, setApplicationConsent, setFailure,
     setInputFailure, draftSequence, nextRow, running, perform, submit, edit } = session;
   const mounted = useRef(false);
   const [leave, setLeave] = useState(false), leaveProof = useRef<(() => boolean) | null>(null);
@@ -116,12 +116,12 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     if (current() && environmentCurrent()) await submit({ kind: "prepare", request: { ...context, tool: toolRequest, attemptId: id, payloads }, view: environment.data, sequence }, current);
   }
   async function start(current: () => boolean) {
-    if (!capture || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest) return;
+    if (!capture || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest || !applicationReady()) return;
     const grantId = await executionCommands.identity(context);
     if (!current() || !environmentCurrent()) return;
     if (capture.sequence !== draftSequence.current) throw new ToolQueryError("input-changed", "text");
     await submit({ kind: "start", review: capture.review, sequence: capture.sequence,
-      request: { ...context, attemptId: capture.review.attemptId, inputDigest: capture.review.inputDigest, grantId, expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true } }, current);
+      request: { ...context, attemptId: capture.review.attemptId, inputDigest: capture.review.inputDigest, grantId, expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true, applicationExecution: session.current().applicationConsent === capture.review.inputDigest } }, current);
   }
   function answerLeave(answer: boolean) { setLeave(false); leaveResolver.current?.(answer); leaveResolver.current = null; }
   useImperativeHandle(ref, () => ({ addText: text => !disabled && session.addText(text), allowLeave(current = () => true, intentCurrent = current) {
@@ -153,6 +153,30 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     ? { kind: "resource-tool-preparation", editSeq: draftSequence.current, tool: toolRequest, view: environment.data } : undefined;
   const capturePayload: ResourceToolCaptureCommandPayload | undefined = capture
     ? { kind: "resource-tool-capture", editSeq: capture.sequence, attemptId: capture.review.attemptId, inputDigest: capture.review.inputDigest } : undefined;
+  const applicationBasis = capture?.review.applicationScope ?? null;
+  const instanceKey = ["application-plugin-instance", applicationBasis?.instanceId, applicationBasis?.activationGeneration] as const;
+  const instance = useSessionQuery({ key: instanceKey, scopes: ["execution"], enabled: open && !!applicationBasis && !busy,
+    read: async () => { if (!applicationBasis) throw new Error("Missing application instance"); return executionCommands.applicationInstance({ basis: applicationBasis }); } });
+  function currentInstance() {
+    const state = reads.client.getQueryState(reads.key(instanceKey));
+    return state?.status === "success" && state.fetchStatus === "idle" && !state.isInvalidated && !state.error && state.data === instance.data ? instance.data : null;
+  }
+  function applicationReady() {
+    if (!applicationBasis) return true;
+    const value = currentInstance();
+    return value?.state === "active" || value?.state === "reserved" && session.current().applicationConsent === capture?.review.inputDigest;
+  }
+  function stopInstanceAvailability(payload?: ResourceToolCaptureCommandPayload): CommandAvailability {
+    const base = captureAvailability(payload);
+    const value = currentInstance();
+    return base.enabled && applicationBasis && value && (value.state === "active" || value.state === "reserved")
+      ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  async function stopInstance(current: () => boolean) {
+    if (!applicationBasis || !currentInstance()) return;
+    const basis = structuredClone(applicationBasis), actionId = await executionCommands.identity(context);
+    if (current()) await submit({ kind: "stop-instance", request: { actionId, basis } }, current);
+  }
   const pendingPayload: ResourceToolPendingCommandPayload | undefined = pending ? { kind: "resource-tool-pending", intent: pending } : undefined;
   const cancelPayload: ExecutionCancellationCommandPayload | undefined = taskId && attemptId
     ? { kind: "execution-cancellation", taskId, attemptId, origin: "resources" } : undefined;
@@ -171,7 +195,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     const fixed = session.current().capture;
     return payload && fixed && !session.current().pending && payload.attemptId === fixed.review.attemptId && payload.inputDigest === fixed.review.inputDigest
       && payload.editSeq === fixed.sequence && (!starting || !changed && !environmentChanged && !unavailable && !inventory.isFetching && !environment.isFetching && environmentCurrent()
-        && fixed.sequence === draftSequence.current && session.current().consent === fixed.review.inputDigest)
+        && fixed.sequence === draftSequence.current && session.current().consent === fixed.review.inputDigest && applicationReady())
       ? { enabled: true } : { enabled: false, reason: "unavailable" };
   }
   function pendingAvailability(payload?: ResourceToolPendingCommandPayload): CommandAvailability {
@@ -198,6 +222,8 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
         availability: preparationAvailability, handler: () => { void perform(prepare); } }),
       registry.register({ ...metadata, id: "resource.start-tool", payloadKind: "resource-tool-capture", nameKey: "toolQuery.start", risk: "runs-resource-tool",
         availability: payload => captureAvailability(payload, true), handler: () => { void perform(start); } }),
+      registry.register({ ...metadata, id: "resource.stop-tool-instance", payloadKind: "resource-tool-capture", nameKey: "toolQuery.applicationStop", risk: "stops-application-component",
+        availability: stopInstanceAvailability, handler: () => { void perform(stopInstance); } }),
       registry.register({ ...metadata, id: "resource.discard-tool", payloadKind: "resource-tool-capture", nameKey: "toolQuery.discardReview", risk: "retries-resource-action",
         availability: payload => captureAvailability(payload), handler: () => { void perform(discard); } }),
       registry.register({ ...metadata, id: "resource.retry-tool", payloadKind: "resource-tool-pending", nameKey: "toolQuery.retryOriginal", risk: "retries-resource-action",
@@ -253,11 +279,22 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
       {capture ? <section aria-label={t("toolQuery.review")}>
         <p>{t(visibleRun?.review.attemptId === capture.review.attemptId ? "toolQuery.executionCaptured" : "toolQuery.captured", { count: capture.review.items.length })}</p>
         <PluginPermissions permissions={capture.review.tool.binding.capability.declaration.permissions} /><p>{t("sourcePlugin.unsandboxed")}</p>
+        <p>{t(`toolQuery.scopes.${capture.review.tool.componentScope}`)}</p>
+        {applicationBasis ? <section aria-label={t("toolQuery.applicationTitle")}>
+          <p>{t("toolQuery.applicationHelp")}</p>
+          {instance.isFetching ? <p role="status">{t("toolQuery.applicationLoading")}</p> : null}
+          {instance.error ? <div role="alert"><CommandFailureDetails failure={commandFailure(instance.error)} /></div> : null}
+          {instance.data ? <p role="status">{t(`toolQuery.applicationStates.${instance.data.state}`)}</p> : null}
+          {instance.data?.state === "reserved" ? <label className="source-check"><input type="checkbox" checked={session.state.applicationConsent === capture.review.inputDigest}
+            disabled={locked || changed || environmentChanged} onChange={event => setApplicationConsent(event.target.checked ? capture.review.inputDigest : null)} />{t("toolQuery.applicationConsent")}</label> : null}
+          <button type="button" disabled={busy} onClick={() => { void instance.refetch(); }}>{t("toolQuery.applicationRefresh")}</button>
+          <button type="button" disabled={!stopInstanceAvailability(capturePayload).enabled} onClick={() => { if (capturePayload) registry.dispatch("resource.stop-tool-instance", commandScope, capturePayload); }}>{t("toolQuery.applicationStop")}</button>
+        </section> : null}
         <details><summary>{t("sourcePlugin.fixedDetails")}</summary><p>{capture.review.tool.binding.declaration.title}</p><code>{capture.review.tool.binding.capability.provider.packageDigest}</code><p><code>{capture.review.tool.environmentDigest}</code></p>
           {capture.review.items.map(item => <pre key={item.itemId}>{typeof field(item.payload, capture.review.tool.binding.declaration.query?.textPath ?? []) === "string" ? String(field(item.payload, capture.review.tool.binding.declaration.query?.textPath ?? [])) : t("toolQuery.invalidResult")}</pre>)}
         </details>
         {!run || run.review.attemptId !== capture.review.attemptId ? <><label className="source-check"><input type="checkbox" checked={consent === capture.review.inputDigest} disabled={locked || changed || environmentChanged || unavailable} onChange={event => setConsent(event.target.checked ? capture.review.inputDigest : null)} />{t("toolQuery.consent")}</label>
-          <button className="primary-button" disabled={locked || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest || inventory.isFetching || environment.isFetching} onClick={() => { if (capturePayload) registry.dispatch("resource.start-tool", commandScope, capturePayload); }}>{t("toolQuery.start")}</button></> : null}
+          <button className="primary-button" disabled={!captureAvailability(capturePayload, true).enabled} onClick={() => { if (capturePayload) registry.dispatch("resource.start-tool", commandScope, capturePayload); }}>{t("toolQuery.start")}</button></> : null}
         <button className="secondary-button" disabled={locked || working} onClick={() => { if (capturePayload) registry.dispatch("resource.discard-tool", commandScope, capturePayload); }}>{t("toolQuery.discardReview")}</button>
       </section> : null}
       {pending ? <button className="secondary-button" disabled={busy || disabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("toolQuery.retryOriginal")}</button> : null}

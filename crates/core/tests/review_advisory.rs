@@ -50,6 +50,7 @@ fn choice(store: &ProjectStore, unit: ExecutionId, all: bool) -> AdvisoryReviewC
         &binding,
         &tsumugi_core::execution::PluginExecutionBinding {
             component_scope: sdk::ComponentScope::Project,
+            application_scope: None,
             capability: binding.checker.clone(),
             profile: Some(binding.declaration.profile.clone()),
             environment: format.binding().checker.environment.clone(),
@@ -307,6 +308,7 @@ fn execute(
             expires,
             PluginConsent {
                 unsandboxed_execution: true,
+                application_execution: false,
             },
         )
         .unwrap();
