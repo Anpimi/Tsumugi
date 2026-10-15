@@ -452,3 +452,31 @@ it.each([["extracted",true],["inferred",true],["neighbors",true],["maxBytes",204
   expect(owner.config.maxRequests).toBe(before.config.maxRequests);
   expect(calls("start_arena_translation")).toHaveLength(0);
 });
+
+it("receives a checked offline target without replacing manual B or model settings, and refuses newer choices", () => {
+  render(<Probe/>, project);
+  act(() => { translations.begin({unitId:fixtureIdentity(1901),locale:"zh-CN",sourceRevisionId:fixtureIdentity(1902),key:"manual",sourceText:"Original"},null,null,"Manual B");
+    owner.setConfig(value=>({...value,variants:value.variants.map(variant=>({...variant,model:"Kept model"}))})); });
+  const before=owner.current();
+  act(()=>expect(owner.receiveComparisonTarget(comparison.unitId,"zh-CN",comparison.rows[0].revisionId,before)).toBe(true));
+  expect(owner.current().unit).toBe(comparison.unitId);expect(owner.current().references).toEqual([comparison.rows[0].revisionId]);
+  expect(owner.current().config.variants[0].model).toBe("Kept model");expect(translations.current()?.text).toBe("Manual B");
+  const captured=owner.current();act(()=>owner.setReferences(comparison.rows.map(row=>row.revisionId)));
+  act(()=>expect(owner.receiveComparisonTarget(fixtureIdentity(1903),"zh-CN",fixtureIdentity(1904),captured)).toBe(false));
+  expect(owner.current().references).toEqual(comparison.rows.map(row=>row.revisionId));
+  expect(calls("create_execution_identity")).toHaveLength(0);expect(calls("create_arena_comparison")).toHaveLength(0);
+});
+
+it("keeps rejected comparison rows readable but refuses direct selection until a fresh restored projection", () => {
+  render(<Probe/>, project);act(()=>owner.openComparison(comparison.comparisonId!));
+  comparison={...comparison,rows:comparison.rows.map((row,index)=>({...row,candidateDisposition:index===0?"rejected" as const:null}))};
+  act(()=>reads.client.setQueryData(reads.key(["arena-comparison",comparison.comparisonId]),comparison));
+  expect(owner.canSelect(comparison,comparison.rows[0].revisionId)).toBe(false);
+  expect(owner.canSelect(comparison,comparison.rows[1].revisionId)).toBe(true);
+  expect(comparison.rows[0].text).toBeTruthy();expect(comparison.rows[0].model).toBeNull();
+  const old=comparison;
+  comparison={...comparison,rows:comparison.rows.map((row,index)=>({...row,candidateDisposition:index===0?"restored" as const:null}))};
+  act(()=>reads.client.setQueryData(reads.key(["arena-comparison",comparison.comparisonId]),comparison));
+  expect(owner.canSelect(old,old.rows[0].revisionId)).toBe(false);
+  expect(owner.canSelect(comparison,comparison.rows[0].revisionId)).toBe(true);
+});

@@ -368,3 +368,30 @@ it("retains the exact request when a structurally valid acknowledgement names th
   await screen.findByText(i18n.t("candidateDecisions.rejectedRecorded"));
   expect(calls("decide_translation_candidate")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(1);
 });
+
+it("opens the exact saved AI revision in offline Arena and preserves the separate manual B draft", async () => {
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command,args)=>command==="list_arena_comparisons"?Promise.resolve([]):original(command,args));
+  const {handle,user}=await openProduction(true);
+  await user.click(await screen.findByRole("button",{name:i18n.t("arena.openFromEntry")}));
+  await screen.findByRole("heading",{name:i18n.t("arena.savedComparison")});
+  expect(await screen.findByRole("checkbox",{name:/你好/})).toBeChecked();
+  expect(requests("read_translation_history").some(request=>request.unitId===revision.unitId&&request.afterOrdinal==="0"&&request.limit===1)).toBe(true);
+  for(const command of ["create_arena_comparison","preview_arena_translation","start_arena_translation","select_translation_revision","save_arena_merge"])expect(calls(command)).toHaveLength(0);
+  await user.click(screen.getByRole("button",{name:i18n.t("arena.returnToEntry")}));
+  await screen.findByRole("heading",{level:1,name:i18n.t("ai.title")});
+  await act(async()=>expect(await handle.current!.navigate({kind:"area",area:"translation"})).toBe(true));
+  expect(await screen.findByLabelText(i18n.t("translation.draft"))).toHaveValue("Manual B 👩🏽‍💻");
+});
+
+it("rejects a contextual Arena destination if the actual selected revision or source basis disagrees", async()=>{
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command,args)=>command==="list_arena_comparisons"?Promise.resolve([]):original(command,args));
+  const {handle}=await openProduction(true);
+  const target={unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,key:item.nativeKey,sourceText:item.sourceText};
+  for(const invalid of [{revisionId:fixtureIdentity(1800)},{revisionOrdinal:"0"},{target:{...target,sourceRevisionId:fixtureIdentity(1801)}}]){
+    await act(async()=>expect(await handle.current!.navigate({kind:"arena-comparison",target,locale:"zh-CN",revisionId:revision.revisionId,revisionOrdinal:revision.ordinal,returnTo:"ai",...invalid})).toBe(false));
+  }
+  expect(screen.getByRole("heading",{level:1,name:i18n.t("ai.title")})).toBeInTheDocument();
+  expect(calls("create_arena_comparison")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(0);
+});

@@ -1,5 +1,21 @@
 # Direct AI translation
 
+Use **Compare saved translations** beside a revision in editor history, or while
+reviewing a saved AI candidate, to open that exact entry and language in Arena.
+The application rechecks the current source and the selected historical revision
+before opening offline choices. This does not create a comparison, contact a
+model, select a translation or replace your manual draft. Choose a second saved
+revision and explicitly start the comparison. Unfinished comparison choices,
+merge drafts and unconfirmed actions must be resolved before replacing them.
+
+Rejected candidates remain readable in saved comparisons. Their current rejection
+status prevents direct selection until you explicitly restore them through the
+translation history or saved AI candidate review. Status alone is shown in blind
+comparisons, preserving hidden model identities. **Manual merge** remains an
+explicit new revision with all contributor references; it neither restores nor
+directly selects a rejected contributor. **Return to the original work area**
+returns to the editor or AI preparation with its retained draft and settings.
+
 AI translation and Arena comparison are working areas in the sidebar. Connection configuration can be folded away while preparing a task; validation errors in connection fields reveal those settings again. The selected scope, sharing choices and budget remain part of the explicit preview and consent flow. Moving between working areas keeps local preparation state through the existing leave decision, and Tasks retains persisted attempts.
 
 Open a project with current source content and choose **AI translation**. Choose the working mode of each stage: understanding, resources, translation, checks and delivery. Manual and skipped stages require no model. Choosing manual translation hides connection and sharing settings; **Prepare manual plan** captures the selected entries and language and offers their manual editors. Glossary and context, Review and QA, and Build and export provide the other manual stages. AI assistance generates candidates. An explicit selection policy can also save candidates, run mechanical checks and choose eligible translations; resource adoption, standalone automated checks and delivery remain unavailable.

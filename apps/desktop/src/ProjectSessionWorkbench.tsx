@@ -23,7 +23,8 @@ import { TaskDock } from "./TaskDock";
 import { useWorkspaceView, useWorkspaceViewChanges, type WorkspaceArea } from "./WorkbenchFrame";
 import { executionContext } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
-import { reviewCommands } from "./reviewCommands";
+import { reviewCommands, type ReviewEditorSnapshot } from "./reviewCommands";
+import { translationCommands, type TranslationHistory, type TranslationRevision } from "./translationCommands";
 import { sourceKeys, sourceReads } from "./sourceQueries";
 import type { ContentScope } from "./sourceCommands";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
@@ -199,6 +200,49 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       if (!accepted) setFailure("navigation-edited");
       return accepted;
     }
+    if (destination.kind === "arena-comparison") {
+      const before = arena.current(), metadata = committed.current.project.metadata;
+      if (arena.reserved() || before.draft || translation.candidates.blocked() || translation.mutationReserved || translation.protection.blocked()
+        || translation.current()?.pending || translation.current()?.pendingSelection || translation.current()?.saving || translation.current()?.selecting
+        || !metadata.targetLocales.includes(destination.locale)
+        || !/^[1-9]\d{0,18}$/.test(destination.revisionOrdinal) || BigInt(destination.revisionOrdinal) > 9223372036854775807n) { setFailure("arena-context-blocked"); return false; }
+      const source = sourceReads.scope(scope), editorKey = ["editor-snapshot", destination.target.unitId, destination.locale];
+      const historyKey = ["arena-entry-history", destination.target.unitId, destination.locale, destination.revisionOrdinal];
+      await Promise.all([
+        reads.client.fetchQuery({ queryKey: reads.key(source.key), staleTime: 0, meta: { scopes: source.scopes }, queryFn: source.read }),
+        reads.client.fetchQuery({ queryKey: reads.key(editorKey), staleTime: 0, meta: { scopes: ["source", "translation", "resources", "review"] },
+          queryFn: () => reviewCommands.editorSnapshot({ ...scope, unitId: destination.target.unitId, locale: destination.locale }) }),
+        reads.client.fetchQuery({ queryKey: reads.key(historyKey), staleTime: 0, meta: { scopes: ["source", "translation"] },
+          queryFn: () => translationCommands.history({ ...scope, unitId: destination.target.unitId, locale: destination.locale,
+            afterOrdinal: (BigInt(destination.revisionOrdinal) - 1n).toString(), limit: 1 }) }),
+      ]);
+      // Query retains canonical references when a fresh response is equal to
+      // its cached value. Inspect those checked records, not fetchQuery's raw
+      // response objects, so an unchanged editor remains a valid destination.
+      const sourceValue = reads.client.getQueryData<ContentScope>(reads.key(source.key));
+      const snapshot = reads.client.getQueryData<ReviewEditorSnapshot>(reads.key(editorKey));
+      const history = reads.client.getQueryData<TranslationHistory>(reads.key(historyKey));
+      const checked = (key: readonly unknown[], data: unknown) => {
+        const value = reads.client.getQueryState(reads.key(key));
+        return value?.status === "success" && value.error === null && value.fetchStatus === "idle" && !value.isInvalidated && value.data === data;
+      };
+      const revision = history?.rows[0];
+      if (!current() || committed.current.project.metadata.sourceLocale !== metadata.sourceLocale
+        || !sourceValue || !snapshot || !history
+        || !checked(source.key, sourceValue) || !checked(editorKey, snapshot) || !checked(historyKey, history)
+        || !sourceValue.currentSnapshot || snapshot.target.sourceSnapshotId !== sourceValue.currentSnapshot
+        || snapshot.target.unitId !== destination.target.unitId || snapshot.target.locale !== destination.locale
+        || snapshot.target.sourceRevisionId !== destination.target.sourceRevisionId
+        || history.unitId !== destination.target.unitId || history.locale !== destination.locale
+        || revision?.revisionId !== destination.revisionId || revision.ordinal !== destination.revisionOrdinal
+        || revision.unitId !== destination.target.unitId || revision.locale !== destination.locale
+        || !arena.receiveComparisonTarget(destination.target.unitId, destination.locale, destination.revisionId, before)) {
+        setFailure("arena-context-blocked"); return false;
+      }
+      committed.current.view.memory.write("arena", "comparisonReturnTo", destination.returnTo);
+      committed.current.view.memory.write("arena", "comparisonEntry", { ...destination.target, locale: destination.locale, revisionId: destination.revisionId, revisionOrdinal: destination.revisionOrdinal });
+      return true;
+    }
     if (destination.kind === "attempt") {
       let accepted = false;
       if (destination.area === "source") accepted = source.showAttempt(destination.attemptId);
@@ -281,8 +325,11 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     navigation.navigate({ kind: "translation", target, locale, ...(suggestedText === undefined ? {} : { suggestedText }) });
   const openAiTranslation = (target: import("./TranslationWorkbench").EditorTarget, locale: string, suggestedText?: string) =>
     navigation.navigate({ kind: "translation", target, locale, returnTo: "ai", ...(suggestedText === undefined ? {} : { suggestedText }) });
+  const openComparison = (returnTo: "translation" | "ai") => (target: import("./TranslationWorkbench").EditorTarget, locale: string, revision: Pick<TranslationRevision, "revisionId" | "ordinal">) =>
+    navigation.navigate({ kind: "arena-comparison", target, locale, revisionId: revision.revisionId, revisionOrdinal: revision.ordinal, returnTo });
   const attempt = (area: "source" | "translation" | "ai" | "arena", attemptId: string) => { void navigation.navigate({ kind: "attempt", area, attemptId }); };
   const locked = disabled || navigating;
+  const comparisonReturnTo = view.memory.read<"translation" | "ai">("arena", "comparisonReturnTo");
   if (retired) return <section className="workbench-panel" aria-label={t("workbench.retiredDraftTitle")}>
     <h2>{t("workbench.retiredDraftTitle")}</h2><p>{t("workbench.retiredDraftHelp")}</p>
     <label className="field"><span>{t("workbench.retiredDraftData")}</span><textarea readOnly rows={18} value={JSON.stringify({
@@ -291,10 +338,11 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       tasks: { cancellation: tasks.state, adoption: tasks.currentActivity() },
     }, null, 2)} /></label>
   </section>;
-  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : "workbench.navigationBlocked")}</p><CommandFailureDetails failure={failure} /></div> : null}
+  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : "workbench.navigationBlocked")}</p><CommandFailureDetails failure={failure} /></div> : null}
     {view.area === "overview" && !reads.retired ? <OverviewSourceObserver project={project} onSourceState={onSourceState} /> : null}
     {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} onOpenExtensions={onOpenExtensions}
+      onOpenComparison={openComparison("translation")}
       onQueryText={text => navigation.navigate({ kind: "tool-query", text })}
       onReturnToAi={view.memory.read<boolean>("translation", "returnToAi") ? () => { void navigation.navigate({ kind: "area", area: "ai" }); } : undefined}
       aiSelection={{ count: ai.selected.length, locale: ai.locale, editSeq: ai.editSeq, available: ai.contentRangeAvailable }}
@@ -302,8 +350,9 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} /> : null}
     {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
-    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenTranslation={openAiTranslation} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
-    {view.area === "arena" ? <ArenaWorkbench ref={handle => register("arena", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenConnections={onOpenConnections} /> : null}
+    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenComparison={openComparison("ai")} onOpenTranslation={openAiTranslation} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
+    {view.area === "arena" ? <ArenaWorkbench ref={handle => register("arena", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenConnections={onOpenConnections}
+      onReturn={comparisonReturnTo ? () => { void navigation.navigate({ kind: "area", area: comparisonReturnTo }); } : undefined} /> : null}
     {view.area === "tasks" ? <ExecutionTasks ref={handle => register("tasks", handle)} project={project} disabled={locked}
       onSavedBuild={attemptId => navigation.navigate({ kind: "saved-build", attemptId })}
       onSourcePreview={id => attempt("source", id)} onTranslationPreview={id => attempt("translation", id)} onAiPreview={id => attempt("ai", id)} onArenaPreview={id => attempt("arena", id)} /> : null}

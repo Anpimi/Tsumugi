@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Open an exact saved translation from its editor history or AI candidate review
+  in the offline comparison work area. Existing editor drafts, model settings and
+  unfinished comparisons are preserved. Rejected candidates stay readable in
+  comparisons but must be explicitly restored before direct selection.
 - Saved AI translation candidates support explicit rejection and restoration with
   an actor, reason and fixed source/selection basis. Decisions and original
   receipts survive reopening. Rejected candidates keep their text and provenance

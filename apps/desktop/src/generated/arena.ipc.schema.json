@@ -869,11 +869,28 @@
         ],
         "type": "object"
       },
+      "CandidateDisposition": {
+        "enum": [
+          "rejected",
+          "restored"
+        ],
+        "type": "string"
+      },
       "ComparisonEntry": {
         "additionalProperties": false,
         "properties": {
           "basisCurrent": {
             "type": "boolean"
+          },
+          "candidateDisposition": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CandidateDisposition"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "contributors": {
             "items": {
@@ -914,7 +931,8 @@
           "contributors",
           "model",
           "recipe",
-          "basisCurrent"
+          "basisCurrent",
+          "candidateDisposition"
         ],
         "type": "object"
       },

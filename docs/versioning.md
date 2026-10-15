@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+Contextual offline comparison navigation uses the existing project session and
+Arena draft owner. Comparison reads project the current candidate disposition
+through the existing verified decision owner; this additive Desktop read field
+is generated from Rust and carries no actor, reason or hidden model identity.
+No persisted field, project schema, SDK/process, dependency or lockfile changes
+are introduced by this unit. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain in the same undistributed batch without another version
+bump. Earlier format statements below describe their original development units.
+
 AI cards now reuse the translation decision owner for in-place rejection and
 restoration of a verified saved revision. Explicit snapshot/history bases do not
 replace a manual editor draft; pending decisions keep their original action and

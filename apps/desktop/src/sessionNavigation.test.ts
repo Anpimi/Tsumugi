@@ -178,3 +178,15 @@ describe("project session navigation", () => {
   });
 
 });
+
+it("captures an immutable offline comparison destination and keeps the original work guard",async()=>{
+  const test=setup();test.setArea("translation");
+  const waiting=deferred<boolean>();test.presentation.allowNavigate.mockReturnValueOnce(waiting.promise);
+  const target={unitId:"original-unit",sourceRevisionId:"original-source",key:"Original",sourceText:"Original text"};
+  const destination:WorkspaceDestination={kind:"arena-comparison",target,locale:"zh-CN",revisionId:"saved-revision",revisionOrdinal:"101",returnTo:"translation"};
+  const navigating=test.navigation.navigate(destination);target.unitId="changed-unit";waiting.resolve(true);
+  expect(await navigating).toBe(true);expect(test.area()).toBe("arena");
+  expect(test.ports.accept).toHaveBeenCalledWith(expect.objectContaining({target:expect.objectContaining({unitId:"original-unit"}),revisionId:"saved-revision",revisionOrdinal:"101"}),expect.any(Function));
+  const captured=vi.mocked(test.ports.accept).mock.calls[0][0];expect(Object.isFrozen(captured)).toBe(true);
+  if(captured.kind!=="arena-comparison")throw new Error("Expected comparison target");expect(Object.isFrozen(captured.target)).toBe(true);
+});

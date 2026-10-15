@@ -578,6 +578,13 @@ workbench: {
 },
 
 arena: {
+  locateRevision: "Revision {{number}} is preselected. Load candidate pages to locate it before starting the comparison.",
+  contextBlocked: "The comparison could not open. Finish or keep your existing comparison, check the current source and try again. Your drafts and model settings are kept.",
+  openFromEntry: "Compare saved translations",
+  returnToEntry: "Return to the original work area",
+  rejectionHelp: "Rejected candidates remain readable. Restore a rejected candidate in its translation history before selecting it.",
+  mergeDecisionHelp: "Manual merging creates your own new revision and records all contributors; it does not restore or select a rejected contributor.",
+
   "removedLocale": "The target language {{locale}} is no longer available. Choose a current language for a new action; the original action remains recoverable.",
   "sourceStale": "The source or shared resources changed. Preview the complete selected range again before sending a new round.",
   "clearRange": "Clear selected range",

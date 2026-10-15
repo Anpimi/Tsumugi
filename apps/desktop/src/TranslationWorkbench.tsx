@@ -70,10 +70,11 @@ const targetFromTranslation = (row: TranslationPreviewRow): EditorTarget | null 
   ? { unitId: row.unitId, sourceRevisionId: row.sourceRevisionId, key: row.entry.nativeKey, sourceText: row.sourceText ?? "" }
   : null;
 
-export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, ref }: {
+export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, onOpenComparison, ref }: {
   project: ProjectView; disabled: boolean; onOpenExtensions?: () => void; onQueryText?: (text: string) => boolean | Promise<boolean>;
   aiSelection?: { count: number; locale: string; editSeq: number; available: boolean };
-  onPrepareSelection?: (selection: ContentSelection, expectedEditSeq: number) => Promise<boolean>; onReturnToAi?: () => void; ref?: Ref<TranslationHandle>
+  onPrepareSelection?: (selection: ContentSelection, expectedEditSeq: number) => Promise<boolean>; onReturnToAi?: () => void; ref?: Ref<TranslationHandle>;
+  onOpenComparison?: (target: EditorTarget, locale: string, revision: Pick<TranslationRevision, "revisionId" | "ordinal">) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const context = executionContext(project);
@@ -616,6 +617,12 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     const value = draftSession.current()?.pendingSelection;
     return value ? { kind: "translation-selection-pending", request: structuredClone(value.request), submittedSeq: value.submittedSeq } : undefined;
   }
+  function comparisonAvailability(payload?: TranslationRevisionCommandPayload): CommandAvailability {
+    const allowed = businessGate("edit"); if (!allowed.enabled) return allowed;
+    return onOpenComparison && payload && revisionTarget(payload) && displayedTarget && snapshot && sourceReady()
+      && checkedRead(editorKey(editorIntent), snapshot) && (!historySelected || !!history && checkedRead(historyKey(historyIntent), history))
+      ? { enabled: true } : unavailableCommand;
+  }
   function candidatePayload(revision: TranslationRevision): TranslationCandidateCommandPayload | undefined {
     const base = revisionPayload(revision), state = candidates.current();
     return base ? { ...base,kind:"translation-candidate",disposition:revision.candidateDecision?.request.disposition === "rejected" ? "restored" : "rejected",
@@ -717,6 +724,10 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
         payloadKind: "translation-revision", availability: revisionAvailability, handler: payload => { void perform(current => selectRevision(payload,current)); } }),
       commandRegistry.register({ ...metadata, id: "translation.check-selection", nameKey: "translation.checkSelection", risk: "reconciles-execution-action",
         payloadKind: "translation-selection-pending", availability: payload => selectionPendingAvailability(payload), handler: () => { void perform(current => checkSelection(current)); } }),
+      commandRegistry.register({ ...metadata, id: "translation.open-comparison", nameKey: "arena.openFromEntry", risk: "reads-arena",
+        payloadKind: "translation-revision", availability: comparisonAvailability, handler: payload => {
+          const revision = revisionTarget(payload); if (revision && displayedTarget) void onOpenComparison?.(displayedTarget, targetLocale, revision);
+        } }),
       commandRegistry.register({ ...metadata, id: "translation.retry-selection", nameKey: "translation.retrySelection", risk: "retries-execution-action",
         payloadKind: "translation-selection-pending", availability: payload => selectionPendingAvailability(payload,true), handler: () => { void perform(current => checkSelection(current,true)); } }),
       commandRegistry.register({ ...metadata,id:"translation.decide-candidate",nameKey:"candidateDecisions.title",risk:"writes-translation",payloadKind:"translation-candidate",availability:candidateAvailability,
@@ -1158,6 +1169,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                   : null} />
 
               <section aria-label={t("translation.history")}><div className="execution-section-heading"><h4>{t("translation.history")}</h4><button className="text-button" disabled={busy || readBusy || !targetAvailable || !!pendingSave || !editorTarget} onClick={() => void performRead(refreshHistory)}>{t("translation.refreshHistory")}</button></div>{historyRead.error && historyIntent ? <button className="secondary-button" disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable} onClick={() => void performRead(current => loadHistory(historyIntent.after, current))}>{t("execution.refresh")}</button> : null}{historyStale ? <p role="status">{t("translation.historyStale")}</p> : null}{history?.rows.length ? <ul>{history.rows.map(revision => <li key={revision.revisionId}><p>{revision.ordinal}: {revision.text === "" ? t("translation.empty") : revision.text}</p><p>{revision.originKind === "import" ? t("translation.importOrigin", { file: revision.logicalPath ?? "" }) : revision.originKind === "ai" ? t("ai.origin") : t("translation.manualOrigin")}</p>{revision.originKind === "import" ? <details><summary>{t("translation.evidence")}</summary><p>{t("translation.key")}: {revision.nativeKey}</p><p>{t("translation.file")}: {revision.logicalPath}</p><code>{revision.fileDigest}</code></details> : null}{revision.candidateDecision ? <p role="status">{t(revision.candidateDecision.request.disposition === "rejected" ? "candidateDecisions.rejected" : "candidateDecisions.restored")} · {revision.candidateDecision.request.actor}: {revision.candidateDecision.request.reason}</p> : null}
+                  {onOpenComparison ? <button className="secondary-button" disabled={!comparisonAvailability(revisionPayload(revision)).enabled} onClick={() => { const payload = revisionPayload(revision); if (payload) commandRegistry.dispatch("translation.open-comparison", commandScope, payload); }}>{t("arena.openFromEntry")}</button> : null}
                   {revision.originKind === "ai" ? <button className="secondary-button" disabled={!candidateAvailability(candidatePayload(revision)).enabled} onClick={()=>{const input=candidatePayload(revision);if(input)commandRegistry.dispatch("translation.decide-candidate",commandScope,input);}}>{t(revision.candidateDecision?.request.disposition === "rejected" ? "candidateDecisions.restore" : "candidateDecisions.reject")}</button> : null}<button className="secondary-button" disabled={!revisionAvailability(revisionPayload(revision)).enabled} onClick={() => {const payload=revisionPayload(revision);if(payload)commandRegistry.dispatch("translation.select-revision",commandScope,payload);}}>{t("translation.selectRevision")}</button></li>)}</ul> : historyStale ? null : <p>{t("translation.noHistory")}</p>}
               {history ? <div className="execution-actions"><button className="secondary-button" disabled={busy || readBusy || !targetAvailable || historyRead.isFetching || history.rows[0]?.ordinal === "1"} onClick={() => void performRead(current => loadHistory(translationHistoryAfter(history.rows[0]?.ordinal ?? "1", 101), current))}>{t("translation.earlier")}</button>{history.nextOrdinal !== null ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable || historyRead.isFetching} onClick={() => void performRead(current => loadHistory(history.nextOrdinal!, current))}>{t("translation.later")}</button> : null}</div> : null}</section>
                 </details>

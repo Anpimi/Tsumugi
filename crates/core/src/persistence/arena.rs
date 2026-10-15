@@ -115,6 +115,7 @@ pub struct ComparisonEntry {
     pub model: Option<String>,
     pub recipe: Option<String>,
     pub basis_current: bool,
+    pub candidate_disposition: Option<crate::CandidateDisposition>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -352,6 +353,10 @@ impl ProjectStore {
                 model,
                 recipe,
                 basis_current: source_id == target.source_revision_id && !changed,
+                // Reuse the verified append-only decision owner. Only status is
+                // projected, so a human reason cannot disclose a blind model.
+                candidate_disposition: self.translation_candidate_decision(project, *revision)?
+                    .map(|value| value.request.disposition),
             });
         }
         Ok(ComparisonView {

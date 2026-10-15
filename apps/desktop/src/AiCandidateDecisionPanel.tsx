@@ -6,15 +6,17 @@ import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useSessionAlive, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { executionContext } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
+import type { EditorTarget } from "./TranslationWorkbench";
 import type { AiView } from "./aiCommands";
 import { reviewCommands } from "./reviewCommands";
 import { sourceReads } from "./sourceQueries";
-import { translationCommands, translationHistoryAfter, type TranslationHistory } from "./translationCommands";
+import { translationCommands, translationHistoryAfter, type TranslationHistory, type TranslationRevision } from "./translationCommands";
 import { useWorkbenchCommands, type AiSavedCandidateCommandPayload, type TranslationCandidateCommandPayload,
   type TranslationCandidatePendingCommandPayload, type CommandAvailability } from "./workbenchCommands";
 
-export function AiCandidateDecisionPanel({ project, disabled, target, currentRow }: {
+export function AiCandidateDecisionPanel({ project, disabled, target, currentRow, onOpenComparison }: {
   project: ProjectView; disabled: boolean; target: AiSavedCandidateCommandPayload | null;
+  onOpenComparison?: (target: EditorTarget, locale: string, revision: Pick<TranslationRevision, "revisionId" | "ordinal">) => Promise<boolean>;
   currentRow: () => { value: AiView; row: AiView["rows"][number] } | null;
 }) {
   const { t } = useTranslation(), reads = useSessionReads(), alive = useSessionAlive(), registry = useWorkbenchCommands();
@@ -76,6 +78,10 @@ export function AiCandidateDecisionPanel({ project, disabled, target, currentRow
       && input.actor.trim() && input.reason.trim() && value.revision.revisionId !== value.basis.baseRevisionId
       && Object.entries(expected).every(([key, field]) => input[key as keyof typeof input] === field) ? { enabled: true } : unavailable;
   }
+  function comparisonAvailability(input?: AiSavedCandidateCommandPayload): CommandAvailability {
+    return onOpenComparison && input && target && resolve() && !candidates.blocked()
+      && Object.entries(target).every(([key, value]) => input[key as keyof typeof input] === value) ? { enabled: true } : unavailable;
+  }
   function pendingPayload(): TranslationCandidatePendingCommandPayload | undefined {
     const request = candidates.current().pending;
     return request ? { kind: "translation-candidate-pending", request: structuredClone(request) } : undefined;
@@ -99,6 +105,9 @@ export function AiCandidateDecisionPanel({ project, disabled, target, currentRow
   useLayoutEffect(() => {
     const metadata = { category: "ai" as const, scope, binding: null, confirmation: "none" as const };
     const remove = [
+      registry.register({ ...metadata, id: "ai.open-comparison", nameKey: "arena.openFromEntry", risk: "reads-arena", payloadKind: "ai-saved-candidate", availability: comparisonAvailability,
+        handler: input => { const value = resolve(); if (value && comparisonAvailability(input).enabled && snapshot) void onOpenComparison?.({ unitId: snapshot.target.unitId,
+          sourceRevisionId: snapshot.target.sourceRevisionId, key: snapshot.target.nativeKey, sourceText: snapshot.target.sourceText }, value.basis.locale, value.revision); } }),
       registry.register({ ...metadata, id: "ai.decide-candidate", nameKey: "candidateDecisions.title", risk: "writes-translation", payloadKind: "translation-candidate", availability, handler: decide }),
       registry.register({ ...metadata, id: "ai.check-candidate-decision", nameKey: "candidateDecisions.check", risk: "reconciles-execution-action", payloadKind: "translation-candidate-pending",
         availability: input => recoveryAvailability(input), handler: () => { void candidates.check(); } }),
@@ -127,6 +136,8 @@ export function AiCandidateDecisionPanel({ project, disabled, target, currentRow
       </div> : null}
       <button className="secondary-button" disabled={loading || candidates.blocked()} onClick={() => { void sourceRead.refetch(); void editorRead.refetch(); if (after !== null) void historyRead.refetch(); }}>{t("candidateDecisions.refresh")}</button>
     </> : null}
+    {onOpenComparison && target ? <button className="secondary-button" disabled={!comparisonAvailability(target).enabled}
+      onClick={() => { if (target) registry.dispatch("ai.open-comparison", scope, target); }}>{t("arena.openFromEntry")}</button> : null}
     <TranslationCandidateDecisionFields canCheck={recoveryAvailability(pendingPayload()).enabled} canRetry={recoveryAvailability(pendingPayload(), true).enabled}
       onCheck={() => { const input = pendingPayload(); if (input) registry.dispatch("ai.check-candidate-decision", scope, input); }}
       onRetry={() => { const input = pendingPayload(); if (input) registry.dispatch("ai.retry-candidate-decision", scope, input); }} />

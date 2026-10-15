@@ -935,6 +935,40 @@ mod tests {
             expected_decision_id: None, disposition: crate::CandidateDisposition::Rejected, actor: "Synthetic reviewer".into(), reason: "Does not fit this entry".into() }
     }
     #[test]
+    fn candidate_decision_arena_projection_respects_rejection_restoration_and_blind_history() {
+        let (_directory, mut store, project, units) = fixture();
+        let (_plan, input) = grant(&mut store, &[units[0]], SelectionPolicy::MissingOnly);
+        let revision = candidate(&mut store, &input, units[0], "你好 {{name}}");
+        let target = store.review_target(project, units[0], "zh-CN").unwrap();
+        let manual = store.save_translation_revision(&SaveTranslationRevision {
+            project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(),
+            source_revision_id: target.source_revision_id, expected_selection_id: None, text: "人工 {{name}}".into(),
+        }).unwrap();
+        let request = candidate_decision(&store, project, units[0], revision);
+        store.decide_translation_candidate(&request).unwrap();
+        let comparison = crate::ComparisonRequest { project_id: project, action_id: ExecutionId::new(), unit_id: units[0],
+            locale: "zh-CN".into(), revision_ids: vec![revision, manual.revision_id], blind: true };
+        let view = store.create_comparison(&comparison).unwrap();
+        assert!(!view.revealed);
+        assert!(view.rows.iter().all(|row| row.model.is_none() && row.recipe.is_none()));
+        let row = view.rows.iter().find(|row| row.revision_id == revision).unwrap();
+        assert_eq!(row.text, "你好 {{name}}");
+        assert_eq!(row.candidate_disposition, Some(crate::CandidateDisposition::Rejected));
+        let choose = crate::SelectTranslationRevision { project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(),
+            source_revision_id: request.source_revision_id, expected_selection_id: request.expected_selection_id, revision_id: revision };
+        assert_eq!(store.select_translation_revision(&choose).unwrap_err().stage, "candidate-rejected");
+        let path = store.directory().to_path_buf(); store.close().unwrap(); store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.read_comparison(project, comparison.action_id).unwrap().rows.iter().find(|row| row.revision_id == revision).unwrap().candidate_disposition,
+            Some(crate::CandidateDisposition::Rejected));
+        store.decide_translation_candidate(&crate::CandidateDecisionWrite { action_id: ExecutionId::new(), expected_decision_id: Some(request.action_id),
+            disposition: crate::CandidateDisposition::Restored, reason: "Explicit reconsideration".into(), ..request }).unwrap();
+        let restored = store.read_comparison(project, comparison.action_id).unwrap();
+        assert!(!restored.revealed);
+        assert_eq!(restored.rows.iter().find(|row| row.revision_id == revision).unwrap().candidate_disposition, Some(crate::CandidateDisposition::Restored));
+        store.select_translation_revision(&choose).unwrap();
+        assert_eq!(store.translation_history(project, units[0], "zh-CN", 0, 100).unwrap().rows.len(), 2);
+    }
+    #[test]
     fn candidate_decision_rejection_restore_and_exact_receipts_survive_reopen() {
         let (_directory, mut store, project, units) = fixture();
         let (_plan, input) = grant(&mut store, &[units[0]], SelectionPolicy::MissingOnly);

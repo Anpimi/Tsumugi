@@ -119,7 +119,7 @@ export function confirmArenaView(view: ArenaView, attemptId: string, prepared?: 
 }
 function comparisonBasis(view: ComparisonView) {
   return JSON.stringify([view.comparisonId,view.unitId,view.locale,view.sourceRevisionId,view.sourceText,view.selectionId,view.basis,
-    view.rows.map(row => [row.revisionId,row.sourceRevisionId,row.text,row.basisCurrent])]);
+    view.rows.map(row => [row.revisionId,row.sourceRevisionId,row.text,row.basisCurrent,row.candidateDisposition])]);
 }
 function confirmComparisonRead(view: ComparisonView, comparisonId: string) {
   if (!validateResponseComparison(view) || view.comparisonId !== comparisonId || view.rows.length < 2 || view.rows.length > 4
@@ -341,6 +341,22 @@ function useArenaOwner(project: ProjectView) {
       && before.references.length >= 2 && before.references.length <= 4 && new Set(before.references).size === before.references.length
       && before.references.every(validateResponseIdentity);
   }
+  /** A checked read may open offline choices without replacing model preparation
+   * or a separate editor draft. Existing choices require explicit disposal. */
+  function receiveComparisonTarget(unitId: string, locale: string, revisionId: string, expected: State) {
+    const before = current();
+    if (!live() || before !== expected || reserved() || before.draft || !available(locale)
+      || draftsRef.current.candidates.blocked() || draftsRef.current.mutationReserved || draftsRef.current.protection.blocked()
+      || draftsRef.current.current()?.pending || draftsRef.current.current()?.pendingSelection
+      || draftsRef.current.current()?.saving || draftsRef.current.current()?.selecting
+      || !validateResponseIdentity(unitId) || !validateResponseIdentity(revisionId)
+      || (before.locale !== locale && (before.dirty || before.prepared || before.attempt || before.selected.length > 0))
+      || (before.references.length > 0 && (before.unit !== unitId || before.locale !== locale || !before.references.includes(revisionId)))) return false;
+    version.current++;
+    update(value => ({ ...value, unit: unitId, locale, references: value.references.length ? value.references : [revisionId],
+      comparisonId: null, dirty: true, editSeq: value.editSeq + 1, failure: null, notice: null }));
+    return true;
+  }
   async function compare() {
     const before = current(), ticket = version.current;
     if (!canCompare() || !available()) return;
@@ -359,7 +375,7 @@ function useArenaOwner(project: ProjectView) {
   }
   function canSelect(view: ComparisonView, revisionId: string) {
     return live() && !reserved() && !translations.mutationReserved && comparisonCurrent(view)
-      && view.rows.some(row => row.revisionId === revisionId && row.sourceRevisionId === view.sourceRevisionId);
+      && view.rows.some(row => row.revisionId === revisionId && row.sourceRevisionId === view.sourceRevisionId && row.candidateDisposition !== "rejected");
   }
   async function select(view: ComparisonView, revisionId: string) {
     if (!canSelect(view,revisionId) || !reserveTranslation()) return;
@@ -537,7 +553,7 @@ function useArenaOwner(project: ProjectView) {
       unit:"",references:[],comparisonBlind:false,comparisonId:null,draft:null,attempt:null,started:null,staleReason:null,failure:null,notice:null})); return true;
   }
   return {...state,current,reserved,targetAvailable,connectionCurrent,selectConnection,canPreview,preview,canStart,start,readView,readComparison,canCompare,compare,canSelect,select,reveal,canBeginMerge,beginMerge,editMerge,canSaveMerge,mergeBasisCurrent,saveMerge,refreshMerge,
-    canAdopt,adopt,checkPending,retryPending,showAttempt,newRound,reset,
+    canAdopt,adopt,checkPending,retryPending,showAttempt,newRound,reset,receiveComparisonTarget,
     setConfig:(value: SetStateAction<ArenaConfig>) => edit("config",before => {
       const next = typeof value === "function" ? value(before) : value;
       return { ...next, variants: next.variants.map((config, index) => before.variants[index] ? editedAiConfig(before.variants[index], config) : config) };

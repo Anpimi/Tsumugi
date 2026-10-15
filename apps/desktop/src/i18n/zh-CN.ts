@@ -569,6 +569,13 @@ workbench: {
   references: "术语、上下文与历史", saved: "已保存", unsaved: "有未保存修改", saving: "正在保存…", unselected: "未选择译文", selected: "已选择译文", qaPending: "QA 尚未有效", reviewPending: "尚未批准",
 },
 arena: {
+  locateRevision: "已预选第 {{number}} 个修订。请加载候选分页找到它，再开始比较。",
+  contextBlocked: "未能打开比较。请先处理现有比较或保留它，核对当前源内容后重试。草稿和模型设置均已保留。",
+  openFromEntry: "比较已保存译文",
+  returnToEntry: "返回原工作面",
+  rejectionHelp: "被拒候选仍可阅读。要直接选择它，请先在译文历史中明确恢复。",
+  mergeDecisionHelp: "人工合并会创建你自己的新修订并记录全部贡献来源；不会恢复或直接选择被拒的贡献候选。",
+
   "removedLocale": "目标语言 {{locale}} 已不可用。新行动请选择当前语言；原行动仍可核对恢复。",
   "sourceStale": "原文或共享资源已变化。发送新轮前请重新预览完整所选范围。",
   "clearRange": "清空所选范围",

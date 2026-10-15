@@ -9,6 +9,7 @@ export type WorkspaceDestination =
   | { kind: "translation"; target: EditorTarget; locale: string; suggestedText?: string; returnTo?: "ai" }
   | { kind: "review-work" }
   | { kind: "ai-selection"; selection: ContentSelection; expectedEditSeq: number }
+  | { kind: "arena-comparison"; target: EditorTarget; locale: string; revisionId: string; revisionOrdinal: string; returnTo: "translation" | "ai" }
   | { kind: "saved-build"; attemptId: string }
   | { kind: "tool-query"; text: string }
   | { kind: "attempt"; area: "source" | "translation" | "ai" | "arena"; attemptId: string };
@@ -32,7 +33,7 @@ export interface SessionNavigationPorts {
 export function destinationArea(destination: WorkspaceDestination): WorkspaceArea {
   return destination.kind === "area" || destination.kind === "attempt" ? destination.area
     : destination.kind === "translation" ? "translation" : destination.kind === "ai-selection" ? "ai" : destination.kind === "saved-build" ? "release"
-      : destination.kind === "tool-query" ? "resources" : destination.kind === "task" || destination.kind === "task-list" ? "tasks" : "review";
+      : destination.kind === "tool-query" ? "resources" : destination.kind === "arena-comparison" ? "arena" : destination.kind === "task" || destination.kind === "task-list" ? "tasks" : "review";
 }
 
 /** One in-flight UI intent. Business state and write reservations stay in the original owners. */
@@ -51,7 +52,7 @@ export class SessionNavigation {
     const intent = this.acquire("navigation"); if (!intent) return false;
     const current = () => this.current(intent);
     // Capture the user target before any asynchronous view or read work.
-    const fixed: WorkspaceDestination = Object.freeze(destination.kind === "translation"
+    const fixed: WorkspaceDestination = Object.freeze(destination.kind === "translation" || destination.kind === "arena-comparison"
       ? { ...destination, target: Object.freeze({ ...destination.target }) } : { ...destination });
     try {
       const from = this.ports.area();

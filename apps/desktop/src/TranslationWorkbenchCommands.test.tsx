@@ -156,7 +156,7 @@ it("registers import and content row commands and confirms an ordered complete m
   preview=translationPreviewFixture([translationRowFixture(0),translationRowFixture(1),translationRowFixture(2)]);const {user}=await readyImport(),dispatch=vi.spyOn(registry,"dispatch");
   expect(registry.list(scope).filter(value=>value.payloadKind?.startsWith("translation-")).map(value=>value.id).sort()).toEqual([
     "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-candidate-decision","translation.check-import-receipt","translation.check-selection",
-    "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.decide-candidate","translation.inspect-import","translation.retry-candidate-decision","translation.retry-import-action",
+    "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.decide-candidate","translation.inspect-import","translation.open-comparison","translation.retry-candidate-decision","translation.retry-import-action",
     "translation.retry-import-start","translation.retry-selection","translation.select-revision","translation.start-import","translation.toggle-content-selection",
     "translation.prepare-import-check","translation.start-import-check","translation.finish-import-check","translation.prepare-import-projection","translation.start-import-projection","translation.retry-import-plugin",
   ].sort());
@@ -349,4 +349,14 @@ it("checks the original lost candidate-decision receipt after consumer removal w
   expect(drafts.current()?.text).toBe("Text B");expect(drafts.mutationReserved).toBe(false);
   expect(calls("decide_translation_candidate")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
   expect(originalRequests("read_translation_candidate_action")[0]).toMatchObject({actionId:originalRequests("decide_translation_candidate")[0].decision.actionId,unitId:candidate.unitId,locale:"zh-CN"});
+});
+
+it("opens an exact saved revision for offline comparison without saving the newer manual draft", async()=>{
+  const {user,view}=await readyEditor(),compare=vi.fn(async()=>true);
+  view.rerender(<><Probe/><TranslationWorkbench project={project} disabled={false} onOpenComparison={compare}/></>,project);
+  act(()=>drafts.edit("Newer manual B"));
+  const button=await screen.findByRole("button",{name:i18n.t("arena.openFromEntry")});
+  await waitFor(()=>expect(button).toBeEnabled());await user.click(button);
+  expect(compare).toHaveBeenCalledWith(expect.objectContaining({unitId:candidate.unitId,sourceRevisionId:candidate.sourceRevisionId}),"zh-CN",expect.objectContaining({revisionId:candidate.revisionId,ordinal:candidate.ordinal}));
+  expect(drafts.current()?.text).toBe("Newer manual B");expect(calls("save_translation_revision")).toHaveLength(0);expect(calls("select_translation_revision")).toHaveLength(0);
 });

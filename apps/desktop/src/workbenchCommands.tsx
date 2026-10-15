@@ -280,6 +280,7 @@ interface WorkbenchCommandPayloads {
   "translation.check-import-receipt": TranslationImportPendingCommandPayload;
   "translation.retry-import-action": TranslationImportPendingCommandPayload;
   "translation.select-revision": TranslationRevisionCommandPayload;
+  "translation.open-comparison": TranslationRevisionCommandPayload;
   "translation.check-selection": TranslationSelectionPendingCommandPayload;
   "translation.retry-selection": TranslationSelectionPendingCommandPayload;
   "translation.decide-candidate": TranslationCandidateCommandPayload;
@@ -347,6 +348,7 @@ interface WorkbenchCommandPayloads {
   "ai.open-translation": AiTranslationCommandPayload;
   "ai.rewrite-translation": AiTranslationCommandPayload;
   "ai.inspect-candidate": AiSavedCandidateCommandPayload;
+  "ai.open-comparison": AiSavedCandidateCommandPayload;
   "ai.decide-candidate": TranslationCandidateCommandPayload;
   "ai.check-candidate-decision": TranslationCandidatePendingCommandPayload;
   "ai.retry-candidate-decision": TranslationCandidatePendingCommandPayload;
@@ -467,7 +469,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"translation-import-preview", "translation.capture-import-batch">
   | ResourceCommand<"translation-import-batch", "translation.apply-import-batch">
   | ResourceCommand<"translation-import-pending", "translation.check-import-receipt" | "translation.retry-import-action">
-  | ResourceCommand<"translation-revision", "translation.select-revision">
+  | ResourceCommand<"translation-revision", "translation.select-revision" | "translation.open-comparison">
   | ResourceCommand<"translation-candidate", "translation.decide-candidate" | "ai.decide-candidate">
   | ResourceCommand<"translation-candidate-pending", "translation.check-candidate-decision" | "translation.retry-candidate-decision" | "ai.check-candidate-decision" | "ai.retry-candidate-decision">
   | ResourceCommand<"translation-selection-pending", "translation.check-selection" | "translation.retry-selection">
@@ -506,7 +508,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
   | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task" | "release.cancel-task" | "resource.cancel-tool">
   | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "release.retry-cancellation" | "resource.retry-tool-cancellation">
-  | ResourceCommand<"ai-saved-candidate", "ai.inspect-candidate">
+  | ResourceCommand<"ai-saved-candidate", "ai.inspect-candidate" | "ai.open-comparison">
   | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation">
   | ResourceCommand<"resource-tool-preparation", "resource.prepare-tool">
   | ResourceCommand<"resource-tool-capture", "resource.start-tool" | "resource.discard-tool">
