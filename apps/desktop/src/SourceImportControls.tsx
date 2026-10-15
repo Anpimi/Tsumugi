@@ -13,6 +13,8 @@ import { sourceReads, sourceKeys, type SourceInventory } from "./sourceQueries";
 import { sameSourceEnvironment, sourceRequest } from "./sourceCommands";
 import { useWorkbenchState } from "./WorkbenchFrame";
 import { CommandFailureDetails, commandFailure } from "./CommandFailure";
+import { ExecutionDiagnosticDetails } from "./ExecutionDiagnosticDetails";
+import { useSourceFailureOutput } from "./useSourceFailureOutput";
 import { useWorkbenchCommands, type CommandAvailability, type SourceSelectionCommandPayload, type SourceCaptureCommandPayload,
   type SourceCheckCommandPayload, type SourceTaskCommandPayload, type SourcePluginPendingCommandPayload } from "./workbenchCommands";
 import type { ProjectView } from "./projectCommands";
@@ -64,6 +66,10 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
   const checkRead = useSessionQuery({ key: checkKey, scopes: ["execution"], enabled: open && !!state.checkAttempt,
     read: () => state.checkAttempt ? readCompleteAttempt(context, state.checkAttempt, "source-semantic-check") : Promise.resolve(null) });
   const checkedItem = checkRead.data?.items.length === 1 ? checkRead.data.items[0] : null;
+  const failedCheck = checkRead.data?.attemptId === state.checkAttempt && checkedItem?.status.execution === "failed"
+    && checkedItem.resultId && state.checkAttempt
+    ? { attemptId: state.checkAttempt, resultId: checkedItem.resultId, itemId: checkedItem.status.itemId } : null;
+  const checkFailureOutput = useSourceFailureOutput(project, open, failedCheck);
   const checkActive = !!state.checkAttempt && (!checkedItem || checkedItem.status.execution === "queued" || checkedItem.status.execution === "dispatched");
   const error = inventory.error ?? environmentRead.error ?? checkRead.error;
   const pending = state.pendingPlugin;
@@ -171,7 +177,15 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
         {cancellation && checkActive ? <div><button className="secondary-button" disabled={!registry.describe("source.cancel-task", commandScope, cancellation)?.availability.enabled} onClick={() => registry.dispatch("source.cancel-task", commandScope, cancellation)}>{t("execution.cancel")}</button>
           <TaskCancellationFeedback origin="source" taskId={cancellation.taskId} disabled={disabled || owner.inFlight()} visible={open} /></div> : null}
         {checkedItem ? <p role="status">{t(`execution.states.${checkedItem.status.execution}`)}</p> : null}
-        {checkedItem?.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary>{checkedItem.status.diagnostic}</details> : null}
+        {checkedItem?.status.diagnostic || failedCheck && checkFailureOutput.data?.sourceFailure ? <ExecutionDiagnosticDetails
+          code={checkedItem?.status.diagnostic}
+          sourceFailure={failedCheck && checkFailureOutput.status === "success" && !checkFailureOutput.isFetching && !checkFailureOutput.error
+            && checkFailureOutput.data?.projectId === context.projectId && checkFailureOutput.data?.resultId === failedCheck.resultId
+            && checkFailureOutput.data?.itemId === failedCheck.itemId ? checkFailureOutput.data.sourceFailure : undefined} /> : null}
+        {failedCheck && checkFailureOutput.error ? <div role="alert"><p>{t("execution.failureReadFailed")}</p>
+          <CommandFailureDetails failure={commandFailure(checkFailureOutput.error)} />
+          <button className="secondary-button" disabled={checkFailureOutput.isFetching} onClick={() => void checkFailureOutput.refetch()}>{t("source.retryRead")}</button>
+        </div> : null}
         {checkedItem?.status.execution === "succeeded" ? <button className="primary-button" disabled={!checkAvailability(checkCommand, "finish", true).enabled} onClick={() => registry.dispatch("source.finish-check", commandScope, checkCommand)}>{t("sourcePlugin.recordCheck")}</button> : null}
       </> : null}
     </section> : null}

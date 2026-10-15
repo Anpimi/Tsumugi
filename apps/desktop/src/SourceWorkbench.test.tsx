@@ -44,6 +44,83 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it("shows bounded saved source failure detail as text and retries only its failed read", async () => {
+  const original = invoke.getMockImplementation()!;
+  const failed = sourceAttemptFixture(executionFixture.detail.attemptId, preview.resultId);
+  failed.progress.succeeded = 0;
+  failed.progress.failed = 1;
+  failed.items[0].status.execution = "failed";
+  failed.items[0].status.validation = "invalid";
+  failed.items[0].status.diagnostic = "source-corrupt";
+  failed.recovery.units[0].actions = [];
+  const literalDetail = '<a href="https://example.invalid">bad source</a>';
+  let reads = 0;
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "read_execution_attempt") return Promise.resolve(failed);
+    if (command === "read_execution_output") {
+      reads++;
+      return reads === 1 ? Promise.reject({ code: "busy", outcome: "rejected" }) : Promise.resolve({ ...executionFixture.output,
+        projectId: project.metadata.projectId, attemptId: failed.attemptId, resultId: failed.items[0].resultId,
+        itemId: failed.items[0].status.itemId, outcome: "failed", sourceFailure: { code: "invalid-source", artifactId: "captured-1", detail: literalDetail } });
+    }
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(screen.getByRole("button", { name: "Import for preview" }));
+  expect(await screen.findByText(i18n.t("execution.failureReadFailed"))).toBeVisible();
+  expect(screen.getByText(i18n.t("source.errors.invalid"))).toBeVisible();
+  expect(screen.queryByText(literalDetail, { exact: false })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: i18n.t("source.retryRead") }));
+  const diagnostic = await screen.findByText(i18n.t("execution.diagnostic"));
+  await user.click(diagnostic);
+  expect(screen.getByText(literalDetail, { exact: false })).toBeVisible();
+  expect(screen.getByText("captured-1")).toBeVisible();
+  expect(document.querySelector('a[href="https://example.invalid"]')).toBeNull();
+  expect(reads).toBe(2);
+  expect(invoke.mock.calls.some(([name]) => name === "prepare_source_adoption" || name === "adopt_execution")).toBe(false);
+});
+
+it("hides a late failed-source result after selecting another attempt", async () => {
+  const original = invoke.getMockImplementation()!;
+  const ref = createRef<SourceHandle>();
+  const laterAttempt = fixtureIdentity(239);
+  const failed = sourceAttemptFixture(executionFixture.detail.attemptId, preview.resultId);
+  failed.progress.succeeded = 0; failed.progress.failed = 1;
+  failed.items[0].status.execution = "failed";
+  failed.items[0].status.diagnostic = "source-corrupt";
+  let complete!: (value: unknown) => void;
+  const late = new Promise(resolve => { complete = resolve; });
+  invoke.mockImplementation((command: string, args: { request?: { attemptId?: string } }) => {
+    if (command === "read_execution_attempt") {
+      if (args.request?.attemptId === laterAttempt) {
+        const next = sourceAttemptFixture(laterAttempt, preview.resultId);
+        next.items[0].resultId = null; next.items[0].status.execution = "queued";
+        return Promise.resolve(next);
+      }
+      return Promise.resolve(failed);
+    }
+    if (command === "read_execution_output") return late;
+    return original(command, args);
+  });
+  render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(screen.getByRole("button", { name: "Import for preview" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "read_execution_output")).toBe(true));
+  act(() => ref.current!.showAttempt(laterAttempt));
+  await act(async () => complete({ ...executionFixture.output, projectId: project.metadata.projectId,
+    resultId: preview.resultId, itemId: failed.items[0].status.itemId,
+    sourceFailure: { code: "invalid-source", artifactId: null, detail: "Previous attempt failure" } }));
+  expect(screen.queryByText("Previous attempt failure", { exact: false })).not.toBeInTheDocument();
+  expect(screen.queryByText("source-corrupt")).not.toBeInTheDocument();
+});
 it("discovers multiple enabled source packages without competing for the installed Store", async () => {
   const original = invoke.getMockImplementation()!;
   const second = { ...pluginSourcePackage, packageDigest: "d".repeat(64),
@@ -597,6 +674,49 @@ it("retains pending proposals and requires separate checker consent and recorded
   await user.click(screen.getByRole("button", { name: "Apply to project" }));
   await screen.findByRole("heading", { name: "Imported source content" });
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+});
+
+it("shows the independent checker failure from its own saved result without changing the source proposal", async () => {
+  const original = invoke.getMockImplementation()!;
+  const checkAttempt = fixtureIdentity(235), checkResult = fixtureIdentity(236);
+  let identity = 0;
+  invoke.mockImplementation((command: string, args: { request?: { attemptId?: string; resultId?: string } }) => {
+    if (command === "create_execution_identity") return Promise.resolve([executionFixture.detail.attemptId, executionFixture.prepare.actionId, checkAttempt][identity++] ?? fixtureIdentity(400 + identity));
+    if (command === "read_execution_attempt") {
+      const isCheck = args.request!.attemptId === checkAttempt;
+      const value = sourceAttemptFixture(String(args.request!.attemptId), isCheck ? checkResult : executionFixture.prepare.resultIds[0]);
+      value.operation = isCheck ? "source-semantic-check" : "source-import";
+      value.items[0].status.validation = "pending";
+      if (isCheck) {
+        value.progress.succeeded = 0; value.progress.failed = 1;
+        value.items[0].status.execution = "failed";
+        value.items[0].status.diagnostic = "plugin-failed";
+        value.recovery.units[0].actions = [];
+      }
+      return Promise.resolve(value);
+    }
+    if (command === "prepare_source_check") return Promise.resolve({ ...pluginSourceWorkflow.checkReview, attemptId: checkAttempt,
+      sourceAttemptId: executionFixture.detail.attemptId, sourceResultId: executionFixture.prepare.resultIds[0] });
+    if (command === "start_source_check") return Promise.resolve(checkAttempt);
+    if (command === "read_execution_output") {
+      expect(args.request).toMatchObject({ attemptId: checkAttempt, resultId: checkResult });
+      return Promise.resolve({ ...executionFixture.output, projectId: project.metadata.projectId, attemptId: checkAttempt,
+        resultId: checkResult, itemId: sourceAttemptFixture().items[0].status.itemId,
+        sourceFailure: { code: "unsupported-structure", artifactId: "captured-check", detail: "Required manifest Name is missing." } });
+    }
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I separately allow/ }));
+  await user.click(screen.getByRole("button", { name: "Run independent source checks" }));
+  await screen.findByText(/Independent checks did not complete successfully/);
+  await user.click(screen.getByText(i18n.t("execution.diagnostic")));
+  expect(screen.getByText("Required manifest Name is missing.", { exact: false })).toBeVisible();
+  expect(screen.getByText("captured-check")).toBeVisible();
+  expect(screen.getByText("Unchanged {{name}} 世界")).toBeInTheDocument();
+  expect(invoke.mock.calls.some(([name]) => name === "finish_source_check" || name === "adopt_execution")).toBe(false);
 });
 
 it.each([[1, 1], [1, 2], [2, 1], [3, 2], [2, 3]])("keeps unsupported source declaration %s/%s unavailable", async (schemaVersion, behaviorVersion) => {

@@ -243,13 +243,20 @@ it("shows named failure details beside the item and focuses the readable result"
   const user = await openTasks(value);
   expect(screen.getByRole("region", { name: "Available actions" }).compareDocumentPosition(screen.getByRole("heading", { name: "Item results" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument();
-  invoke.mockResolvedValueOnce(fixture.output);
+  const literalDetail = '<img src=x onerror="fetch(\'https://example.invalid\')"> https://example.invalid';
+  invoke.mockResolvedValueOnce({ ...fixture.output,
+    sourceFailure: { code: "invalid-source", artifactId: "captured-1", detail: literalDetail } });
   await user.click(screen.getByRole("button", { name: "View failure details" }));
   const result = await screen.findByRole("region", { name: "Result for Sample A" });
   expect(within(result).getByText(/did not generate usable output/)).toBeInTheDocument();
   expect(within(result).queryByText("null")).not.toBeInTheDocument();
   expect(result).toHaveFocus();
   expect(result.closest("li")).toContainElement(screen.getByText("Sample A · zh-CN", { selector: "strong" }));
+  await user.click(within(result).getByText("Technical details"));
+  expect(within(result).getByText(literalDetail, { exact: false })).toBeVisible();
+  expect(within(result).getByText("captured-1")).toBeVisible();
+  expect(result.querySelector("img")).toBeNull();
+  expect(within(result).queryByRole("link")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Retry eligible failures" }));
   await waitFor(() => expect(within(screen.getByRole("dialog", { name: "Retry eligible failures" })).getByRole("button", { name: "Retry eligible failures" })).toBeEnabled());
   taskReplies({ create_execution_identity: () => fixtureIdentity(6) });

@@ -1588,6 +1588,7 @@ ai: {
       "groupScope": "查看操作范围：{{count}} 项",
       "itemResults": "逐项结果",
       "failureDetails": "查看失败详情",
+      "failureReadFailed": "无法读取已保存的失败详情。原任务和当前输入已保留，可重试读取。",
       "resultFor": "{{name}} 的结果",
       "noOutput": "本项未生成可用输出。其他已保存的结果会保留。",
       "safeFailure": "如上方提供重试操作，可重试此失败项。",

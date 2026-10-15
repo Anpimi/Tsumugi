@@ -1,4 +1,4 @@
-//! Installed domain worker facts through source checking, adoption and read IPC.
+//! Installed domain worker evidence through source checking, adoption and read IPC.
 use super::*;
 use crate::commands::execution::test_fixtures::{
     OwnedDirectory, approved_runtime, provision_packages, selected_package,
@@ -476,6 +476,202 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
         call(&window, "read_source_context", reopened_request).unwrap(),
         next_page
     );
+    state.plugins.close();
+    drop(state);
+    drop(app);
+}
+
+#[test]
+fn installed_smapi_source_failure_details_survive_saved_output_read_and_reopen() {
+    let temporary = OwnedDirectory(tempfile::tempdir().unwrap());
+    let root = temporary.0.path();
+    let (package, approval) = selected_package(
+        "TSUMUGI_TEST_SMAPI_PACKAGE",
+        "TSUMUGI_TEST_SMAPI_DIGEST",
+        "stardew-smapi",
+    );
+    let runtime = approved_runtime();
+    let runtime_approval = RuntimeApproval {
+        environment: runtime.descriptor().clone().into(),
+        origin: crate::runtime_bundle::bundled_origin(),
+    };
+    let environment_digest = runtime_approval.environment.digest().unwrap();
+    provision_packages(
+        root,
+        &[(package, approval.clone())],
+        &runtime,
+        &runtime_approval,
+    );
+    drop(runtime);
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .invoke_handler(crate::commands::execution::production_handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let state = app.state::<AppState>();
+    state.plugins.configure(root.join("application")).unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(
+        &window,
+        "create_project",
+        json!({
+            "destination": root.join("project"), "displayName": "Saved source failure",
+            "sourceLocale": "en-US", "targetLocales": ["zh-CN"]
+        }),
+    )
+    .unwrap();
+    let context = json!({
+        "sessionToken": project["sessionToken"],
+        "projectId": project["metadata"]["projectId"]
+    });
+    let source_choice = PluginSourceRequest {
+        package: crate::commands::plugins::PluginPackageRequest {
+            plugin: approval.plugin.clone(),
+            package_digest: approval.package_digest.clone(),
+        },
+        resource_id: "source-profile".into(),
+        environment_digest,
+    };
+    let source_directory = root.join("mod");
+    std::fs::create_dir_all(source_directory.join("i18n")).unwrap();
+    // The manifest is valid JSON but deliberately lacks the profile's required
+    // exactly-one entry declaration. No mod code is supplied or executed.
+    let manifest = r#"{"UniqueID":"Example.Failure","Name":"Moon 👩🏽‍💻","Version":"1.0.0"}"#;
+    let source_text = r#"{"greeting":"Hello {{player}}"}"#;
+    std::fs::write(source_directory.join("manifest.json"), manifest).unwrap();
+    std::fs::write(source_directory.join("i18n/default.json"), source_text).unwrap();
+    let selection = ExecutionId::new();
+    let selected = source_directory.clone();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let host = sessions
+            .active
+            .as_mut()
+            .unwrap()
+            .execution_parts()
+            .unwrap()
+            .0;
+        host.source.selection = Some((
+            selection,
+            Arc::new(capture::Selection::authorize(selected).unwrap()),
+        ));
+        host.source.plugin.choice = Some((selection, source_choice));
+    });
+    let preflight = call(
+        &window,
+        "preflight_plugin_source",
+        scoped(
+            &context,
+            json!({
+                "selectionId": selection, "sourceLanguage": "en-US", "attemptId": ExecutionId::new()
+            }),
+        ),
+    )
+    .unwrap();
+    let attempt = call(
+        &window,
+        "start_plugin_source",
+        consent(&context, &preflight),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let failed = loop {
+        let detail = call(
+            &window,
+            "read_execution_attempt",
+            scoped(
+                &context,
+                json!({
+                    "attemptId": attempt, "offset": 0, "limit": 100
+                }),
+            ),
+        )
+        .unwrap();
+        let item = &detail["items"][0];
+        match item["status"]["execution"].as_str() {
+            Some("failed") => break item.clone(),
+            Some("queued" | "dispatched") => {}
+            _ => panic!("expected the installed extractor's failure: {detail}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "installed failure did not finish: {detail}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(failed["status"]["diagnostic"], "plugin-failed");
+    assert_eq!(failed["status"]["retrySafe"], false);
+    let selected = json!({"attemptId": attempt, "resultId": failed["resultId"]});
+    let output = call(
+        &window,
+        "read_execution_output",
+        scoped(&context, selected.clone()),
+    )
+    .unwrap();
+    let raw = output["plugin"]["result"]["outcome"]["error"]["utf8"]
+        .as_str()
+        .unwrap();
+    let original = tsumugi_plugin_sdk::parse_source_extraction_error(raw.as_bytes()).unwrap();
+    assert_eq!(
+        output["sourceFailure"],
+        serde_json::to_value(original).unwrap()
+    );
+    assert_eq!(output["sourceFailure"]["code"], "invalid-source");
+    assert_eq!(
+        output["sourceFailure"]["detail"],
+        "Expected exactly one EntryDll or ContentPackFor.UniqueID."
+    );
+    assert!(output["sourceFailure"]["artifactId"].is_string());
+    assert_eq!(output["outcome"], "failed");
+    assert!(output["output"].is_null());
+    assert_eq!(
+        output["diagnostic"],
+        json!({"code":"plugin-failed","retrySafe":false})
+    );
+    let mut foreign = scoped(&context, selected.clone());
+    foreign["projectId"] = json!(ExecutionId::new());
+    assert!(call(&window, "read_execution_output", foreign).is_err());
+    let scope = call(&window, "read_content_scope", context.clone()).unwrap();
+    assert!(scope["currentSnapshot"].is_null());
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":context["sessionToken"]}),
+    )
+    .unwrap();
+    let reopened = call(
+        &window,
+        "open_project",
+        json!({"locator":root.join("project")}),
+    )
+    .unwrap();
+    let reopened_context =
+        json!({"sessionToken":reopened["sessionToken"],"projectId":context["projectId"]});
+    assert_eq!(
+        call(
+            &window,
+            "read_execution_output",
+            scoped(&reopened_context, selected)
+        )
+        .unwrap(),
+        output
+    );
+    assert_eq!(
+        std::fs::read_to_string(source_directory.join("manifest.json")).unwrap(),
+        manifest
+    );
+    assert_eq!(
+        std::fs::read_to_string(source_directory.join("i18n/default.json")).unwrap(),
+        source_text
+    );
+    let tasks = call(
+        &window,
+        "list_execution_tasks",
+        scoped(&reopened_context, json!({"after":"0","limit":50})),
+    )
+    .unwrap();
+    assert_eq!(tasks.as_array().unwrap().len(), 1);
     state.plugins.close();
     drop(state);
     drop(app);

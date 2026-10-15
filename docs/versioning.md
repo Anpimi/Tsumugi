@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Source failure details are a read-only Desktop projection of the original SDK
+error and captured input. The additive execution-output view is generated from
+Rust; the Core result envelope, generic task status, retry policy and persisted
+bytes are unchanged. There is no project schema 36, SDK/process format,
+dependency, lockfile or version-source change. Application `0.2.0-alpha.1` and
+SDK `0.1.0-alpha.1` remain in the same undistributed batch without another bump
+or release; both Unreleased changelogs are synchronized.
+
 Explicit TMX and TBX file previews survive unchanged native focus checks while
 ordinary current reads still refresh. Actual source/resource changes and session
 resets continue to invalidate the preview and require a new explicit selection.

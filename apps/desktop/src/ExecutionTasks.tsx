@@ -8,7 +8,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import type { ProjectView } from "./projectCommands";
 import { releaseCommands } from "./releaseCommands";
 import { SavedPluginBuildSummary } from "./SavedPluginBuildSummary";
-import { executionCommands as commands, executionContext, matchesContinuation, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type ResultEnvelope, type ContinuationPage, type ContinuationReceipt } from "./executionCommands";
+import { executionCommands as commands, executionContext, matchesContinuation, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type ExecutionOutputView, type ContinuationPage, type ContinuationReceipt } from "./executionCommands";
+import { ExecutionDiagnosticDetails } from "./ExecutionDiagnosticDetails";
 import { useWorkbenchCommands, type CommandAvailability, type TaskActionCommandPayload, type TaskConfirmedCommandPayload, type TaskPendingCommandPayload,
   type TaskHistoryCommandPayload, type TaskReceiptCommandPayload, type TaskOutputCommandPayload, type TaskPreviewCommandPayload,
   type ExecutionCancellationCommandPayload, type ExecutionCancellationRetryCommandPayload, type TaskSavedBuildCommandPayload } from "./workbenchCommands";
@@ -184,7 +185,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       setMessage(recovered?.queryStarted ? "queryStarted" : "done");
     }
   }, [recovered, continued]);
-  const outputQuery = useSessionQuery<ResultEnvelope>({ key: ["task-output", outputSelection], scopes: ["execution"], enabled: active && outputSelection !== null,
+  const outputQuery = useSessionQuery<ExecutionOutputView>({ key: ["task-output", outputSelection], scopes: ["execution"], enabled: active && outputSelection !== null,
     read: async () => {
       if (!outputSelection) throw new Error("No task output selected");
       const result = await commands.output({ ...context, attemptId: outputSelection.attemptId, resultId: outputSelection.resultId });
@@ -514,8 +515,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
               {savedOutputRead.error ? <div role="alert"><p>{t("releasePlugin.savedReadFailed")}</p><CommandFailureDetails failure={commandFailure(savedOutputRead.error)} /><button disabled={savedOutputRead.isFetching} onClick={() => void savedOutputRead.refetch()}>{t("releasePlugin.savedRefresh")}</button></div> : null}
               {!savedOutputRead.error && savedOutputRead.data ? <SavedPluginBuildSummary build={savedOutputRead.data} itemId={item.status.itemId} /> : null}
             </> : output && output.output !== null ? <pre className="execution-output">{JSON.stringify(output.output, null, 2)}</pre> : <p>{t("execution.noOutput")}</p>}
-            {detail.operation !== "locale-build" && output?.diagnostic ? <>{output.outcome !== "succeeded" ? <p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p> : null}
-              <details><summary>{t("execution.diagnostic")}</summary><code>{output.diagnostic.code}</code></details></> : null}
+            {detail.operation !== "locale-build" && (output?.diagnostic || output?.sourceFailure) ? <>{output?.diagnostic && output.outcome !== "succeeded" ? <p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p> : null}
+              <ExecutionDiagnosticDetails code={output?.diagnostic?.code} sourceFailure={output?.sourceFailure} /></> : null}
           </div> : null}
         </li>)}</ul>
         {offset > 0 || detail.nextOffset !== null ? <div className="execution-actions">

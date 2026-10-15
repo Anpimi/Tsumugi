@@ -12,4 +12,5 @@ export const RecoveryGuidanceValues = ["reconcile-original","review-current","ch
 export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeOperatingSystemValues = ["macos","linux"] as const;
+export const SourceExtractionErrorCodeValues = ["invalid-input","unsupported-profile","invalid-source","unsupported-structure","limit-exceeded","cancelled"] as const;
 export const ValidationStateValues = ["absent","pending","valid","invalid"] as const;

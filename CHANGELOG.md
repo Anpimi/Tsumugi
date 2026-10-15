@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Failed source extraction and source checks retain the plugin's bounded reason
+  in local technical details in both the source workbench and task results.
+  The Host validates the original error contract and captured input association;
+  reading the reason does not authorize a retry, adoption or model sharing.
+
 - TMX and TBX file previews remain visible after returning from the native file
   chooser or refocusing an unchanged project. Actual source, resource or session
   changes still clear the report and require an explicit new selection.

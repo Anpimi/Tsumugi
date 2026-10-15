@@ -17,6 +17,8 @@ import { useWorkbenchCommands, type CommandAvailability, type SourceSelectionCom
   type SourceBasisCommandPayload, type SourceComparisonCommandPayload, type SourcePendingCommandPayload,
   type SourceTaskCommandPayload, type SourcePageCommandPayload, type SourceHistoryContentCommandPayload } from "./workbenchCommands";
 import { executionCommands as execution, executionContext, type AttemptDetail } from "./executionCommands";
+import { ExecutionDiagnosticDetails } from "./ExecutionDiagnosticDetails";
+import { useSourceFailureOutput } from "./useSourceFailureOutput";
 import { sourceCommands as commands, sameSourceEnvironment, type ContentPage, type LineageChoice } from "./sourceCommands";
 
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
@@ -85,6 +87,10 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const detailRead = useSessionQuery({ key: detailKey, scopes: ["execution"], enabled: open && !!attempt && !pendingStart,
     read: () => execution.attempt({ ...context, attemptId: attempt!, offset: 0, limit: 100 }) });
   const detail = detailRead.data ?? null;
+  const sourceResult = detail?.attemptId === attempt && detail.operation === "source-import" && detail.items.length === 1 ? detail.items[0] : null;
+  const failedResultId = sourceResult?.status.execution === "failed" ? sourceResult.resultId : null;
+  const failureOutput = useSourceFailureOutput(project, open, attempt && sourceResult && failedResultId
+    ? { attemptId: attempt, resultId: failedResultId, itemId: sourceResult.status.itemId } : null);
   const busy = captureBusy || busyMutation;
   const failureValue = owner.state.failure ?? captureFailure ?? (open ? commandFailureOrNull(detailRead.error) : null);
   const failure = failureReason(failureValue);
@@ -320,7 +326,6 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     "unsupported-format": "format", "missing-companion": "missing", "language-conflict": "language", "limit-exceeded": "limit", "input-limit": "limit", "unauthorized-selection": "selection", "session-invalid": "selection", "input-busy": "busy", busy: "busy", "source-already-present": "conflict", "source-namespace": "namespace", "source-unchanged": "unchanged", "lineage-choice": "lineage", "lineage-split": "lineage", "dependency-conflict": "conflict", "output-invalid": "invalid", "invalid-structure": "invalid", cancelled: "cancelled", "cancelled-before-dispatch": "cancelled", unknown: "unknown", "outcome-unknown": "unknown",
   };
   const locked = busy || owner.hasPending();
-  const sourceResult = detail?.attemptId === attempt && detail.operation === "source-import" && detail.items.length === 1 ? detail.items[0] : null;
   const proposal = comparison ? { attemptId: comparison.attemptId, resultId: comparison.resultId } : fixedPreview ? { attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId }
     : attempt && sourceResult?.resultId && sourceResult.status.execution === "succeeded" && !sourceResult.status.cancellationRequested ? { attemptId: attempt, resultId: sourceResult.resultId } : null;
   const warnings = page?.diagnostics ?? [];
@@ -329,7 +334,16 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     <WorkbenchPanel open={open} title={t("source.title")} description={t("source.description")} className="source-dialog" onBack={() => void requestBack()} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
           <TaskCancellationFeedback origin="source" taskId={detail?.taskId} disabled={busy} visible={open} />
-          {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
+          {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />
+            <ExecutionDiagnosticDetails code={typeof failureValue === "string" ? failure : null}
+              sourceFailure={sourceResult && failureOutput.status === "success" && !failureOutput.isFetching && !failureOutput.error
+                && failureOutput.data?.projectId === context.projectId && failureOutput.data?.itemId === sourceResult.status.itemId
+                && failureOutput.data?.resultId === failedResultId ? failureOutput.data.sourceFailure : undefined} />
+          </div> : null}
+          {failure && failedResultId && failureOutput.error ? <div role="alert"><p>{t("execution.failureReadFailed")}</p>
+            <CommandFailureDetails failure={commandFailure(failureOutput.error)} />
+            <button className="secondary-button" disabled={failureOutput.isFetching} onClick={() => void failureOutput.refetch()}>{t("source.retryRead")}</button>
+          </div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           <SourceReadFeedback error={open ? integrationRead.error || scopeRead.error : null} fetching={open && (integrationRead.isFetching || scopeRead.isFetching)} messageKey="source.readFailed" retry={() => {
             if (integrationRead.error) void integrationRead.refetch(); if (scopeRead.error) void scopeRead.refetch();

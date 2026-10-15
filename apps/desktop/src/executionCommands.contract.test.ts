@@ -11,6 +11,16 @@ const list: ListRequest = fixture.list;
 const prepare: PrepareRequest = fixture.prepare;
 const receipt: Receipt = fixture.receipt;
 beforeEach(() => invoke.mockReset());
+it("accepts bounded source-failure shape without opening the execution output contract", () => {
+  const output = { ...fixture.output, sourceFailure: {
+    code: "invalid-source", artifactId: "captured-1", detail: "Expected exactly one entry declaration.",
+  } };
+  expect(validators.validateResponseOutput(output)).toBe(true);
+  expect(validators.validateResponseOutput({ ...output, retryAuthority: true })).toBe(false);
+  expect(validators.validateResponseOutput({ ...output, sourceFailure: { ...output.sourceFailure, code: "future" } })).toBe(false);
+  expect(validators.validateResponseOutput({ ...output, sourceFailure: { ...output.sourceFailure, allowRetry: true } })).toBe(false);
+  expect(validators.validateResponseOutput({ ...output, sourceFailure: { ...output.sourceFailure, artifactId: 2 } })).toBe(false);
+});
 it("retains SDK channel and raw result evidence through the generated output contract", async () => {
   const result = sdkResult.body.data;
   const output = { ...fixture.output, outcome: "succeeded", output: JSON.parse(result.outcome.output.utf8), diagnostic: null,

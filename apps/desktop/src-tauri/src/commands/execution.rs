@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tsumugi_core::{RecoveryPlan, TaskView, execution::*};
+use tsumugi_plugin_sdk as sdk;
 mod package_lifecycle;
 use package_lifecycle::{PackageControl, PackageWork, PackageWorkState, RetiredQuery};
 
@@ -726,6 +727,17 @@ request!(
         result_id: ExecutionId
     }
 );
+
+/// Read-only display projection. The stored ResultEnvelope remains unchanged.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionOutputView {
+    #[serde(flatten)]
+    pub result: ResultEnvelope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_failure: Option<sdk::SourceExtractionError>,
+}
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     CancelRequest {
@@ -1086,11 +1098,92 @@ fn attempt_detail(
         next_offset: ((end as usize) < total).then_some(end),
     })
 }
+fn source_failure(
+    store: &ProjectStore,
+    result: &ResultEnvelope,
+) -> Result<Option<sdk::SourceExtractionError>, ExecutionError> {
+    let Some(evidence) = &result.plugin else {
+        return Ok(None);
+    };
+    let sdk::InvocationOutcome::Failed { error } = &evidence.result.outcome else {
+        return Ok(None);
+    };
+    if result.outcome != ExecutionState::Failed
+        || error.schema != sdk::source_extraction_error_contract()
+    {
+        return Ok(None);
+    }
+    // A reused result belongs to its original attempt, not the request that
+    // selected it. Read that immutable input to bind any reported artifact.
+    let input = store.execution_input(result.attempt_id)?;
+    let envelope = input.envelope();
+    let Some(binding) = &envelope.plugin else {
+        return Ok(None);
+    };
+    let [item] = envelope.items.as_slice() else {
+        return Ok(None);
+    };
+    if item.item_id != result.item_id || binding.capability.declaration.error_schema != error.schema
+    {
+        return Ok(None);
+    }
+    let artifacts = match envelope.operation.as_str() {
+        tsumugi_core::content::OPERATION
+            if binding.capability.declaration.input_schema
+                == sdk::source_extraction_input_contract() =>
+        {
+            let Ok(source) =
+                serde_json::from_value::<sdk::SourceExtractionInput>(item.payload.clone())
+            else {
+                return Ok(None);
+            };
+            if source.validate().is_err() {
+                return Ok(None);
+            }
+            source.artifacts
+        }
+        SOURCE_CHECK_OPERATION
+            if binding.capability.declaration.input_schema
+                == sdk::source_extraction_check_input_contract() =>
+        {
+            let Ok(check) =
+                serde_json::from_value::<sdk::SourceExtractionCheckInput>(item.payload.clone())
+            else {
+                return Ok(None);
+            };
+            if check.validate().is_err() {
+                return Ok(None);
+            }
+            check.source.artifacts
+        }
+        _ => return Ok(None),
+    };
+    Ok(parse_public_source_failure(error, &artifacts))
+}
+
+fn parse_public_source_failure(
+    error: &sdk::EncodedPayload,
+    artifacts: &[sdk::CapturedTextArtifact],
+) -> Option<sdk::SourceExtractionError> {
+    if error.schema != sdk::source_extraction_error_contract() {
+        return None;
+    }
+    let failure = sdk::parse_source_extraction_error(error.utf8.as_bytes()).ok()?;
+    if failure
+        .artifact_id
+        .as_ref()
+        .is_some_and(|id| !artifacts.iter().any(|artifact| &artifact.id == id))
+    {
+        return None;
+    }
+    Some(failure)
+}
+
 #[tauri::command]
 pub async fn read_execution_output(
     state: State<'_, AppState>,
     request: OutputRequest,
-) -> Result<ResultEnvelope, CommandError> {
+) -> Result<ExecutionOutputView, CommandError> {
     state
         .sessions
         .run(
@@ -1103,11 +1196,16 @@ pub async fn read_execution_output(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                active
+                let result = active
                     .store
                     .execution_result(request.attempt_id, request.result_id)
-                    .map(|result| result.envelope().clone())
-                    .map_err(map_read)
+                    .map_err(map_read)?;
+                let result = result.envelope().clone();
+                let source_failure = source_failure(&active.store, &result).map_err(map_read)?;
+                Ok(ExecutionOutputView {
+                    result,
+                    source_failure,
+                })
             },
         )
         .await

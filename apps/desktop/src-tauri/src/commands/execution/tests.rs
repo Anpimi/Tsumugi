@@ -133,6 +133,15 @@ fn execution_wire_fixture_matches_rust_types() {
     round_trip::<AdoptionReceipt>(&fixture["receipt"]);
     round_trip::<AdoptionAction>(&fixture["action"]);
     round_trip::<ResultEnvelope>(&fixture["output"]);
+    let result: ResultEnvelope = serde_json::from_value(fixture["output"].clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(ExecutionOutputView {
+            result,
+            source_failure: None
+        })
+        .unwrap(),
+        fixture["output"],
+    );
     round_trip::<TaskView>(&fixture["task"]);
     round_trip::<AttemptSummary>(&fixture["summary"]);
     round_trip::<RecoveryView>(&fixture["recovery"]);
@@ -150,6 +159,98 @@ fn execution_wire_fixture_matches_rust_types() {
     let mut unknown = fixture["detail"].clone();
     unknown["items"][0]["status"]["execution"] = json!("future-state");
     assert!(serde_json::from_value::<AttemptDetail>(unknown).is_err());
+}
+
+#[test]
+fn source_failure_projection_requires_valid_public_payload_and_captured_artifact() {
+    let artifacts = [sdk::CapturedTextArtifact {
+        id: "captured-1".into(),
+        logical_path: "manifest.json".into(),
+        role: "source".into(),
+        sha256: "a".repeat(64),
+        utf8: "{}".into(),
+    }];
+    let encoded =
+        |schema, value: Value| sdk::EncodedPayload::capture(schema, value.to_string()).unwrap();
+    let valid = json!({"code":"unsupported-structure","artifactId":"captured-1","detail":"The Name value must be a string."});
+    let payload = encoded(sdk::source_extraction_error_contract(), valid.clone());
+    let projected = parse_public_source_failure(&payload, &artifacts).unwrap();
+    assert_eq!(projected.detail, "The Name value must be a string.");
+    assert_eq!(projected.artifact_id.as_deref(), Some("captured-1"));
+    assert!(
+        parse_public_source_failure(
+            &encoded(sdk::source_extraction_input_contract(), valid.clone()),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"future","artifactId":"captured-1","detail":"x"})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"invalid-source","artifactId":"not-captured","detail":"x"})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"invalid-source","artifactId":null,"detail":""})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn source_failure_output_keeps_generic_shape_and_rejects_cross_project_read() {
+    let (_directory, _app, webview, context) = setup();
+    let attempt = call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"partial","delayMs":1,"grouped":true}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    let record = detail(&webview, &context, &attempt);
+    let failed = record["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["status"]["execution"] == "failed" && item["resultId"].is_string())
+        .expect("saved failed result");
+    let selected = request(
+        &context,
+        json!({"attemptId":attempt,"resultId":failed["resultId"]}),
+    );
+    let output = call(&webview, "read_execution_output", selected.clone()).unwrap();
+    assert_eq!(output["projectId"], context["projectId"]);
+    assert_eq!(output["resultId"], failed["resultId"]);
+    assert_eq!(output["itemId"], failed["status"]["itemId"]);
+    assert!(output.get("sourceFailure").is_none());
+    let mut foreign = selected;
+    foreign["projectId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&webview, "read_execution_output", foreign).unwrap_err()["code"],
+        "session-invalid"
+    );
 }
 
 #[test]

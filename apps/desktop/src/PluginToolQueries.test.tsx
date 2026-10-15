@@ -11,7 +11,7 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { i18n } from "./i18n";
 import { SessionNavigation, type SessionExitPermit } from "./sessionNavigation";
 import type { ProjectView } from "./projectCommands";
-import type { AttemptDetail, PluginToolPrepareRequest, PluginToolPreflight, ResultEnvelope } from "./executionCommands";
+import type { AttemptDetail, PluginToolPrepareRequest, PluginToolPreflight, ExecutionOutputView } from "./executionCommands";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import errorFixture from "../test/fixtures/commandErrors.contract.json";
 
@@ -20,7 +20,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "synthetic-query-session", locator: "/synthetic/project", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(900), displayName: "Query demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 let serial: number, inventory: typeof toolQueryInventory, prepared: PluginToolPreflight | null, detail: AttemptDetail | null;
-let outputs: Map<string, ResultEnvelope>, startUnknown: boolean, malformedOutput: boolean, queued: boolean;
+let outputs: Map<string, ExecutionOutputView>, startUnknown: boolean, malformedOutput: boolean, queued: boolean;
 let holdPreparation: Promise<void> | null;
 
 beforeEach(async () => {

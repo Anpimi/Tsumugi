@@ -1597,6 +1597,7 @@ ai: {
       "groupScope": "Review scope: {{count}} items",
       "itemResults": "Item results",
       "failureDetails": "View failure details",
+      "failureReadFailed": "Saved failure details could not be read. The original task and current input are kept; retry this read.",
       "resultFor": "Result for {{name}}",
       "noOutput": "This item did not generate usable output. Other saved results are preserved.",
       "safeFailure": "You can retry this failed item if a retry action is available above.",

@@ -115,7 +115,7 @@ struct ExecutionResponses {
     tasks: Vec<tsumugi_core::TaskView>,
     attempts: Vec<execution::AttemptSummary>,
     attempt: execution::AttemptDetail,
-    output: tsumugi_core::execution::ResultEnvelope,
+    output: execution::ExecutionOutputView,
     cancellation: tsumugi_core::execution::Revision,
     recovery: execution::RecoveryView,
     continuation: tsumugi_core::execution::ContinuationReceipt,

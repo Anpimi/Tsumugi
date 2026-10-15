@@ -1688,6 +1688,91 @@
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
       },
+      "ExecutionOutputView": {
+        "additionalProperties": false,
+        "description": "Read-only display projection. The stored ResultEnvelope remains unchanged.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "capabilityId": {
+            "type": "string"
+          },
+          "capabilityVersion": {
+            "type": "string"
+          },
+          "diagnostic": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Diagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dispatchToken": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "outcome": {
+            "$ref": "#/definitions/ExecutionState"
+          },
+          "output": true,
+          "plugin": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginResultEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceFailure": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceExtractionError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "itemId",
+          "resultId",
+          "supersedes",
+          "dispatchToken",
+          "capabilityId",
+          "capabilityVersion",
+          "outcome",
+          "output",
+          "diagnostic"
+        ],
+        "type": "object"
+      },
       "ExecutionState": {
         "enum": [
           "queued",
@@ -2456,80 +2541,6 @@
         ],
         "type": "object"
       },
-      "ResultEnvelope": {
-        "additionalProperties": false,
-        "properties": {
-          "attemptId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "capabilityId": {
-            "type": "string"
-          },
-          "capabilityVersion": {
-            "type": "string"
-          },
-          "diagnostic": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/Diagnostic"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "dispatchToken": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "itemId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "outcome": {
-            "$ref": "#/definitions/ExecutionState"
-          },
-          "output": true,
-          "plugin": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/PluginResultEvidence"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "projectId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "resultId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "supersedes": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/ExecutionId"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "projectId",
-          "attemptId",
-          "itemId",
-          "resultId",
-          "supersedes",
-          "dispatchToken",
-          "capabilityId",
-          "capabilityVersion",
-          "outcome",
-          "output",
-          "diagnostic"
-        ],
-        "type": "object"
-      },
       "Revision": {
         "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
         "type": "string"
@@ -2691,6 +2702,42 @@
           "locale"
         ],
         "type": "object"
+      },
+      "SourceExtractionError": {
+        "additionalProperties": false,
+        "description": "A bounded public diagnostic. Producers must use public descriptions and\ncaptured artifact IDs, never local paths, raw source text or secrets. Data\nvalidation cannot establish that arbitrary diagnostic text is safe to share.",
+        "properties": {
+          "artifactId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "$ref": "#/definitions/SourceExtractionErrorCode"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "artifactId",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "SourceExtractionErrorCode": {
+        "description": "Finite public failure classifications; details never determine permissions.",
+        "enum": [
+          "invalid-input",
+          "unsupported-profile",
+          "invalid-source",
+          "unsupported-structure",
+          "limit-exceeded",
+          "cancelled"
+        ],
+        "type": "string"
       },
       "TaskView": {
         "additionalProperties": false,
@@ -2967,7 +3014,7 @@
         "$ref": "#/definitions/ExecutionId"
       },
       "output": {
-        "$ref": "#/definitions/ResultEnvelope"
+        "$ref": "#/definitions/ExecutionOutputView"
       },
       "receipt": {
         "anyOf": [
