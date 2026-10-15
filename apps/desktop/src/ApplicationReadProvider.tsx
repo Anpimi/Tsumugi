@@ -19,9 +19,19 @@ export function ApplicationReadProvider({ children }: { children: ReactNode }) {
     refetchOnWindowFocus: false, refetchOnReconnect: false,
   } } }));
   useEffect(() => {
-    const focus = () => { void client.invalidateQueries({ queryKey: connectionReadKey, exact: true }); };
+    let alive = true;
+    const filter = { queryKey: connectionReadKey, exact: true };
+    const focus = () => {
+      // Invalidate immediately, then cancel even a first read with no data.
+      // Query otherwise reuses that pending promise during refetch, allowing a
+      // response captured before this focus check to clear the invalidation.
+      void client.invalidateQueries({ ...filter, refetchType: "none" });
+      void client.cancelQueries(filter, { revert: false }).then(() => {
+        if (alive) return client.refetchQueries({ ...filter, type: "active" });
+      });
+    };
     window.addEventListener("focus", focus);
-    return () => { window.removeEventListener("focus", focus); client.clear(); };
+    return () => { alive = false; window.removeEventListener("focus", focus); client.clear(); };
   }, [client]);
   return <ApplicationReads.Provider value={client}>{children}</ApplicationReads.Provider>;
 }
@@ -38,7 +48,11 @@ export function currentConnections(client: QueryClient): ConnectionReadView | un
 export function useConnectionFacts() {
   const client = useApplicationQueryClient();
   const subscribe = useCallback((changed: () => void) => client.getQueryCache().subscribe(event => {
-    if (matchQuery({ queryKey: connectionReadKey, exact: true }, event.query)) changed();
+    // A child useQuery can add its empty query or change observer options in
+    // render. Those structural events provide no current facts. Observe actual
+    // state changes and removal so data/invalidations still reach owners at once.
+    if ((event.type === "updated" || event.type === "removed")
+      && matchQuery({ queryKey: connectionReadKey, exact: true }, event.query)) changed();
   }), [client]);
   const snapshot = useCallback(() => client.getQueryState<ConnectionReadView>(connectionReadKey), [client]);
   const state = useSyncExternalStore(subscribe, snapshot, snapshot);

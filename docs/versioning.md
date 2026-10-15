@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Application connection facts notify preparation consumers of Query state changes
+instead of render-time cache structure events. Focus invalidation cancels an
+unfinished earlier read before reading again; obsolete responses cannot become
+current facts. Drafts, captured consent
+and original uncertain actions retain their existing owners and rules. This
+frontend correction changes no persisted field, schema, IPC, SDK/process,
+dependency or lockfile. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain
+in the same undistributed batch without another version bump; both Unreleased
+changelogs are synchronized.
+
 Contextual offline comparison navigation uses the existing project session and
 Arena draft owner. Comparison reads project the current candidate disposition
 through the existing verified decision owner; this additive Desktop read field
