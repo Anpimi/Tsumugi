@@ -30,6 +30,7 @@ import type { ContentScope } from "./sourceCommands";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { SessionNavigation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination } from "./sessionNavigation";
 import type { ContentSelection } from "./contentSelection";
+import type { ContextEditorTarget } from "./workbenchCommands";
 
 /** The same project owners are shared by production assembly and isolated consumer tests. */
 export function ProjectSessionOwners({ project, children, bridge = true }: { project: ProjectView; children: ReactNode; bridge?: boolean }) {
@@ -188,6 +189,58 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       return true;
     }
     if (destination.kind === "review-work") { committed.current.view.memory.write("review", "tab", "work"); return true; }
+    if (destination.kind === "resource-context-return") {
+      const capture=destination.capture, original=committed.current.view.memory.read<ContextEditorTarget|null>("resources","contextEditorReturn"), draft=translation.current();
+      if (!original || JSON.stringify(original)!==JSON.stringify(capture) || !draft || draft.unitId!==capture.target.unitId || draft.locale!==capture.locale
+        || resources.inFlight() || resources.current().pending || resources.tool.blocked() || resources.tool.hasDraft()
+        || translation.mutationReserved || translation.protection.blocked() || translation.candidates.blocked()) {
+        setFailure("context-editor-blocked");return false;
+      }
+      // Return to the retained editor, including newer text or a source-change
+      // warning. Never begin a replacement draft from the old navigation target.
+      committed.current.view.memory.write("translation","tab","edit");
+      committed.current.view.memory.write("resources","contextEditorReturn",null);
+      return true;
+    }
+    if (destination.kind === "resource-context") {
+      const capture=destination.capture, before=resources.current();
+      const editorCurrent=()=>{const draft=translation.current();return !!draft && draft.unitId===capture.target.unitId && draft.locale===capture.locale
+        && draft.sourceRevisionId===capture.target.sourceRevisionId && draft.editSeq===capture.editSeq
+        && !translation.mutationReserved && !translation.protection.blocked() && !translation.candidates.blocked();};
+      if (!editorCurrent() || !resources.canReceiveContext(capture.locale)) {setFailure("context-editor-blocked");return false;}
+      const source=sourceReads.scope(scope), key=["editor-snapshot",capture.target.unitId,capture.locale];
+      // A later successful response cannot erase an invalidation observed while
+      // this explicit handoff was waiting. These witnesses own only this read.
+      let invalidated=false;
+      const exactKeys=[reads.key(source.key),reads.key(key)];
+      const uncache=reads.client.getQueryCache().subscribe(event=>{
+        if(exactKeys.some(queryKey=>matchQuery({queryKey,exact:true},event.query))
+          && (event.type==="removed" || event.type==="updated" && event.action.type==="invalidate"))invalidated=true;
+      });
+      const unchange=reads.subscribeChanges(scopes=>{if(scopes.some(value=>["project","source","translation","resources","review"].includes(value)))invalidated=true;});
+      try {
+      await Promise.all([
+        reads.client.fetchQuery({queryKey:reads.key(source.key),staleTime:0,meta:{scopes:source.scopes},queryFn:source.read}),
+        reads.client.fetchQuery({queryKey:reads.key(key),staleTime:0,meta:{scopes:["source","translation","resources","review"]},
+          queryFn:()=>reviewCommands.editorSnapshot({...scope,unitId:capture.target.unitId,locale:capture.locale})}),
+      ]);
+      const snapshot=reads.client.getQueryData<ReviewEditorSnapshot>(reads.key(key)), sourceValue=reads.client.getQueryData<ContentScope>(reads.key(source.key));
+      const checked=(queryKey:readonly unknown[],data:unknown)=>{const query=reads.client.getQueryState(reads.key(queryKey));
+        return query?.status==="success" && query.error===null && query.fetchStatus==="idle" && !query.isInvalidated && query.data===data;};
+      const fresh=()=>current() && !invalidated && editorCurrent() && !!snapshot && !!sourceValue && checked(key,snapshot) && checked(source.key,sourceValue)
+        && sourceValue.currentSnapshot===capture.sourceSnapshotId && snapshot.target.sourceSnapshotId===capture.sourceSnapshotId
+        && snapshot.target.unitId===capture.target.unitId && snapshot.target.locale===capture.locale && snapshot.target.sourceRevisionId===capture.target.sourceRevisionId
+        && snapshot.target.nativeKey===capture.target.key && snapshot.target.sourceText===capture.target.sourceText
+        && snapshot.readVersion===capture.readVersion && (snapshot.context?.revisionId??null)===capture.contextRevisionId
+        && (!snapshot.context || snapshot.context.unitId===capture.target.unitId && snapshot.context.locale===capture.locale);
+      if (!snapshot || !fresh() || !resources.receiveContext({unitId:snapshot.target.unitId,sourceRevisionId:snapshot.target.sourceRevisionId,
+        occurrence:{key:snapshot.target.nativeKey,text:snapshot.target.sourceText}},capture.locale,snapshot.context,before,fresh)) {
+        setFailure("context-editor-changed");return false;
+      }
+      committed.current.view.memory.write("resources","tab","context");
+      committed.current.view.memory.write("resources","contextEditorReturn",structuredClone(capture));return true;
+      } finally {uncache();unchange();}
+    }
     if (destination.kind === "tool-query") {
       if (resources.inFlight() || resources.current().pending || !resources.tool.addText(destination.text)) {
         setFailure("navigation-edited"); return false;
@@ -338,16 +391,19 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       tasks: { cancellation: tasks.state, adoption: tasks.currentActivity() },
     }, null, 2)} /></label>
   </section>;
-  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : "workbench.navigationBlocked")}</p><CommandFailureDetails failure={failure} /></div> : null}
+  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : failureReason(failure)==="context-editor-blocked" ? "resource.contextEditorBlocked" : failureReason(failure)==="context-editor-changed" ? "resource.contextEditorChanged" : "workbench.navigationBlocked")}</p><CommandFailureDetails failure={failure} /></div> : null}
     {view.area === "overview" && !reads.retired ? <OverviewSourceObserver project={project} onSourceState={onSourceState} /> : null}
     {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} onOpenExtensions={onOpenExtensions}
       onOpenComparison={openComparison("translation")}
+      onEditContext={capture=>navigation.navigate({kind:"resource-context",capture})}
       onQueryText={text => navigation.navigate({ kind: "tool-query", text })}
       onReturnToAi={view.memory.read<boolean>("translation", "returnToAi") ? () => { void navigation.navigate({ kind: "area", area: "ai" }); } : undefined}
       aiSelection={{ count: ai.selected.length, locale: ai.locale, editSeq: ai.editSeq, available: ai.contentRangeAvailable }}
       onPrepareSelection={(selection, expectedEditSeq) => navigation.navigate({ kind: "ai-selection", selection, expectedEditSeq })} /> : null}
-    {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} /> : null}
+    {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation}
+      contextEditorReturn={view.memory.read<ContextEditorTarget|null>("resources","contextEditorReturn")}
+      onReturnToEditor={capture=>navigation.navigate({kind:"resource-context-return",capture})} /> : null}
     {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
     {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenComparison={openComparison("ai")} onOpenTranslation={openAiTranslation} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}

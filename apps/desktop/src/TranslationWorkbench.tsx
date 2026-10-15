@@ -17,7 +17,7 @@ import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useWorkbenchCommands, type CommandAvailability, type TranslationImportPreviewCommandPayload, type TranslationImportRowTarget,
   type TranslationImportRowCommandPayload, type TranslationImportBatchCommandPayload, type TranslationImportPendingCommandPayload,
   type TranslationRevisionCommandPayload, type TranslationSelectionPendingCommandPayload, type TranslationContentRowCommandPayload,
-  type TranslationCandidateCommandPayload, type TranslationCandidatePendingCommandPayload } from "./workbenchCommands";
+  type TranslationCandidateCommandPayload, type TranslationCandidatePendingCommandPayload, type TranslationContextCommandPayload, type ContextEditorTarget } from "./workbenchCommands";
 import { contentSelectionIds, fixedContentSelection, type ContentSelection } from "./contentSelection";
 import { EditorMemoryReferences } from "./EditorMemoryReferences";
 import { EditorSourceContext } from "./EditorSourceContext";
@@ -70,11 +70,12 @@ const targetFromTranslation = (row: TranslationPreviewRow): EditorTarget | null 
   ? { unitId: row.unitId, sourceRevisionId: row.sourceRevisionId, key: row.entry.nativeKey, sourceText: row.sourceText ?? "" }
   : null;
 
-export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, onOpenComparison, ref }: {
+export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, onOpenComparison, onEditContext, ref }: {
   project: ProjectView; disabled: boolean; onOpenExtensions?: () => void; onQueryText?: (text: string) => boolean | Promise<boolean>;
   aiSelection?: { count: number; locale: string; editSeq: number; available: boolean };
   onPrepareSelection?: (selection: ContentSelection, expectedEditSeq: number) => Promise<boolean>; onReturnToAi?: () => void; ref?: Ref<TranslationHandle>;
   onOpenComparison?: (target: EditorTarget, locale: string, revision: Pick<TranslationRevision, "revisionId" | "ordinal">) => Promise<boolean>;
+  onEditContext?: (capture: ContextEditorTarget) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const context = executionContext(project);
@@ -595,6 +596,20 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     return payload && pending && sameCommandValue(payload, importPendingPayload(payload.request.actionId)) && (!retry || pending.receiptChecked)
       ? { enabled: true } : unavailableCommand;
   }
+  function contextEditorPayload(): TranslationContextCommandPayload | undefined {
+    const draft=draftSession.current();
+    return draft && snapshot ? {kind:"translation-context",target:{unitId:snapshot.target.unitId,sourceRevisionId:snapshot.target.sourceRevisionId,
+      key:snapshot.target.nativeKey,sourceText:snapshot.target.sourceText},locale:targetLocale,sourceSnapshotId:snapshot.target.sourceSnapshotId,
+      contextRevisionId:snapshot.context?.revisionId??null,readVersion:snapshot.readVersion,editSeq:draft.editSeq} : undefined;
+  }
+  function contextEditorAvailability(input?:TranslationContextCommandPayload):CommandAvailability {
+    const allowed=businessGate("edit");if(!allowed.enabled)return allowed;
+    const draft=draftSession.current(),expected=contextEditorPayload();
+    return onEditContext && input && expected && sameCommandValue(input,expected) && !!snapshot && !!draft
+      && !retainedSourceChanged && draft.unitId===snapshot.target.unitId && draft.locale===targetLocale
+      && draft.sourceRevisionId===snapshot.target.sourceRevisionId && checkedRead(editorKey(editorIntent),snapshot)
+      && sourceReady(snapshot.target.sourceSnapshotId) ? {enabled:true} : unavailableCommand;
+  }
   function revisionPayload(revision: TranslationRevision): TranslationRevisionCommandPayload | undefined {
     const value = draftSession.current();
     return value ? { kind: "translation-revision", unitId: value.unitId, locale: value.locale, sourceRevisionId: value.sourceRevisionId,
@@ -722,6 +737,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
         payloadKind: "translation-import-pending", availability: payload => importPendingAvailability(payload,true), handler: payload => { void importSession.retryAction(payload.request.actionId); } }),
       commandRegistry.register({ ...metadata, id: "translation.select-revision", nameKey: "translation.selectRevision", risk: "writes-translation",
         payloadKind: "translation-revision", availability: revisionAvailability, handler: payload => { void perform(current => selectRevision(payload,current)); } }),
+      commandRegistry.register({...metadata,id:"translation.edit-context",nameKey:"resource.editFromEntry",risk:"reads-resources",payloadKind:"translation-context",
+        availability:contextEditorAvailability,handler:input=>{if(contextEditorAvailability(input).enabled){const {kind:_,...capture}=input;void onEditContext?.(capture);}}}),
       commandRegistry.register({ ...metadata, id: "translation.check-selection", nameKey: "translation.checkSelection", risk: "reconciles-execution-action",
         payloadKind: "translation-selection-pending", availability: payload => selectionPendingAvailability(payload), handler: () => { void perform(current => checkSelection(current)); } }),
       commandRegistry.register({ ...metadata, id: "translation.open-comparison", nameKey: "arena.openFromEntry", risk: "reads-arena",
@@ -1152,6 +1169,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                 {editorRead.error ? <p role="status">{t("resource.editorLoadFailed")}</p> : null}
                 {editorResources?.terms ? <><h6>{t("resource.applicableTerms")}</h6>{editorResources.terms.entries.length ? <ul>{editorResources.terms.entries.map(entry => <li key={entry.source}>{entry.source}: {entry.selected ? <>{entry.selected.target} · {entry.selected.originKind === "manual" ? t("resource.manual") : t("resource.external")} · {entry.selected.reason}</> : t("resource.conflict")}</li>)}</ul> : <p>{t("resource.noApplicableTerms")}</p>}</> : null}
                 {editorResources ? <><h6>{t("resource.manualContext")}</h6>{editorResources.context ? <p>{editorResources.context.text} · {editorResources.context.reason}</p> : <p>{t("resource.noManualContext")}</p>}</> : null}
+                {onEditContext ? <><p>{t("resource.editFromEntryHelp")}</p><button type="button" className="secondary-button" disabled={!contextEditorAvailability(contextEditorPayload()).enabled}
+                  onClick={()=>{const input=contextEditorPayload();if(input)commandRegistry.dispatch("translation.edit-context",commandScope,input);}}>{t("resource.editFromEntry")}</button></>:null}
               </section>
               <EditorMemoryReferences context={context} target={displayedTarget} locale={targetLocale} draftText={draft}
                 enabled={referencesOpen && open && tab === "edit" && targetAvailable && !!snapshot && snapshot.target.sourceRevisionId === displayedTarget.sourceRevisionId

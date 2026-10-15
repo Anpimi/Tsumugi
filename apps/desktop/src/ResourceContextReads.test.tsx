@@ -68,6 +68,30 @@ function basisPayload(): ResourceContextBasisCommandPayload {
 }
 function contextKey() { return reads.key(resourceReads.context(executionContext(project), row.unitId!, "zh-CN", row.sourceRevisionId!).key); }
 
+it("accepts a checked editor target without a fabricated content page and preserves unrelated term input",async()=>{
+  await ready();
+  const target={unitId:row.unitId!,sourceRevisionId:row.sourceRevisionId!,occurrence:{key:row.occurrence.key,text:row.occurrence.text}};
+  act(()=>{owner.editTerm({...owner.current().termDraft,source:"Term B"});});
+  const before=owner.current();
+  act(()=>{expect(owner.receiveContext(target,"zh-CN",initial,before,()=>false)).toBe(false);
+    expect(owner.receiveContext(target,"zh-CN",{...initial,unitId:fixtureIdentity(890)},before,()=>true)).toBe(false);
+    expect(owner.receiveContext(target,"zh-CN",initial,before,()=>true)).toBe(true);});
+  expect(owner.current().termDraft.source).toBe("Term B");expect(owner.current().selectedUnit).toEqual(target);expect(owner.current().contextRevision).toEqual(initial);
+  expect(invoke.mock.calls.some(([name])=>name==="save_context")).toBe(false);
+});
+
+it("refuses an old handoff after resource B and keeps the original uncertain context action",async()=>{
+  await ready();const before=owner.current(),target={unitId:row.unitId!,sourceRevisionId:row.sourceRevisionId!,occurrence:{key:row.occurrence.key,text:row.occurrence.text}};
+  act(()=>{owner.editContext("Context B");expect(owner.receiveContext(target,"zh-CN",initial,before,()=>true)).toBe(false);});
+  expect(owner.current().contextDraft).toBe("Context B");
+  const original=invoke.getMockImplementation()!;invoke.mockImplementation((name,args)=>name==="save_context"?Promise.reject(new Error("Synthetic lost ACK")):original(name,args));
+  await act(async()=>{await owner.saveContext(()=>true);});const pending=owner.current().pending;
+  expect(pending?.kind).toBe("context");expect(owner.current().pendingUncertain).toBe(true);
+  act(()=>{expect(owner.receiveContext(target,"zh-CN",initial,owner.current(),()=>true)).toBe(false);});
+  expect(owner.current().pending).toBe(pending);expect(owner.current().contextDraft).toBe("Context B");
+  expect(invoke.mock.calls.filter(([name])=>name==="save_context")).toHaveLength(1);
+});
+
 it("refreshes current context without replacing drafts and explicitly adopts the reviewed save basis", async () => {
   const { user } = await ready();
   const text = screen.getByRole("textbox", { name: "Context you provide" }), reason = screen.getByRole("textbox", { name: "Reason or source note" });

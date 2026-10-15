@@ -2,6 +2,24 @@
 
 Open a project with a source snapshot and at least one target language, then choose **Glossary and context**. The Terms tab creates or edits project terms with a target language, source phrase, optional aliases, preferred target form, project or source-unit scope, protected-form flag, and reason. Each save creates a revision; the earlier value remains in History. A unit-scoped term takes precedence over a project-wide term. Conflicting terms at the same scope are shown as a conflict, not silently chosen. Terms are guidance; saving one does not rewrite translations.
 
+In a translation editor, expand **Terms, context and history** and choose
+**Edit context for this entry**. The resource workspace opens the exact entry
+and target language after checking the current source and context revision.
+Your translation draft remains in its original editor. An existing resource
+draft or unconfirmed action cannot be replaced by this navigation; finish or
+resolve it in the resource workspace first. If evidence changes during the
+read, refresh the translation editor before trying again.
+
+Opening context neither saves nor shares it with AI. Edit the human context and
+its reason, then explicitly choose **Save context**. Concurrent resource changes
+retain your text and require reviewing the current save basis. Saving A while
+typing B retains B as unsaved input. Use **Return to …** to return to the retained
+translation editor; unsaved resource input is retained too. An unconfirmed action
+must be resolved before this return. Human context supplements the project; it
+does not edit extracted source observations or accept/reject an AI inference.
+Existing resource invalidation makes related AI preparation require a new
+preview without clearing its model settings or renewing an old execution grant.
+
 ## Local glossary updates
 
 The Resource updates tab reads a complete UTF-8 JSON file selected by the user. This is a local resource format, not an output of the bundled SMAPI source integration. The file is captured into the project with its SHA-256 digest before preview. Previewing never adopts a change. A later file revision is another complete set with the same `resourceId`; entries absent from it appear as removals. Keep current and Ignore update preserve the adopted value. Adopt checks that the affected term has not changed since the preview. A manual project override remains unless the user explicitly chooses **Replace override**. Review each row separately; there is no implicit bulk adoption.

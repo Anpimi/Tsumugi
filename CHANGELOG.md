@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Open the current entry's human context directly from the translation editor
+  and return to the retained translation draft. Navigation rechecks source and
+  context evidence, preserves newer resource edits and unconfirmed actions, and
+  saves only through the existing explicit context revision flow. Extracted
+  facts and AI inferences are unchanged.
+
 - Opening saved model connection choices no longer triggers render-time owner
   updates. A window focus check replaces an unfinished earlier read, so its late
   response cannot restore obsolete connection choices as current. Existing

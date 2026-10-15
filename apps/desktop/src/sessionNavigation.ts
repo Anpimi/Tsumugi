@@ -1,6 +1,7 @@
 import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { EditorTarget } from "./TranslationWorkbench";
 import type { ContentSelection } from "./contentSelection";
+import type { ContextEditorTarget } from "./workbenchCommands";
 
 export type WorkspaceDestination =
   | { kind: "area"; area: WorkspaceArea }
@@ -12,6 +13,8 @@ export type WorkspaceDestination =
   | { kind: "arena-comparison"; target: EditorTarget; locale: string; revisionId: string; revisionOrdinal: string; returnTo: "translation" | "ai" }
   | { kind: "saved-build"; attemptId: string }
   | { kind: "tool-query"; text: string }
+  | { kind: "resource-context"; capture: ContextEditorTarget }
+  | { kind: "resource-context-return"; capture: ContextEditorTarget }
   | { kind: "attempt"; area: "source" | "translation" | "ai" | "arena"; attemptId: string };
 export interface SessionConsumer {
   allowNavigate: () => Promise<boolean>;
@@ -33,7 +36,7 @@ export interface SessionNavigationPorts {
 export function destinationArea(destination: WorkspaceDestination): WorkspaceArea {
   return destination.kind === "area" || destination.kind === "attempt" ? destination.area
     : destination.kind === "translation" ? "translation" : destination.kind === "ai-selection" ? "ai" : destination.kind === "saved-build" ? "release"
-      : destination.kind === "tool-query" ? "resources" : destination.kind === "arena-comparison" ? "arena" : destination.kind === "task" || destination.kind === "task-list" ? "tasks" : "review";
+      : destination.kind === "tool-query" || destination.kind === "resource-context" ? "resources" : destination.kind === "resource-context-return" ? "translation" : destination.kind === "arena-comparison" ? "arena" : destination.kind === "task" || destination.kind === "task-list" ? "tasks" : "review";
 }
 
 /** One in-flight UI intent. Business state and write reservations stay in the original owners. */
@@ -52,7 +55,9 @@ export class SessionNavigation {
     const intent = this.acquire("navigation"); if (!intent) return false;
     const current = () => this.current(intent);
     // Capture the user target before any asynchronous view or read work.
-    const fixed: WorkspaceDestination = Object.freeze(destination.kind === "translation" || destination.kind === "arena-comparison"
+    const fixed: WorkspaceDestination = Object.freeze(destination.kind === "resource-context" || destination.kind === "resource-context-return"
+      ? {...destination,capture:Object.freeze({...destination.capture,target:Object.freeze({...destination.capture.target})})}
+      : destination.kind === "translation" || destination.kind === "arena-comparison"
       ? { ...destination, target: Object.freeze({ ...destination.target }) } : { ...destination });
     try {
       const from = this.ports.area();
