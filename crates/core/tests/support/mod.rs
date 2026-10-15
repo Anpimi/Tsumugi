@@ -249,29 +249,37 @@ impl Runner for FixtureRunner {
                 .collect();
             serde_json::to_value(checks).unwrap()
         };
-        results.send(FixedResult::capture_plugin(
-            &request.input,
-            request.item_id,
-            request.dispatch_token,
-            PluginResultEvidence {
-                authorization_id: permit.grant_id(),
-                channel: channel.clone(),
-                result: sdk::InvocationResult {
-                    context: invocation.context,
-                    provider: channel,
-                    capability: invocation.capability,
-                    profile: invocation.profile,
-                    result_id: ExecutionId::new().to_string(),
-                    outcome: sdk::InvocationOutcome::Succeeded {
-                        output: sdk::EncodedPayload::capture(
-                            invocation.output_schema,
-                            serde_json::to_string(&output).unwrap(),
-                        )
-                        .unwrap(),
+        results.send(
+            FixedResult::capture_plugin(
+                &request.input,
+                request.item_id,
+                request.dispatch_token,
+                PluginResultEvidence {
+                    authorization_id: permit.grant_id(),
+                    channel: channel.clone(),
+                    result: sdk::InvocationResult {
+                        context: invocation.context,
+                        provider: channel,
+                        capability: invocation.capability,
+                        profile: invocation.profile,
+                        result_id: ExecutionId::new().to_string(),
+                        outcome: sdk::InvocationOutcome::Succeeded {
+                            output: sdk::EncodedPayload::capture(
+                                invocation.output_schema,
+                                serde_json::to_string(&output).unwrap(),
+                            )
+                            .unwrap(),
+                        },
                     },
                 },
-            },
-        )?)
+            )
+            .inspect_err(|error| {
+                eprintln!(
+                    "Synthetic result capture refused: {:?} at {}",
+                    error.code, error.stage
+                );
+            })?,
+        )
     }
 }
 #[allow(dead_code)]
@@ -420,6 +428,14 @@ fn source_fixture_config(
             .revision_basis
             .push(sdk::source_context_facts_contract());
         envelope.settings["revisionPolicy"] = serde_json::to_value(policy).unwrap();
+        envelope
+            .plugin
+            .as_mut()
+            .unwrap()
+            .capability
+            .declaration
+            .limits
+            .max_output_bytes = sdk::MAX_CONTENT_EXCHANGE_BYTES as u32;
         input = FixedInput::capture(envelope).unwrap();
     }
     let (producer_grant, result) = execute(&mut runtime, &mut store, &input);

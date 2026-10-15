@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Source execution retains the original SDK content once, with a checked
+  schema/digest projection instead of duplicating the parsed proposal. Bounded
+  quoted content above 2 MiB can complete checking, adoption and reopening within
+  the existing 8 MiB result ledger; source identity and semantic proof are still
+  verified from the exact original bytes. The stored representation advances
+  the current-only project format to schema 35. Preserve older development
+  directories and reimport their sources into a new project; no conversion or
+  reset is performed.
+
 - SDK content exchanges allow up to 4,000 domain blocks and 4 MiB encoded content,
   so separate identity and context extensions can cover the existing 2,000-item
   scope. Other content counts,
@@ -43,7 +52,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   defaults; edits or archival invalidate that preparation. Accepted requests,
   original receipts and deadlines keep their captured configuration. Profile
   identities do not enter provider payloads.
-- The current project format advances to schema 34 for captured connection
+- The schema 34 development boundary introduced captured connection
   provenance. Earlier development directories are refused without conversion
   or reset; retain them and reimport sources into a new project.
 
@@ -70,7 +79,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   inside the sidebar.
 
 
-The combined development build opens project schema 34 only. Earlier Unreleased
+The combined development build opens project schema 35 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 

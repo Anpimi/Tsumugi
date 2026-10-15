@@ -119,28 +119,38 @@ impl FixedInput {
         // Quoting its original JSON costs at most twice the raw bytes; the
         // checked canonical projection is no larger. Reserve metadata separately.
         // Other contracts keep their conservative opaque-payload budget.
-        let max_result_bytes =
-            if envelope.operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
-                // This operation stores the complete channel result once, with a
-                // small digest reference rather than a duplicate parsed proposal.
-                // The SDK receiver bounds the entire encoded response, including
-                // quoting; Core metadata has its own reserved space.
-                envelope
-                    .limits
-                    .max_result_bytes
-                    .saturating_sub(64 * 1024)
-                    .min(declaration.limits.max_output_bytes)
-                    .min(sdk::MAX_EXCHANGE_BYTES as u32)
-            } else if bounded_json_contract {
-                let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
-                let raw = raw
-                    .min(declaration.limits.max_output_bytes)
-                    .min(sdk::MAX_EXCHANGE_BYTES as u32);
-                if raw == 0 { 0 } else { raw * 2 + 32 * 1024 }
-            } else {
-                (envelope.limits.max_result_bytes.saturating_sub(16 * 1024) / 8)
-                    .min(declaration.limits.max_output_bytes)
-            };
+        let max_result_bytes = if envelope.operation == crate::content::OPERATION {
+            // Source content retains one original SDK result plus a small
+            // schema/digest projection. Bound the quoted result frame and
+            // reserve the remaining ledger envelope metadata separately.
+            let raw = declaration
+                .limits
+                .max_output_bytes
+                .min(sdk::MAX_CONTENT_EXCHANGE_BYTES as u32);
+            raw.saturating_mul(2)
+                .saturating_add(32 * 1024)
+                .min(envelope.limits.max_result_bytes.saturating_sub(64 * 1024))
+        } else if envelope.operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
+            // This operation stores the complete channel result once, with a
+            // small digest reference rather than a duplicate parsed proposal.
+            // The SDK receiver bounds the entire encoded response, including
+            // quoting; Core metadata has its own reserved space.
+            envelope
+                .limits
+                .max_result_bytes
+                .saturating_sub(64 * 1024)
+                .min(declaration.limits.max_output_bytes)
+                .min(sdk::MAX_EXCHANGE_BYTES as u32)
+        } else if bounded_json_contract {
+            let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
+            let raw = raw
+                .min(declaration.limits.max_output_bytes)
+                .min(sdk::MAX_EXCHANGE_BYTES as u32);
+            if raw == 0 { 0 } else { raw * 2 + 32 * 1024 }
+        } else {
+            (envelope.limits.max_result_bytes.saturating_sub(16 * 1024) / 8)
+                .min(declaration.limits.max_output_bytes)
+        };
         if max_result_bytes == 0 {
             return Err(ExecutionError::new(
                 ErrorCode::LimitExceeded,
@@ -301,12 +311,15 @@ fn ledger_output(
 ) -> Result<Value, ExecutionError> {
     // Decode strict JSON before accepting the original bytes even when the
     // ledger projects only their schema/hash. Qualification parses the SDK
-    // translation contract from those same immutable bytes.
+    // source/translation contract from those same immutable bytes.
     let parsed: Value = codec::decode(
         output.utf8.as_bytes(),
         input.envelope().limits.max_result_bytes as usize,
     )?;
-    if input.envelope().operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
+    if matches!(
+        input.envelope().operation.as_str(),
+        crate::content::OPERATION | crate::content::TRANSLATION_EXTRACTION_OPERATION
+    ) {
         serde_json::to_value((&output.schema, &output.sha256))
             .map_err(|_| ExecutionError::new(ErrorCode::OutputInvalid, "plugin-output"))
     } else {

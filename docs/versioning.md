@@ -1,5 +1,19 @@
 # Application versioning and changelog maintenance
 
+Source executions now retain their original SDK content only once, using the
+existing schema/digest projection mechanism for the ledger output. Typed source
+qualification, semantic proof, source mapping and all historical reads still use
+the exact immutable SDK bytes. The stored representation is incompatible, so
+the current-only project boundary advances to schema 35; earlier development
+formats are preserved and refused before application DDL, without migration,
+rebuild or reset. Source request frames account for JSON quoting within the
+existing 8 MiB result ledger; combined input remains 4 MiB. SDK/process/IPC,
+application connection1/plugin settings2 and dependencies do not change.
+The same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch
+requires no further SemVer bump or distribution; both Unreleased changelogs
+and current README format statements are synchronized. Earlier paragraphs
+retain their intermediate development boundaries.
+
 SDK content has independent 4,000-block and 4 MiB encoded ceilings for coexisting
 identity and context extensions across the existing 2,000-item scope. Typed
 content receivers and Review source checks use the same bound. Unit, occurrence,
