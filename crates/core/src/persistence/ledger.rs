@@ -80,10 +80,20 @@ pub(super) fn table_names(_connection: &Connection) -> Vec<String> {
 thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
-    validate_schema(connection)
+    validate_schema(connection, |_, _| Ok(()))
 }
 
-fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
+pub(super) fn validate_for_open(connection: &Connection) -> Result<(), ExecutionError> {
+    validate_schema(
+        connection,
+        super::plugin_execution::validate_associated_input,
+    )
+}
+
+fn validate_schema(
+    connection: &Connection,
+    mut validate_input: impl FnMut(&Connection, &FixedInput) -> Result<(), ExecutionError>,
+) -> Result<(), ExecutionError> {
     #[cfg(feature = "execution-test-host")]
     if let Some(sql) = connection
         .query_row(
@@ -139,6 +149,7 @@ fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
         let _ = read_attempt_in(connection, &input, false)?;
+        validate_input(connection, &input)?;
     }
     let mut links = connection
         .prepare("SELECT producer_result_id,valid FROM plugin_validation_links")

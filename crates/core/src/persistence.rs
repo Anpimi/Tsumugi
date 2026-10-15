@@ -346,7 +346,6 @@ impl ProjectStore {
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         validate_existing_connection(&mut connection, &directory)?;
-        let _ = read_metadata_from(&connection)?;
 
         Ok(Self {
             directory,
@@ -834,7 +833,17 @@ fn validate_existing_connection(
             stage: PersistenceStage::Open,
         });
     }
-    validate_schema_shape(connection)
+    // Every open-time association check must see the same database snapshot.
+    // A deferred transaction keeps validation read-only while excluding
+    // changes between the ledger scan, grant scan, and final metadata read.
+    let snapshot = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    validate_schema_shape(&snapshot)?;
+    let _ = read_metadata_from(&snapshot)?;
+    snapshot
+        .commit()
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))
 }
 
 #[cfg(test)]
@@ -924,7 +933,7 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
     ledger::provider::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    ledger::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+    ledger::validate_for_open(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     content::validate(connection).map_err(|_| PersistenceError::CorruptProject {

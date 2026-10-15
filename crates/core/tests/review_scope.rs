@@ -442,7 +442,12 @@ fn full_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
     drop(runtime);
     store.close().unwrap();
     REOPEN_PROFILE.with(|profile| {
-        assert!(profile.borrow_mut().replace(ReopenProfile::default()).is_none());
+        assert!(
+            profile
+                .borrow_mut()
+                .replace(ReopenProfile::default())
+                .is_none()
+        );
     });
     let (reopened, _) = measured("reopen-2000", || {
         ProjectStore::open(&directory.path().join("project")).unwrap()
@@ -454,14 +459,19 @@ fn full_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
         "all reopen windows must be observed"
     );
     assert!(profile.active.is_none());
-    for window in &profile.completed {
-        assert!(window["reconstructedFrames"].as_u64().unwrap() >= 2000);
-        assert!(window["reconstructedBytes"].as_u64().unwrap() >= input_bytes as u64);
-    }
     println!(
         "REVIEW_SCOPE_REOPEN_WINDOWS {}",
         serde_json::json!(profile.completed)
     );
+    for window in &profile.completed {
+        if window["name"] == "plugin-grants" {
+            assert_eq!(window["reconstructedFrames"], 0);
+            assert_eq!(window["reconstructedBytes"], 0);
+        } else {
+            assert!(window["reconstructedFrames"].as_u64().unwrap() >= 2000);
+            assert!(window["reconstructedBytes"].as_u64().unwrap() >= input_bytes as u64);
+        }
+    }
     assert!(
         reopened
             .review_target(project, rows[1999].unit_id.unwrap(), "zh-CN")

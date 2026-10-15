@@ -215,24 +215,22 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         let record = decode(record.map_err(sql)?)?;
         not_delegated(connection, record.task_id)
             .map_err(|_| failure(ErrorCode::CorruptLedger, "plugin-grant-delegation"))?;
-        let captured = connection
-            .query_row(
-                &format!(
-                    "SELECT {} FROM execution_attempts a WHERE a.attempt_id=?1",
-                    super::ledger::input_columns_sql()
-                ),
-                [record.attempt_id.to_string()],
-                |row| super::ledger::StoredInputRow::from_row(row, 0),
-            )
-            .optional()
-            .map_err(sql)?;
-        if let Some(stored) = captured {
-            let input = stored.restore(record.attempt_id)?;
-            check_record(&record, &input)?;
-            check_project(connection, &input)?;
-            if input.envelope().plugin.is_none() || input.envelope().automation.is_some() {
-                return Err(failure(ErrorCode::CorruptLedger, "plugin-grant-input"));
-            }
+    }
+    Ok(())
+}
+
+/// Called only by the open-time ledger scan after the fixed input and its
+/// project association have been validated in the same read transaction.
+/// Missing grants are valid, including for a queued plugin input; an orphan
+/// grant is checked by `validate` without reconstructing an absent input.
+pub(super) fn validate_associated_input(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    if let Some(record) = for_attempt(connection, input.envelope().attempt_id)? {
+        check_record(&record, input)?;
+        if input.envelope().plugin.is_none() || input.envelope().automation.is_some() {
+            return Err(failure(ErrorCode::CorruptLedger, "plugin-grant-input"));
         }
     }
     Ok(())
