@@ -165,22 +165,25 @@ fn request() -> InvocationRequest {
 fn activation(request: &InvocationRequest) -> ProcessActivation {
     ProcessActivation {
         services: vec![],
-        provider: request.provider.clone(),
-        capability: CapabilityDeclaration {
-            contract: request.capability.clone(),
-            input_schema: request.input.schema.clone(),
-            output_schema: request.output_schema.clone(),
-            error_schema: request.error_schema.clone(),
-            profiles: vec![request.profile.clone().unwrap()],
-            effect: EffectKind::ReadOnly,
-            permissions: vec![PermissionRequest::CapturedInput],
-            limits: CapabilityLimits {
-                max_input_bytes: 131072,
-                max_output_bytes: 65536,
-                concurrency: 1,
-                timeout_ms: 1000,
+        instance: request.provider.instance(),
+        capabilities: vec![ProcessCapability {
+            contribution_id: request.provider.contribution_id.clone(),
+            capability: CapabilityDeclaration {
+                contract: request.capability.clone(),
+                input_schema: request.input.schema.clone(),
+                output_schema: request.output_schema.clone(),
+                error_schema: request.error_schema.clone(),
+                profiles: vec![request.profile.clone().unwrap()],
+                effect: EffectKind::ReadOnly,
+                permissions: vec![PermissionRequest::CapturedInput],
+                limits: CapabilityLimits {
+                    max_input_bytes: 131072,
+                    max_output_bytes: 65536,
+                    concurrency: 1,
+                    timeout_ms: 1000,
+                },
             },
-        },
+        }],
     }
 }
 fn send(peer: &mut Peer, body: ProcessBody) {
@@ -199,20 +202,20 @@ fn activated(h: &mut Harness, a: &ProcessActivation) {
     else {
         panic!("activation");
     };
-    assert_eq!(id, a.provider.contribution_id);
-    assert_eq!(contract, a.capability.contract);
+    assert_eq!(id, a.capabilities[0].contribution_id);
+    assert_eq!(contract, a.capabilities[0].capability.contract);
 }
 fn finish(mut h: Harness, a: &ProcessActivation) {
     send(
         &mut h.peer,
         ProcessBody::Close {
-            provider: a.provider.clone(),
+            instance: a.instance.clone(),
         },
     );
     assert_eq!(
         receive(&mut h.peer),
         ProcessBody::Closed {
-            provider: a.provider.clone()
+            instance: a.instance.clone()
         }
     );
     drop(h.peer);
@@ -255,7 +258,12 @@ fn exact_unicode_identity_all_outcomes_heartbeat_and_serial_results() {
             body: ExchangeBody::Result(result.clone()),
         })
         .unwrap();
-        receive_invocation_result(&bytes, &r, &a.provider).unwrap();
+        receive_invocation_result(
+            &bytes,
+            &r,
+            &a.provider(&r.provider.contribution_id).unwrap(),
+        )
+        .unwrap();
         assert_eq!(result.result_id, r.context.dispatch_id);
         match (i, result.outcome) {
             (0, InvocationOutcome::Succeeded { output }) => assert_eq!(output.utf8, utf8),
@@ -290,7 +298,7 @@ fn exact_unicode_identity_all_outcomes_heartbeat_and_serial_results() {
 }
 #[test]
 fn forged_requests_and_declared_input_limits_never_enter_component() {
-    for case in 0..8 {
+    for case in 0..10 {
         let mut h = harness(Behavior::Echo);
         let mut r = request();
         let a = activation(&r);
@@ -303,6 +311,8 @@ fn forged_requests_and_declared_input_limits_never_enter_component() {
             4 => r.error_schema.behavior_version += 1,
             5 => r.profile = None,
             6 => r.profile.as_mut().unwrap().behavior_version += 1,
+            7 => r.provider.contribution_id = "not-in-roster".into(),
+            8 => r.provider.activation_generation += 1,
             _ => {
                 r.input =
                     EncodedPayload::capture(r.input.schema.clone(), "x".repeat(131073)).unwrap();
@@ -385,6 +395,22 @@ fn unsupported_service_facade_refuses_before_author_activation() {
 }
 
 #[test]
+fn multi_callable_roster_refuses_before_author_activation_or_ready() {
+    let mut h = harness(Behavior::Echo);
+    let mut a = activation(&request());
+    let mut second = a.capabilities[0].clone();
+    second.contribution_id = "another-capability".into();
+    a.capabilities.push(second);
+    a.validate().unwrap();
+    send(&mut h.peer, ProcessBody::Activate(a));
+    assert!(h.observed.recv_timeout(Duration::from_secs(1)).is_err());
+    assert!(matches!(
+        refused(h),
+        NativeWorkerError::UnsupportedCapabilities
+    ));
+}
+
+#[test]
 fn close_during_activation_cancels_scope_and_waits_for_cleanup_without_ready() {
     let mut h = harness(Behavior::WaitActivation);
     let a = activation(&request());
@@ -428,7 +454,7 @@ fn partial_activation_panic_and_failed_disposal_never_acknowledge_success() {
                     ProcessBody::Invoke(r)
                 } else {
                     ProcessBody::Close {
-                        provider: a.provider,
+                        instance: a.instance,
                     }
                 },
             );
@@ -459,7 +485,7 @@ fn duplicate_dispatch_and_129th_call_are_refused() {
 }
 #[test]
 fn conflicting_control_and_worker_direction_are_refused_and_cancel_owned_work() {
-    for case in 0..5 {
+    for case in 0..6 {
         let mut h = harness(Behavior::WaitInvocation);
         let r = request();
         let a = activation(&r);
@@ -475,9 +501,14 @@ fn conflicting_control_and_worker_direction_are_refused_and_cancel_owned_work() 
                 nonce: "busy".into(),
             },
             3 => {
-                let mut provider = a.provider;
-                provider.instance_id = "other".into();
-                ProcessBody::Close { provider }
+                let mut instance = a.instance;
+                instance.instance_id = "other".into();
+                ProcessBody::Close { instance }
+            }
+            4 => {
+                let mut instance = a.instance;
+                instance.activation_generation += 1;
+                ProcessBody::Close { instance }
             }
             _ => ProcessBody::Ready(a),
         };
@@ -488,7 +519,7 @@ fn conflicting_control_and_worker_direction_are_refused_and_cancel_owned_work() 
 #[test]
 fn malformed_and_incomplete_wire_is_refused_before_component_activation() {
     let duplicate =
-        br#"{"protocolVersion":2,"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"a"}}}"#;
+        br#"{"protocolVersion":3,"protocolVersion":3,"body":{"kind":"ping","data":{"nonce":"a"}}}"#;
     let mut malformed = (duplicate.len() as u32).to_be_bytes().to_vec();
     malformed.extend_from_slice(duplicate);
     for bytes in [

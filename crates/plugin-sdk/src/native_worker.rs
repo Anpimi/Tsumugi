@@ -63,7 +63,8 @@ pub enum NativeCapabilityOutput {
 }
 pub type NativeComponentError = Box<dyn std::error::Error + Send + Sync>;
 
-/// One component for the selected contribution on a serial process channel.
+/// One component for a singleton callable roster on a serial process channel.
+/// This basic facade rejects multi-callable activation before author code runs.
 /// Activation and invocation run away from the control reader, so cancellation
 /// and close remain observable while component code is running.
 pub trait NativeComponent: Send + 'static {
@@ -93,6 +94,7 @@ pub enum NativeWorkerError {
     ComponentFailed,
     ThreadUnavailable,
     UnsupportedServices,
+    UnsupportedCapabilities,
 }
 impl fmt::Display for NativeWorkerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -238,8 +240,11 @@ fn check_request(
     activation: &ProcessActivation,
 ) -> Result<(), NativeWorkerError> {
     request.validate()?;
-    let capability = &activation.capability;
-    if request.provider != activation.provider
+    let member = activation
+        .capability(&request.provider.contribution_id)
+        .ok_or(NativeWorkerError::RequestMismatch)?;
+    let capability = &member.capability;
+    if !activation.instance.matches_provider(&request.provider)
         || request.capability != capability.contract
         || request.input.schema != capability.input_schema
         || request.output_schema != capability.output_schema
@@ -335,6 +340,11 @@ fn serve<R: Read + Send + 'static, W: Write>(
             {
                 Event::Frame(frame) => match frame.body {
                     ProcessBody::Activate(value) if phase == Phase::Waiting => {
+                        // NativeComponent has one handler, so it cannot promise
+                        // readiness for a larger captured callable roster.
+                        if value.capabilities.len() != 1 {
+                            return Err(NativeWorkerError::UnsupportedCapabilities);
+                        }
                         // This basic component facade cannot issue service calls.
                         // Refuse before activation rather than echoing readiness
                         // for a service dependency the author cannot consume.
@@ -342,8 +352,8 @@ fn serve<R: Read + Send + 'static, W: Write>(
                             return Err(NativeWorkerError::UnsupportedServices);
                         }
                         jobs.try_send(Job::Activate(NativeComponentContext {
-                            contribution_id: value.provider.contribution_id.clone(),
-                            contract: value.capability.contract.clone(),
+                            contribution_id: value.capabilities[0].contribution_id.clone(),
+                            contract: value.capabilities[0].capability.contract.clone(),
                             cancellation: scope.clone(),
                         }))
                         .map_err(|_| NativeWorkerError::UnexpectedFrame)?;
@@ -381,9 +391,9 @@ fn serve<R: Read + Send + 'static, W: Write>(
                             None,
                         )?;
                     }
-                    ProcessBody::Close { provider }
+                    ProcessBody::Close { instance }
                         if (phase == Phase::Active || phase == Phase::Activating)
-                            && activation.as_ref().is_some_and(|a| a.provider == provider) =>
+                            && activation.as_ref().is_some_and(|a| a.instance == instance) =>
                     {
                         phase = Phase::Closing;
                         scope.cancel();
@@ -415,9 +425,7 @@ fn serve<R: Read + Send + 'static, W: Write>(
                         let result = result(
                             &request,
                             output.ok_or(NativeWorkerError::ComponentFailed)?,
-                            activation
-                                .as_ref()
-                                .unwrap()
+                            activation.as_ref().unwrap().capabilities[0]
                                 .capability
                                 .limits
                                 .max_output_bytes,
@@ -434,7 +442,7 @@ fn serve<R: Read + Send + 'static, W: Write>(
                     emit(
                         &mut writer,
                         ProcessBody::Closed {
-                            provider: activation.as_ref().unwrap().provider.clone(),
+                            instance: activation.as_ref().unwrap().instance.clone(),
                         },
                         &mut sent,
                         None,

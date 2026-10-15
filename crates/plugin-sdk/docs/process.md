@@ -1,6 +1,6 @@
 # Experimental local process protocol
 
-Process protocol **2** is separate from manifest protocol, content exchange,
+Process protocol **3** is separate from manifest protocol, content exchange,
 capability schema/behavior identities and package SemVer. Its sole type/schema
 source is the Rust SDK. The [process Host](../../plugin-host/README.md) implements
 actual pipe/state handling; parsing a frame does not start a worker or grant
@@ -28,19 +28,38 @@ and semantic data; the Host also checks message direction, active state and exac
 request/nonce/instance correlation. A syntactically valid result in the wrong
 state is not an accepted invocation.
 
-`activate`/`ready` carry the exact captured `ProcessActivation`: provider binding
-plus capability declaration and the mandatory `services` array. The claimed binding includes package digest,
-plugin/component/contribution identity, fresh instance and activation generation.
-The actual Host must compare it to the artifact it captured and the process it
-launched. A peer that echoes these values has not authenticated a publisher,
-obtained a grant or proven safe domain behavior.
+`activate`/`ready` carry the exact captured `ProcessActivation`: one `instance`,
+the frozen `capabilities` roster and the mandatory `services` array. The
+`ComponentInstanceBinding` includes plugin identity, component ID, package digest,
+fresh instance ID and activation generation, without choosing a contribution.
+Every `ProcessCapability` has a `contributionId` and its full `capability`
+declaration. The roster must be nonempty, unique by contribution ID and contain
+at most `MAX_PROCESS_CAPABILITIES` (128) members, while the original encoded-frame
+byte limit still applies. Duplicate IDs with different declarations are also
+refused. The actual Host must compare Ready to its complete original activation,
+the artifact it captured and the process it launched. A peer that echoes these
+values has not authenticated a publisher, obtained a grant or proven safe domain
+behavior. A roster cannot be expanded after activation.
 
-`invoke` and `result` reuse the existing invocation types and exact UTF-8 payload
-digests. `receive_invocation_result` checks the complete result document against
+`ProcessActivation::capability(id)` looks up the exact member; `provider(id)`
+validates the complete roster and derives that member's full call binding,
+refusing a missing member. `ProviderBinding::instance()` projects its component
+principal. `ComponentInstanceBinding::provider(id)` checks syntax only; it does
+not prove membership. Scope, permissions, current authority and deadlines remain
+with the actual Host. Project/Attempt use singleton rosters and retain the
+existing service semantics. The initial multi-callable Application profile is
+JavaScript and read-only, without required dependencies or ProjectService
+permissions; broader composition and Native Application remain unsupported.
+
+`invoke` and `result` reuse the existing invocation types, the full per-call
+`ProviderBinding` including contribution ID, and exact UTF-8 payload digests.
+Sharing an instance does not authorize any other roster member's call.
+`receive_invocation_result` checks the complete result document against
 the request's `maxResultBytes` and validates its separately bounded payload. Opaque payloads still need
 their own schema/domain interpreter and Core adoption. `cancelled` acknowledges
 only the correlated dispatch; it cannot claim rollback, refund or the absence of
-an external effect. `closed` acknowledges only the captured provider's cleanup.
+an external effect. `close` and `closed` carry the component `instance` and apply
+to its entire frozen roster. `closed` acknowledges only that instance's cleanup.
 The Host's actual exit/reaping evidence remains separate. `ping`/`pong` use fresh
 nonces for an explicit liveness check, not an authorization lease.
 
@@ -87,8 +106,8 @@ execution/grant association until the child task is terminal, including after
 channel cleanup. This transport supplies no AI, budget, adoption or authorization
 implementation. Those remain the application's existing execution owners.
 
-Process 1 frames and captured runtime descriptions are not accepted by the
-current process-2 receiver. Regenerate bindings and build/capture the current
+Process 1/2 frames and captured runtime descriptions are not accepted by the
+current process-3 receiver. Regenerate bindings and build/capture the current
 Host; no historical wire fallback or development-data migration is supplied.
 Manifest and content-exchange protocol identities remain independent.
 
@@ -99,7 +118,17 @@ loads SDK components using generated [wire types](../javascript/process.d.ts) an
 a small [component facade](../javascript/component.d.ts). The Rust schema remains
 the wire source; the Host's `generate:contracts` command emits those TypeScript
 types and an Ajv standalone validator. `profile-process` exports the Rust protocol
-version, frame bound and SDK package version for generation.
+version, frame and roster bounds and SDK package version for generation.
+
+The facade exposes read-only `instance` and `contributions` descriptions, where
+each contribution has its exact ID and contract. During `activate`, authors call
+`register(contributionId, handler)` exactly once for every captured member.
+Missing, duplicate, unknown and late registrations fail. Only complete successful
+activation publishes Ready; a partially registered component must be disposed
+without exposing a callable subset. Disposal and late callbacks remain bound to
+their original instance and activation generation. The old `contribution` field
+and no-ID registration API have no fallback. Per-call metadata retains its
+original complete provider, invocation context, cancellation signal and services.
 
 This JavaScript profile rejects duplicate decoded JSON keys, non-scalar strings,
 non-integer numeric tokens, unsafe JavaScript integers and excessive nesting.

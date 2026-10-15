@@ -46,19 +46,22 @@ fn response(kind: usize) -> ServiceResponse {
 fn activation(services: Vec<ServiceBinding>) -> ProcessActivation {
     let invocation = invocation();
     ProcessActivation {
-        provider: invocation.provider,
-        capability: CapabilityDeclaration {
-            contract: invocation.capability,
-            input_schema: invocation.input.schema,
-            output_schema: invocation.output_schema,
-            error_schema: invocation.error_schema,
-            profiles: vec![invocation.profile.unwrap()],
-            effect: EffectKind::Proposal,
-            permissions: vec![PermissionRequest::ProjectService {
-                contract: binding().contract,
-            }],
-            limits: binding().limits,
-        },
+        instance: invocation.provider.instance(),
+        capabilities: vec![ProcessCapability {
+            contribution_id: invocation.provider.contribution_id,
+            capability: CapabilityDeclaration {
+                contract: invocation.capability,
+                input_schema: invocation.input.schema,
+                output_schema: invocation.output_schema,
+                error_schema: invocation.error_schema,
+                profiles: vec![invocation.profile.unwrap()],
+                effect: EffectKind::Proposal,
+                permissions: vec![PermissionRequest::ProjectService {
+                    contract: binding().contract,
+                }],
+                limits: binding().limits,
+            },
+        }],
         services,
     }
 }
@@ -164,7 +167,7 @@ fn activation_services_are_required_bounded_and_unique_by_handle_and_provider_co
         ContractErrorCode::InvalidSchema
     );
     let mut old = ProcessFrame::new(ProcessBody::Activate(activation(vec![])));
-    old.protocol_version = 1;
+    old.protocol_version = 2;
     assert_eq!(
         old.validate().unwrap_err().code,
         ContractErrorCode::UnsupportedProtocol

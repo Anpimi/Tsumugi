@@ -95,7 +95,7 @@ pub const MAX_CONTENT_DOMAIN_BLOCKS: usize = 4000;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 
 /// Length-prefixed local process messages, independent of content protocols.
-pub const PROCESS_PROTOCOL: u32 = 2;
+pub const PROCESS_PROTOCOL: u32 = 3;
 
 /// Validate a logical package file path before a host materializes captured bytes.
 /// This does not open a path or prove filesystem containment.
@@ -133,6 +133,7 @@ pub fn process_profile() -> serde_json::Value {
         "protocolVersion": PROCESS_PROTOCOL,
         "maxFrameBytes": MAX_PROCESS_FRAME_BYTES,
         "maxInvocationPayloadBytes": MAX_INVOCATION_PAYLOAD_BYTES,
+        "maxCapabilities": MAX_PROCESS_CAPABILITIES,
         "maxServiceBindings": MAX_SERVICE_BINDINGS,
         "maxServiceCalls": MAX_SERVICE_CALLS,
         "sdkVersion": SDK_VERSION

@@ -101,6 +101,27 @@ binds those frames to captured packages and actual child pipes. The SDK has no
 Core dependency; its optional native component entry point uses only the standard
 library and the existing contracts, with no additional framework dependency.
 
+Process protocol **3** activates one `ComponentInstanceBinding` and a frozen,
+nonempty roster of at most 128 `ProcessCapability` declarations. Ready must echo
+the complete original activation, and Close/Closed identify the whole instance.
+Each invocation still carries its exact `ProviderBinding`, including its own
+contribution. `ProcessActivation::provider(id)` checks that exact member;
+`ProviderBinding::instance()` projects the shared component principal. Neither
+helper grants authority. Project/Attempt activation keeps a singleton roster and
+its existing service rules. The basic Rust native facade accepts only a singleton
+without services, and rejects a larger roster before author activation.
+
+The JavaScript `ComponentAPI` exposes read-only `instance` and `contributions`
+descriptions. Authors call `register(contributionId, handler)` for every captured
+member exactly once before Ready. Missing, duplicate, unknown or late registration
+is an error. There is no old single-contribution API or protocol-2 fallback.
+The initial multi-callable Application profile is JavaScript, read-only, without
+required dependencies or project services; this wire format does not enable
+Native Application execution or domain, Agent or generation adoption. Manifest
+and exchange protocols remain at 1, and this undistributed SDK stays at
+`0.1.0-alpha.1`. Captured process-2 environments require new matching materials;
+the receiver does not migrate historical descriptions.
+
 `bind_capability` captures an exact validated declaration and its owner with an
 independently supplied package digest. `ProviderSelectionBinding` identifies that
 fixed choice without an instance or activation generation; `ProviderBinding`
