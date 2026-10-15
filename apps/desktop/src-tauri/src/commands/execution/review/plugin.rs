@@ -381,7 +381,8 @@ fn recorded(
         if saved.binding.checker.provider.plugin != selected.package.plugin
             || saved.binding.checker.provider.package_digest != selected.package.package_digest
             || saved.declaration_resource_id != selected.resource_id
-            || saved.environment.digest().map_err(|_| stale())? != selected.environment_digest
+            || saved.execution.environment.digest().map_err(|_| stale())?
+                != selected.environment_digest
             || saved.rules != selected.rules
         {
             return Err(stale());

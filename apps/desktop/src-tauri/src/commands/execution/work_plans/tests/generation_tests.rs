@@ -161,6 +161,13 @@ fn generation_package_with_timeout(
     observer: Option<&std::path::Path>,
     timeout_ms: u32,
 ) -> tsumugi_plugin_host::PackageImage {
+    generation_package_scoped(observer, timeout_ms, sdk::ComponentScope::Project)
+}
+fn generation_package_scoped(
+    observer: Option<&std::path::Path>,
+    timeout_ms: u32,
+    scope: sdk::ComponentScope,
+) -> tsumugi_plugin_host::PackageImage {
     use tsumugi_plugin_host::{PackageFile, PackageImage};
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../../../../test/fixtures/pluginGenerationComponent.contract.json"
@@ -174,7 +181,7 @@ fn generation_package_with_timeout(
         permissions: capability.declaration.permissions.clone(),
         components: vec![sdk::ComponentDeclaration {
             id: capability.provider.component_id.clone(),
-            scope: sdk::ComponentScope::Project,
+            scope,
             runtime: sdk::RuntimeKind::JavaScript,
             entrypoint: Some("component.mjs".into()),
             dependencies: vec![sdk::CapabilityDependency {
@@ -245,15 +252,32 @@ fn install_generation(
     crate::commands::plugins::InstalledPluginFixture,
     tsumugi_plugin_host::RuntimeApproval,
 ) {
+    install_generation_scoped(fixture, sdk::ComponentScope::Project)
+}
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+fn install_generation_scoped(
+    fixture: &Fixture,
+    scope: sdk::ComponentScope,
+) -> (
+    Value,
+    crate::commands::plugins::InstalledPluginFixture,
+    tsumugi_plugin_host::RuntimeApproval,
+) {
     use crate::commands::plugins::InstalledPluginFixture;
     use std::{fs, path::PathBuf};
     use tsumugi_plugin_host::{
         CapturedRuntime, RuntimeApproval,
         catalog::{PackageApproval, PackageOrigin},
     };
-    let image = generation_package_observed(Some(
-        &fixture.directory.path().join("component-observer.txt"),
-    ));
+    let image = generation_package_scoped(
+        Some(&fixture.directory.path().join("component-observer.txt")),
+        10_000,
+        scope,
+    );
     let approval = PackageApproval {
         plugin: image.manifest().manifest().plugin.clone(),
         package_digest: image.package_digest().into(),
@@ -314,8 +338,25 @@ fn install_generation(
 ))]
 #[test]
 fn generation_component_real_ipc_process_factory_preserves_two_original_plans_and_budgets() {
-    let fixture = Fixture::create();
-    let (component, _installed, _approval) = install_generation(&fixture);
+    generation_component_real_scoped(sdk::ComponentScope::Project)
+}
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+#[test]
+fn attempt_generation_component_real_ipc_keeps_original_receipts_budgets_and_reopen() {
+    generation_component_real_scoped(sdk::ComponentScope::Attempt)
+}
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+fn generation_component_real_scoped(component_scope: sdk::ComponentScope) {
+    let mut fixture = Fixture::create();
+    let (component, _installed, _approval) = install_generation_scoped(&fixture, component_scope);
     let responses: ServiceResponses = Arc::default();
     let captured = responses.clone();
     fixture
@@ -555,7 +596,7 @@ fn generation_component_real_ipc_process_factory_preserves_two_original_plans_an
         );
         assert_eq!(fixture.bytes(), saved);
         assert_eq!(fixture.attempt_count(), count + 2);
-        let mut replaced = starting;
+        let mut replaced = starting.clone();
         replaced["grantId"] = json!(ExecutionId::new());
         assert!(
             fixture
@@ -572,7 +613,23 @@ fn generation_component_real_ipc_process_factory_preserves_two_original_plans_an
                 .as_bool()
                 .unwrap()
         );
-        completed.push((outer, generation, preflight));
+        let expected_scope = if component_scope == sdk::ComponentScope::Attempt {
+            outer.to_string()
+        } else {
+            responses
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .context
+                .project_id
+                .clone()
+        };
+        assert_eq!(
+            responses.lock().unwrap().last().unwrap().context.scope_id,
+            expected_scope
+        );
+        completed.push((outer, generation, preflight, starting));
     }
     let connection = rusqlite::Connection::open_with_flags(
         fixture.directory.path().join("project/project.sqlite3"),
@@ -589,7 +646,7 @@ fn generation_component_real_ipc_process_factory_preserves_two_original_plans_an
             .unwrap(),
         2
     );
-    for (outer, generation, _) in completed {
+    for (outer, generation, _, _) in &completed {
         let association: (String,String) = connection.query_row("SELECT outer_attempt, child_attempt FROM application_service_calls WHERE outer_attempt=?1", [outer.to_string()], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
         assert_eq!(
             association,
@@ -598,6 +655,42 @@ fn generation_component_real_ipc_process_factory_preserves_two_original_plans_an
                 generation["attemptId"].as_str().unwrap().into()
             )
         );
+    }
+    drop(connection);
+    fixture.reopen();
+    for (outer, generation, _, starting) in completed {
+        assert!(
+            fixture
+                .call("start_work_plan_generation_component", starting)
+                .is_err()
+        );
+        let state = fixture
+            .call(
+                "read_ai_translation",
+                json!({"attemptId":generation["attemptId"]}),
+            )
+            .unwrap();
+        assert!(!state["rows"][0]["savedRevisionId"].is_null());
+        let connection = rusqlite::Connection::open_with_flags(
+            fixture.directory.path().join("project/project.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let origin: Vec<u8> = connection
+            .query_row(
+                "SELECT origin FROM application_service_calls WHERE outer_attempt=?1",
+                [outer.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let origin: Value = serde_json::from_slice(&origin).unwrap();
+        let expected_scope = if component_scope == sdk::ComponentScope::Attempt {
+            outer.to_string()
+        } else {
+            origin["projectId"].as_str().unwrap().to_owned()
+        };
+        assert_eq!(origin["service"]["scopeId"], expected_scope);
+        assert_eq!(origin["invocation"]["context"]["scopeId"], expected_scope);
     }
 }
 

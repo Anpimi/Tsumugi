@@ -831,6 +831,14 @@
         ],
         "type": "object"
       },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
+        ],
+        "type": "string"
+      },
       "ContractRef": {
         "additionalProperties": false,
         "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
@@ -1391,6 +1399,47 @@
         ],
         "type": "object"
       },
+      "PluginExecutionBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "componentScope": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ComponentScope"
+              }
+            ],
+            "description": "Captured from the selected component, never inferred from a result."
+          },
+          "environment": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+              }
+            ],
+            "description": "Exact captured Node artifacts or actual native application Host identity.\nThis data value does not authenticate its source or grant execution."
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "capability",
+          "componentScope",
+          "profile",
+          "environment"
+        ],
+        "type": "object"
+      },
       "PluginIdentity": {
         "additionalProperties": false,
         "description": "Claimed package identity; a host must authenticate the actual package source.",
@@ -1491,13 +1540,17 @@
           "binding": {
             "$ref": "#/definitions/BuildBinding"
           },
-          "environment": {
-            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          "builderExecution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
+          },
+          "checkerExecution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
           }
         },
         "required": [
           "binding",
-          "environment"
+          "builderExecution",
+          "checkerExecution"
         ],
         "type": "object"
       },

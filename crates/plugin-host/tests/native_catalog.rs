@@ -500,8 +500,16 @@ fn native_catalog_normal_core_requires_source_qa_human_and_artifact_proofs_and_k
                 ),
                 semantic_rules: source_binding.declaration.semantic_rules.clone(),
                 review: Some(
-                    SourceReviewBinding::capture(&source_binding.review, &producer.environment)
-                        .unwrap(),
+                    SourceReviewBinding::capture(
+                        &source_binding.review,
+                        &tsumugi_core::execution::PluginExecutionBinding {
+                            component_scope: sdk::ComponentScope::Project,
+                            capability: (&source_binding.review).checker.clone(),
+                            profile: Some((&source_binding.review).declaration.profile.clone()),
+                            environment: (*(&producer.environment)).clone().into(),
+                        },
+                    )
+                    .unwrap(),
                 ),
             },
         )
@@ -650,8 +658,16 @@ fn native_catalog_normal_core_requires_source_qa_human_and_artifact_proofs_and_k
         .review_eligibility(project, &["zh-CN".into()])
         .unwrap();
     assert!(eligibility.ready);
-    let release_environment =
-        ReleaseBuildEnvironment::new(build_binding, environment.descriptor().clone()).unwrap();
+    let release_environment = ReleaseBuildEnvironment::new(
+        build_binding.clone(),
+        builder
+            .execution_binding(Some(build_binding.declaration.profile.clone()))
+            .unwrap(),
+        artifact_checker
+            .execution_binding(Some(build_binding.declaration.profile.clone()))
+            .unwrap(),
+    )
+    .unwrap();
     let input = store
         .prepare_plugin_build(
             project,

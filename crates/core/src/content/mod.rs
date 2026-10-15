@@ -393,22 +393,20 @@ pub struct SourceReviewBinding {
 impl SourceReviewBinding {
     /// Preserve the selected package rules and independently captured runtime.
     /// Capturing this metadata grants no checker execution or project approval.
-    pub fn capture<E: Clone + Into<sdk::ExecutionEnvironmentDescriptor>>(
+    pub fn capture(
         binding: &sdk::ReviewBinding,
-        environment: &E,
+        checker: &PluginExecutionBinding,
     ) -> Result<Self, ExecutionError> {
         binding.validate().map_err(source_contract_error)?;
-        let checker = PluginExecutionBinding {
-            // This domain composition requires a Host-verified Project component.
-            component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-            capability: binding.checker.clone(),
-            profile: Some(binding.declaration.profile.clone()),
-            environment: environment.clone().into(),
-        };
         checker.validate()?;
+        if checker.capability != binding.checker
+            || checker.profile.as_ref() != Some(&binding.declaration.profile)
+        {
+            return Err(invalid("source-review-binding"));
+        }
         Ok(Self {
             declaration: binding.declaration.clone(),
-            checker,
+            checker: checker.clone(),
         })
     }
     fn validate(

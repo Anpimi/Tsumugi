@@ -6,25 +6,6 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
-- Opening saved model connection choices no longer triggers render-time owner
-  updates. A window focus check replaces an unfinished earlier read, so its late
-  response cannot restore obsolete connection choices as current. Existing
-  preparation drafts and uncertain actions retain their original inputs.
-- Open an exact saved translation from its editor history or AI candidate review
-  in the offline comparison work area. Existing editor drafts, model settings and
-  unfinished comparisons are preserved. Rejected candidates stay readable in
-  comparisons but must be explicitly restored before direct selection.
-
-- Generic plugin execution and manual reference tools support captured Attempt
-  components with exact project/attempt scope and their original execution grant.
-  Revocation, cancellation, late results and cleanup use the existing owned
-  channel lifecycle. Project-service dependencies and domain/Agent compositions
-  remain explicitly restricted to their supported Project scope.
-- Plugin execution inputs now require the captured component scope. The
-  current-only project format is schema 38; preserve older development projects
-  and reimport into a new project. There is no implicit Project default, migration
-  or additional application/SDK version bump in this undistributed alpha batch.
-
 - Advisory Review findings support explicit false-positive rejection and
   restoration with original check, finding, actor, reason and basis history.
   Identical complete evidence associates its earlier decision across check runs;
@@ -34,9 +15,28 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   same rule is rechecked on current content; new findings retain their own
   evidence. Uncertain actions recover their original receipts and preserve newer
   reason edits and independent manual drafts.
-- Review finding facts advance the current-only project format to schema 38.
-  Older development directories are preserved and refused without conversion or
-  reset. The same undistributed application/SDK alpha batch needs no extra bump.
+
+- Opening saved model connection choices no longer triggers render-time owner
+  updates. A window focus check replaces an unfinished earlier read, so its late
+  response cannot restore obsolete connection choices as current. Existing
+  preparation drafts and uncertain actions retain their original inputs.
+- Open an exact saved translation from its editor history or AI candidate review
+  in the offline comparison work area. Existing editor drafts, model settings and
+  unfinished comparisons are preserved. Rejected candidates stay readable in
+  comparisons but must be explicitly restored before direct selection.
+
+- Source and translation import, format and advisory review, build/artifact checks,
+  Agent tools and generation components capture each capability's exact Project
+  or Attempt execution binding. Different roles can use different scopes without
+  changing their original grants, required checks or receipt identities.
+- Attempt generation components use the existing per-dispatch service adapter,
+  bound to the fixed outer input, original grant and deadline. Unsupported service
+  dependencies and Application execution remain refused. Accepted child work
+  retains its original budget and authority after the component channel closes.
+- Complete build, advisory-review and Agent-tool bindings advance the current-only
+  project format to schema 39. Preserve older development directories and reimport
+  into a new project; no default scope, migration or additional application/SDK
+  version bump is introduced in this undistributed alpha batch.
 - Saved AI translation candidates support explicit rejection and restoration with
   an actor, reason and fixed source/selection basis. Decisions and original
   receipts survive reopening. Rejected candidates keep their text and provenance
@@ -188,7 +188,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   inside the sidebar.
 
 
-The combined development build opens project schema 38 only. Earlier Unreleased
+The combined development build opens project schema 39 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 

@@ -122,7 +122,14 @@ pub(super) fn declared_fixture(
                         review: Some(
                             SourceReviewBinding::capture(
                                 &source.binding.review,
-                                &producer.environment,
+                                &tsumugi_core::execution::PluginExecutionBinding {
+                                    component_scope: sdk::ComponentScope::Project,
+                                    capability: (&source.binding.review).checker.clone(),
+                                    profile: Some(
+                                        (&source.binding.review).declaration.profile.clone(),
+                                    ),
+                                    environment: (*(&producer.environment)).clone().into(),
+                                },
                             )
                             .unwrap(),
                         ),

@@ -26,33 +26,38 @@ fn tool() -> WorkPlanToolSpec {
     let binding = declaration.bind(&manifest, &"a".repeat(64)).unwrap();
     WorkPlanToolSpec {
         handle: ExecutionId::new(),
-        binding,
+        binding: binding.clone(),
         resource_id: "query-tool".into(),
         settings_revision: 1u64.into(),
         package_origin: json!({"sourceId":"synthetic","publisherId":"example"}),
         runtime_origin: json!({"sourceId":"synthetic","publisherId":"example"}),
         target: "zh-CN".into(),
         selections: vec!["term".into()],
-        environment: sdk::RuntimeEnvironmentDescriptor {
-            protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
-            platform: sdk::RuntimePlatform {
-                operating_system: sdk::RuntimeOperatingSystem::Macos,
-                architecture: sdk::RuntimeArchitecture::Aarch64,
-            },
-            sdk_version: "0.1.0-alpha.1".into(),
-            process_protocol: sdk::PROCESS_PROTOCOL,
-            profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
-            tool_version: "26.10.0".into(),
-            tool: sdk::RuntimeArtifactBinding {
-                tree_digest: "b".repeat(64),
-                entrypoint: "bin/node".into(),
-            },
-            host: sdk::RuntimeArtifactBinding {
-                tree_digest: "c".repeat(64),
-                entrypoint: "dist/main.js".into(),
-            },
-        }
-        .into(),
+        execution: PluginExecutionBinding {
+            component_scope: sdk::ComponentScope::Project,
+            capability: binding.capability.clone(),
+            profile: binding.declaration.profile.clone(),
+            environment: sdk::RuntimeEnvironmentDescriptor {
+                protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+                platform: sdk::RuntimePlatform {
+                    operating_system: sdk::RuntimeOperatingSystem::Macos,
+                    architecture: sdk::RuntimeArchitecture::Aarch64,
+                },
+                sdk_version: "0.1.0-alpha.1".into(),
+                process_protocol: sdk::PROCESS_PROTOCOL,
+                profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+                tool_version: "26.10.0".into(),
+                tool: sdk::RuntimeArtifactBinding {
+                    tree_digest: "b".repeat(64),
+                    entrypoint: "bin/node".into(),
+                },
+                host: sdk::RuntimeArtifactBinding {
+                    tree_digest: "c".repeat(64),
+                    entrypoint: "dist/main.js".into(),
+                },
+            }
+            .into(),
+        },
     }
 }
 struct UncalledPlugin(WorkPlanToolSpec);
@@ -87,7 +92,7 @@ impl Runner for UncalledPlugin {
         Some(&self.0.binding.capability.provider)
     }
     fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
-        Some(&self.0.environment)
+        Some(&self.0.execution.environment)
     }
     fn run(
         &self,
@@ -1203,8 +1208,13 @@ fn reopening_preserves_reservations_and_never_recreates_old_tool_authority() {
 #[test]
 fn reopening_refuses_a_delegated_grant_without_its_original_attempt() {
     let mut f = fixture(2);
-    let prepared = f.store.prepare_work_plan_agent_tool(&f.scope, &request(&f, vec![f.units[0]])).unwrap();
-    f.runtime.submit_work_plan_tool(&mut f.store, &prepared, &f.consent, ExecutionId::new()).unwrap();
+    let prepared = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &request(&f, vec![f.units[0]]))
+        .unwrap();
+    f.runtime
+        .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, ExecutionId::new())
+        .unwrap();
     let path = f.store.directory().to_owned();
     drop(f.runtime);
     drop(f.store);
@@ -1219,7 +1229,10 @@ fn reopening_refuses_a_delegated_grant_without_its_original_attempt() {
     ).unwrap(), 1);
     drop(connection);
     let before = std::fs::read(&database).unwrap();
-    assert!(matches!(ProjectStore::open(&path), Err(tsumugi_core::PersistenceError::CorruptProject { .. })));
+    assert!(matches!(
+        ProjectStore::open(&path),
+        Err(tsumugi_core::PersistenceError::CorruptProject { .. })
+    ));
     assert_eq!(std::fs::read(database).unwrap(), before);
 }
 
@@ -1421,4 +1434,166 @@ fn crash_after_atomic_tool_commit_preserves_input_without_rearming_permission() 
     drop(runtime);
     drop(store);
     std::fs::remove_dir_all(temporary).unwrap();
+}
+
+#[test]
+fn attempt_tool_scope_is_the_child_attempt_and_fixed_in_plan_grant_and_history() {
+    let mut selected = tool();
+    selected.execution.component_scope = sdk::ComponentScope::Attempt;
+    let (started, received) = std::sync::mpsc::channel();
+    let runner = Arc::new(ControlledPlugin {
+        tool: UncalledPlugin(selected.clone()),
+        started,
+        wait_for_cancel: false,
+    });
+    let mut f = fixture_with_tool_runners(2, vec![selected.clone()], vec![runner]);
+    // This fixture exercises tool execution only. Retain the authorized parent
+    // as already dispatched, using the existing ledger fixture pattern, so a
+    // scheduler tick cannot invoke the deliberately forbidden model runner.
+    let root = f.plan.fixed_input().unwrap();
+    for item in &root.envelope().items {
+        f.store
+            .dispatch_execution_item(root.envelope().attempt_id, item.item_id)
+            .unwrap();
+    }
+    let mut saved = Vec::new();
+    for _ in 0..2 {
+        let proposal = f
+            .store
+            .prepare_work_plan_agent_tool(&f.scope, &request(&f, vec![f.units[0]]))
+            .unwrap();
+        let input = proposal.input().clone();
+        assert_eq!(
+            input.envelope().plugin.as_ref().unwrap(),
+            &selected.execution
+        );
+        let child = input.envelope().attempt_id;
+        assert_eq!(
+            selected
+                .execution
+                .scope_id(input.envelope().project_id, child)
+                .unwrap(),
+            child.to_string()
+        );
+        assert_ne!(child, f.plan.execution_input().unwrap().attempt_id);
+        assert_ne!(child, f.scope.caller_id());
+        let grant = ExecutionId::new();
+        f.runtime
+            .submit_work_plan_tool(&mut f.store, &proposal, &f.consent, grant)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            f.runtime.tick(&mut f.store).unwrap();
+            if let Some(id) = f
+                .store
+                .execution_current_result(child, input.envelope().items[0].item_id)
+                .unwrap()
+            {
+                break f.store.execution_result(child, id).unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        let dispatch = received.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(dispatch.input.digest(), input.digest());
+        assert_eq!(
+            result.envelope().plugin.as_ref().unwrap().authorization_id,
+            grant
+        );
+        assert_eq!(
+            result
+                .envelope()
+                .plugin
+                .as_ref()
+                .unwrap()
+                .result
+                .context
+                .scope_id,
+            child.to_string()
+        );
+        let mut altered = input.envelope().clone();
+        altered.plugin.as_mut().unwrap().component_scope = sdk::ComponentScope::Project;
+        let altered = FixedInput::capture(altered).unwrap();
+        assert_ne!(altered.digest(), input.digest());
+        assert!(
+            FixedResult::restore(
+                result.bytes(),
+                result.digest(),
+                &altered,
+                result.envelope().dispatch_token
+            )
+            .is_err()
+        );
+        saved.push((input, result));
+    }
+    assert_ne!(
+        saved[0].0.envelope().attempt_id,
+        saved[1].0.envelope().attempt_id
+    );
+    assert_eq!(
+        f.store.work_plan_tool_invocations(f.plan.plan_id).unwrap(),
+        2
+    );
+    let path = f.store.directory().to_owned();
+    drop(f.runtime);
+    drop(f.store);
+    let reopened = ProjectStore::open(path).unwrap();
+    for (input, result) in saved {
+        assert_eq!(
+            reopened
+                .execution_input(input.envelope().attempt_id)
+                .unwrap()
+                .bytes(),
+            input.bytes()
+        );
+        assert_eq!(
+            reopened
+                .execution_result(input.envelope().attempt_id, result.envelope().result_id)
+                .unwrap()
+                .bytes(),
+            result.bytes()
+        );
+        let error = reopened
+            .execution_dispatch(
+                input.envelope().attempt_id,
+                input.envelope().items[0].item_id,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+        assert_eq!(error.stage, "plugin-authority");
+    }
+}
+
+#[test]
+fn tool_plan_requires_its_complete_execution_binding_without_scope_defaults() {
+    let selected = tool();
+    let mut encoded = serde_json::to_value(&selected).unwrap();
+    encoded.as_object_mut().unwrap().remove("execution");
+    assert!(serde_json::from_value::<WorkPlanToolSpec>(encoded).is_err());
+    let mut missing_scope = serde_json::to_value(&selected).unwrap();
+    missing_scope["execution"]
+        .as_object_mut()
+        .unwrap()
+        .remove("componentScope");
+    assert!(serde_json::from_value::<WorkPlanToolSpec>(missing_scope).is_err());
+    let mut wrong = selected.clone();
+    wrong.execution.profile = None;
+    assert!(
+        WorkPlanTools {
+            max_invocations: 1,
+            entries: vec![wrong]
+        }
+        .validate()
+        .is_err()
+    );
+    let mut application = selected;
+    application.execution.component_scope = sdk::ComponentScope::Application;
+    assert!(
+        WorkPlanTools {
+            max_invocations: 1,
+            entries: vec![application]
+        }
+        .validate()
+        .is_err()
+    );
 }

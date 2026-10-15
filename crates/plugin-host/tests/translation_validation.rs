@@ -30,15 +30,36 @@ impl ResultValidator for CannotApprove {
     }
 }
 
+#[path = "support/scoped_package.rs"]
+mod scoped_package;
 #[test]
 fn complete_translation_requires_current_scope_independent_grants_and_saved_check_proof() {
+    complete_translation(None)
+}
+#[test]
+fn mixed_translation_capability_scopes_preserve_original_source_and_checker_proofs() {
+    for checks_attempt in [false, true] {
+        complete_translation(Some(checks_attempt));
+    }
+}
+fn complete_translation(checks_attempt: Option<bool>) {
     let selected = PathBuf::from(
         std::env::var_os("TSUMUGI_TEST_PLUGIN_PACKAGE")
             .expect("explicit prebuilt SMAPI package required"),
     );
     let digest = std::env::var("TSUMUGI_TEST_PLUGIN_DIGEST")
         .expect("independent package fingerprint required");
-    let image = PackageImage::capture_directory(&selected, &digest, || true).unwrap();
+    let image = if let Some(checks_attempt) = checks_attempt {
+        scoped_package::capture(&selected, &digest, |id| {
+            if (id.contains("check") || id == "validate-artifact") == checks_attempt {
+                sdk::ComponentScope::Attempt
+            } else {
+                sdk::ComponentScope::Project
+            }
+        })
+    } else {
+        PackageImage::capture_directory(&selected, &digest, || true).unwrap()
+    };
     let temporary = tempfile::tempdir().unwrap();
     let staging = temporary.path().join("workers");
     std::fs::create_dir(&staging).unwrap();
@@ -60,6 +81,18 @@ fn complete_translation_requires_current_scope_independent_grants_and_saved_chec
     let resource = image.translation_import("translation-profile").unwrap();
     let producer = proxy(resource.declaration.extractor.as_str());
     let checker = proxy(resource.declaration.checker.as_str());
+    if checks_attempt.is_some() {
+        assert_ne!(
+            producer
+                .execution_binding(Some(resource.declaration.profile.clone()))
+                .unwrap()
+                .component_scope,
+            checker
+                .execution_binding(Some(resource.declaration.profile.clone()))
+                .unwrap()
+                .component_scope
+        );
+    }
     let path = temporary.path().join("project");
     let mut store = ProjectStore::create(
         &path,
@@ -99,10 +132,11 @@ fn complete_translation_requires_current_scope_independent_grants_and_saved_chec
                 review: Some(
                     tsumugi_core::content::SourceReviewBinding::capture(
                         &source_resource.review,
-                        &source_producer
-                            .execution_binding(Some(source_resource.declaration.profile.clone()))
-                            .unwrap()
-                            .environment,
+                        &proxy(source_resource.review.declaration.checker.as_str())
+                            .execution_binding(Some(
+                                source_resource.review.declaration.profile.clone(),
+                            ))
+                            .unwrap(),
                     )
                     .unwrap(),
                 ),

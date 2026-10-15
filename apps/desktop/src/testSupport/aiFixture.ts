@@ -55,6 +55,7 @@ export function aiWorkPlanFixture(prepared:AiPrepared,options?:PlanOptions):Work
   const value:unknown=structuredClone(workPlan.responses.plan);
   if(!validateResponseWorkPlan(value))throw new Error("Invalid work-plan fixture");
   return {...value,attemptId:prepared.attemptId,preview:structuredClone(prepared.preview),locale:prepared.preview.items[0].targetLocale,
-    ...(options?{options:structuredClone(options)}:{}),checkers:[],tools:null,
+    ...(options?{options:{...structuredClone(options),advisoryChecks:options.advisoryChecks.map(check=>({...structuredClone(check),
+      execution:{...structuredClone(check.execution),profile:structuredClone(check.execution.profile??null)}}))}}:{}),checkers:[],tools:null,
     scope:prepared.preview.items.map(item=>({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:item.nativeKey,selectionId:null})).sort((left,right)=>left.unitId.localeCompare(right.unitId))};
 }

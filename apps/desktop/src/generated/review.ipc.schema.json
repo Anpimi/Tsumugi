@@ -939,8 +939,8 @@
           "declarationResourceId": {
             "type": "string"
           },
-          "environment": {
-            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          "execution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
           },
           "resourcePins": {
             "items": {
@@ -957,7 +957,7 @@
         },
         "required": [
           "binding",
-          "environment",
+          "execution",
           "declarationResourceId",
           "resourcePins",
           "rules"

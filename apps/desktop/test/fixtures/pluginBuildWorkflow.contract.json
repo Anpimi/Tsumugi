@@ -607,23 +607,164 @@
           }
         }
       },
-      "environment": {
-        "protocolVersion": 1,
-        "platform": {
-          "operatingSystem": "macos",
-          "architecture": "aarch64"
+      "builderExecution": {
+        "capability": {
+          "provider": {
+            "plugin": {
+              "publisher": "example",
+              "id": "plain-text",
+              "version": "0.1.0"
+            },
+            "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "componentId": "worker",
+            "contributionId": "build"
+          },
+          "declaration": {
+            "contract": {
+              "id": "example.build",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "inputSchema": {
+              "id": "tsumugi.build-input",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "outputSchema": {
+              "id": "tsumugi.artifact-set",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "errorSchema": {
+              "id": "tsumugi.build-error",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "profiles": [
+              {
+                "id": "example.plain-text",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            ],
+            "effect": "proposal",
+            "permissions": [
+              {
+                "kind": "captured-input"
+              }
+            ],
+            "limits": {
+              "maxInputBytes": 4194304,
+              "maxOutputBytes": 2097152,
+              "concurrency": 1,
+              "timeoutMs": 30000
+            }
+          }
         },
-        "sdkVersion": "0.1.0-alpha.1",
-        "processProtocol": 2,
-        "profile": "node-system-libraries-v1",
-        "toolVersion": "26.10.0",
-        "tool": {
-          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
-          "entrypoint": "bin/node"
+        "componentScope": "project",
+        "profile": {
+          "id": "example.plain-text",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
         },
-        "host": {
-          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
-          "entrypoint": "dist/main.js"
+        "environment": {
+          "protocolVersion": 1,
+          "platform": {
+            "operatingSystem": "macos",
+            "architecture": "aarch64"
+          },
+          "sdkVersion": "0.1.0-alpha.1",
+          "processProtocol": 2,
+          "profile": "node-system-libraries-v1",
+          "toolVersion": "26.10.0",
+          "tool": {
+            "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+            "entrypoint": "bin/node"
+          },
+          "host": {
+            "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+            "entrypoint": "dist/main.js"
+          }
+        }
+      },
+      "checkerExecution": {
+        "capability": {
+          "provider": {
+            "plugin": {
+              "publisher": "example",
+              "id": "plain-text",
+              "version": "0.1.0"
+            },
+            "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "componentId": "worker",
+            "contributionId": "check-artifact"
+          },
+          "declaration": {
+            "contract": {
+              "id": "example.artifact-check",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "inputSchema": {
+              "id": "tsumugi.artifact-check-input",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "outputSchema": {
+              "id": "tsumugi.check-results",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "errorSchema": {
+              "id": "tsumugi.build-error",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "profiles": [
+              {
+                "id": "example.plain-text",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            ],
+            "effect": "read-only",
+            "permissions": [
+              {
+                "kind": "captured-input"
+              }
+            ],
+            "limits": {
+              "maxInputBytes": 4194304,
+              "maxOutputBytes": 2097152,
+              "concurrency": 1,
+              "timeoutMs": 30000
+            }
+          }
+        },
+        "componentScope": "project",
+        "profile": {
+          "id": "example.plain-text",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "environment": {
+          "protocolVersion": 1,
+          "platform": {
+            "operatingSystem": "macos",
+            "architecture": "aarch64"
+          },
+          "sdkVersion": "0.1.0-alpha.1",
+          "processProtocol": 2,
+          "profile": "node-system-libraries-v1",
+          "toolVersion": "26.10.0",
+          "tool": {
+            "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+            "entrypoint": "bin/node"
+          },
+          "host": {
+            "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+            "entrypoint": "dist/main.js"
+          }
         }
       }
     },

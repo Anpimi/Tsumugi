@@ -430,6 +430,7 @@ export interface CommandError {
 }
 export interface PluginGenerationComponentView {
   binding: CapabilityBinding;
+  componentScope: ComponentScope;
   environment: ExecutionEnvironmentDescriptor;
   environmentDigest: string;
   packageOrigin: PluginOriginView;

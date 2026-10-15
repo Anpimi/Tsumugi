@@ -1837,6 +1837,9 @@
           "binding": {
             "$ref": "#/definitions/CapabilityBinding"
           },
+          "componentScope": {
+            "$ref": "#/definitions/ComponentScope"
+          },
           "environment": {
             "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
           },
@@ -1866,6 +1869,7 @@
         "required": [
           "settingsRevision",
           "binding",
+          "componentScope",
           "profile",
           "packageOrigin",
           "environment",

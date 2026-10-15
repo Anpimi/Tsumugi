@@ -11,7 +11,7 @@ export async function readPluginGenerationChoices() {
   const packages = await readEnabledPluginPackages(inventory);
   const choices = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => {
     const component = item.manifest.components.find(component => component.id === contribution.componentId);
-    if (!component || component.scope !== "project" || component.runtime !== "javascript"
+    if (!component || (component.scope !== "project" && component.scope !== "attempt") || component.runtime !== "javascript"
       || !component.dependencies.some(dependency => dependency.required && dependency.selection === "single"
         && contractIdentity(dependency.contract) === generationContract(""))
       || contribution.contribution.kind !== "capability") return [];

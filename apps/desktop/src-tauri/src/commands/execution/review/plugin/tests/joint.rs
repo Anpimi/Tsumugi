@@ -234,7 +234,14 @@ fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
                         review: Some(
                             SourceReviewBinding::capture(
                                 &source.binding.review,
-                                &producer.environment,
+                                &tsumugi_core::execution::PluginExecutionBinding {
+                                    component_scope: sdk::ComponentScope::Project,
+                                    capability: (&source.binding.review).checker.clone(),
+                                    profile: Some(
+                                        (&source.binding.review).declaration.profile.clone(),
+                                    ),
+                                    environment: (*(&producer.environment)).clone().into(),
+                                },
                             )
                             .unwrap(),
                         ),

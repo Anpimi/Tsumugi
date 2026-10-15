@@ -22,11 +22,8 @@ fn native(manifest: &mut sdk::PluginManifest, files: &mut BTreeMap<String, Packa
 }
 
 #[test]
-fn domain_compositions_reject_nonproject_components_without_rescoping() {
-    for scope in [
-        sdk::ComponentScope::Attempt,
-        sdk::ComponentScope::Application,
-    ] {
+fn domain_compositions_reject_application_components_without_rescoping() {
+    for scope in [sdk::ComponentScope::Application] {
         let change = |manifest: &mut sdk::PluginManifest,
                       files: &mut BTreeMap<String, PackageFile>| {
             native(manifest, files);
@@ -50,7 +47,12 @@ fn domain_compositions_reject_nonproject_components_without_rescoping() {
         let selected = source.image.source_import("source-profile").unwrap();
         let review = tsumugi_core::content::SourceReviewBinding::capture(
             &selected.review,
-            &approved.environment,
+            &tsumugi_core::execution::PluginExecutionBinding {
+                component_scope: sdk::ComponentScope::Project,
+                capability: (&selected.review).checker.clone(),
+                profile: Some((&selected.review).declaration.profile.clone()),
+                environment: (*(&approved.environment)).clone().into(),
+            },
         )
         .unwrap();
         assert!(source.owner.capture_review(&review).is_err());
@@ -121,7 +123,12 @@ fn current_native_host_resolves_source_and_adopted_review_without_node_installat
     assert!(matches!(environment.runtime, RunnerRuntime::Native(_)));
     let review = tsumugi_core::content::SourceReviewBinding::capture(
         &environment.binding.review,
-        &environment.runtime.environment(),
+        &tsumugi_core::execution::PluginExecutionBinding {
+            component_scope: sdk::ComponentScope::Project,
+            capability: (&environment.binding.review).checker.clone(),
+            profile: Some((&environment.binding.review).declaration.profile.clone()),
+            environment: (*(&environment.runtime.environment())).clone().into(),
+        },
     )
     .unwrap();
     assert_eq!(
@@ -348,4 +355,120 @@ fn close_revokes_settings_epoch_without_waiting_for_manager_operation() {
             .with_environment_authority(revision, Ok)
             .is_err()
     );
+}
+
+#[test]
+fn mixed_native_component_scopes_are_captured_per_source_checker_and_build_role() {
+    for checks_attempt in [false, true] {
+        let change = |manifest: &mut sdk::PluginManifest,
+                      files: &mut BTreeMap<String, PackageFile>| {
+            native(manifest, files);
+            let components = manifest.components.clone();
+            for contribution in &mut manifest.contributions {
+                if matches!(
+                    contribution.contribution,
+                    sdk::ContributionKind::Capability { .. }
+                ) {
+                    let mut component = components
+                        .iter()
+                        .find(|component| component.id == contribution.component_id)
+                        .unwrap()
+                        .clone();
+                    component.id = format!("scoped-{}", contribution.id);
+                    component.scope = if contribution.id.contains("check") == checks_attempt {
+                        sdk::ComponentScope::Attempt
+                    } else {
+                        sdk::ComponentScope::Project
+                    };
+                    contribution.component_id = component.id.clone();
+                    manifest.components.push(component);
+                }
+            }
+        };
+        let source = Fixture::new(change);
+        source.install();
+        let approved = approval();
+        source.decide(true, vec![approved.clone()]);
+        let mut request = source.request();
+        request.environment_digest = approved.environment.digest().unwrap();
+        let captured = source.owner.capture_source(&request).unwrap();
+        let producer = captured
+            .execution_binding(
+                &captured.binding.extractor,
+                Some(captured.binding.declaration.profile.clone()),
+            )
+            .unwrap();
+        let checker = captured
+            .execution_binding(
+                &captured.binding.checker,
+                Some(captured.binding.declaration.profile.clone()),
+            )
+            .unwrap();
+        assert_ne!(producer.component_scope, checker.component_scope);
+        let review_checker = captured
+            .execution_binding(
+                &captured.binding.review.checker,
+                Some(captured.binding.review.declaration.profile.clone()),
+            )
+            .unwrap();
+        let review = tsumugi_core::content::SourceReviewBinding::capture(
+            &captured.binding.review,
+            &review_checker,
+        )
+        .unwrap();
+        source.owner.capture_review(&review).unwrap();
+        let mut changed = review.clone();
+        changed.checker.component_scope =
+            if review_checker.component_scope == sdk::ComponentScope::Attempt {
+                sdk::ComponentScope::Project
+            } else {
+                sdk::ComponentScope::Attempt
+            };
+        assert!(source.owner.capture_review(&changed).is_err());
+        let build = Fixture::with_resource(
+            Arc::new(ApplicationPlugins::default()),
+            include_bytes!(
+                "../../../../../../../crates/plugin-sdk/tests/fixtures/build.manifest.json"
+            ),
+            "build-profile.json",
+            include_bytes!(
+                "../../../../../../../crates/plugin-sdk/tests/fixtures/build.declaration.json"
+            ),
+            change,
+        );
+        build.install();
+        build.decide(true, vec![approved.clone()]);
+        let captured = build
+            .owner
+            .capture_build(&PluginBuildRequest {
+                package: build.request().package,
+                resource_id: "build-profile".into(),
+                environment_digest: approved.environment.digest().unwrap(),
+            })
+            .unwrap();
+        let builder = captured
+            .execution_binding(
+                &captured.binding.builder,
+                Some(captured.binding.declaration.profile.clone()),
+            )
+            .unwrap();
+        let checker = captured
+            .execution_binding(
+                &captured.binding.checker,
+                Some(captured.binding.declaration.profile.clone()),
+            )
+            .unwrap();
+        assert_ne!(builder.component_scope, checker.component_scope);
+        let environment = tsumugi_core::ReleaseBuildEnvironment::new(
+            captured.binding.clone(),
+            builder.clone(),
+            checker.clone(),
+        )
+        .unwrap();
+        assert_eq!(environment.checker(), &checker);
+        assert!(
+            tsumugi_core::ReleaseBuildEnvironment::new(captured.binding.clone(), checker, builder)
+                .is_err()
+        );
+    }
 }

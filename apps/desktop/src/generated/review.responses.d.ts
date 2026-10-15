@@ -33,6 +33,7 @@ export type PermissionRequest =
  * Blocking checks continue to use the original mandatory Review contract.
  */
 export type TextReviewDisposition = "advisory";
+export type ComponentScope = "application" | "project" | "attempt";
 /**
  * Fixed execution choices for the two actual runtime profiles. Each variant
  * has a strict, distinct profile value and its own data/hash owner. Captured
@@ -94,7 +95,6 @@ export type CheckOutcome =
       kind: "unavailable";
     };
 export type FindingSeverity = "warning" | "error";
-export type ComponentScope = "application" | "project" | "attempt";
 export type ReviewCheckOutcome = "completed" | "failed" | "cancelled" | "unknown";
 export type ReviewDecisionKind = "approve" | "request-changes";
 export type TermOrigin = "manual" | "external";
@@ -181,7 +181,7 @@ export interface ReviewCheckEvidence {
 export interface AdvisoryReviewCheck {
   binding: TextReviewBinding;
   declarationResourceId: string;
-  environment: ExecutionEnvironmentDescriptor;
+  execution: PluginExecutionBinding;
   resourcePins: TextReviewResourcePin[];
   rules: ContractRef[];
 }
@@ -270,6 +270,19 @@ export interface TextReviewRuleDeclaration {
 export interface TextReviewResourceBinding {
   contributionId: string;
   schema: ContractRef;
+}
+export interface PluginExecutionBinding {
+  capability: CapabilityBinding;
+  /**
+   * Captured from the selected component, never inferred from a result.
+   */
+  componentScope: ComponentScope;
+  /**
+   * Exact captured Node artifacts or actual native application Host identity.
+   * This data value does not authenticate its source or grant execution.
+   */
+  environment: ExecutionEnvironmentDescriptor;
+  profile: ContractRef | null;
 }
 /**
  * Exact tool and Host choices for a fixed invocation. Paths are logical within
@@ -407,19 +420,6 @@ export interface CheckFinding2 {
 export interface SourceReviewBinding {
   checker: PluginExecutionBinding;
   declaration: ReviewDeclaration;
-}
-export interface PluginExecutionBinding {
-  capability: CapabilityBinding;
-  /**
-   * Captured from the selected component, never inferred from a result.
-   */
-  componentScope: ComponentScope;
-  /**
-   * Exact captured Node artifacts or actual native application Host identity.
-   * This data value does not authenticate its source or grant execution.
-   */
-  environment: ExecutionEnvironmentDescriptor;
-  profile: ContractRef | null;
 }
 export interface ReviewDeclaration {
   checker: string;

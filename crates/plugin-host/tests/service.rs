@@ -517,6 +517,138 @@ mod javascript {
         .await
         .unwrap()
     }
+    #[test]
+    fn attempt_generation_service_transport_refuses_foreign_scopes_before_staging() {
+        runtime().block_on(async {
+            let base = scoped_image(
+                "normal",
+                true,
+                ProviderSelection::Single,
+                true,
+                EffectKind::External,
+                None,
+                ComponentScope::Attempt,
+            );
+            let mut manifest = base.manifest().manifest().clone();
+            manifest.permissions[1] = PermissionRequest::ProjectService {
+                contract: generation_service_contract(),
+            };
+            manifest.components[0].dependencies[0].contract = generation_service_contract();
+            let ContributionKind::Capability { declaration } =
+                &mut manifest.contributions[0].contribution
+            else {
+                unreachable!()
+            };
+            declaration.permissions = manifest.permissions.clone();
+            declaration.input_schema = generation_service_input_contract();
+            declaration.output_schema = generation_service_receipt_contract();
+            declaration.error_schema = generation_service_error_contract();
+            let files = BTreeMap::from([
+                (
+                    "component.mjs".into(),
+                    PackageFile {
+                        bytes: include_bytes!("support/service-component.mjs").to_vec(),
+                        executable: false,
+                    },
+                ),
+                (
+                    "behavior.txt".into(),
+                    PackageFile {
+                        bytes: b"normal".to_vec(),
+                        executable: false,
+                    },
+                ),
+            ]);
+            let bytes = serde_json::to_vec(&manifest).unwrap();
+            let digest = PackageImage::digest(&bytes, &files).unwrap();
+            let image = PackageImage::capture(bytes, files, &digest).unwrap();
+            let mut service = binding("tsumugi.core", "generation");
+            service.scope_id = "attempt-a".into();
+            service.contract = generation_service_contract();
+            service.input_schema = generation_service_input_contract();
+            service.output_schema = generation_service_receipt_contract();
+            service.error_schema = generation_service_error_contract();
+            service.effect = EffectKind::External;
+            let mut configured = options();
+            configured.scope.scope_id = "attempt-a".into();
+            for mutation in [
+                "missing",
+                "project-scope",
+                "other-attempt",
+                "other-project",
+                "other-contract",
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut selected = service.clone();
+                match mutation {
+                    "project-scope" => selected.scope_id = "project-a".into(),
+                    "other-attempt" => selected.scope_id = "attempt-b".into(),
+                    "other-project" => selected.project_id = "project-b".into(),
+                    "other-contract" => selected.contract = contract("example.service"),
+                    _ => {}
+                }
+                let broker = Broker::new(
+                    if mutation == "missing" {
+                        vec![]
+                    } else {
+                        vec![selected]
+                    },
+                    0,
+                    "normal",
+                );
+                let error = ProcessSession::launch_with_services(
+                    &image,
+                    "client.call",
+                    dir.path(),
+                    &launcher(),
+                    configured.clone(),
+                    broker.clone(),
+                    || true,
+                )
+                .await
+                .err()
+                .unwrap();
+                assert_eq!(error, HostError::DependencyUnavailable, "{mutation}");
+                assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+                assert!(broker.seen.lock().unwrap().is_empty());
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let broker = Broker::new(vec![service], 0, "normal");
+            let mut session = ProcessSession::launch_with_services(
+                &image,
+                "client.call",
+                dir.path(),
+                &launcher(),
+                configured,
+                broker.clone(),
+                || true,
+            )
+            .await
+            .unwrap();
+            let mut invocation = request(&session, "dispatch-a");
+            invocation.context.scope_id = "attempt-a".into();
+            invocation.input.schema = generation_service_input_contract();
+            invocation.output_schema = generation_service_receipt_contract();
+            invocation.error_schema = generation_service_error_contract();
+            let result = session
+                .invoke(&invocation, || false, || true)
+                .await
+                .unwrap();
+            assert_eq!(result.result().context.scope_id, "attempt-a");
+            let seen = broker.seen.lock().unwrap();
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].0.channel().provider, session.channel().provider);
+            assert_eq!(
+                seen[0].0.channel().scope.scope_id,
+                session.channel().scope.scope_id
+            );
+            assert_eq!(seen[0].0.context(), &invocation.context);
+            drop(seen);
+            session.close().await;
+            assert_eq!(broker.released.load(Ordering::Acquire), 1);
+        });
+    }
+
     fn assert_terminated(session: &ProcessSession, broker: &Broker) {
         assert!(!session.is_accepting());
         assert!(session.termination_receipt().unwrap().direct_child_reaped);

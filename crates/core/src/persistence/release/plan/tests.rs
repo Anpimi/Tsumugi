@@ -127,27 +127,36 @@ fn environment(store: &ProjectStore) -> ReleaseBuildEnvironment {
     let binding = declaration
         .bind(&manifest.validate().unwrap(), &"a".repeat(64))
         .unwrap();
-    ReleaseBuildEnvironment::new(
-        binding,
-        sdk::RuntimeEnvironmentDescriptor {
-            protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
-            platform: sdk::RuntimePlatform {
-                operating_system: sdk::RuntimeOperatingSystem::Macos,
-                architecture: sdk::RuntimeArchitecture::Aarch64,
-            },
-            sdk_version: sdk::SDK_VERSION.into(),
-            process_protocol: sdk::PROCESS_PROTOCOL,
-            profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
-            tool_version: "26.10.0".into(),
-            tool: sdk::RuntimeArtifactBinding {
-                tree_digest: "b".repeat(64),
-                entrypoint: "bin/node".into(),
-            },
-            host: sdk::RuntimeArtifactBinding {
-                tree_digest: "c".repeat(64),
-                entrypoint: "dist/main.js".into(),
-            },
+    let environment: sdk::ExecutionEnvironmentDescriptor = sdk::RuntimeEnvironmentDescriptor {
+        protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+        platform: sdk::RuntimePlatform {
+            operating_system: sdk::RuntimeOperatingSystem::Macos,
+            architecture: sdk::RuntimeArchitecture::Aarch64,
         },
+        sdk_version: sdk::SDK_VERSION.into(),
+        process_protocol: sdk::PROCESS_PROTOCOL,
+        profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+        tool_version: "26.10.0".into(),
+        tool: sdk::RuntimeArtifactBinding {
+            tree_digest: "b".repeat(64),
+            entrypoint: "bin/node".into(),
+        },
+        host: sdk::RuntimeArtifactBinding {
+            tree_digest: "c".repeat(64),
+            entrypoint: "dist/main.js".into(),
+        },
+    }
+    .into();
+    let selected = |capability| PluginExecutionBinding {
+        component_scope: sdk::ComponentScope::Project,
+        capability,
+        profile: Some(binding.declaration.profile.clone()),
+        environment: environment.clone(),
+    };
+    ReleaseBuildEnvironment::new(
+        binding.clone(),
+        selected(binding.builder.clone()),
+        selected(binding.checker.clone()),
     )
     .unwrap()
 }
@@ -481,7 +490,9 @@ fn multi_locale_capture_is_atomic_and_rejects_output_aliases_and_substitution() 
     assert_eq!(input.envelope().units[0].item_ids.len(), 2);
     enqueue_fixture(&mut store, &input);
     let mut changed = build.clone();
-    let sdk::ExecutionEnvironmentDescriptor::Captured(value) = &mut changed.environment else {
+    let sdk::ExecutionEnvironmentDescriptor::Captured(value) =
+        &mut changed.builder_execution.environment
+    else {
         panic!("Node fixture");
     };
     value.tool.tree_digest = "d".repeat(64);
@@ -581,4 +592,29 @@ fn captures_every_review_page_and_preserves_original_source_result() {
         .unwrap()
         .exchange
     );
+}
+
+#[test]
+fn build_environment_requires_complete_independent_role_bindings() {
+    let (_directory, store, _project, _units) = fixture();
+    let mut build = environment(&store);
+    build.builder_execution.component_scope = sdk::ComponentScope::Attempt;
+    build.checker_execution.component_scope = sdk::ComponentScope::Project;
+    build.validate().unwrap();
+    assert_ne!(
+        build.builder().component_scope,
+        build.checker().component_scope
+    );
+    let bytes = serde_json::to_value(&build).unwrap();
+    for field in ["builderExecution", "checkerExecution"] {
+        let mut missing = bytes.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<ReleaseBuildEnvironment>(missing).is_err());
+    }
+    let mut changed = build.clone();
+    changed.checker_execution.capability = changed.builder_execution.capability.clone();
+    assert!(changed.validate().is_err());
+    changed = build.clone();
+    changed.checker_execution.component_scope = sdk::ComponentScope::Application;
+    assert!(changed.validate().is_err());
 }

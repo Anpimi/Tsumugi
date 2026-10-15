@@ -40,7 +40,10 @@ impl TextReviewEnvironment {
     pub(in crate::commands) fn advisory_check(&self) -> Result<AdvisoryReviewCheck, CommandError> {
         AdvisoryReviewCheck::capture(
             &self.captured.binding,
-            &self.captured.runtime.environment(),
+            &self.captured.execution_binding(
+                &self.captured.binding.checker,
+                Some(self.captured.binding.declaration.profile.clone()),
+            )?,
             self.captured.resource_id.as_deref().ok_or_else(invalid)?,
             self.resource_pins.clone(),
             self.rules.clone(),
@@ -58,7 +61,7 @@ impl ApplicationPlugins {
             &request.package,
             &request.resource_id,
             &request.environment_digest,
-            &[sdk::ComponentScope::Project],
+            &[sdk::ComponentScope::Project, sdk::ComponentScope::Attempt],
             |image, resource| {
                 let binding = image.text_review_declaration(resource)?;
                 let providers = [binding.checker.clone()];
@@ -127,11 +130,15 @@ impl ApplicationPlugins {
                 package_digest: provider.package_digest.clone(),
             },
             resource_id: captured.declaration_resource_id.clone(),
-            environment_digest: captured.environment.digest().map_err(|_| invalid())?,
+            environment_digest: captured
+                .execution
+                .environment
+                .digest()
+                .map_err(|_| invalid())?,
             rules: captured.rules.clone(),
         })?;
         if actual.captured.binding != captured.binding
-            || actual.captured.runtime.environment() != captured.environment
+            || actual.advisory_check()?.execution != captured.execution
             || actual.resource_pins != captured.resource_pins
         {
             return Err(invalid());

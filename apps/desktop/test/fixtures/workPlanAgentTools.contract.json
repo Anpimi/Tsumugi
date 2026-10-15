@@ -390,25 +390,6 @@
         }
       ]
     },
-    "environment": {
-      "protocolVersion": 1,
-      "platform": {
-        "operatingSystem": "macos",
-        "architecture": "aarch64"
-      },
-      "sdkVersion": "0.1.0-alpha.1",
-      "processProtocol": 1,
-      "profile": "node-system-libraries-v1",
-      "toolVersion": "26.10.0",
-      "tool": {
-        "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
-        "entrypoint": "bin/node"
-      },
-      "host": {
-        "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
-        "entrypoint": "dist/main.js"
-      }
-    },
     "resourceId": "agent-query-tool",
     "settingsRevision": "1",
     "packageOrigin": {
@@ -423,7 +404,86 @@
     "selections": [
       "term"
     ],
-    "componentScope": "project"
+    "execution": {
+      "capability": {
+        "provider": {
+          "plugin": {
+            "publisher": "org.tsumugi.examples",
+            "id": "philosophy",
+            "version": "0.1.0-alpha.1"
+          },
+          "componentId": "knowledge",
+          "contributionId": "query",
+          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "declaration": {
+          "contract": {
+            "id": "org.tsumugi.examples.philosophy-query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "org.tsumugi.examples.philosophy-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.reference",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 65536,
+            "maxOutputBytes": 65536,
+            "concurrency": 1,
+            "timeoutMs": 5000
+          }
+        }
+      },
+      "componentScope": "project",
+      "profile": {
+        "id": "example.reference",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 1,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      }
+    }
   },
   "requests": {
     "prepare": {

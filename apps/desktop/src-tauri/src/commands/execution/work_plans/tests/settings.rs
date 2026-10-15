@@ -154,7 +154,12 @@ fn declared_options(store: &ProjectStore, unit: ExecutionId, advisory: bool) -> 
         options.advisory_checks = vec![
             AdvisoryReviewCheck::capture(
                 &binding,
-                &format.binding().checker.environment,
+                &tsumugi_core::execution::PluginExecutionBinding {
+                    component_scope: sdk::ComponentScope::Project,
+                    capability: binding.checker.clone(),
+                    profile: Some(binding.declaration.profile.clone()),
+                    environment: format.binding().checker.environment.clone(),
+                },
                 "text-review-profile",
                 pins,
                 rules,
@@ -177,16 +182,22 @@ fn declared_tool(
         "../../../../../../../../crates/plugin-sdk/tests/fixtures/tool.query.json"
     ))
     .unwrap();
+    let binding = declaration.bind(&manifest, &"a".repeat(64)).unwrap();
     tsumugi_core::application::WorkPlanToolSpec {
         handle: ExecutionId::new(),
-        binding: declaration.bind(&manifest, &"a".repeat(64)).unwrap(),
+        binding: binding.clone(),
         resource_id: "query-tool".into(),
         settings_revision: revision,
         package_origin: json!({"sourceId":"synthetic-settings","publisherId":"synthetic-publisher"}),
         runtime_origin: json!({"sourceId":"synthetic-settings","publisherId":"synthetic-publisher"}),
         target: "zh-CN".into(),
         selections: vec!["term".into()],
-        environment,
+        execution: PluginExecutionBinding {
+            component_scope: sdk::ComponentScope::Project,
+            capability: binding.capability.clone(),
+            profile: binding.declaration.profile.clone(),
+            environment,
+        },
     }
 }
 

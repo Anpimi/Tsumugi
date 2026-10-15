@@ -80,7 +80,12 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
                 review: Some(
                     tsumugi_core::content::SourceReviewBinding::capture(
                         &source.review,
-                        environment.descriptor(),
+                        &tsumugi_core::execution::PluginExecutionBinding {
+                            component_scope: sdk::ComponentScope::Project,
+                            capability: (&source.review).checker.clone(),
+                            profile: Some((&source.review).declaration.profile.clone()),
+                            environment: (*(environment.descriptor())).clone().into(),
+                        },
                     )
                     .unwrap(),
                 ),
@@ -220,8 +225,16 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
             configuration: vec![],
         },
     ];
-    let build_environment =
-        ReleaseBuildEnvironment::new(build, environment.descriptor().clone()).unwrap();
+    let build_environment = ReleaseBuildEnvironment::new(
+        build.clone(),
+        builder
+            .execution_binding(Some(build.declaration.profile.clone()))
+            .unwrap(),
+        checker
+            .execution_binding(Some(build.declaration.profile.clone()))
+            .unwrap(),
+    )
+    .unwrap();
     let input = store
         .prepare_plugin_build(
             project,

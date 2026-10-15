@@ -52,7 +52,16 @@ fn actual_same_rule_providers_keep_conflicting_suggestions_and_independent_origi
     }
 }
 
+#[path = "support/scoped_package.rs"]
+mod scoped_package;
 fn exercise_joint_review(multiple: bool, reverse: bool) {
+    exercise_joint_review_scoped(multiple, reverse, false)
+}
+#[test]
+fn attempt_advisory_review_keeps_project_format_checks_and_independent_origins() {
+    exercise_joint_review_scoped(false, false, true)
+}
+fn exercise_joint_review_scoped(multiple: bool, reverse: bool, attempt_advisory: bool) {
     let temp = OwnedDirectory(tempfile::tempdir().unwrap());
     let root = temp.0.path();
     let format_root = root.join("format");
@@ -70,6 +79,17 @@ fn exercise_joint_review(multiple: bool, reverse: bool) {
         &knowledge_digest,
         "philosophy",
     );
+    let knowledge = if attempt_advisory {
+        scoped_package::capture(Path::new(&knowledge_source), &knowledge_digest, |id| {
+            if id == "check" {
+                sdk::ComponentScope::Attempt
+            } else {
+                sdk::ComponentScope::Project
+            }
+        })
+    } else {
+        knowledge
+    };
     let alternative = multiple.then(|| {
         let path = root.join("alternative");
         std::fs::create_dir(&path).unwrap();
@@ -126,7 +146,7 @@ fn exercise_joint_review(multiple: bool, reverse: bool) {
         choices.push(
             AdvisoryReviewCheck::capture(
                 &binding,
-                &execution.environment,
+                &execution,
                 "text-review",
                 image.text_review_resource_pins("text-review").unwrap(),
                 vec![rule.clone()],
@@ -286,7 +306,16 @@ fn exercise_joint_review(multiple: bool, reverse: bool) {
             ),
             semantic_rules: source.declaration.semantic_rules.clone(),
             review: Some(
-                SourceReviewBinding::capture(&source.review, &producer.environment).unwrap(),
+                SourceReviewBinding::capture(
+                    &source.review,
+                    &tsumugi_core::execution::PluginExecutionBinding {
+                        component_scope: sdk::ComponentScope::Project,
+                        capability: (&source.review).checker.clone(),
+                        profile: Some((&source.review).declaration.profile.clone()),
+                        environment: (*(&producer.environment)).clone().into(),
+                    },
+                )
+                .unwrap(),
             ),
         },
     )

@@ -220,6 +220,14 @@ it("keeps a preparation when discard is uncertain or the backend reports it alre
   expect(screen.getByRole("checkbox", { name: "barrel" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "start_work_plan_generation_component")).toBe(false);
 });
+it("offers Attempt generation components through the existing installed-package discovery", async () => {
+  installed.manifest.components[0].scope = "attempt";
+  const observed = await readPluginGenerationChoices();
+  expect(observed.choices).toHaveLength(1);
+  expect(observed.choices[0].provider).toEqual(generationComponent.binding.provider);
+  expect(observed.runtimes).toHaveLength(1);
+  expect(invoke.mock.calls.some(([command]) => command === "start_work_plan_generation_component")).toBe(false);
+});
 it("does not offer optional, incompatible, application or non-JavaScript service components", async () => {
   for (const change of ["optional", "version", "scope", "runtime", "data", "permission"] as const) {
     installed = structuredClone(generationPackage);

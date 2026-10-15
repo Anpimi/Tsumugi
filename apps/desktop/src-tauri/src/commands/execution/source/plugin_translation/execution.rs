@@ -97,9 +97,9 @@ fn matches_producer(
     environment: &TranslationEnvironment,
 ) -> Result<(), CommandError> {
     let (_, settings) = content::plugin_translation_input(input).map_err(map_source)?;
-    if input.envelope().plugin.as_ref() != Some(&execution_binding(environment, false))
+    if input.envelope().plugin.as_ref() != Some(&execution_binding(environment, false)?)
         || settings.declaration != environment.binding.declaration
-        || settings.checker != execution_binding(environment, true)
+        || settings.checker != execution_binding(environment, true)?
     {
         return Err(stale());
     }
@@ -221,7 +221,7 @@ async fn start(
                 let environment = plugins.capture_translation(&choice)?;
                 matches_producer(&captured, &environment)?;
                 if fixed.envelope().plugin.as_ref()
-                    != Some(&execution_binding(&environment, checker))
+                    != Some(&execution_binding(&environment, checker)?)
                 {
                     return Err(stale());
                 }
@@ -240,7 +240,7 @@ async fn start(
                     current_input(store, &producer)?;
                     let (environment, runners) = loaded?;
                     for (index, runner) in runners.into_iter().enumerate() {
-                        host.register_plugin(runner, execution_binding(&environment, index == 1))
+                        host.register_plugin(runner, execution_binding(&environment, index == 1)?)
                             .map_err(map_source)?;
                     }
                     host.runtime

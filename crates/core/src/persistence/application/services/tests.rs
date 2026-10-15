@@ -120,6 +120,13 @@ impl Fixture {
         Self::with_model(endpoint, Arc::new(Registered { plugin: None }))
     }
     fn with_model(endpoint: String, model: Arc<dyn Runner>) -> Self {
+        Self::with_model_scope(endpoint, model, sdk::ComponentScope::Project)
+    }
+    fn with_model_scope(
+        endpoint: String,
+        model: Arc<dyn Runner>,
+        component_scope: sdk::ComponentScope,
+    ) -> Self {
         let (directory, mut store, _) =
             crate::persistence::review::tests::current_release_fixture(false);
         let units = store
@@ -162,7 +169,8 @@ impl Fixture {
         let root = FixedInput::capture(grant.input.unwrap()).unwrap();
         store.enqueue_execution(&root).unwrap();
         let scope = store.work_plan_agent_scope(grant.lease).unwrap();
-        let plugin = binding();
+        let mut plugin = binding();
+        plugin.component_scope = component_scope;
         let mut envelope = InputEnvelope::new(
             store.metadata().unwrap().project_id(),
             "fixture",
@@ -1670,4 +1678,101 @@ fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
             .code,
         ErrorCode::Unauthorized
     );
+}
+
+#[test]
+fn attempt_service_origin_rejects_rescoping_and_grant_substitution_and_reopens_without_authority() {
+    let mut f = Fixture::with_model_scope(
+        "http://127.0.0.1:9/v1/chat/completions".into(),
+        Arc::new(Registered { plugin: None }),
+        sdk::ComponentScope::Attempt,
+    );
+    let attempt = f.dispatch.input.envelope().attempt_id;
+    let project = f.dispatch.input.envelope().project_id;
+    assert_eq!(f.origin.record.service.scope_id, attempt.to_string());
+    for mutation in 0..5 {
+        let mut forged = f.origin.clone();
+        match mutation {
+            0 => forged.record.service.scope_id = project.to_string(),
+            1 => {
+                forged.record.service.scope_id = project.to_string();
+                forged.record.invocation.context.scope_id = project.to_string();
+            }
+            2 => forged.record.grant_id = ExecutionId::new(),
+            3 => forged.record.invocation.context.attempt_id = ExecutionId::new().to_string(),
+            4 => forged.record.invocation.context.project_id = ExecutionId::new().to_string(),
+            _ => unreachable!(),
+        }
+        assert!(
+            f.store
+                .prepare_work_plan_service_generation(&forged, &f.call)
+                .is_err(),
+            "mutation {mutation}"
+        );
+    }
+    let (prepared, receipt) = f.submit();
+    f.complete_outer();
+    let sequence = f.store.execution_sequence().unwrap();
+    assert_eq!(
+        f.runtime
+            .submit_work_plan_service_child(&mut f.store, &prepared)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(f.store.execution_sequence().unwrap(), sequence);
+    f.settings_revocation.request();
+    assert!(f.store.check_work_plan_input(prepared.input()).is_err());
+    // ACK reads retain the original accepted identity; they grant no new work.
+    assert_eq!(
+        f.store
+            .work_plan_service_receipt(&receipt.identity, &f.call)
+            .unwrap(),
+        Some(receipt.clone())
+    );
+    let path = f.store.directory().to_owned();
+    drop(f.runtime);
+    drop(f.store);
+    let mut reopened = ProjectStore::open(path).unwrap();
+    assert_eq!(
+        reopened
+            .work_plan_service_receipt(&receipt.identity, &f.call)
+            .unwrap(),
+        Some(receipt.clone())
+    );
+    let mut runtime = ExecutionRuntime::new(&reopened).unwrap();
+    assert_eq!(
+        runtime
+            .submit_work_plan_service_child(&mut reopened, &prepared)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(reopened.execution_sequence().unwrap(), sequence);
+    assert_eq!(
+        reopened
+            .check_work_plan_input(prepared.input())
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    let mut retry = prepared.input().envelope().clone();
+    retry.attempt_id = ExecutionId::new();
+    let retry = FixedInput::capture(retry).unwrap();
+    assert_eq!(
+        reopened
+            .enqueue_execution_with_policy(
+                &retry,
+                RecoveryPolicy::ExternalUnknown,
+                Some(receipt.parent_task)
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert!(
+        reopened
+            .execution_input_if_present(retry.envelope().attempt_id)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(reopened.execution_sequence().unwrap(), sequence);
 }

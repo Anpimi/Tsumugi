@@ -206,7 +206,6 @@ fn actual_knowledge_worker_obeys_original_work_plan_grant_and_control() {
     let image = official::installed(temporary.path(), "philosophy");
     let binding = image.capability_tool("agent-query-tool").unwrap();
     let captured_runtime = tool_runtime::approved_runtime();
-    let environment = captured_runtime.descriptor().clone();
     let proxy = Arc::new(
         RunnerProxy::new(
             image,
@@ -233,8 +232,10 @@ fn actual_knowledge_worker_obeys_original_work_plan_grant_and_control() {
         .clone();
     let spec = WorkPlanToolSpec {
         handle: ExecutionId::new(),
+        execution: proxy
+            .execution_binding(binding.declaration.profile.clone())
+            .unwrap(),
         binding,
-        environment: environment.into(),
         resource_id: "agent-query-tool".into(),
         settings_revision: 1u64.into(),
         package_origin: serde_json::json!({"sourceId":"explicit-test","publisherId":"reviewed-public-source"}),

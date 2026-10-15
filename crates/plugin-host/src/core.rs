@@ -134,6 +134,7 @@ impl RunnerProxy {
                 .dependencies
                 .iter()
                 .any(|dependency| dependency.required)
+            && !crate::service::supports_attempt_services(component, &capability.declaration)
         {
             return Err(ExecutionError::new(
                 ErrorCode::DependencyConflict,
@@ -259,16 +260,16 @@ impl RunnerProxy {
         let options = LaunchOptions {
             scope: ScopeBinding {
                 project_id: project_id.clone(),
-                scope_id: match self.component_scope {
-                    sdk::ComponentScope::Project => project_id,
-                    sdk::ComponentScope::Attempt => request.input.envelope().attempt_id.to_string(),
-                    sdk::ComponentScope::Application => {
-                        return Err(ExecutionError::new(
-                            ErrorCode::InvalidInput,
-                            "plugin-component-scope",
-                        ));
-                    }
-                },
+                scope_id: request
+                    .input
+                    .envelope()
+                    .plugin
+                    .as_ref()
+                    .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"))?
+                    .scope_id(
+                        request.input.envelope().project_id,
+                        request.input.envelope().attempt_id,
+                    )?,
             },
             // Only a matching Core permit can reach this call. The durable
             // grant owner checked consent before issuing the read-only handle.

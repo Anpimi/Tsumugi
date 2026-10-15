@@ -65,6 +65,11 @@ pub fn execute_all(
                         input.envelope().plugin.as_ref().map(|p| &p.capability.provider),
                         result.envelope().diagnostic
                     );
+                    if let Some(binding) = &input.envelope().plugin {
+                        let evidence = result.envelope().plugin.as_ref().unwrap();
+                        assert_eq!(evidence.result.context.scope_id,
+                            binding.scope_id(input.envelope().project_id, input.envelope().attempt_id).unwrap());
+                    }
                     result
                 })
                 .collect();

@@ -1663,7 +1663,18 @@ fn source_import_declared_capture_preserves_material_without_domain_interpretati
                 revision_policy: declaration.revision_policy.clone(),
                 checker: Some(selected(binding.checker)),
                 semantic_rules: declaration.semantic_rules.clone(),
-                review: Some(SourceReviewBinding::capture(&binding.review, &environment).unwrap()),
+                review: Some(
+                    SourceReviewBinding::capture(
+                        &binding.review,
+                        &PluginExecutionBinding {
+                            component_scope: sdk::ComponentScope::Project,
+                            capability: (&binding.review).checker.clone(),
+                            profile: Some((&binding.review).declaration.profile.clone()),
+                            environment: (*(&environment)).clone().into(),
+                        },
+                    )
+                    .unwrap(),
+                ),
             },
         )
         .unwrap();

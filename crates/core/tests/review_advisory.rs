@@ -48,7 +48,12 @@ fn choice(store: &ProjectStore, unit: ExecutionId, all: bool) -> AdvisoryReviewC
         .collect();
     AdvisoryReviewCheck::capture(
         &binding,
-        &format.binding().checker.environment,
+        &tsumugi_core::execution::PluginExecutionBinding {
+            component_scope: sdk::ComponentScope::Project,
+            capability: binding.checker.clone(),
+            profile: Some(binding.declaration.profile.clone()),
+            environment: format.binding().checker.environment.clone(),
+        },
         "text-review-profile",
         pins,
         rules,
@@ -1049,4 +1054,42 @@ fn automatic_selection_uses_saved_plan_choices_and_atomically_adopts_the_full_un
             .unwrap(),
         Some(receipt)
     );
+}
+
+#[test]
+fn advisory_review_captures_execution_scope_without_changing_required_policy() {
+    let (_directory, store, rows) = support::source_fixture();
+    let unit = rows[0].unit_id.unwrap();
+    let original = choice(&store, unit, true);
+    let mut attempt = original.clone();
+    attempt.execution.component_scope = sdk::ComponentScope::Attempt;
+    attempt.validate().unwrap();
+    assert_eq!(attempt.binding, original.binding);
+    assert_eq!(attempt.rules, original.rules);
+    assert_eq!(attempt.resource_pins, original.resource_pins);
+    assert_eq!(attempt.checker().binding, attempt.execution);
+    let mut missing = serde_json::to_value(&attempt).unwrap();
+    missing.as_object_mut().unwrap().remove("execution");
+    assert!(serde_json::from_value::<AdvisoryReviewCheck>(missing).is_err());
+    let mut wrong = attempt.clone();
+    wrong.execution.capability = store
+        .capture_review_check_plan(
+            project(&store),
+            unit,
+            "zh-CN",
+            &store
+                .review_target(project(&store), unit, "zh-CN")
+                .unwrap()
+                .basis,
+            &[],
+        )
+        .unwrap()
+        .binding()
+        .checker
+        .capability
+        .clone();
+    assert!(wrong.validate().is_err());
+    wrong = attempt;
+    wrong.execution.component_scope = sdk::ComponentScope::Application;
+    assert!(wrong.validate().is_err());
 }

@@ -26,39 +26,48 @@ pub struct PluginBuildLocaleChoice {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReleaseBuildEnvironment {
     binding: sdk::BuildBinding,
-    environment: sdk::ExecutionEnvironmentDescriptor,
+    builder_execution: PluginExecutionBinding,
+    checker_execution: PluginExecutionBinding,
 }
 impl ReleaseBuildEnvironment {
     pub fn new(
         binding: sdk::BuildBinding,
-        environment: impl Into<sdk::ExecutionEnvironmentDescriptor>,
+        builder_execution: PluginExecutionBinding,
+        checker_execution: PluginExecutionBinding,
     ) -> Result<Self, ExecutionError> {
         let selection = Self {
             binding,
-            environment: environment.into(),
+            builder_execution,
+            checker_execution,
         };
         selection.validate()?;
         Ok(selection)
     }
     fn validate(&self) -> Result<(), ExecutionError> {
         self.binding.validate().map_err(|_| invalid())?;
-        self.environment.validate().map_err(|_| invalid())?;
+        self.builder_execution.validate()?;
+        self.checker_execution.validate()?;
+        if self.builder_execution.capability != self.binding.builder
+            || self.checker_execution.capability != self.binding.checker
+            || self.builder_execution.profile.as_ref() != Some(&self.binding.declaration.profile)
+            || self.checker_execution.profile.as_ref() != Some(&self.binding.declaration.profile)
+            || self.builder_execution.environment != self.checker_execution.environment
+        {
+            return Err(invalid());
+        }
         Ok(())
     }
     pub fn binding(&self) -> &sdk::BuildBinding {
         &self.binding
     }
     pub fn environment(&self) -> &sdk::ExecutionEnvironmentDescriptor {
-        &self.environment
+        &self.builder_execution.environment
     }
     fn builder(&self) -> PluginExecutionBinding {
-        PluginExecutionBinding {
-            // Build environments currently compose Host-verified Project components.
-            component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-            capability: self.binding.builder.clone(),
-            profile: Some(self.binding.declaration.profile.clone()),
-            environment: self.environment.clone(),
-        }
+        self.builder_execution.clone()
+    }
+    pub fn checker(&self) -> &PluginExecutionBinding {
+        &self.checker_execution
     }
 }
 

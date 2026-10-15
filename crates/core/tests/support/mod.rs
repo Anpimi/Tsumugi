@@ -94,7 +94,14 @@ pub fn source_input_with_texts(store: &ProjectStore, texts: &[&str]) -> FixedInp
                 review: Some(
                     tsumugi_core::content::SourceReviewBinding::capture(
                         &binding.review,
-                        &selected(binding.review.checker.clone()).environment,
+                        &tsumugi_core::execution::PluginExecutionBinding {
+                            component_scope: sdk::ComponentScope::Project,
+                            capability: (&binding.review).checker.clone(),
+                            profile: Some((&binding.review).declaration.profile.clone()),
+                            environment: (*(&selected(binding.review.checker.clone()).environment))
+                                .clone()
+                                .into(),
+                        },
                     )
                     .unwrap(),
                 ),

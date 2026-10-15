@@ -24,6 +24,7 @@ pub struct PluginGenerationComponentRequest {
 pub struct PluginGenerationComponentView {
     pub settings_revision: UnsignedDecimal,
     pub binding: sdk::CapabilityBinding,
+    pub component_scope: sdk::ComponentScope,
     #[serde(deserialize_with = "Option::deserialize")]
     #[cfg_attr(
         feature = "wire-schema",
@@ -53,6 +54,10 @@ impl GenerationComponentEnvironment {
         Ok(PluginGenerationComponentView {
             settings_revision: self.captured.settings_revision,
             binding: self.captured.binding.clone(),
+            component_scope: self
+                .captured
+                .execution_binding(&self.captured.binding, self.profile.clone())?
+                .component_scope,
             profile: self.profile.clone(),
             package_origin: self.captured.package.origin().into(),
             environment_digest: environment.digest().map_err(|_| invalid())?,
@@ -92,8 +97,10 @@ fn resolve_generation_component(
         .find(|component| component.id == binding.provider.component_id)
         .ok_or(HostError::InvalidContract)?;
     let service = sdk::generation_service_contract();
-    if component.scope != sdk::ComponentScope::Project
-        || component.runtime != sdk::RuntimeKind::JavaScript
+    if !matches!(
+        component.scope,
+        sdk::ComponentScope::Project | sdk::ComponentScope::Attempt
+    ) || component.runtime != sdk::RuntimeKind::JavaScript
         || !component.dependencies.iter().any(|dependency| {
             dependency.contract == service
                 && dependency.required
@@ -127,7 +134,7 @@ impl ApplicationPlugins {
             &package,
             None,
             &request.environment_digest,
-            &[sdk::ComponentScope::Project],
+            &[sdk::ComponentScope::Project, sdk::ComponentScope::Attempt],
             |image| {
                 let binding = resolve_generation_component(
                     image,
@@ -324,7 +331,20 @@ mod tests {
             let mut manifest = manifest();
             match scenario {
                 0 => manifest.components[0].scope = sdk::ComponentScope::Application,
-                1 => manifest.components[0].scope = sdk::ComponentScope::Attempt,
+                1 => {
+                    manifest.components[0].scope = sdk::ComponentScope::Attempt;
+                    let image = image(&manifest);
+                    let request = selection_request(&image);
+                    assert!(
+                        resolve_generation_component(
+                            &image,
+                            &request.provider,
+                            request.profile.as_ref()
+                        )
+                        .is_ok()
+                    );
+                    continue;
+                }
                 2 => manifest.components[0].runtime = sdk::RuntimeKind::NativeWorker,
                 3 => {
                     manifest.components[0].runtime = sdk::RuntimeKind::Data;

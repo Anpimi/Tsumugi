@@ -16,6 +16,41 @@ pub(in crate::commands) struct DeclaredEnvironment<B> {
     pub runtime_origin: PackageOrigin,
 }
 
+impl<B> DeclaredEnvironment<B> {
+    /// The original immutable image owns scope, never a DTO or a domain result.
+    pub(in crate::commands) fn execution_binding(
+        &self,
+        capability: &sdk::CapabilityBinding,
+        profile: Option<sdk::ContractRef>,
+    ) -> Result<tsumugi_core::execution::PluginExecutionBinding, CommandError> {
+        let image = self.package.image();
+        let actual = sdk::bind_capability(
+            image.manifest(),
+            &capability.provider.contribution_id,
+            image.package_digest(),
+        )
+        .map_err(|_| invalid())?;
+        if actual != *capability {
+            return Err(invalid());
+        }
+        let component = image
+            .manifest()
+            .manifest()
+            .components
+            .iter()
+            .find(|component| component.id == capability.provider.component_id)
+            .ok_or_else(invalid)?;
+        let binding = tsumugi_core::execution::PluginExecutionBinding {
+            capability: actual,
+            component_scope: component.scope,
+            profile,
+            environment: self.runtime.environment(),
+        };
+        binding.validate().map_err(|_| invalid())?;
+        Ok(binding)
+    }
+}
+
 pub(super) fn invalid() -> CommandError {
     let mut error = CommandError::simple(CommandErrorCode::InvalidInput, CommandStage::Read);
     error.reason = Some("plugin-binding-invalid".into());

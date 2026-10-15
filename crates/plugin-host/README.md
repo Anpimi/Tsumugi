@@ -31,13 +31,21 @@ The original input digest and grant therefore also bind the selected scope.
 Each Core dispatch still owns and closes its process; no shared scope registry,
 grant renewal or automatic activation is introduced.
 
-Project service bindings cannot be rescaled into attempt authority. An attempt
-component with required services, or an attempt channel offered any service
-binding, is refused. Absent optional services remain allowed. Existing project
-brokers keep their exact scope, permissions, effects and generation checks.
-The Desktop's manual generic Tool path captures attempt scope end to end.
-Source, translation, review, build and Agent compositions currently accept only
-Project components and reject other executable scopes at package capture.
+Composed source/translation, format/advisory review, build/artifact and Agent
+operations retain a complete binding per capability. Scopes can differ between
+roles; an Attempt checker uses its own check attempt, not the producer's attempt
+or a UI action/scope handle. The one Core scope derivation is reused for requests,
+launch and service selection. Captured input and all original grants and required
+checks remain authoritative on receipt and reopening.
+
+Attempt services currently support only the existing JavaScript generation
+adapter. Its required dependency, effect, permission and schemas must match, and
+the per-dispatch factory fixes the descriptor to the original outer project and
+attempt. Missing required services, foreign Project/Attempt descriptors and other
+offered service contracts are refused before staging. Absent optional services
+remain allowed. Project brokers retain their existing behavior. A completed
+channel does not roll back an already accepted child or renew its original
+deadline, grant, work-plan lease or budget.
 
 `ProcessSession::launch_with_services` accepts a trusted `ProjectServiceBroker`.
 It validates the broker's explicit selected bindings against actual component

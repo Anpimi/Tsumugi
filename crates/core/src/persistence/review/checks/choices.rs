@@ -47,7 +47,7 @@ impl ReviewChecker {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AdvisoryReviewCheck {
     pub binding: sdk::TextReviewBinding,
-    pub environment: sdk::ExecutionEnvironmentDescriptor,
+    pub execution: PluginExecutionBinding,
     pub declaration_resource_id: String,
     pub resource_pins: Vec<sdk::TextReviewResourcePin>,
     pub rules: Vec<sdk::ContractRef>,
@@ -55,14 +55,14 @@ pub struct AdvisoryReviewCheck {
 impl AdvisoryReviewCheck {
     pub fn capture(
         binding: &sdk::TextReviewBinding,
-        environment: &sdk::ExecutionEnvironmentDescriptor,
+        execution: &PluginExecutionBinding,
         declaration_resource_id: &str,
         resource_pins: Vec<sdk::TextReviewResourcePin>,
         rules: Vec<sdk::ContractRef>,
     ) -> Result<Self, ExecutionError> {
         let value = Self {
             binding: binding.clone(),
-            environment: environment.clone(),
+            execution: execution.clone(),
             declaration_resource_id: declaration_resource_id.into(),
             resource_pins,
             rules,
@@ -77,20 +77,16 @@ impl AdvisoryReviewCheck {
                 profile: self.binding.declaration.profile.clone(),
             },
             kind: ReviewCheckerKind::AdvisoryText,
-            binding: PluginExecutionBinding {
-                // Advisory review composition requires a Host-verified Project component.
-                component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-                capability: self.binding.checker.clone(),
-                profile: Some(self.binding.declaration.profile.clone()),
-                environment: self.environment.clone(),
-            },
+            binding: self.execution.clone(),
         }
     }
     pub fn validate(&self) -> Result<(), ExecutionError> {
         let invalid = || failure(ErrorCode::InvalidInput, "advisory-review-choice");
         self.binding.validate().map_err(|_| invalid())?;
         self.checker().binding.validate()?;
-        if sdk::validate_contribution_id(&self.declaration_resource_id).is_err()
+        if self.execution.capability != self.binding.checker
+            || self.execution.profile.as_ref() != Some(&self.binding.declaration.profile)
+            || sdk::validate_contribution_id(&self.declaration_resource_id).is_err()
             || self.rules.is_empty()
             || self.rules.len() > sdk::MAX_REVIEW_RULES
             || self.rules.iter().collect::<BTreeSet<_>>().len() != self.rules.len()

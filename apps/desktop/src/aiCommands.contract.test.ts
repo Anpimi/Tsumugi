@@ -36,7 +36,9 @@ function advisoryViewFixture(status: "findings" | "failed" | "unknown" | "unavai
   const requirement = { ...structuredClone(formatRequirement), key, mandatory: false, waivable: false, inputDigest: "e".repeat(64) };
   evidence.requiredChecks.requirements.push(requirement);
   evidence.advisoryChecks.push({ binding: text.binding, declarationResourceId: text.resourceId,
-    environment: text.environment, resourcePins: text.resourcePins, rules: text.rules });
+    execution: { capability: text.binding.checker, componentScope: "project",
+      profile: text.binding.declaration.profile, environment: text.environment },
+    resourcePins: text.resourcePins, rules: text.rules });
   evidence.origins.push({ checker: { provider: text.binding.checker.provider, profile: text.binding.declaration.profile },
     attemptId: fixtureIdentity(940), inputDigest: requirement.inputDigest, resultId: fixtureIdentity(941), resultDigest: "f".repeat(64),
     outcome: status === "failed" ? "failed" : status === "unknown" ? "unknown" : "succeeded" });
