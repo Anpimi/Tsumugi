@@ -5,7 +5,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionAlive, useSessionReads } from "./SessionReadProvider";
 import { translationCommands, confirmCandidateDecision, type CandidateDecisionRequest, type CandidateDisposition, type TranslationRevision } from "./translationCommands";
 
-interface CandidateBasis { unitId: string; locale: string; sourceRevisionId: string; baseSelectionId: string | null; baseRevisionId: string | null }
+export interface CandidateBasis { unitId: string; locale: string; sourceRevisionId: string; baseSelectionId: string | null; baseRevisionId: string | null }
 export interface CandidateDecisionState {
   actor: string; reason: string; editSeq: number; busy: boolean; pending: CandidateDecisionRequest | null;
   checkedMissing: boolean; failure: CommandFailure | null; recorded: CandidateDisposition | null;
@@ -44,8 +44,8 @@ export function useCandidateDecisionSession(project: ProjectView, owner: {
       if (!unknown) release();
     }
   }
-  async function decide(revision: TranslationRevision, disposition: CandidateDisposition, proof: () => boolean = () => true) {
-    const draft = ownerRef.current.current(), before = current(), metadata = projectRef.current.metadata;
+  async function decide(revision: TranslationRevision, disposition: CandidateDisposition, proof: () => boolean = () => true, readBasis: () => CandidateBasis | null = () => ownerRef.current.current()) {
+    const draft = readBasis(), before = current(), metadata = projectRef.current.metadata;
     if (!alive.current || before.busy || before.pending || !draft || !proof() || !before.actor.trim() || !before.reason.trim()
       || !metadata.targetLocales.includes(draft.locale) || revision.originKind !== "ai" || revision.unitId !== draft.unitId
       || revision.locale !== draft.locale || revision.sourceRevisionId !== draft.sourceRevisionId || revision.revisionId === draft.baseRevisionId
@@ -53,9 +53,9 @@ export function useCandidateDecisionSession(project: ProjectView, owner: {
     const token = ownerRef.current.reserve(); if (!token) return; reservation.current = token;
     update(value => ({ ...value, busy: true, recorded: null, failure: null }));
     try {
-      const actionId = await executionCommands.identity(session), latest = ownerRef.current.current();
-      if (!alive.current || !proof() || !projectRef.current.metadata.targetLocales.includes(draft.locale) || latest?.unitId !== draft.unitId
-        || latest.locale !== draft.locale || latest.sourceRevisionId !== draft.sourceRevisionId || latest.baseSelectionId !== draft.baseSelectionId) return;
+      const actionId = await executionCommands.identity(session), latest = readBasis();
+      if (!alive.current || !proof() || projectRef.current.metadata.sourceLocale !== metadata.sourceLocale || !projectRef.current.metadata.targetLocales.includes(draft.locale) || latest?.unitId !== draft.unitId
+        || latest.locale !== draft.locale || latest.sourceRevisionId !== draft.sourceRevisionId || latest.baseSelectionId !== draft.baseSelectionId || latest.baseRevisionId !== draft.baseRevisionId) return;
       const request: CandidateDecisionRequest = { ...session, decision: { projectId: session.projectId, actionId, unitId: draft.unitId, locale: draft.locale,
         revisionId: revision.revisionId, sourceRevisionId: draft.sourceRevisionId, expectedSelectionId: draft.baseSelectionId,
         expectedDecisionId: revision.candidateDecision?.request.actionId ?? null, disposition, actor: before.actor.trim(), reason: before.reason.trim() } };

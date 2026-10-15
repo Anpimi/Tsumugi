@@ -44,7 +44,7 @@ export function confirmCandidateDecision(request: CandidateDecisionRequest, valu
   const expected = request.decision, actual = value.request;
   if (actual.projectId !== request.projectId || Object.keys(expected).length !== Object.keys(actual).length
     || Object.entries(expected).some(([key, field]) => actual[key as keyof typeof actual] !== field)) {
-    throw new Error("Invalid candidate decision acknowledgement");
+    throw Object.assign(new Error("Invalid candidate decision acknowledgement"), { outcome: "unknown", reason: "invalid-candidate-decision-receipt" });
   }
   return value;
 }

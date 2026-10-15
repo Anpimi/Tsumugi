@@ -114,6 +114,7 @@ interface ExecutionItemCommandTarget {
   locale: string; sourceRevisionId: string; sourceSnapshotId: string;
 }
 export interface AiCandidateCommandPayload extends ExecutionItemCommandTarget { kind: "ai-candidate"; resultId: string; recoveryUnitId: string }
+export interface AiSavedCandidateCommandPayload extends ExecutionItemCommandTarget { kind: "ai-saved-candidate"; revisionId: string; resultId: string }
 export interface AiTranslationCommandPayload extends ExecutionItemCommandTarget { kind: "ai-translation-target" }
 export interface AiStartPendingCommandPayload { kind: "ai-start-pending"; request: WorkPlanStartRequest; attemptId: string; editSeq: number }
 export interface AiAdoptionPendingCommandPayload { kind: "ai-adoption-pending"; attemptId: string; actionId: string; recoveryUnitId: string; resultId: string }
@@ -345,6 +346,10 @@ interface WorkbenchCommandPayloads {
   "ai.retry-cancellation": ExecutionCancellationRetryCommandPayload;
   "ai.open-translation": AiTranslationCommandPayload;
   "ai.rewrite-translation": AiTranslationCommandPayload;
+  "ai.inspect-candidate": AiSavedCandidateCommandPayload;
+  "ai.decide-candidate": TranslationCandidateCommandPayload;
+  "ai.check-candidate-decision": TranslationCandidatePendingCommandPayload;
+  "ai.retry-candidate-decision": TranslationCandidatePendingCommandPayload;
   "review.allow-fallback": ReviewFallbackCommandPayload;
   "review.withdraw-fallback": ReviewFallbackCommandPayload;
   "review.grant-waiver": ReviewWaiverCommandPayload;
@@ -463,8 +468,8 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"translation-import-batch", "translation.apply-import-batch">
   | ResourceCommand<"translation-import-pending", "translation.check-import-receipt" | "translation.retry-import-action">
   | ResourceCommand<"translation-revision", "translation.select-revision">
-  | ResourceCommand<"translation-candidate", "translation.decide-candidate">
-  | ResourceCommand<"translation-candidate-pending", "translation.check-candidate-decision" | "translation.retry-candidate-decision">
+  | ResourceCommand<"translation-candidate", "translation.decide-candidate" | "ai.decide-candidate">
+  | ResourceCommand<"translation-candidate-pending", "translation.check-candidate-decision" | "translation.retry-candidate-decision" | "ai.check-candidate-decision" | "ai.retry-candidate-decision">
   | ResourceCommand<"translation-selection-pending", "translation.check-selection" | "translation.retry-selection">
   | ResourceCommand<"translation-content-row", "translation.toggle-content-selection">
   | ResourceCommand<"release-preparation", "release.assess-build" | "release.prepare-build">
@@ -501,6 +506,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
   | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task" | "release.cancel-task" | "resource.cancel-tool">
   | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "release.retry-cancellation" | "resource.retry-tool-cancellation">
+  | ResourceCommand<"ai-saved-candidate", "ai.inspect-candidate">
   | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation">
   | ResourceCommand<"resource-tool-preparation", "resource.prepare-tool">
   | ResourceCommand<"resource-tool-capture", "resource.start-tool" | "resource.discard-tool">
@@ -633,6 +639,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "ai-adoption-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "execution-cancellation": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "execution-cancellation-retry": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "ai-saved-candidate": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "ai-translation-target": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
     }
   }
@@ -883,6 +890,7 @@ function validAiPayload(payload: CommandPayload | undefined): payload is AiComma
       && pluginValidation.validateRequestGenerationComponent(payload.component);
     case "ai-component": return [payload.scopeId,payload.attemptId,payload.inputDigest].every(validIdentity);
     case "ai-candidate": return validExecutionItemTarget(payload) && validIdentity(payload.resultId) && validIdentity(payload.recoveryUnitId);
+    case "ai-saved-candidate": return validExecutionItemTarget(payload) && validIdentity(payload.revisionId) && validIdentity(payload.resultId);
     case "ai-translation-target": return validExecutionItemTarget(payload);
     case "ai-adoption-pending": return [payload.attemptId, payload.actionId, payload.recoveryUnitId, payload.resultId].every(validIdentity);
     case "execution-cancellation": return validIdentity(payload.taskId) && validIdentity(payload.attemptId)
@@ -1061,6 +1069,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "ai-adoption-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "execution-cancellation" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "execution-cancellation-retry" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "ai-saved-candidate" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-translation-target" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "review-fallback") {
       if (payload?.kind !== "review-fallback") return false;

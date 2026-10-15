@@ -18,6 +18,7 @@ import { aiAttempt, aiViewFixture, aiWorkPlanFixture, arenaViewFixture } from ".
 import type { WorkPlanView, WorkPlanStatusView, WorkPlanReceiptView, WorkProtection } from "./workPlanCommands";
 import { validateRequestWorkPlanPrepare, validateRequestWorkPlanAuthorize, validateRequestWorkPlanStart, validateRequestWorkProtectionRead, validateRequestWorkProtectionSet } from "./generated/ai.validators";
 import { validateRequestPluginBuild } from "./generated/release.validators";
+import { validateRequestActivity } from "./generated/execution.validators";
 import type { PluginBuildPrepareRequest } from "./releaseCommands";
 import type { ArenaConfig, ArenaPrepared, ArenaView } from "./arenaCommands";
 import type { SessionReads } from "./sessionReads";
@@ -96,6 +97,11 @@ const projectView = (
   metadata: metadata(displayName, revision),
   reconciliationState,
 });
+
+function emptyTaskActivity(request: unknown) {
+  if (!validateRequestActivity(request)) throw new Error("Invalid task activity read request");
+  return { total: "0", active: "0", attention: "0", saved: "0", rows: [] };
+}
 
 async function renderApp() {
   const result = render(<App />);
@@ -208,6 +214,7 @@ function installTranslationEditor() {
     if (command === "save_translation_revision") return onSave(args.request, () => commit(args.request));
     if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
     if (command === "list_execution_tasks") return [];
+    if (command === "read_execution_task_activity") return emptyTaskActivity(args.request);
     return projectView();
   });
   return { setSave: (handler: typeof onSave) => { onSave = handler; }, saves: () => mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision"),
@@ -424,7 +431,10 @@ describe("project lifecycle workbench", () => {
     const calls = mocks.invoke.mock.calls.filter(([command]) => command === "read_content_scope");
     expect(calls).toHaveLength(3);
     for (const [, args] of calls) expect(args).toEqual({ request: { projectId: metadata().projectId, sessionToken: "session-1" } });
-    expect(mocks.invoke.mock.calls.every(([command]) => command === "create_project" || command === "read_content_scope")).toBe(true);
+    expect(mocks.invoke.mock.calls.every(([command]) => command === "create_project" || command === "read_content_scope" || command === "read_execution_task_activity")).toBe(true);
+    const activity = mocks.invoke.mock.calls.filter(([command]) => command === "read_execution_task_activity");
+    expect(activity.length).toBeGreaterThan(0);
+    for (const [, args] of activity) expect(args).toEqual({ request: { projectId: metadata().projectId, sessionToken: "session-1", limit: 12 } });
     expect(reads.client.getQueryCache().findAll({ queryKey: reads.key(sourceKeys.scope), exact: true })).toHaveLength(1);
   });
 
@@ -2113,7 +2123,8 @@ describe("project lifecycle workbench", () => {
     mocks.onCloseRequested.mockResolvedValue(() => undefined);
     mocks.close.mockResolvedValue(undefined);
     mocks.destroy.mockResolvedValue(undefined);
-    mocks.invoke.mockImplementation(async (command: string) => {
+    mocks.invoke.mockImplementation(async (command: string, args?: { request?: unknown }) => {
+      if (command === "read_execution_task_activity") return emptyTaskActivity(args?.request);
       if (command === "create_project") return projectView();
       if (command === "close_project") return { closed: true };
       return projectView();

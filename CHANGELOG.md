@@ -30,6 +30,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   bounded rows with all-project totals. Open a task through the same draft-safe
   navigation; reading status never starts work or applies saved output.
 
+- AI result cards can reject or explicitly restore saved candidates in place,
+  sharing the editor’s decision draft and original-action recovery while keeping
+  unrelated manual edits. Unsaved outputs must become formal candidates first.
+  Rejected results remain visible and cannot be proposed again before restoration.
+  Original decision recovery stays available without an open editor entry, and
+  discarding decision details keeps manual drafts for separate confirmation.
+
 - Returning from a failed source preparation to current content clears the old
   failure while keeping unrelated preparation text. Explicit discard reports
   its own cancellation failure. Source comparison labels also cover changed

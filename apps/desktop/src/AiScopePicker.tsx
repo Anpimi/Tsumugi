@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { enUS } from "./i18n/en-US";
 import type { ContentPage } from "./sourceCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 
@@ -22,7 +23,7 @@ export function AiScopePicker({ page, snapshotId, selectedSnapshotId, selected, 
     {changed ? <p role="alert">{t("ai.workspace.scopeChanged")} <button type="button" className="text-button"
       disabled={disabled || !ready} onClick={() => onChange([], snapshotId)}>{t("ai.workspace.resetScope")}</button></p> : null}
     {ready && page ? <>
-      <p>{t("ai.workspace.page", { first: rows.length ? after + 1 : 0, last: after + rows.length, total: page.total })}</p>
+      <p>{t("ai.workspace.page", { first: rows.length ? after + 1 : 0, last: after + rows.length, total: page.total, defaultValue: enUS.ai.workspace.page })}</p>
       <div className="execution-actions"><button type="button" className="secondary-button" disabled={disabled || changed || !ids.length}
         onClick={() => onChange([...new Set([...selected, ...ids])], snapshotId)}>{t("ai.workspace.selectPage")}</button></div>
       <ul>{rows.map(row => row.unitId && row.sourceRevisionId ? <li key={row.unitId}>

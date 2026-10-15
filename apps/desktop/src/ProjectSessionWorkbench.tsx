@@ -258,7 +258,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (area === "resources" && resources.tool.blocked()) memory.write("resources", "tab", "queries");
     if (area === "translation") {
       const draft = translation.current();
-      memory.write("translation", "tab", translation.protection.blocked() || draft && (draft.pending || draft.pendingSelection || draft.saving || draft.text !== (draft.baseText ?? "") || draft.newerDraftSaved) ? "edit" : "import");
+      memory.write("translation", "tab", translation.candidates.blocked() || translation.candidates.hasDraft() || translation.protection.blocked() || draft && (draft.pending || draft.pendingSelection || draft.saving || draft.text !== (draft.baseText ?? "") || draft.newerDraftSaved) ? "edit" : "import");
     }
   }
   const ports = useRef({ live, inspect, consumer, accept, blocked });
@@ -286,7 +286,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   if (retired) return <section className="workbench-panel" aria-label={t("workbench.retiredDraftTitle")}>
     <h2>{t("workbench.retiredDraftTitle")}</h2><p>{t("workbench.retiredDraftHelp")}</p>
     <label className="field"><span>{t("workbench.retiredDraftData")}</span><textarea readOnly rows={18} value={JSON.stringify({
-      translation: translation.current(), translationImport: imports.current(), source: source.current(), resources: resources.current(),
+      translation: translation.current(), candidateDecision: translation.candidates.current(), translationImport: imports.current(), source: source.current(), resources: resources.current(),
       review: review.current(), release: release.current(), ai: ai.current(), arena: arena.current(),
       tasks: { cancellation: tasks.state, adoption: tasks.currentActivity() },
     }, null, 2)} /></label>

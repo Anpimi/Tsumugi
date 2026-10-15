@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+AI cards now reuse the translation decision owner for in-place rejection and
+restoration of a verified saved revision. Explicit snapshot/history bases do not
+replace a manual editor draft; pending decisions keep their original action and
+newer reason edits. Recovery remains reachable without an editor entry, and
+discarding decision details preserves manual drafts for their own confirmation.
+This frontend integration uses the generated schema 37
+contract below and adds no further stored format, dependency or version bump.
+
 Saved AI candidate rejection and explicit restoration append human decisions with
 exact candidate/source/selection bases and original action receipts. Shared
 selection writes and automatic selection preparations refuse rejected revisions.
