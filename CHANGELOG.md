@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Core exposes a read-only source-context observation for an exact current
+  project, snapshot, unit, source revision and target locale. It retains domain
+  fact origins, unsupported/empty block distinctions and immediate neighbors
+  with their original occurrence and revision evidence. Reads verify the stored
+  source result, semantic proof and project mappings in one SQLite snapshot.
+  Manual context remains separate; AI sharing and desktop integration are pending.
+
 - The experimental SDK defines bounded source-context facts with explicit
   extracted or inferred origin and references to captured source ranges.
   The existing content receiver checks supported blocks without rewriting their

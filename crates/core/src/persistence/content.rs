@@ -112,7 +112,7 @@ fn corrupt() -> ExecutionError {
 fn id(raw: String) -> Result<ExecutionId, ExecutionError> {
     ExecutionId::parse(&raw).map_err(|_| corrupt())
 }
-fn scope(connection: &Connection) -> Result<ContentScope, ExecutionError> {
+pub(super) fn scope(connection: &Connection) -> Result<ContentScope, ExecutionError> {
     let (revision, current): (i64, Option<String>) = connection
         .query_row(
             "SELECT revision,current_snapshot FROM content_scope WHERE row_id=1",

@@ -46,6 +46,8 @@ pub use persistence::{
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub use persistence::{
     SavedBuildArtifact, SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,
+    SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
+    SourceContextOccurrence, SourceContextRequest, SourceContextView,
 };
 
 #[cfg(test)]

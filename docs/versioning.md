@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Core adds a read-only source-context projection using the original adopted
+source result, semantic proof and Core/operation mappings in one SQLite read
+snapshot. It preserves explicit fact origins, unsupported/empty observations
+and ordered neighbor provenance. Manual context, operation selection, budgets
+and sharing remain separate responsibilities; AI and Desktop do not consume
+this read yet. This additive Core API changes no stored field, project schema
+34, IPC, SDK/process, dependency or version source. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no additional
+SemVer bump or distribution; both Unreleased changelogs are synchronized.
+
 The experimental SDK adds source-context facts at schema/behavior 1/1 inside
 existing content-exchange domain blocks. Supported blocks require explicit
 extracted/inferred origin, bounded source references and exact text coordinates;

@@ -51,8 +51,9 @@ pub use resources::{
     GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind,
     ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence,
     ResourceImpactKind, ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, SaveContext,
-    SaveTerm, TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind,
-    TmSuggestion,
+    SaveTerm, SourceContextAdjacency, SourceContextBlock, SourceContextDirection,
+    SourceContextNeighbor, SourceContextOccurrence, SourceContextRequest, SourceContextView,
+    TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind, TmSuggestion,
 };
 pub(crate) use review::validate_choices;
 pub use review::{

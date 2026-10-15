@@ -79,7 +79,7 @@ fn production_source_schema_refuses_previous_format_without_changing_files() {
             })
             .collect::<std::collections::BTreeMap<_, _>>()
     };
-    for unsupported in [27, 28, 29, 30, 31, 32, 34] {
+    for unsupported in [27, 28, 29, 30, 31, 32, 33, 35] {
         let connection = rusqlite::Connection::open(project.join("project.sqlite3")).unwrap();
         connection
             .pragma_update(None, "user_version", unsupported)

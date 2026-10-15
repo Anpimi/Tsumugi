@@ -12,6 +12,12 @@ const MAX_RESOURCE_BYTES: usize = 128 * 1024;
 const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
+mod source_context;
+pub use source_context::{
+    SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
+    SourceContextOccurrence, SourceContextRequest, SourceContextView,
+};
+
 fn change_targets_source(
     unit: &str,
     text: &str,
