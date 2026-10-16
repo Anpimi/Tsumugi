@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+Preserving terminal AI automation history corrects a background control-state
+regression. Pending work, uncertain receipts and service-origin cleanup retain
+their original authority checks. This changes no SDK/IPC, project/settings/Store
+format, dependency or package selection. It stays in the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with a bilingual
+Unreleased fix entry and no additional bump or replacement SDK artifact.
+
 The independently versioned Philosophy example adds an Attempt-scoped client
 for the existing work-plan generation service while retaining its separate
 knowledge component. Application changes document that path and correct

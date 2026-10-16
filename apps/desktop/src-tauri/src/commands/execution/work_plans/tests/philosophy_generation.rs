@@ -594,6 +594,23 @@ fn exercise(outcome: ChildOutcome) {
         root_after["rows"][0]["savedRevisionId"],
         root["rows"][0]["savedRevisionId"]
     );
+    if outcome == ChildOutcome::Cancelled {
+        assert_eq!(root["rows"][0]["automation"]["phase"], "saved");
+        assert_eq!(
+            root_after["rows"][0]["automation"],
+            root["rows"][0]["automation"]
+        );
+        assert_eq!(
+            fixture
+                .call(
+                    "read_ai_translation",
+                    json!({"attemptId":action.generation["attemptId"]})
+                )
+                .unwrap()["rows"][0]["automation"],
+            child["rows"][0]["automation"],
+            "drained cancelled effect keeps its original diagnostic"
+        );
+    }
     let historical = fixture
         .call(
             "read_ai_translation",
@@ -601,6 +618,23 @@ fn exercise(outcome: ChildOutcome) {
         )
         .unwrap();
     fixture.reopen();
+    if outcome == ChildOutcome::Cancelled {
+        let reopened_root = fixture
+            .call(
+                "read_ai_translation",
+                json!({"attemptId":plan["attemptId"]}),
+            )
+            .unwrap();
+        assert_eq!(
+            reopened_root["rows"][0]["automation"]["phase"],
+            root_after["rows"][0]["automation"]["phase"]
+        );
+        assert_eq!(
+            reopened_root["rows"][0]["savedRevisionId"],
+            root_after["rows"][0]["savedRevisionId"]
+        );
+        assert_eq!(reopened_root["budget"], root_after["budget"]);
+    }
     let reopened = fixture
         .call(
             "read_ai_translation",

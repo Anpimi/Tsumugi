@@ -41,6 +41,25 @@ struct Item {
     view: EffectView,
     checker: Option<CheckerAttempt>,
 }
+impl Item {
+    fn awaiting_effect(&self) -> bool {
+        self.view.receipt.is_none()
+            && matches!(
+                self.view.phase,
+                EffectPhase::Waiting | EffectPhase::SavingCandidate | EffectPhase::Checking
+            )
+    }
+
+    fn needs_reconciliation(&self) -> bool {
+        self.view.receipt.is_none()
+            && (self.view.retryable
+                || self
+                    .view
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == CommandErrorCode::OutcomeUnknown))
+    }
+}
 struct CheckerChannel {
     key: ReviewCheckerKey,
     input: FixedInput,
@@ -154,6 +173,79 @@ fn checker_channel_unsettled(
     // Authorization can precede a failed submit. Explicitly absent inputs have
     // no queued effects, but the Runtime still checks owned producer handles.
     runtime.has_unsettled_attempt(store, child)
+}
+fn needs_authority(
+    id: ExecutionId,
+    attempt: &Attempt,
+    jobs: &[Job],
+    store: &ProjectStore,
+    runtime: &ExecutionRuntime,
+) -> Result<bool, ExecutionError> {
+    for (item_id, item) in &attempt.items {
+        if item.view.receipt.is_some() {
+            continue;
+        }
+        if item.awaiting_effect()
+            || jobs.iter().any(|job| {
+                job.attempt == id && job.item == *item_id && !job.cancellation.is_requested()
+            })
+        {
+            return Ok(true);
+        }
+        let Some(checker) = &item.checker else {
+            continue;
+        };
+        if checker.cancellation.is_requested() {
+            continue;
+        }
+        if checker.pending {
+            return Ok(true);
+        }
+        // A failed submission can still have enqueued a channel before the
+        // checker became pending. Its original producer must remain controlled.
+        for channel in checker
+            .channels
+            .iter()
+            .filter(|channel| channel.submitted && !channel.cancellation_sent)
+        {
+            if checker_channel_unsettled(store, runtime, &channel.input)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+fn reconcile_effect(
+    store: &ProjectStore,
+    input: &FixedInput,
+    id: ExecutionId,
+    item_id: ExecutionId,
+    item: &mut Item,
+) -> Result<bool, ExecutionError> {
+    let Some(lease) = input.envelope().automation else {
+        return Ok(false);
+    };
+    let Some(revision) = store.saved_ai_candidate(id, item_id)? else {
+        return Ok(false);
+    };
+    if let Some(receipt) = store.automatic_selection_for_candidate(lease, revision)? {
+        item.revision = Some(revision);
+        item.view.action_id = Some(receipt.request.action_id);
+        item.view.phase = phase_for(&receipt);
+        item.view.receipt = Some(receipt);
+    } else {
+        let options = store.work_plan(lease.plan_id)?.options;
+        if options.selection_policy != SelectionPolicy::CandidatesOnly
+            || options.requests(AutomationEffect::RunChecks)
+        {
+            return Ok(false);
+        }
+        item.revision = Some(revision);
+        item.view.phase = EffectPhase::Saved;
+    }
+    item.view.error = None;
+    item.view.retryable = false;
+    Ok(true)
 }
 fn cancel_channels(
     checker: &mut CheckerAttempt,
@@ -583,27 +675,27 @@ impl Automation {
             if attempt.service_origin == ServiceOriginState::Released {
                 continue;
             }
-            let controlled = store
-                .check_work_plan_input(&attempt.input)
-                .map_err(map_adopt);
-            let needs_authority = attempt.items.values().any(|item| {
-                item.view.receipt.is_none()
-                    && (matches!(
-                        item.view.phase,
-                        EffectPhase::Waiting | EffectPhase::SavingCandidate | EffectPhase::Checking
-                    ) || item
-                        .checker
-                        .as_ref()
-                        .is_some_and(|checker| !checker.cancellation.is_requested()))
-            });
-            let authority = if controlled.is_ok() && needs_authority {
-                match &attempt.consent {
-                    Some(consent) => consent.with_current_environment(|| Ok(())),
-                    None => Ok(()),
+            // Reading an original receipt does not require renewed authority.
+            // An unresolved commit stays visible until the ledger confirms it;
+            // neither a terminal phase nor revocation proves that it failed.
+            for (item_id, item) in &mut attempt.items {
+                if item.needs_reconciliation() {
+                    reconcile_effect(store, &attempt.input, *id, *item_id, item)
+                        .map_err(map_adopt)?;
                 }
-            } else {
-                controlled
-            };
+            }
+            let authority =
+                if needs_authority(*id, attempt, &self.jobs, store, runtime).map_err(map_adopt)? {
+                    store
+                        .check_work_plan_input(&attempt.input)
+                        .map_err(map_adopt)
+                        .and_then(|()| match &attempt.consent {
+                            Some(consent) => consent.with_current_environment(|| Ok(())),
+                            None => Ok(()),
+                        })
+                } else {
+                    Ok(())
+                };
             if let Err(error) = authority {
                 if matches!(
                     error.code,
@@ -620,38 +712,23 @@ impl Automation {
                     if item.view.receipt.is_some() {
                         continue;
                     }
-                    // An uncertain selection commit can already have a durable
-                    // receipt. Reconcile it before withdrawing future authority.
-                    if let Some(lease) = attempt.input.envelope().automation {
-                        if let Some(revision) =
-                            store.saved_ai_candidate(*id, *item_id).map_err(map_adopt)?
-                        {
-                            if let Some(receipt) = store
-                                .automatic_selection_for_candidate(lease, revision)
-                                .map_err(map_adopt)?
-                            {
-                                item.revision = Some(revision);
-                                item.view.action_id = Some(receipt.request.action_id);
-                                item.view.phase = phase_for(&receipt);
-                                item.view.receipt = Some(receipt);
-                                item.view.error = None;
-                                item.view.retryable = false;
-                                continue;
-                            }
-                        }
-                    }
                     if let Some(checker) = &item.checker {
                         checker.cancellation.request();
                     }
-                    command_failure(item, error.clone());
-                    item.view.retryable = false;
+                    if item.awaiting_effect()
+                        && !reconcile_effect(store, &attempt.input, *id, *item_id, item)
+                            .map_err(map_adopt)?
+                    {
+                        command_failure(item, error.clone());
+                        item.view.retryable = false;
+                    }
                 }
             }
             for item in attempt.items.values_mut() {
                 if let Some(checker) = &mut item.checker {
                     if checker.cancellation.is_requested() {
                         cancel_channels(checker, store, runtime).map_err(map_adopt)?;
-                        if item.view.phase != EffectPhase::Failed && item.view.receipt.is_none() {
+                        if item.awaiting_effect() {
                             item.view.phase = EffectPhase::Cancelled;
                             item.view.retryable = false;
                         }
@@ -683,7 +760,15 @@ impl Automation {
             if attempt.service_origin == ServiceOriginState::Released {
                 continue;
             }
-            if let Err(error) = store.check_work_plan_input(&attempt.input) {
+            let controlled =
+                needs_authority(*id, attempt, &self.jobs, store, runtime).and_then(|pending| {
+                    if pending {
+                        store.check_work_plan_input(&attempt.input)
+                    } else {
+                        Ok(())
+                    }
+                });
+            if let Err(error) = controlled {
                 for job in self.jobs.iter().filter(|job| job.attempt == *id) {
                     job.cancellation.request();
                 }
@@ -691,10 +776,7 @@ impl Automation {
                     if let Some(checker) = &item.checker {
                         checker.cancellation.request();
                     }
-                    if matches!(
-                        item.view.phase,
-                        EffectPhase::Waiting | EffectPhase::SavingCandidate | EffectPhase::Checking
-                    ) {
+                    if item.awaiting_effect() {
                         failure(item, error.clone());
                         item.view.retryable = false;
                     }
@@ -772,10 +854,10 @@ impl Automation {
                         continue;
                     }
                     checker.pending = false;
-                    if item.view.phase != EffectPhase::Failed {
+                    if item.awaiting_effect() {
                         item.view.phase = EffectPhase::Cancelled;
+                        item.view.retryable = false;
                     }
-                    item.view.retryable = false;
                     continue;
                 }
                 if !checker.pending {
@@ -1187,6 +1269,10 @@ mod tracking_tests {
 
     impl Fixture {
         fn new() -> Self {
+            Self::with_options(PlanOptions::default())
+        }
+
+        fn with_options(options: PlanOptions) -> Self {
             let directory = tempfile::tempdir().unwrap();
             let mut store = ProjectStore::create(
                 directory.path().join("project"),
@@ -1247,7 +1333,7 @@ mod tracking_tests {
                     }),
                     "zh-CN",
                     &[unit],
-                    PlanOptions::default(),
+                    options.clone(),
                 )
                 .unwrap();
             assert!(store.work_plan_review_checkers(&plan).unwrap().is_empty());
@@ -1263,7 +1349,14 @@ mod tracking_tests {
                         action_id: ExecutionId::new(),
                         plan_digest: plan.digest.clone(),
                         confirmed: true,
-                        effects: vec![AutomationEffect::SaveCandidate],
+                        effects: [
+                            AutomationEffect::SaveCandidate,
+                            AutomationEffect::RunChecks,
+                            AutomationEffect::SelectMissing,
+                        ]
+                        .into_iter()
+                        .filter(|effect| options.requests(*effect))
+                        .collect(),
                         expires_at,
                     },
                 )
@@ -1281,6 +1374,78 @@ mod tracking_tests {
 
         fn bytes(&self) -> Vec<u8> {
             std::fs::read(self.store.directory().join("project.sqlite3")).unwrap()
+        }
+
+        fn pause(&mut self) {
+            let lease = self.input.envelope().automation.unwrap();
+            self.store
+                .control_work_plan(&ControlWorkPlan {
+                    action_id: ExecutionId::new(),
+                    plan_id: lease.plan_id,
+                    expected_generation: lease.generation,
+                    command: WorkPlanCommand::Pause,
+                    confirmed: false,
+                    expires_at: None,
+                })
+                .unwrap();
+        }
+
+        fn save_candidate(&mut self) -> ExecutionId {
+            let input = &self.input;
+            let attempt = input.envelope().attempt_id;
+            let item = input.envelope().items[0].item_id;
+            let payload = tsumugi_core::ai::item_payload(input, item).unwrap();
+            let dispatch = self.store.dispatch_execution_item(attempt, item).unwrap();
+            let result = FixedResult::capture(
+                ResultEnvelope {
+                    plugin: None,
+                    project_id: input.envelope().project_id,
+                    attempt_id: attempt,
+                    item_id: item,
+                    result_id: ExecutionId::new(),
+                    supersedes: None,
+                    dispatch_token: dispatch.dispatch_token,
+                    capability_id: tsumugi_core::ai::CAPABILITY.into(),
+                    capability_version: "1".into(),
+                    outcome: ExecutionState::Succeeded,
+                    output: Some(
+                        serde_json::to_value(tsumugi_core::ai::AiOutput {
+                            unit_id: payload.unit_id,
+                            target_locale: payload.target_locale,
+                            text: "Synthetic candidate".into(),
+                            usage: None,
+                            requests: 1,
+                            usage_incomplete: true,
+                        })
+                        .unwrap(),
+                    ),
+                    diagnostic: None,
+                },
+                input,
+                dispatch.dispatch_token,
+            )
+            .unwrap();
+            self.store.save_execution_result(&result).unwrap();
+            self.store
+                .validate_execution_result(attempt, result.envelope().result_id)
+                .unwrap();
+            let action = self
+                .store
+                .prepare_adoption_with_id(
+                    ExecutionId::new(),
+                    attempt,
+                    input.envelope().units[0].unit_id,
+                    vec![result.envelope().result_id],
+                    serde_json::Value::Null,
+                )
+                .unwrap();
+            self.store
+                .adopt_execution(&action, &tsumugi_core::AiAdoptionHandler)
+                .unwrap();
+            self.store
+                .saved_ai_candidate(attempt, item)
+                .unwrap()
+                .unwrap()
         }
     }
 
@@ -1507,6 +1672,269 @@ mod tracking_tests {
             automation.attempts[&id].items[&item_id].view.phase,
             EffectPhase::Cancelled
         );
+    }
+
+    #[test]
+    fn revoked_ticks_preserve_saved_history_and_terminal_diagnostics() {
+        for phase in [
+            EffectPhase::Saved,
+            EffectPhase::Cancelled,
+            EffectPhase::Failed,
+        ] {
+            let mut fixture = Fixture::new();
+            let mut automation = Automation::default();
+            automation
+                .track(&fixture.store, &fixture.input, None)
+                .unwrap();
+            let id = fixture.input.envelope().attempt_id;
+            let item_id = fixture.input.envelope().items[0].item_id;
+            let revision = (phase == EffectPhase::Saved).then(|| fixture.save_candidate());
+            let item = automation
+                .attempts
+                .get_mut(&id)
+                .unwrap()
+                .items
+                .get_mut(&item_id)
+                .unwrap();
+            item.view.action_id = Some(item.candidate_action);
+            if phase == EffectPhase::Saved {
+                item.revision = revision;
+                item.view.phase = EffectPhase::Saved;
+            } else if phase == EffectPhase::Failed {
+                failure(
+                    item,
+                    ExecutionError::new(ErrorCode::OutputInvalid, "synthetic-terminal"),
+                );
+            }
+            let prior = (phase != EffectPhase::Cancelled)
+                .then(|| serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap());
+            fixture.pause();
+            let mut runtime = ExecutionRuntime::new(&fixture.store).unwrap();
+            automation
+                .prepare_runtime_tick(&mut fixture.store, &mut runtime)
+                .unwrap();
+            assert_eq!(automation.view(id, item_id).unwrap().phase, phase);
+            let original = serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap();
+            if let Some(prior) = prior {
+                assert_eq!(original, prior);
+            }
+            if phase != EffectPhase::Saved {
+                assert!(original["error"]["diagnosticId"].is_string());
+            }
+            let actions = {
+                let item = &automation.attempts[&id].items[&item_id];
+                (item.candidate_action, item.selection_action)
+            };
+            let before = fixture.bytes();
+            let sequence = fixture.store.execution_sequence().unwrap();
+            for _ in 0..3 {
+                automation
+                    .prepare_runtime_tick(&mut fixture.store, &mut runtime)
+                    .unwrap();
+                automation.tick(&mut fixture.store, &mut runtime);
+                assert_eq!(
+                    serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap(),
+                    original
+                );
+            }
+            if phase == EffectPhase::Saved {
+                // A lost candidate commit ACK is also reconciled from its
+                // durable revision, without restarting the revoked loop.
+                command_failure(
+                    automation
+                        .attempts
+                        .get_mut(&id)
+                        .unwrap()
+                        .items
+                        .get_mut(&item_id)
+                        .unwrap(),
+                    CommandError::simple(
+                        CommandErrorCode::OutcomeUnknown,
+                        CommandStage::ExecutionAdopt,
+                    ),
+                );
+                automation
+                    .prepare_runtime_tick(&mut fixture.store, &mut runtime)
+                    .unwrap();
+                automation.tick(&mut fixture.store, &mut runtime);
+                assert_eq!(
+                    serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap(),
+                    original
+                );
+            }
+            let item = &automation.attempts[&id].items[&item_id];
+            assert_eq!((item.candidate_action, item.selection_action), actions);
+            assert_eq!(
+                fixture.store.saved_ai_candidate(id, item_id).unwrap(),
+                revision
+            );
+            assert_eq!(fixture.bytes(), before);
+            assert_eq!(fixture.store.execution_sequence().unwrap(), sequence);
+            assert!(automation.jobs.is_empty() && automation.retired.is_empty());
+            assert!(!automation.active());
+        }
+    }
+
+    #[test]
+    fn revoked_pending_job_drains_without_replacing_its_cancellation_diagnostic() {
+        let mut fixture = Fixture::new();
+        let mut automation = Automation::default();
+        automation
+            .track(&fixture.store, &fixture.input, None)
+            .unwrap();
+        let id = fixture.input.envelope().attempt_id;
+        let item_id = fixture.input.envelope().items[0].item_id;
+        let item = automation
+            .attempts
+            .get_mut(&id)
+            .unwrap()
+            .items
+            .get_mut(&item_id)
+            .unwrap();
+        item.view.phase = EffectPhase::SavingCandidate;
+        item.view.action_id = Some(item.candidate_action);
+        let cancellation = Cancellation::default();
+        let (release, gate) = mpsc::sync_channel(1);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let thread = std::thread::spawn(move || {
+            gate.recv_timeout(Duration::from_secs(5)).unwrap();
+            sender
+                .send(Err(ExecutionError::new(
+                    ErrorCode::Cancelled,
+                    "synthetic-computation",
+                )))
+                .unwrap();
+        });
+        automation.jobs.push(Job {
+            attempt: id,
+            item: item_id,
+            cancellation: cancellation.clone(),
+            receiver,
+            thread,
+        });
+        fixture.pause();
+        let mut runtime = ExecutionRuntime::new(&fixture.store).unwrap();
+        automation
+            .prepare_runtime_tick(&mut fixture.store, &mut runtime)
+            .unwrap();
+        assert!(cancellation.is_requested());
+        let original = serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap();
+        assert_eq!(original["phase"], "cancelled");
+        for _ in 0..3 {
+            automation
+                .prepare_runtime_tick(&mut fixture.store, &mut runtime)
+                .unwrap();
+            automation.tick(&mut fixture.store, &mut runtime);
+            assert!(
+                automation.active(),
+                "the owned computation is still draining"
+            );
+            assert_eq!(
+                serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap(),
+                original
+            );
+        }
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while automation.active() {
+            automation
+                .prepare_runtime_tick(&mut fixture.store, &mut runtime)
+                .unwrap();
+            automation.tick(&mut fixture.store, &mut runtime);
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap(),
+            original
+        );
+        assert!(
+            fixture
+                .store
+                .saved_ai_candidate(id, item_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(automation.jobs.is_empty() && automation.retired.is_empty());
+    }
+
+    #[test]
+    fn retryable_effects_recover_the_original_receipt_after_revocation_without_new_work() {
+        for code in [
+            CommandErrorCode::Busy,
+            CommandErrorCode::StorageFailed,
+            CommandErrorCode::OutcomeUnknown,
+        ] {
+            let mut options = PlanOptions {
+                selection_policy: SelectionPolicy::MissingOnly,
+                ..PlanOptions::default()
+            };
+            options
+                .stages
+                .iter_mut()
+                .find(|stage| stage.stage == tsumugi_core::application::WorkStage::Checks)
+                .unwrap()
+                .mode = tsumugi_core::application::StageMode::Assisted;
+            let mut fixture = Fixture::with_options(options);
+            let mut automation = Automation::default();
+            automation
+                .track(&fixture.store, &fixture.input, None)
+                .unwrap();
+            let id = fixture.input.envelope().attempt_id;
+            let item_id = fixture.input.envelope().items[0].item_id;
+            let revision = fixture.save_candidate();
+            let item = &automation.attempts[&id].items[&item_id];
+            let payload = tsumugi_core::ai::item_payload(&fixture.input, item_id).unwrap();
+            let request = AutomaticSelectionRequest {
+                project_id: fixture.input.envelope().project_id,
+                action_id: item.selection_action,
+                lease: fixture.input.envelope().automation.unwrap(),
+                unit_id: payload.unit_id,
+                locale: payload.target_locale,
+                revision_id: revision,
+            };
+            let cancellation = Cancellation::default();
+            let computed = fixture
+                .store
+                .prepare_automatic_selection(&request)
+                .unwrap()
+                .compute(&cancellation)
+                .unwrap();
+            let receipt = fixture
+                .store
+                .commit_automatic_selection(computed, &cancellation)
+                .unwrap();
+            let item = automation
+                .attempts
+                .get_mut(&id)
+                .unwrap()
+                .items
+                .get_mut(&item_id)
+                .unwrap();
+            item.view.action_id = Some(request.action_id);
+            command_failure(
+                item,
+                CommandError::simple(code, CommandStage::ExecutionAdopt),
+            );
+            fixture.pause();
+            let before = fixture.bytes();
+            let sequence = fixture.store.execution_sequence().unwrap();
+            let mut runtime = ExecutionRuntime::new(&fixture.store).unwrap();
+            for _ in 0..3 {
+                automation
+                    .prepare_runtime_tick(&mut fixture.store, &mut runtime)
+                    .unwrap();
+                automation.tick(&mut fixture.store, &mut runtime);
+                let view = automation.view(id, item_id).unwrap();
+                assert_eq!(view.phase, phase_for(&receipt));
+                assert_eq!(view.action_id, Some(request.action_id));
+                assert_eq!(view.receipt, Some(receipt.clone()));
+                assert!(view.error.is_none() && !view.retryable);
+            }
+            assert_eq!(fixture.bytes(), before);
+            assert_eq!(fixture.store.execution_sequence().unwrap(), sequence);
+            assert!(automation.jobs.is_empty() && automation.retired.is_empty());
+        }
     }
 
     mod service_lifecycle {
@@ -1877,6 +2305,73 @@ mod tracking_tests {
                     .check_work_plan_input(prepared.input())
                     .unwrap();
             }
+        }
+
+        #[test]
+        fn revoked_unknown_effect_keeps_its_diagnostic_and_retained_origin_without_a_receipt() {
+            let mut fixture = ServiceFixture::new();
+            let mut automation = Automation::default();
+            let prepared = fixture.prepare("unknown-effect");
+            fixture.enqueue(&mut automation, &prepared);
+            let id = prepared.input().envelope().attempt_id;
+            let item_id = prepared.input().envelope().items[0].item_id;
+            fixture.fail(prepared.input());
+            automation.tick(&mut fixture.fixture.store, &mut fixture.runtime);
+            let item = automation
+                .attempts
+                .get_mut(&id)
+                .unwrap()
+                .items
+                .get_mut(&item_id)
+                .unwrap();
+            item.view.action_id = Some(item.candidate_action);
+            command_failure(
+                item,
+                CommandError::simple(
+                    CommandErrorCode::OutcomeUnknown,
+                    CommandStage::ExecutionAdopt,
+                ),
+            );
+            let original = serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap();
+            fixture.fixture.pause();
+            let before = fixture.fixture.bytes();
+            for _ in 0..3 {
+                automation
+                    .prepare_runtime_tick(&mut fixture.fixture.store, &mut fixture.runtime)
+                    .unwrap();
+                automation.tick(&mut fixture.fixture.store, &mut fixture.runtime);
+                fixture.release(&mut automation).unwrap();
+                assert_eq!(
+                    serde_json::to_value(automation.view(id, item_id).unwrap()).unwrap(),
+                    original
+                );
+                assert_eq!(
+                    automation.attempts[&id].service_origin,
+                    ServiceOriginState::Retained
+                );
+                assert!(
+                    !automation.active(),
+                    "idle does not settle an unknown effect"
+                );
+            }
+            assert_eq!(fixture.fixture.bytes(), before);
+            assert!(
+                fixture
+                    .fixture
+                    .store
+                    .saved_ai_candidate(id, item_id)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                fixture
+                    .fixture
+                    .store
+                    .check_work_plan_input(prepared.input())
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Cancelled
+            );
         }
 
         #[test]

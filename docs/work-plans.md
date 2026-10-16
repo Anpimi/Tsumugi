@@ -406,6 +406,12 @@ adoption and delivery remain unavailable. The API is not a stable plugin SDK. A 
 methods, `ProjectStore` or the raw runtime; its host must carry the issued lease
 and parent identity through the scoped application entry points.
 
+Completed automation views are historical facts: pausing or withdrawing their
+plan preserves a saved result and a settled failure's original diagnostic.
+Only work that still needs authority transitions on revocation. Uncertain
+commits still reconcile their durable receipt, and pending workers and checker
+channels still drain before the original service origin can be released.
+
 ## Installed generation-client conformance
 
 On macOS/aarch64, the `generation_tests::philosophy_generation` desktop tests

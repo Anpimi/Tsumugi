@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Preserve completed AI automation history after pausing or withdrawing a plan.
+  Background control checks no longer replace saved results or settled failure
+  diagnostics with repeated cancellation errors; pending work still stops and
+  uncertain operations retain their original reconciliation and cleanup.
+
 - Diagnose a captured package's capability contract and profile with explicit
   expected versions. Reports distinguish schema and behavior mismatches, missing
   contributions and profile requirements through the existing SDK matcher;
