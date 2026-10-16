@@ -25,9 +25,15 @@ name = "tsumugi-process-conformance-worker"
 path = "tests/support/worker.rs"
 required-features = ["conformance-worker"]
 
+[[example]]
+name = "native-application-worker"
+path = "examples/native-application-worker.rs"
+required-features = ["native-application-conformance"]
+
 [features]
 conformance-worker = []
 javascript-conformance = []
+native-application-conformance = ["tsumugi-plugin-sdk/native-worker"]
 core-adapter = ["dep:tsumugi-core"]
 
 [dev-dependencies]

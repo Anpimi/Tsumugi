@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- A native read-only reference tool with one callable can explicitly share an
+  Application instance across projects. Native Host approval, instance lifetime
+  consent and each query's own grant remain separate; stopping retires the exact
+  process while preserving saved output. Native multi-callable components and
+  project services remain unsupported.
+
 - Propose a term from a saved manual correction for the current entry and target
   language. Review its exact source, before/after text and scope before adopting.
   Unadopted, ignored or stale proposals leave project terms unchanged. New AI

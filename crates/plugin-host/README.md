@@ -9,9 +9,10 @@ and the complete extension lifecycle remain under development.
 
 Project- and attempt-scoped native workers or JavaScript components retain one
 serialized capability per channel. The Application profile supports a frozen
-roster of JavaScript read-only Tool callables with no required dependencies or
-ProjectService access, under a separate explicit lifetime lease. Native
-Application and broader Application compositions remain unsupported. The Unix launcher creates an owned process group;
+roster of JavaScript read-only Tool callables or one native read-only Tool
+callable, with no required dependencies or ProjectService access, under a
+separate explicit lifetime lease. Native multi-callable components and broader
+Application compositions remain unsupported. The Unix launcher creates an owned process group;
 this profile is tested on macOS. Windows is refused until an owned Job Object implementation is verified.
 The JavaScript launcher requires a `CapturedRuntime` containing the independently
 approved Node tool and complete [built component Host](../../runtimes/javascript-host/README.md) trees. That Host
@@ -52,11 +53,13 @@ Ready acknowledgement admits calls. Close/Closed identify the whole component.
 Project/Attempt and native workers keep a singleton roster; older process
 protocols are rejected without a fallback.
 
-Only JavaScript, read-only effects, no required dependencies and no
-ProjectService permission are supported. Every callable must meet these rules,
-including members other than the currently selected Tool. Resources/Skills
-remain inert data. Application generation/domain/Agent and Native workers stay
-refused. Stop, settings withdrawal, cancellation, failure or cumulative budget
+The manual Application Tool profile accepts JavaScript components with a frozen
+read-only roster or a native worker with exactly one read-only callable. Neither
+may require dependencies or ProjectService permission. Every callable must meet
+these rules, including members other than the currently selected Tool.
+Resources/Skills remain inert data. Application generation/domain/Agent, native
+multi-callable components and service compositions stay refused. Stop, settings
+withdrawal, cancellation, failure or cumulative budget
 exhaustion retires the original activation. It is never silently replaced.
 Cleanup reports stopped only after the owned direct child is reaped; exact old
 keys cannot remove a later registration. Application exit snapshots its original
@@ -839,6 +842,19 @@ oversized frames, blocked input, crashes, duplicate output, authority revocation
 uncooperative exit and A/B instance cleanup. They do not invoke a paid model or
 open a developer project. The worker is a conformance peer, not a production
 domain implementation or evidence of an accepted desktop plugin flow.
+
+The Native Application tests use a distinct SDK-client fixture with actual child
+PID and invocation-count observations. Build it explicitly, then supply the
+absolute example path from your Cargo target directory for this test command:
+
+```sh
+cargo build --locked -p tsumugi-plugin-host --features native-application-conformance --example native-application-worker
+TSUMUGI_NATIVE_SDK_WORKER=/absolute/path/to/debug/examples/native-application-worker cargo test --locked -p tsumugi-plugin-host --features core-adapter --test native_application -- --ignored --test-threads=1
+```
+
+The tests create synthetic projects and a unique temporary observation file for
+mid-invocation cancellation. Keep the worker path local to this command; other
+Native SDK tests retain their original echo-worker fixture.
 
 ## Desktop Native environment integration
 

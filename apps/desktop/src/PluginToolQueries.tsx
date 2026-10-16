@@ -282,6 +282,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
         <p>{t(`toolQuery.scopes.${capture.review.tool.componentScope}`)}</p>
         {applicationBasis ? <section aria-label={t("toolQuery.applicationTitle")}>
           <p>{t("toolQuery.applicationHelp")}</p>
+          {capture.review.tool.environment.profile === "native-application-host-v1" ? <p>{t("toolQuery.applicationNativeHelp")}</p> : null}
           <p>{t("toolQuery.applicationCapabilities")}</p>
           <ul>{capture.review.applicationCapabilities.map(member => <li key={member.contributionId}>{member.contributionId}</li>)}</ul>
           {instance.isFetching ? <p role="status">{t("toolQuery.applicationLoading")}</p> : null}

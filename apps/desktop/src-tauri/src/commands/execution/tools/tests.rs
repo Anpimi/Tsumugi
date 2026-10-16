@@ -1,6 +1,9 @@
 use super::*;
 use serde_json::{Value, json};
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod native;
+
 #[test]
 fn tool_wire_keeps_selection_fixed_queries_and_consent_separate() {
     let fixture: Value = serde_json::from_str(include_str!(

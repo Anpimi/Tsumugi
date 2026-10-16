@@ -151,7 +151,10 @@ pub(crate) fn application_roster(
         .find(|value| value.id == component_id)
         .ok_or(HostError::MissingArtifact)?;
     if component.scope != ComponentScope::Application
-        || component.runtime != RuntimeKind::JavaScript
+        || !matches!(
+            component.runtime,
+            RuntimeKind::JavaScript | RuntimeKind::NativeWorker
+        )
         || component.dependencies.iter().any(|value| value.required)
     {
         return Err(HostError::UnsupportedRuntime);
@@ -175,7 +178,10 @@ pub(crate) fn application_roster(
             });
         }
     }
-    if capabilities.is_empty() || capabilities.len() > MAX_PROCESS_CAPABILITIES {
+    if capabilities.is_empty()
+        || capabilities.len() > MAX_PROCESS_CAPABILITIES
+        || (component.runtime == RuntimeKind::NativeWorker && capabilities.len() != 1)
+    {
         return Err(HostError::UnsupportedRuntime);
     }
     capabilities.sort_by(|a, b| a.contribution_id.cmp(&b.contribution_id));
