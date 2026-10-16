@@ -136,11 +136,18 @@ it("reveals invalid connection fields when preview fails after settings were col
 
 it("keeps a prepared draft through panel unmount and clears it only after confirmed project leave",async()=>{
  const handle=createRef<AiHandle>();const user=await preview(handle);
+ for(const name of ["Share applicable adopted terms","Share saved context"]){
+  expect(screen.getByRole("checkbox",{name})).toBeChecked();await user.click(screen.getByRole("checkbox",{name}));
+ }
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await screen.findByRole("heading",{name:"Data sharing preview"});
+ const captured=structuredClone(prepared.preview.config);
+ expect(captured).toMatchObject({shareTerms:false,shareContext:false});
  await user.click(screen.getByRole("button",{name:"Back to overview"}));
  expect(document.querySelector("section.ai-dialog")).toBeNull();
  await user.click(screen.getByRole("button",{name:"AI work"}));
  expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model");
  expect(screen.getByRole("heading",{name:"Data sharing preview"})).toBeInTheDocument();
+ for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).not.toBeChecked();
  await act(async()=>{void handle.current!.allowLeave();});
  await user.click(await screen.findByRole("button",{name:"Stay and keep draft"}));
  expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model");
@@ -148,7 +155,11 @@ it("keeps a prepared draft through panel unmount and clears it only after confir
  await user.click(await screen.findByRole("button",{name:"Discard draft and leave"}));
  await user.click(screen.getByRole("button",{name:"AI work"}));
  expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("");
+ for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).toBeChecked();
+ for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])expect(screen.getByRole("checkbox",{name})).not.toBeChecked();
  expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+ expect(prepared.preview.config).toEqual(captured);
+ expect(invoke.mock.calls.some(([name])=>["authorize_work_plan","start_work_plan"].includes(name))).toBe(false);
 });
 it("retains AI preparation when its entire controller unmounts within the same project session",async()=>{
  const user=userEvent.setup();const rendered=render(<ToggleAiWorkbench project={project} mounted/>);
@@ -157,7 +168,9 @@ it("retains AI preparation when its entire controller unmounts within the same p
  await user.type(screen.getByRole("textbox",{name:"Model"}),"test-model");
  await user.clear(screen.getByRole("textbox",{name:"API key environment variable name"}));
  await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
- await user.click(screen.getByRole("checkbox",{name:"Share applicable adopted terms"}));
+ for(const name of ["Share applicable adopted terms","Share saved context"]){
+  expect(screen.getByRole("checkbox",{name})).toBeChecked();await user.click(screen.getByRole("checkbox",{name}));
+ }
  await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
  await screen.findByRole("heading",{name:"Data sharing preview"});
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));
@@ -171,7 +184,7 @@ it("retains AI preparation when its entire controller unmounts within the same p
  expect(screen.getByRole("textbox",{name:"Chat Completions URL"})).toHaveValue("http://127.0.0.1:4000/v1/chat/completions");
  expect(screen.getByRole("combobox",{name:"Target language"})).toHaveValue("zh-CN");
  expect(await screen.findByRole("checkbox",{name:"first: Hello"})).toBeChecked();
- expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).toBeChecked();
+ for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).not.toBeChecked();
  expect(screen.getByRole("heading",{name:"Data sharing preview"})).toBeInTheDocument();
  expect(screen.getByRole("checkbox",{name:/I confirm sending/})).toBeChecked();
  expect(screen.getByRole("checkbox",{name:/I authorize this checker/})).toBeChecked();
@@ -184,7 +197,21 @@ it("ignores a preview from a project that was replaced while the request was pen
  const user=userEvent.setup();const rendered=render(<TestAiWorkbench key="session" project={project} disabled={false} onOpenTranslation={async()=>true}/>);await user.click(screen.getByRole("button",{name:"AI work"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));let resolve:(value:WorkPlanView)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="prepare_work_plan"?new Promise<WorkPlanView>(done=>{resolve=done;}):original(command,args));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<TestAiWorkbench key="replacement" project={{...project,sessionToken:"replacement"}} disabled={false} onOpenTranslation={async()=>true}/>);resolve({...plan,checkers:[],planId,digest:"plan-digest",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false,advisoryChecks:[]},attemptId:aiAttempt,preview:prepared.preview,scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:"first",selectionId:null}]});await user.click(screen.getByRole("button",{name:"AI work"}));await screen.findByRole("checkbox",{name:"first: Hello"});expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);
 });
 
-it("requires exact sharing confirmation and invalidates it on configuration edits",async()=>{const user=await preview();expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).not.toBeChecked();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
+it("recommends adopted resources but requires exact sharing confirmation and invalidates it on configuration edits",async()=>{
+ const user=await preview();
+ expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();
+ for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).toBeChecked();
+ for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])expect(screen.getByRole("checkbox",{name})).not.toBeChecked();
+ const request=invoke.mock.calls.find(([command])=>command==="prepare_work_plan")![1].request;
+ expect(request.config).toEqual({...defaultAiConfig,endpoint:"http://127.0.0.1:4000/v1/chat/completions",model:"test-model",credentialEnv:"",shareTerms:true,shareContext:true});
+ expect(invoke.mock.calls.some(([c])=>["authorize_work_plan","start_work_plan"].includes(c))).toBe(false);
+ await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));
+ expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();
+ await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");
+ expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+ for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).toBeChecked();
+ expect(invoke.mock.calls.some(([c])=>["authorize_work_plan","start_work_plan"].includes(c))).toBe(false);
+});
 it("keeps empty limits editable and rejects them before preview serialization",async()=>{const user=await preview();await user.click(screen.getByText("Budget and limits"));await user.clear(screen.getByRole("spinbutton",{name:"Maximum requests including retries"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));expect(await screen.findByRole("alert")).toHaveFocus();expect(screen.getByRole("spinbutton",{name:"Maximum requests including retries"})).toHaveAttribute("aria-invalid","true");expect(invoke.mock.calls.filter(([c])=>c==="prepare_work_plan")).toHaveLength(1);expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it.each([true,false])("restores only execution budgets while retaining sharing choice %s and requiring fresh consent",async sharing=>{
  const linked:AiConfig={...prepared.preview.config,tokenField:"max_completion_tokens",connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}};
@@ -193,7 +220,9 @@ it.each([true,false])("restores only execution budgets while retaining sharing c
  const user=await preview();
  await user.selectOptions(screen.getByRole("combobox",{name:i18n.t("connections.choose")}),linked.connectionProfile!.profileId);
  for(const name of ["Share applicable adopted terms","Share saved context"]){
-  const checkbox=screen.getByRole("checkbox",{name});await user.click(checkbox);if(!sharing)await user.click(checkbox);
+  const checkbox=screen.getByRole("checkbox",{name});
+  if(!(checkbox instanceof HTMLInputElement))throw new Error("Expected a sharing checkbox");
+  if(checkbox.checked!==sharing)await user.click(checkbox);
  }
  for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])await user.click(screen.getByRole("checkbox",{name}));
  const sourceLimits=[["Source context budget (encoded bytes)",2048],["Maximum source context entries",17]] as const;
@@ -314,7 +343,7 @@ it("lets the user explicitly clear a removed cross-page AI scope without losing 
  expect(screen.getByRole("textbox",{name:"Chat Completions URL"})).toHaveValue("http://127.0.0.1:4000/v1/chat/completions");
  expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model");
  expect(screen.getByRole("combobox",{name:"Target language"})).toHaveValue("zh-CN");
- expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).toBeChecked();
+ expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).not.toBeChecked();
  expect(screen.getByRole("button",{name:"Preview what will be sent"})).toBeDisabled();
  await user.click(screen.getByRole("checkbox",{name:"second: World"}));
  await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
@@ -360,7 +389,7 @@ it("keeps checking independent of selection and preserves an explicit manual che
  expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model-newer B");
  expect(invoke.mock.calls.some(([name])=>name==="authorize_work_plan")).toBe(false);
 });
-it("requires exact sharing confirmation and invalidates it on configuration edits through the stable preparation consumer",async()=>{const user=await preview();expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).not.toBeChecked();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
+it("requires exact sharing confirmation and invalidates it on configuration edits through the stable preparation consumer",async()=>{const user=await preview();expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).toBeChecked();expect(screen.getByRole("checkbox",{name:"Share saved context"})).toBeChecked();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it("keeps empty limits editable and rejects them before preview serialization through the stable preparation consumer",async()=>{const user=await preview();await user.click(screen.getByText("Budget and limits"));await user.clear(screen.getByRole("spinbutton",{name:"Maximum requests including retries"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));expect(await screen.findByRole("alert")).toHaveFocus();expect(screen.getByRole("spinbutton",{name:"Maximum requests including retries"})).toHaveAttribute("aria-invalid","true");expect(invoke.mock.calls.filter(([c])=>c==="prepare_work_plan")).toHaveLength(1);expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it("saves a normal candidate without issuing a translation selection",async()=>{const user=await preview();await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));await waitFor(()=>expect(invoke.mock.calls.some(([c])=>c==="adopt_execution")).toBe(true));expect(invoke.mock.calls.some(([c])=>c==="select_translation_revision")).toBe(false);expect(screen.getAllByText(/Total usage/).length).toBeGreaterThan(0);});
 it("keeps an uncertain start identity and blocks leaving until reconciliation",async()=>{const user=await preview();const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject({code:"outcome-unknown"}):original(command,args));await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await screen.findByText(/Start may have succeeded/);expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();await user.click(screen.getByRole("button",{name:"Check saved result"}));await waitFor(()=>expect(screen.queryByText(/Start may have succeeded/)).not.toBeInTheDocument());const calls=invoke.mock.calls.filter(([c])=>c==="start_work_plan");expect(calls).toHaveLength(1);expect(calls[0][1].request).toMatchObject({planId,expectedGeneration:"1",actionId:fixtureIdentity(510)});});

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/aiCommands.contract.json";
 import execution from "../test/fixtures/executionCommands.contract.json";
 import { AiPreparationSession, useAiPreparation } from "./AiPreparationSession";
-import type { AiConfig, AiItem, AiPrepared, AiView } from "./aiCommands";
+import { defaultAiConfig, type AiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
 import { isCommandError, type CommandError, type ProjectView } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
@@ -107,6 +107,39 @@ async function prepare() {
   await act(async () => { await owner.preview(); });
   act(() => { owner.setConsent(true); });
 }
+
+it("recommends adopted resources only for new drafts and explicit full resets without changing captured defaults", async () => {
+  render(<Harness />, project);
+  const recommendation = { ...defaultAiConfig, shareTerms: true, shareContext: true };
+  expect(owner.config).toEqual(recommendation);
+  expect(owner.config.sourceContext).toEqual({ extracted: false, inferred: false, neighbors: false, maxBytes: 16384, maxItems: 128 });
+  expect(defaultAiConfig.shareTerms).toBe(false); expect(defaultAiConfig.shareContext).toBe(false);
+  expect(owner.consent).toBe(false); expect(owner.dirty).toBe(false);
+  expect(owner.canStart()).toBe(false); expect(invoke).not.toHaveBeenCalled();
+
+  // Loading an explicit configuration keeps its original sharing choices.
+  prepared.preview.config = { ...prepared.preview.config, shareTerms: false, shareContext: false };
+  items = items.map<AiItem>(item => ({ ...item, terms: [], context: null, projectContext: { kind: "not-selected" },
+    omissions: ["terms-not-shared", "context-not-shared"] }));
+  prepared.preview.items = items;
+  await prepare();
+  const captured = owner.prepared!, capturedConfig = structuredClone(captured.preview.config);
+  expect(capturedConfig).toMatchObject({ shareTerms: false, shareContext: false });
+  expect(captured.preview.items).toEqual(items);
+  expect(captured.preview.items.every(item => item.terms.length === 0 && item.context === null && item.projectContext.kind === "not-selected")).toBe(true);
+  act(() => { owner.setConfig(before => ({ ...before, model: "newer B", maxRequests: 7,
+    sourceContext: { extracted: true, inferred: true, neighbors: true, maxBytes: 2048, maxItems: 17 } })); });
+  expect(owner.config).toMatchObject({ shareTerms: false, shareContext: false });
+  expect(owner.prepared).toBeNull(); expect(owner.consent).toBe(false);
+  const count = invoke.mock.calls.length;
+  act(() => { expect(owner.reset()).toBe(true); });
+  expect(owner.config).toEqual(recommendation);
+  expect(owner.prepared).toBeNull(); expect(owner.preparedPlan).toBeNull();
+  expect(owner.selected).toEqual([]); expect(owner.consent).toBe(false); expect(owner.dirty).toBe(false);
+  expect(captured.preview.config).toEqual(capturedConfig);
+  expect(defaultAiConfig.shareTerms).toBe(false); expect(defaultAiConfig.shareContext).toBe(false);
+  expect(invoke.mock.calls).toHaveLength(count);
+});
 
 it("recommends checks only in a new draft and preserves an explicit manual choice through consumer remount and newer input", () => {
   const rendered = render(<Harness />, project);
@@ -673,12 +706,15 @@ function selectSaved() {
   const config=savedConnection(),view=connectionFixture([config]);
   act(()=>{application.setQueryData(connectionReadKey,view);expect(owner.selectConnection(view,config.connectionProfile.profileId,owner.editSeq)).toBe(true);});return view;
 }
-it("copies only saved defaults and exact identity while retaining scope sharing and invocation limits",()=>{
-  render(<Harness/>,project);act(()=>{owner.setConfig({...prepared.preview.config,maxRequests:4,maxOutputTokens:37,shareContext:true});owner.setPresetName("openai");owner.setSelected([items[0].unitId]);});
-  const before=owner.current(),view=selectSaved();expect(owner.config).toMatchObject({...view.snapshot.profiles[0].connection,connectionProfile:view.references[0],maxRequests:4,maxOutputTokens:37,shareContext:true});
+it.each([true,false])("copies only saved defaults and exact identity while retaining terms opt-out, context choice %s, and invocation limits",sharing=>{
+  const rendered=render(<Harness/>,project);act(()=>{owner.setConfig({...prepared.preview.config,maxRequests:4,maxOutputTokens:37,shareTerms:false,shareContext:sharing});owner.setPresetName("openai");owner.setSelected([items[0].unitId]);});
+  const before=owner.current(),view=selectSaved();expect(owner.config).toMatchObject({...view.snapshot.profiles[0].connection,connectionProfile:view.references[0],maxRequests:4,maxOutputTokens:37,shareTerms:false,shareContext:sharing});
   expect(owner.presetName).toBe("custom");expect(owner.selected).toEqual(before.selected);expect(owner.locale).toBe(before.locale);expect(owner.consent).toBe(false);expect(calls("preview_ai_translation")).toHaveLength(0);
   act(()=>owner.setConfig({...owner.config,maxRequests:3}));expect(owner.config.connectionProfile).toEqual(view.references[0]);
   act(()=>owner.setConfig({...owner.config,endpoint:"https://edited.example.test/v1"}));expect(owner.config.connectionProfile).toBeNull();expect(application.getQueryData(connectionReadKey)).toEqual(view);
+  const edited=owner.config;
+  rendered.rerender(<Harness mounted={false}/>);rendered.rerender(<Harness/>);
+  expect(owner.config).toEqual(edited);expect(owner.config).toMatchObject({shareTerms:false,shareContext:sharing});
 });
 it("refuses an old picker selection after newer input or an unconfirmed current read",()=>{
   render(<Harness/>,project);const config=savedConnection(),view=connectionFixture([config]);act(()=>application.setQueryData(connectionReadKey,view));const seq=owner.editSeq;
@@ -694,11 +730,22 @@ it("keeps consent through an unchanged reread but revokes it for a changed selec
   act(()=>application.setQueryData(connectionReadKey,newer));expect(owner.prepared).toBeNull();expect(owner.consent).toBe(false);expect(owner.config).toEqual(config);expect(owner.staleReason).toBe("connection");
 });
 it("retains an original unknown start through saved-profile changes without renewing or recapturing it",async()=>{
-  render(<Harness/>,project);const view=selectSaved();act(()=>owner.setSelected([items[0].unitId]));await act(async()=>owner.preview());act(()=>owner.setConsent(true));
+  const rendered=render(<Harness/>,project);act(()=>owner.setConfig(before=>({...before,shareTerms:false,shareContext:false})));const view=selectSaved();act(()=>owner.setSelected([items[0].unitId]));await act(async()=>owner.preview());act(()=>owner.setConsent(true));
   const response=deferred<unknown>(),original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="start_ai_translation"?response.promise:original(command,args));
   let start!:Promise<void>;act(()=>{start=owner.start();});const request=structuredClone(owner.pendingStart!.request),capture=owner.pendingStart!.prepared;
+  act(()=>owner.setConfig(before=>({...before,model:"newer B"})));const newer=owner.config;
+  rendered.rerender(<Harness mounted={false}/>);
   const changed=structuredClone(view);changed.snapshot.profiles[0].archived=true;changed.references=[];act(()=>application.setQueryData(connectionReadKey,changed));
-  await act(async()=>{response.reject(new Error("Lost original ACK"));await start;});expect(owner.pendingStart?.request).toEqual(request);expect(owner.pendingStart?.prepared).toEqual(capture);expect(owner.pendingStart?.uncertain).toBe(true);expect(calls("start_ai_translation")).toHaveLength(1);
+  await act(async()=>{response.reject(new Error("Lost original ACK"));await start;});
+  rendered.rerender(<Harness/>);
+  expect(owner.pendingStart?.request).toEqual(request);expect(owner.pendingStart?.prepared).toEqual(capture);expect(owner.pendingStart?.uncertain).toBe(true);expect(calls("start_ai_translation")).toHaveLength(1);
+  expect(owner.config).toEqual(newer);expect(owner.config).toMatchObject({model:"newer B",shareTerms:false,shareContext:false});
+  expect(capture.preview.config).toMatchObject({shareTerms:false,shareContext:false});
+  act(()=>expect(owner.reset()).toBe(false));
+  await act(async()=>owner.checkStart());
+  expect(owner.pendingStart).toBeNull();expect(owner.started?.prepared).toEqual(capture);
+  expect(owner.config).toEqual(newer);expect(owner.dirty).toBe(true);expect(owner.consent).toBe(false);
+  expect(calls("start_ai_translation")).toHaveLength(1);
 });
 
 it.each([["extracted",true],["inferred",true],["neighbors",true],["maxBytes",2048],["maxItems",4]] as const)("revokes preparation and consent when source context %s changes", async (key,value) => {

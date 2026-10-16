@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- New AI workbench drafts recommend including applicable adopted terms and saved
+  human context. Review the exact request and explicitly confirm sharing before
+  execution. Turning either category off remains available; source observations
+  retain their separate, initially disabled choices.
+
 - Open the current selected translation for an AI result directly in human
   Review. The handoff verifies the exact entry, language and current source,
   preserves both workspaces' drafts and unresolved actions, and retains the AI
