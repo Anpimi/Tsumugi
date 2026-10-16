@@ -22,6 +22,16 @@ function receiptOf(view: AiView) {
   if (!receipt?.evidence) throw new Error("Captured selection evidence required");
   return { receipt, evidence: receipt.evidence };
 }
+function checkOnlyView(view = automaticViewFixture()): AiView {
+  const { receipt } = receiptOf(view), effect = view.rows[0].automation;
+  if (!effect) throw new Error("Candidate work required");
+  effect.phase = "checked";
+  receipt.policy = "candidates-only";
+  receipt.policyVersion = "checked-selection-3";
+  receipt.candidateBasis.selectionId = null;
+  receipt.selection = null; receipt.checkRunId = null; receipt.blocked = null;
+  return view;
+}
 function advisoryViewFixture(status: "findings" | "failed" | "unknown" | "unavailable"): AiView {
   const view = automaticViewFixture();
   const { receipt, evidence } = receiptOf(view);
@@ -61,6 +71,46 @@ function advisoryViewFixture(status: "findings" | "failed" | "unknown" | "unavai
   if (!validators.validateResponseView(observed)) throw new Error("Invalid joint selection fixture");
   return observed;
 }
+
+it("reads a recorded candidate check without claiming a selected revision or current QA", async () => {
+  const view = checkOnlyView();
+  expect(validators.validateResponseView(view)).toBe(true);
+  invoke.mockResolvedValueOnce(view);
+  expect(await aiCommands.read(fixture.requests.automaticRead)).toEqual(view);
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it.each(["findings", "failed", "unknown", "unavailable"] as const)("preserves complete check-only %s evidence without granting selection", async status => {
+  const view = checkOnlyView(advisoryViewFixture(status));
+  invoke.mockResolvedValueOnce(view);
+  const read = await aiCommands.read(fixture.requests.automaticRead);
+  expect(read.rows[0].automation?.receipt).toEqual(view.rows[0].automation?.receipt);
+  expect(read.rows[0].automation?.phase).toBe("checked");
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it("rejects check-only receipts that claim selection, current QA, another candidate or another authority", async () => {
+  const selected = receiptOf(automaticViewFixture()).receipt;
+  const changes: ((view: AiView) => void)[] = [
+    view => { receiptOf(view).receipt.selection = selected.selection; },
+    view => { receiptOf(view).receipt.checkRunId = selected.checkRunId; },
+    view => { receiptOf(view).receipt.blocked = "protected"; },
+    view => { receiptOf(view).receipt.candidateBasis.selectionId = fixtureIdentity(942); },
+    view => { receiptOf(view).receipt.candidateBasis.revisionId = fixtureIdentity(942); },
+    view => { receiptOf(view).receipt.request.revisionId = fixtureIdentity(942); },
+    view => { receiptOf(view).receipt.request.projectId = fixtureIdentity(942); },
+    view => { receiptOf(view).receipt.request.lease.generation = "2"; },
+    view => { receiptOf(view).receipt.request.actionId = fixtureIdentity(942); },
+    view => { const effect = view.rows[0].automation; if (!effect) throw new Error("Missing effect"); effect.phase = "selected"; },
+    view => { const effect = view.rows[0].automation; if (!effect) throw new Error("Missing effect"); effect.receipt = null; },
+  ];
+  for (const change of changes) {
+    const view = checkOnlyView(); change(view);
+    expect(validators.validateResponseView(view)).toBe(true);
+    invoke.mockResolvedValueOnce(view);
+    await expect(aiCommands.read(fixture.requests.automaticRead)).rejects.toThrow("automatic selection");
+  }
+});
 
 it("validates both directions of every shared AI contract", async () => {
   for (const [validate, value] of [

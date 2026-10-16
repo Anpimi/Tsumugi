@@ -1,4 +1,4 @@
-//! Checked policy selection shares ordinary translation and QA authorities.
+//! Candidate QA and checked selection share ordinary translation/QA authorities.
 use super::{ProjectStore, control};
 use crate::{
     CheckRuleResult, ReviewTarget, TermResolution,
@@ -8,13 +8,28 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
-const POLICY_VERSION: &str = "checked-selection-2";
+const POLICY_VERSION: &str = "checked-selection-3";
 
 fn error(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
 }
 fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, ExecutionError> {
     codec::encode(value, MAX_INPUT_BYTES)
+}
+fn valid_receipt_outcome(receipt: &AutomaticSelectionReceipt) -> bool {
+    receipt.candidate_basis.revision_id == Some(receipt.request.revision_id)
+        && match receipt.policy {
+            SelectionPolicy::CandidatesOnly => {
+                receipt.candidate_basis.selection_id.is_none()
+                    && receipt.blocked.is_none()
+                    && receipt.selection.is_none()
+                    && receipt.check_run_id.is_none()
+            }
+            SelectionPolicy::MissingOnly | SelectionPolicy::ReplaceCapturedSelection => {
+                receipt.blocked.is_some() != receipt.selection.is_some()
+                    && receipt.selection.is_some() == receipt.check_run_id.is_some()
+            }
+        }
 }
 fn checks_allow_selection(
     rules: &[CheckRuleResult],
@@ -159,6 +174,7 @@ fn recorded(
             || request != encode(&value.request)?
             || digest != codec::digest(&request)
             || receipt_digest != codec::digest(&receipt)
+            || !valid_receipt_outcome(&value)
         {
             return Err(error(ErrorCode::CorruptLedger, "work-selection-receipt"));
         }
@@ -176,7 +192,7 @@ fn recorded(
             if value.validator_version != review::CURRENT_CHECK_VERSION {
                 return Err(error(ErrorCode::CorruptLedger, "work-selection-validator"));
             }
-            if value.blocked.is_none() {
+            if value.policy != SelectionPolicy::CandidatesOnly && value.blocked.is_none() {
                 let (check, _) = review::check_by_action(c, value.request.project_id, action)?
                     .ok_or_else(|| error(ErrorCode::CorruptLedger, "work-selection-check"))?;
                 let (selected, _) = translation::selection_by_action(c, action)?
@@ -197,6 +213,12 @@ fn recorded(
             }
         } else if !cfg!(any(test, feature = "execution-test-host")) {
             return Err(error(ErrorCode::CorruptLedger, "work-selection-evidence"));
+        }
+        if value.policy == SelectionPolicy::CandidatesOnly
+            && (translation::selection_by_action(c, action)?.is_some()
+                || review::check_by_action(c, value.request.project_id, action)?.is_some())
+        {
+            return Err(error(ErrorCode::CorruptLedger, "work-selection-check-only"));
         }
         Ok(value)
     })
@@ -266,9 +288,7 @@ fn authority(
         return Err(error(ErrorCode::Cancelled, "work-plan-control"));
     }
     let effect = match stored.plan.options.selection_policy {
-        SelectionPolicy::CandidatesOnly => {
-            return Err(error(ErrorCode::Unauthorized, "work-selection-policy"));
-        }
+        SelectionPolicy::CandidatesOnly => AutomationEffect::SaveCandidate,
         SelectionPolicy::MissingOnly => AutomationEffect::SelectMissing,
         SelectionPolicy::ReplaceCapturedSelection => AutomationEffect::ReplaceCapturedSelection,
     };
@@ -375,7 +395,8 @@ fn capture(
         request.project_id,
         request.action_id,
         &target,
-        selection_event,
+        (stored.plan.options.selection_policy != SelectionPolicy::CandidatesOnly)
+            .then_some(selection_event),
         request.revision_id,
         &text,
         &terms,
@@ -538,7 +559,10 @@ impl ProjectStore {
                 "review-plugin-evidence-required",
             ));
         }
-        let blocked = if current.protection.protected {
+        let selecting = current.policy != SelectionPolicy::CandidatesOnly;
+        let blocked = if !selecting {
+            None
+        } else if current.protection.protected {
             Some(AutomaticSelectionBlock::Protected)
         } else if current.policy == SelectionPolicy::MissingOnly
             && current.target.selection_id.is_some()
@@ -556,6 +580,9 @@ impl ProjectStore {
         let digest = codec::digest(&bytes);
         let mut candidate_basis = capture.target.basis_evidence;
         candidate_basis.revision_id = Some(request.revision_id);
+        if !selecting {
+            candidate_basis.selection_id = None;
+        }
         if let Some(adoption) = &computed.adoption {
             candidate_basis = adoption.candidate_basis().clone();
         }
@@ -579,7 +606,7 @@ impl ProjectStore {
             selection: None,
             check_run_id: None,
         };
-        if receipt.blocked.is_none() {
+        if selecting && receipt.blocked.is_none() {
             let prior = translation::current_selection(&tx, request.unit_id, &request.locale)?;
             let sequence = translation::check_expected(&prior, current.target.selection_id)?;
             let selected = translation::insert_reserved_selection(
@@ -627,6 +654,12 @@ impl ProjectStore {
             receipt.check_run_id = Some(check.run_id);
             tx.observer.add_scope(crate::ChangeScope::Translation);
             tx.observer.add_scope(crate::ChangeScope::Review);
+        }
+        if !selecting
+            && (translation::selection_by_action(&tx, request.action_id)?.is_some()
+                || review::check_by_action(&tx, request.project_id, request.action_id)?.is_some())
+        {
+            return Err(error(ErrorCode::ResultMismatch, "work-selection-action"));
         }
         let result = encode(&receipt)?;
         tx.execute(
@@ -702,7 +735,7 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             || request.lease.generation.get() == 0
             || request.lease.generation > stored.lease.generation
             || receipt.policy != stored.plan.options.selection_policy
-            || receipt.policy == SelectionPolicy::CandidatesOnly
+            || !stored.effects.contains(&AutomationEffect::RunChecks)
             || receipt.policy_version != POLICY_VERSION
             || receipt.validator_version != review::validator_version(receipt.evidence.as_ref())?
             || receipt.candidate_basis.source_revision_id != basis.source_revision_id
@@ -716,8 +749,7 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             || receipt.candidate_basis.revision_id != Some(request.revision_id)
             || !valid_candidate
             || receipt.selection.as_ref().map(|s| s.event_id.to_string()) != selection
-            || receipt.blocked.is_some() == receipt.selection.is_some()
-            || receipt.selection.is_some() != receipt.check_run_id.is_some()
+            || !valid_receipt_outcome(&receipt)
         {
             return Err(error(ErrorCode::CorruptLedger, "work-selection-receipt"));
         }
@@ -1750,6 +1782,215 @@ mod tests {
             assert_eq!(
                 store.control_work_plan(&resume).unwrap_err().stage,
                 "work-plan-selection"
+            );
+        }
+    }
+
+    #[test]
+    fn candidate_checks_require_exact_effects_and_manual_candidates_remain_save_only() {
+        let (_temp, mut store, _project, units) = fixture();
+        let manual = PlanOptions::default();
+        assert_eq!(manual.selection_policy, SelectionPolicy::CandidatesOnly);
+        assert!(!manual.requests(AutomationEffect::RunChecks));
+        let config = crate::ai::AiConfig {
+            endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+            model: "synthetic-candidate-checks".into(),
+            credential_env: String::new(),
+            ..crate::ai::AiConfig::default()
+        };
+        let plan = store
+            .prepare_work_plan(Some(config), "zh-CN", &[units[0]], manual)
+            .unwrap();
+        assert_eq!(
+            plan.authorization_effects().unwrap(),
+            [AutomationEffect::SaveCandidate]
+        );
+        let mut authorization = AuthorizeWorkPlan {
+            action_id: ExecutionId::new(),
+            plan_digest: plan.digest.clone(),
+            confirmed: true,
+            effects: vec![AutomationEffect::SaveCandidate, AutomationEffect::RunChecks],
+            expires_at: control::now().unwrap() + 600,
+        };
+        assert_eq!(
+            store
+                .authorize_work_plan(&plan, &authorization)
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        authorization.effects = vec![AutomationEffect::SaveCandidate];
+        let input = FixedInput::capture(
+            store
+                .authorize_work_plan(&plan, &authorization)
+                .unwrap()
+                .input
+                .unwrap(),
+        )
+        .unwrap();
+        store.enqueue_execution(&input).unwrap();
+        let revision = candidate(&mut store, &input, units[0], "自动 {{name}}");
+        let request = request(&input, units[0], revision);
+        assert_eq!(
+            store
+                .prepare_automatic_selection(&request)
+                .unwrap_err()
+                .stage,
+            "work-selection-effect"
+        );
+        assert!(
+            store
+                .automatic_selection_receipt(request.action_id)
+                .unwrap()
+                .is_none()
+        );
+        let (checked, _) = grant(&mut store, &[units[1]], SelectionPolicy::CandidatesOnly);
+        assert_eq!(
+            checked.authorization_effects().unwrap(),
+            [AutomationEffect::SaveCandidate, AutomationEffect::RunChecks]
+        );
+        let mut selecting = checked.authorization_effects().unwrap();
+        selecting.push(AutomationEffect::SelectMissing);
+        let unauthorized = AuthorizeWorkPlan {
+            action_id: ExecutionId::new(),
+            plan_digest: checked.digest.clone(),
+            confirmed: true,
+            effects: selecting,
+            expires_at: control::now().unwrap() + 600,
+        };
+        assert_eq!(
+            store
+                .authorize_work_plan(&checked, &unauthorized)
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+    }
+
+    #[test]
+    fn candidate_checks_recheck_current_basis_and_control_before_commit() {
+        for mode in [
+            "source",
+            "resources",
+            "protection",
+            "manual",
+            "cancel",
+            "pause",
+            "stop",
+            "take-over",
+            "continue",
+        ] {
+            let (_temp, mut store, project, units) = fixture();
+            let (plan, input) = grant(&mut store, &[units[0]], SelectionPolicy::CandidatesOnly);
+            let revision = candidate(&mut store, &input, units[0], "自动 {{name}}");
+            let action = request(&input, units[0], revision);
+            let cancel = Cancellation::default();
+            let computed = store
+                .prepare_automatic_selection(&action)
+                .unwrap()
+                .compute(&cancel)
+                .unwrap();
+            match mode {
+                "source" => {
+                    crate::persistence::review::tests::adopt_source(
+                        &mut store,
+                        br#"{"hello":"Changed {{name}}","plain":"Plain"}"#,
+                    );
+                }
+                "resources" => {
+                    store
+                        .save_context(&crate::SaveContext {
+                            project_id: project,
+                            action_id: ExecutionId::new(),
+                            unit_id: units[0],
+                            locale: "zh-CN".into(),
+                            text: "New current interpretation".into(),
+                            source_revision_id: plan.selection_basis[0].source_revision_id,
+                            expected_revision_id: None,
+                            reason: "Synthetic resource conflict".into(),
+                        })
+                        .unwrap();
+                }
+                "protection" => {
+                    store
+                        .set_work_protection(&SetWorkProtection {
+                            action_id: ExecutionId::new(),
+                            project_id: project,
+                            unit_id: units[0],
+                            locale: "zh-CN".into(),
+                            source_revision_id: plan.selection_basis[0].source_revision_id,
+                            selection_id: None,
+                            expected_revision: store
+                                .work_protection(units[0], "zh-CN")
+                                .unwrap()
+                                .revision,
+                            protected: true,
+                            confirmed_release: false,
+                        })
+                        .unwrap();
+                }
+                "manual" => {
+                    translate(&mut store, project, units[0], "zh-CN", "新的人工 {{name}}");
+                }
+                "cancel" => cancel.request(),
+                _ => {
+                    let command = match mode {
+                        "stop" => WorkPlanCommand::Stop,
+                        "take-over" => WorkPlanCommand::TakeOver,
+                        _ => WorkPlanCommand::Pause,
+                    };
+                    let stopped = store
+                        .control_work_plan(&ControlWorkPlan {
+                            action_id: ExecutionId::new(),
+                            plan_id: plan.plan_id,
+                            expected_generation: action.lease.generation,
+                            command,
+                            confirmed: false,
+                            expires_at: None,
+                        })
+                        .unwrap();
+                    if mode == "continue" {
+                        store
+                            .control_work_plan(&ControlWorkPlan {
+                                action_id: ExecutionId::new(),
+                                plan_id: plan.plan_id,
+                                expected_generation: stopped.lease.generation,
+                                command: WorkPlanCommand::Continue,
+                                confirmed: true,
+                                expires_at: Some(control::now().unwrap() + 600),
+                            })
+                            .unwrap();
+                    }
+                }
+            }
+            let error = store
+                .commit_automatic_selection(computed, &cancel)
+                .unwrap_err();
+            assert_eq!(
+                error.code,
+                if matches!(mode, "source" | "resources" | "protection" | "manual") {
+                    ErrorCode::DependencyConflict
+                } else {
+                    ErrorCode::Cancelled
+                },
+                "{mode}: {error:?}"
+            );
+            assert!(
+                store
+                    .automatic_selection_receipt(action.action_id)
+                    .unwrap()
+                    .is_none(),
+                "{mode}"
+            );
+            assert_eq!(
+                store
+                    .saved_ai_candidate(
+                        input.envelope().attempt_id,
+                        input.envelope().items[0].item_id
+                    )
+                    .unwrap(),
+                Some(revision),
+                "{mode}"
             );
         }
     }

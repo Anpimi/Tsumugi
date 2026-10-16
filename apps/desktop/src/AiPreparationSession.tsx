@@ -23,7 +23,7 @@ import type { ChangeScope } from "./sessionReads";
 import { sourceReads } from "./sourceQueries";
 import { contentSelectionIds, validContentSelection, type ContentSelection } from "./contentSelection";
 
-export const defaultPlanOptions: PlanOptions = { stages: (["understanding", "resources", "generation", "checks", "delivery"] as const).map(stage => ({ stage, mode: stage === "generation" ? "assisted" : "manual" })), selectionPolicy: "candidates-only", adoptResources: false, deliver: false, advisoryChecks: [] };
+export const defaultPlanOptions: PlanOptions = { stages: (["understanding", "resources", "generation", "checks", "delivery"] as const).map(stage => ({ stage, mode: stage === "generation" || stage === "checks" ? "assisted" : "manual" })), selectionPolicy: "candidates-only", adoptResources: false, deliver: false, advisoryChecks: [] };
 export type WorkPlanContinuation = (() => boolean) & { fresh: () => boolean; acceptPlan: (status: WorkPlanStatusView) => boolean };
 type PreparationCapture = { kind: "direct"; value: AiPrepared } | { kind: "plan"; value: WorkPlanView };
 

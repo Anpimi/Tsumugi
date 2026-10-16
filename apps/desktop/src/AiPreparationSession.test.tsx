@@ -108,6 +108,27 @@ async function prepare() {
   act(() => { owner.setConsent(true); });
 }
 
+it("recommends checks only in a new draft and preserves an explicit manual choice through consumer remount and newer input", () => {
+  const rendered = render(<Harness />, project);
+  expect(owner.options.selectionPolicy).toBe("candidates-only");
+  expect(owner.options.stages.filter(choice => choice.stage === "generation" || choice.stage === "checks")
+    .every(choice => choice.mode === "assisted")).toBe(true);
+  expect(owner.consent).toBe(false);
+  expect(invoke).not.toHaveBeenCalled();
+  act(() => {
+    owner.setOptions(before => ({ ...before, stages: before.stages.map(choice => choice.stage === "checks" ? { ...choice, mode: "manual" } : choice) }));
+    owner.setConfig(before => ({ ...before, model: "manual-checks-newer-B" }));
+  });
+  const original = owner.current();
+  rendered.rerender(<Harness mounted={false} />);
+  rendered.rerender(<Harness />);
+  expect(owner.options).toEqual(original.options);
+  expect(owner.config.model).toBe("manual-checks-newer-B");
+  expect(owner.dirty).toBe(true);
+  expect(owner.consent).toBe(false);
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it("transfers exact fixed content members without execution, preserving configuration and invalidating the old preview and consent", async () => {
   render(<Harness />, project); await prepare();
   const before = owner.current(), selection = contentRange(), count = invoke.mock.calls.length;

@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Save AI candidates and automatically run their explicitly authorized checks
+  while leaving translation selection to a person. Candidate check evidence
+  retains its findings and execution history without becoming current QA,
+  approval or delivery qualification. New workbench drafts recommend this
+  combination; captured plans and explicit manual checks keep their choices.
+
 - A native read-only reference tool with one callable can explicitly share an
   Application instance across projects. Native Host approval, instance lifetime
   consent and each query's own grant remain separate; stopping retires the exact
@@ -49,7 +55,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   saves only through the existing explicit context revision flow. Extracted
   facts and AI inferences are unchanged.
 
-- Current development projects use current-only schema 43 and internal immutable
+- Current development projects use current-only schema 45 and internal immutable
   WorkPlan format 3. Captured component scope, application instance, original
   grant consent, project-context capture and maintenance fields have no implicit defaults. Other
   development project formats are refused before

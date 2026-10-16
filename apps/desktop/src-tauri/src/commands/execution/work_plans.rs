@@ -2360,7 +2360,7 @@ mod tests {
         assert_eq!(row["automation"]["phase"], "selected", "{view}");
         assert_eq!(receipt["request"]["revisionId"], row["savedRevisionId"]);
         assert_eq!(receipt["request"]["lease"]["planId"], plan["planId"]);
-        assert_eq!(receipt["policyVersion"], "checked-selection-2");
+        assert_eq!(receipt["policyVersion"], "checked-selection-3");
         assert!(receipt["checkRunId"].is_string());
         assert_eq!(receipt["rules"].as_array().unwrap().len(), 4);
         assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));

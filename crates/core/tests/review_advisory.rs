@@ -1095,3 +1095,6 @@ fn advisory_review_captures_execution_scope_without_changing_required_policy() {
     wrong.execution.component_scope = sdk::ComponentScope::Application;
     assert!(wrong.validate().is_err());
 }
+
+#[path = "review_advisory/candidate_checks.rs"]
+mod candidate_checks;

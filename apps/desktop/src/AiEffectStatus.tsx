@@ -12,6 +12,7 @@ export function AiEffectStatus({ effect, disabled, onRetry }: {
   const statusKeys: Record<string, "passed" | "notApplicable" | "findings" | "checkFailed" | "checkCancelled" | "checkUnknown"> = { passed: "passed", "not-applicable": "notApplicable", findings: "findings", failed: "checkFailed", cancelled: "checkCancelled", unknown: "checkUnknown" };
   return <section aria-label={t("ai.effects.title")}>
     <p>{t(`ai.effects.phases.${effect.phase}`)}</p>
+    {effect.phase === "checked" ? <p>{t("ai.effects.candidateChecksOnly")}</p> : null}
     {effect.receipt ? <>
       <p>{t("ai.effects.policy", { policy: effect.receipt.policyVersion })}</p>
       {effect.receipt.blocked ? <p>{t(`ai.effects.blocks.${effect.receipt.blocked}`)}</p> : null}

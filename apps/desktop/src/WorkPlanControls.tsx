@@ -187,8 +187,10 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   }
   function effects():AutomationEffect[] {
     if(!plan)return [];
-    return [...(plan.options.selectionPolicy==="candidates-only"?["save-candidate"] as const:
-      ["save-candidate","run-checks",plan.options.selectionPolicy==="missing-only"?"select-missing":"replace-captured-selection"] as const),...(toolsRequired?["query-tools"] as const:[])];
+    return ["save-candidate",...(checkerRequired?["run-checks"] as const:[]),
+      ...(plan.options.selectionPolicy==="candidates-only"?[]:
+        [plan.options.selectionPolicy==="missing-only"?"select-missing":"replace-captured-selection"] as const),
+      ...(toolsRequired?["query-tools"] as const:[])];
   }
   function startPayload():AiStartCommandPayload|undefined {
     return prepared?.preview&&prepared.attemptId?{kind:"ai-start",planId:prepared.planId,digest:prepared.digest,attemptId:prepared.attemptId,

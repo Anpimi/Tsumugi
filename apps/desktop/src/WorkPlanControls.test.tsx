@@ -95,6 +95,43 @@ it("keeps an unavailable selected checker visible and prevents authorization", a
   expect(authorize).not.toHaveBeenCalled();
 });
 
+it.each(["manual", "assisted"] as const)("keeps CandidatesOnly %s checks independent of selection authority", async mode => {
+  const plan = planFixture();
+  plan.options.selectionPolicy = "candidates-only";
+  plan.options.stages = plan.options.stages.map(choice => choice.stage === "checks" ? { ...choice, mode } : choice);
+  if (mode === "manual") { plan.checkers = []; plan.options.advisoryChecks = []; }
+  const receipt = wire.responses.receipt;
+  if (!validateResponseWorkPlanReceipt(receipt) || !receipt.attemptId) throw new Error("Invalid receipt fixture");
+  vi.spyOn(executionCommands, "identity").mockResolvedValue(receipt.actionId);
+  const authorize = vi.spyOn(workPlanCommands, "authorize").mockResolvedValue(receipt);
+  vi.spyOn(workPlanCommands, "start").mockResolvedValue(receipt.attemptId);
+  const effects: WorkPlanStatusView["effects"] = mode === "assisted" ? ["save-candidate", "run-checks"] : ["save-candidate"];
+  const status: WorkPlanStatusView = { plan, lease: receipt.lease, state: "active", effects,
+    expiresAt: "9007199254740994", toolInvocations: null };
+  const started = vi.fn(), user = userEvent.setup();
+  render(<WorkPlanControls context={{ sessionToken: "session", projectId: wire.requests.prepare.projectId }} prepared={plan}
+    status={null} busy={false} disabled={false} consent refresh={vi.fn().mockResolvedValue(status)}
+    run={async work => { await work(() => true); }} onPlan={vi.fn()} onStarted={started}
+    onBlockedChange={vi.fn()} onOpenTranslation={vi.fn()} />);
+  const generate = screen.getByRole("button", { name: "Send and generate candidates" });
+  const confirmations = screen.queryAllByRole("checkbox", { name: i18n.t("ai.plan.checkerConsent") });
+  if (mode === "assisted") {
+    expect(confirmations).toHaveLength(plan.checkers.length);
+    expect(generate).toBeDisabled();
+    await user.click(generate);
+    expect(authorize).not.toHaveBeenCalled();
+    for (const confirmation of confirmations) await user.click(confirmation);
+  } else {
+    expect(confirmations).toHaveLength(0);
+    expect(generate).toBeEnabled();
+  }
+  await user.click(generate);
+  await waitFor(() => expect(started).toHaveBeenCalled());
+  expect(authorize.mock.calls[0][0].effects).toEqual(effects);
+  expect(authorize.mock.calls[0][0].checkerExecutions).toEqual(mode === "assisted" ? plan.checkers.map(checker => checker.checker) : []);
+  expect(authorize.mock.calls[0][0].effects.some(effect => effect === "select-missing" || effect === "replace-captured-selection")).toBe(false);
+});
+
 it("keeps tool execution consent independent of every captured checker and invalidates it on tool changes", async () => {
   const tools = workPlanToolStatus.plan.tools;
   if (!tools) throw new Error("Captured tool fixture required");

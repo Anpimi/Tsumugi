@@ -25,23 +25,24 @@ pub use execution::{
     ReviewCheckOriginEvidence, ReviewInvocationOutcome,
 };
 
-/// Capture QA for a store-reserved candidate selection, without selecting it.
+/// Capture candidate QA without selecting it. Only an action that may actually
+/// select reserves an event; check-only material retains no selection identity.
 pub(in crate::persistence) fn prepare_candidate_in(
     connection: &Connection,
     project_id: ExecutionId,
     action_id: ExecutionId,
     current: &ReviewTarget,
-    selection_id: ExecutionId,
+    selection_id: Option<ExecutionId>,
     revision_id: ExecutionId,
     text: &str,
     terms: &resources::TermResolution,
     advisory_checks: &[AdvisoryReviewCheck],
 ) -> Result<PreparedReviewCheck, ExecutionError> {
     let mut target = current.clone();
-    target.selection_id = Some(selection_id);
+    target.selection_id = selection_id;
     target.revision_id = Some(revision_id);
     target.translation_text = Some(text.into());
-    target.basis_evidence.selection_id = Some(selection_id);
+    target.basis_evidence.selection_id = selection_id;
     target.basis_evidence.revision_id = Some(revision_id);
     target.basis = basis_digest(&target.basis_evidence)?;
     target.current_decision = None;

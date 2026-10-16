@@ -258,7 +258,7 @@ export type CommandStage =
   | "execution-adopt"
   | "execution-quiesce";
 export type EffectPhase =
-  "waiting" | "saving-candidate" | "saved" | "checking" | "selected" | "blocked" | "failed" | "cancelled";
+  "waiting" | "saving-candidate" | "saved" | "checking" | "checked" | "selected" | "blocked" | "failed" | "cancelled";
 export type AutomaticSelectionBlock = "protected" | "already-selected" | "checks";
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
@@ -766,6 +766,8 @@ export interface CommandError {
 /**
  * A policy action is distinct from a human review decision. Replaying this
  * receipt does not select again or restore an older authority or check basis.
+ * CandidatesOnly records candidate QA with no selection, current CheckRun or
+ * selection block; its rule outcomes remain evidence rather than approval.
  */
 export interface AutomaticSelectionReceipt {
   blocked: AutomaticSelectionBlock | null;
