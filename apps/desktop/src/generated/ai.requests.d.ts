@@ -93,6 +93,8 @@ export interface Requests {
   workPlanAgentOpen: WorkPlanAgentOpenRequest;
   workPlanAgentPrepare: WorkPlanAgentPrepareRequest;
   workPlanAgentStart: WorkPlanAgentStartRequest;
+  workPlanAgentToolAttempt: WorkPlanAgentToolAttemptRequest;
+  workPlanAgentToolOutput: WorkPlanAgentToolOutputRequest;
   workPlanAgentToolPrepare: WorkPlanAgentToolPrepareRequest;
   workPlanAgentToolStart: WorkPlanAgentToolStartRequest;
   workPlanAuthorize: WorkPlanAuthorizeRequest;
@@ -219,7 +221,10 @@ export interface WorkPlanAgentStartRequest {
   scopeId: ExecutionId;
   sessionToken: string;
 }
-export interface WorkPlanAgentToolPrepareRequest {
+export interface WorkPlanAgentToolAttemptRequest {
+  inputDigest: string;
+  limit: number;
+  offset: number;
   projectId: ExecutionId;
   scopeId: ExecutionId;
   sessionToken: string;
@@ -234,6 +239,21 @@ export interface AgentToolRequest {
    * @maxItems 100
    */
   unitIds: [ExecutionId, ...ExecutionId[]];
+}
+export interface WorkPlanAgentToolOutputRequest {
+  inputDigest: string;
+  itemId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+  tool: AgentToolRequest;
+}
+export interface WorkPlanAgentToolPrepareRequest {
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+  tool: AgentToolRequest;
 }
 export interface WorkPlanAgentToolStartRequest {
   inputDigest: string;

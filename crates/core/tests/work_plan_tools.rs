@@ -1678,3 +1678,595 @@ fn agent_tool_selection_rejects_a_structurally_valid_application_instance() {
         "plugin-composition-scope"
     );
 }
+
+#[test]
+fn scoped_tool_reads_distinguish_enqueue_running_empty_and_failed_without_mutations() {
+    let mut f = fixture(2);
+    let request = request(&f, f.units.clone());
+    let prepared = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &request)
+        .unwrap();
+    let digest = prepared.input().digest().to_owned();
+    let absent = f
+        .store
+        .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 1)
+        .unwrap_err();
+    assert_eq!(
+        (absent.code, absent.stage.as_str()),
+        (ErrorCode::DependencyConflict, "work-plan-tool-not-enqueued")
+    );
+    f.runtime
+        .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, ExecutionId::new())
+        .unwrap();
+    let before = counts(&f.store);
+    let budget = f
+        .store
+        .provider_budget(f.scope.parent_task())
+        .unwrap()
+        .unwrap();
+    let first = f
+        .store
+        .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 1)
+        .unwrap();
+    assert_eq!(first.progress.total, 2);
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.next_offset, Some(1));
+    assert_eq!(first.items[0].status.execution, ExecutionState::Queued);
+    assert_eq!(first.items[0].scope.kind, "translation-unit");
+    assert_eq!(first.items[0].scope.locale.as_deref(), Some("zh-CN"));
+    let second = f
+        .store
+        .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 1, 1)
+        .unwrap();
+    assert_eq!(second.next_offset, None);
+    assert_ne!(
+        first.items[0].status.item_id,
+        second.items[0].status.item_id
+    );
+    for (offset, limit) in [(0, 0), (0, 101), (3, 1)] {
+        assert!(
+            f.store
+                .read_work_plan_agent_tool_attempt(
+                    &f.scope, &request, &digest, false, offset, limit
+                )
+                .is_err()
+        );
+    }
+    let item = first.items[0].status.item_id;
+    let dispatch = f
+        .store
+        .dispatch_execution_item(request.attempt_id, item)
+        .unwrap();
+    let running = f
+        .store
+        .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, true, 0, 1)
+        .unwrap();
+    assert_eq!(
+        running.items[0].status.execution,
+        ExecutionState::Dispatched
+    );
+    assert_eq!(running.items[0].result_id, None);
+    let result = successful_plugin_result(&dispatch);
+    f.store.save_execution_result(&result).unwrap();
+    let other_item = second.items[0].status.item_id;
+    let other_dispatch = f
+        .store
+        .dispatch_execution_item(request.attempt_id, other_item)
+        .unwrap();
+    let mut evidence = successful_plugin_result(&other_dispatch)
+        .envelope()
+        .plugin
+        .clone()
+        .unwrap();
+    evidence.result.outcome = sdk::InvocationOutcome::Failed {
+        error: sdk::EncodedPayload::capture(
+            prepared
+                .tool()
+                .binding
+                .capability
+                .declaration
+                .error_schema
+                .clone(),
+            "{\"reason\":\"synthetic\"}".into(),
+        )
+        .unwrap(),
+    };
+    let failed = FixedResult::capture_plugin(
+        prepared.input(),
+        other_item,
+        other_dispatch.dispatch_token,
+        evidence,
+    )
+    .unwrap();
+    f.store.save_execution_result(&failed).unwrap();
+    let before_reads = std::fs::read(f.store.directory().join("project.sqlite3")).unwrap();
+    let output = f
+        .store
+        .read_work_plan_agent_tool_output(
+            &f.scope,
+            &request,
+            &digest,
+            item,
+            result.envelope().result_id,
+        )
+        .unwrap();
+    assert_eq!(output.bytes(), result.bytes());
+    assert_eq!(
+        output.envelope().output.as_ref().unwrap()["matches"],
+        json!([])
+    );
+    assert_eq!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &f.scope,
+                &request,
+                &digest,
+                other_item,
+                failed.envelope().result_id
+            )
+            .unwrap()
+            .envelope()
+            .outcome,
+        ExecutionState::Failed
+    );
+    let settled = f
+        .store
+        .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 100)
+        .unwrap();
+    assert_eq!(
+        (settled.progress.succeeded, settled.progress.failed),
+        (1, 1)
+    );
+    assert_eq!(
+        std::fs::read(f.store.directory().join("project.sqlite3")).unwrap(),
+        before_reads
+    );
+    assert_eq!(counts(&f.store), before);
+    assert_eq!(
+        f.store.work_plan_tool_invocations(f.plan.plan_id).unwrap(),
+        2
+    );
+    assert_eq!(
+        f.store
+            .provider_budget(f.scope.parent_task())
+            .unwrap()
+            .unwrap(),
+        budget
+    );
+}
+
+#[test]
+fn scoped_tool_reads_bind_caller_tool_input_item_result_and_original_grant() {
+    let mut f = fixture(2);
+    let request = request(&f, vec![f.units[0]]);
+    let prepared = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &request)
+        .unwrap();
+    let digest = prepared.input().digest().to_owned();
+    let grant = ExecutionId::new();
+    f.runtime
+        .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, grant)
+        .unwrap();
+    let item = prepared.input().envelope().items[0].item_id;
+    let dispatch = f
+        .store
+        .dispatch_execution_item(request.attempt_id, item)
+        .unwrap();
+    let result = successful_plugin_result(&dispatch);
+    f.store.save_execution_result(&result).unwrap();
+    let other_caller = f.store.work_plan_agent_scope(f.lease).unwrap();
+    assert_ne!(other_caller.caller_id(), f.scope.caller_id());
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_attempt(&other_caller, &request, &digest, false, 0, 1)
+            .is_err()
+    );
+    for field in ["task", "attempt", "tool", "unit"] {
+        let mut changed = request.clone();
+        match field {
+            "task" => changed.task_id = ExecutionId::new(),
+            "attempt" => changed.attempt_id = ExecutionId::new(),
+            "tool" => changed.tool_handle = ExecutionId::new(),
+            _ => changed.unit_ids = vec![f.units[1]],
+        }
+        assert!(
+            f.store
+                .read_work_plan_agent_tool_attempt(&f.scope, &changed, &digest, false, 0, 1)
+                .is_err(),
+            "{field}"
+        );
+    }
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_attempt(&f.scope, &request, &"f".repeat(64), false, 0, 1)
+            .is_err()
+    );
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &f.scope,
+                &request,
+                &digest,
+                ExecutionId::new(),
+                result.envelope().result_id
+            )
+            .is_err()
+    );
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_output(&f.scope, &request, &digest, item, ExecutionId::new())
+            .is_err()
+    );
+    let sibling_request = AgentToolRequest {
+        task_id: ExecutionId::new(),
+        attempt_id: ExecutionId::new(),
+        tool_handle: request.tool_handle,
+        unit_ids: request.unit_ids.clone(),
+    };
+    let sibling = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &sibling_request)
+        .unwrap();
+    f.runtime
+        .submit_work_plan_tool(&mut f.store, &sibling, &f.consent, ExecutionId::new())
+        .unwrap();
+    let sibling_dispatch = f
+        .store
+        .dispatch_execution_item(sibling_request.attempt_id, item)
+        .unwrap();
+    let sibling_result = successful_plugin_result(&sibling_dispatch);
+    f.store.save_execution_result(&sibling_result).unwrap();
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &f.scope,
+                &request,
+                &digest,
+                item,
+                sibling_result.envelope().result_id
+            )
+            .is_err()
+    );
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &f.scope,
+                &sibling_request,
+                sibling.input().digest(),
+                item,
+                result.envelope().result_id
+            )
+            .is_err()
+    );
+    let foreign = fixture(1);
+    assert!(
+        foreign
+            .store
+            .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 1)
+            .is_err()
+    );
+    // A completed process grant is data provenance, not a second read lease.
+    f.runtime.revoke_plugin(&mut f.store, grant).unwrap();
+    assert_eq!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &f.scope,
+                &request,
+                &digest,
+                item,
+                result.envelope().result_id
+            )
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+    let db = rusqlite::Connection::open(f.store.directory().join("project.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE plugin_execution_grants SET grant_id=?1 WHERE grant_id=?2",
+        rusqlite::params![ExecutionId::new().to_string(), grant.to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &f.scope,
+                &request,
+                &digest,
+                item,
+                result.envelope().result_id
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger
+    );
+    assert_eq!(
+        f.store
+            .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 1)
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger
+    );
+    // A fresh sibling's authority is unaffected by a foreign read.
+    assert!(foreign.store.work_plan_agent_scope(foreign.lease).is_ok());
+}
+
+#[test]
+fn scoped_tool_reads_keep_active_scope_after_root_completion_and_reject_control_expiry_reopen() {
+    let mut f = fixture(1);
+    let request = request(&f, vec![f.units[0]]);
+    let prepared = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &request)
+        .unwrap();
+    let digest = prepared.input().digest().to_owned();
+    f.runtime
+        .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, ExecutionId::new())
+        .unwrap();
+    let root = f.plan.fixed_input().unwrap();
+    for item in &root.envelope().items {
+        let dispatch = f
+            .store
+            .dispatch_execution_item(root.envelope().attempt_id, item.item_id)
+            .unwrap();
+        let result = FixedResult::capture(
+            ResultEnvelope {
+                project_id: root.envelope().project_id,
+                attempt_id: root.envelope().attempt_id,
+                item_id: item.item_id,
+                result_id: ExecutionId::new(),
+                supersedes: None,
+                dispatch_token: dispatch.dispatch_token,
+                capability_id: root.envelope().capability_id.clone(),
+                capability_version: root.envelope().capability_version.clone(),
+                plugin: None,
+                outcome: ExecutionState::Succeeded,
+                output: Some(json!({"translation":"Synthetic root"})),
+                diagnostic: None,
+            },
+            &root,
+            dispatch.dispatch_token,
+        )
+        .unwrap();
+        f.store.save_execution_result(&result).unwrap();
+    }
+    let root_status = f
+        .store
+        .execution_attempt(root.envelope().attempt_id, false)
+        .unwrap();
+    assert_eq!(root_status.progress.succeeded, root_status.progress.total);
+    assert_eq!(
+        f.store.work_plan_status(f.plan.plan_id).unwrap().state,
+        WorkPlanState::Active
+    );
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 1)
+            .is_ok()
+    );
+    let item = prepared.input().envelope().items[0].item_id;
+    let dispatch = f
+        .store
+        .dispatch_execution_item(request.attempt_id, item)
+        .unwrap();
+    let result = successful_plugin_result(&dispatch);
+    f.store.save_execution_result(&result).unwrap();
+    let paused = control(&f, WorkPlanCommand::Pause);
+    f.store.control_work_plan(&paused).unwrap();
+    assert_eq!(
+        f.store
+            .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 1)
+            .unwrap_err()
+            .code,
+        ErrorCode::Cancelled
+    );
+    let continued = f
+        .store
+        .control_work_plan(&control(&f, WorkPlanCommand::Continue))
+        .unwrap();
+    let new_scope = f.store.work_plan_agent_scope(continued.lease).unwrap();
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &f.scope,
+                &request,
+                &digest,
+                item,
+                result.envelope().result_id
+            )
+            .is_err()
+    );
+    assert!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &new_scope,
+                &request,
+                &digest,
+                item,
+                result.envelope().result_id
+            )
+            .is_err()
+    );
+    assert_eq!(
+        f.store
+            .execution_result(request.attempt_id, result.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+    let db = rusqlite::Connection::open(f.store.directory().join("project.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE application_plans SET expires_at=1 WHERE plan_id=?1",
+        [f.plan.plan_id.to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        f.store
+            .read_work_plan_agent_tool_attempt(&new_scope, &request, &digest, false, 0, 1)
+            .unwrap_err()
+            .code,
+        ErrorCode::Cancelled
+    );
+    db.execute(
+        "UPDATE application_plans SET expires_at=?2 WHERE plan_id=?1",
+        rusqlite::params![f.plan.plan_id.to_string(), (now_ms() / 1000 + 600) as i64],
+    )
+    .unwrap();
+    drop(db);
+    let path = f.store.directory().to_owned();
+    drop(f.runtime);
+    drop(f.store);
+    let store = ProjectStore::open(path).unwrap();
+    assert_eq!(
+        store
+            .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 1)
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    let reopened = store.work_plan_agent_scope(continued.lease).unwrap();
+    assert!(
+        store
+            .read_work_plan_agent_tool_attempt(&reopened, &request, &digest, false, 0, 1)
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .execution_result(request.attempt_id, result.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+}
+
+#[test]
+fn scoped_tool_reads_reject_stopped_taken_over_and_broken_delegation() {
+    for command in [WorkPlanCommand::Stop, WorkPlanCommand::TakeOver] {
+        let mut f = fixture(1);
+        let request = request(&f, vec![f.units[0]]);
+        let prepared = f
+            .store
+            .prepare_work_plan_agent_tool(&f.scope, &request)
+            .unwrap();
+        f.runtime
+            .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, ExecutionId::new())
+            .unwrap();
+        f.store.control_work_plan(&control(&f, command)).unwrap();
+        assert_eq!(
+            f.store
+                .read_work_plan_agent_tool_attempt(
+                    &f.scope,
+                    &request,
+                    prepared.input().digest(),
+                    false,
+                    0,
+                    1
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert!(f.store.execution_input(request.attempt_id).is_ok());
+    }
+    for table in ["application_executions", "plugin_execution_grants"] {
+        let mut f = fixture(1);
+        let request = request(&f, vec![f.units[0]]);
+        let prepared = f
+            .store
+            .prepare_work_plan_agent_tool(&f.scope, &request)
+            .unwrap();
+        f.runtime
+            .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, ExecutionId::new())
+            .unwrap();
+        let db = rusqlite::Connection::open(f.store.directory().join("project.sqlite3")).unwrap();
+        let original: Vec<u8> = db
+            .query_row(
+                &format!("SELECT delegation FROM {table} WHERE attempt_id=?1"),
+                [request.attempt_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut changed: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        changed["callerId"] = json!(ExecutionId::new());
+        db.execute(
+            &format!("UPDATE {table} SET delegation=?2 WHERE attempt_id=?1"),
+            rusqlite::params![
+                request.attempt_id.to_string(),
+                serde_json::to_vec(&changed).unwrap()
+            ],
+        )
+        .unwrap();
+        assert!(
+            f.store
+                .read_work_plan_agent_tool_attempt(
+                    &f.scope,
+                    &request,
+                    prepared.input().digest(),
+                    false,
+                    0,
+                    1
+                )
+                .is_err(),
+            "{table}"
+        );
+    }
+}
+
+#[test]
+fn scoped_tool_reads_do_not_reprepare_against_new_source_or_execution_consent() {
+    let mut f = fixture(1);
+    let request = request(&f, vec![f.units[0]]);
+    let prepared = f
+        .store
+        .prepare_work_plan_agent_tool(&f.scope, &request)
+        .unwrap();
+    let digest = prepared.input().digest().to_owned();
+    let grant = ExecutionId::new();
+    f.runtime
+        .submit_work_plan_tool(&mut f.store, &prepared, &f.consent, grant)
+        .unwrap();
+    let item = prepared.input().envelope().items[0].item_id;
+    let dispatch = f
+        .store
+        .dispatch_execution_item(request.attempt_id, item)
+        .unwrap();
+    let result = successful_plugin_result(&dispatch);
+    f.store.save_execution_result(&result).unwrap();
+    let root = f.plan.fixed_input().unwrap();
+    for item in &root.envelope().items {
+        f.store
+            .dispatch_execution_item(root.envelope().attempt_id, item.item_id)
+            .unwrap();
+    }
+    let action = prepare_source_reimport(&mut f);
+    f.store
+        .adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler)
+        .unwrap();
+    assert!(f.store.verify_work_plan(&f.plan).is_err());
+    f.runtime.revoke_plugin(&mut f.store, grant).unwrap();
+    f.store.check_work_plan_agent_scope(&f.scope).unwrap();
+    let before = counts(&f.store);
+    assert_eq!(
+        f.store
+            .read_work_plan_agent_tool_output(
+                &f.scope,
+                &request,
+                &digest,
+                item,
+                result.envelope().result_id
+            )
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+    assert_eq!(
+        f.store
+            .read_work_plan_agent_tool_attempt(&f.scope, &request, &digest, false, 0, 1)
+            .unwrap()
+            .progress
+            .succeeded,
+        1
+    );
+    assert_eq!(counts(&f.store), before);
+}

@@ -85,6 +85,7 @@ macro_rules! handlers {
         work_plans::agent::open_work_plan_agent_scope,
         work_plans::agent::prepare_work_plan_agent_generation,work_plans::agent::start_work_plan_agent_generation,
         work_plans::broker::prepare_work_plan_agent_tool,work_plans::broker::start_work_plan_agent_tool,
+        work_plans::broker::read_work_plan_agent_tool_attempt,work_plans::broker::read_work_plan_agent_tool_output,
         work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,
         work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
     ] };
@@ -872,27 +873,7 @@ pub struct AttemptSummary {
     pub attempt_id: ExecutionId,
     pub sequence: Revision,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub struct ItemView {
-    pub status: ItemStatus,
-    pub scope: Scope,
-    pub result_id: Option<ExecutionId>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub struct AttemptDetail {
-    pub attempt_id: ExecutionId,
-    pub task_id: ExecutionId,
-    pub operation: String,
-    pub progress: Progress,
-    pub items: Vec<ItemView>,
-    pub recovery: RecoveryPlan,
-    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
-    pub next_offset: Option<u32>,
-}
+pub use tsumugi_core::{AttemptDetail, ItemView};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -1098,61 +1079,22 @@ fn attempt_detail(
     offset: u32,
     limit: u32,
 ) -> Result<AttemptDetail, CommandError> {
-    let view = host.runtime.attempt(store, attempt_id).map_err(map_read)?;
-    let input = store.execution_input(attempt_id).map_err(map_read)?;
-    let total = view.items.len();
-    if offset as usize > total {
-        return Err(CommandError::invalid_input(
-            CommandStage::ExecutionRead,
-            Some("offset"),
-        ));
-    }
-    let items = view
-        .items
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-        .map(|status| {
-            Ok(ItemView {
-                scope: input.item(status.item_id).map_err(map_read)?.scope.clone(),
-                result_id: store
-                    .execution_current_result(attempt_id, status.item_id)
-                    .map_err(map_read)?,
-                status,
-            })
+    store
+        .execution_attempt_detail(
+            attempt_id,
+            host.runtime.is_active(attempt_id),
+            offset,
+            limit,
+        )
+        .map_err(|error| {
+            if error.code == ErrorCode::InvalidInput && error.stage == "offset" {
+                CommandError::invalid_input(CommandStage::ExecutionRead, Some("offset"))
+            } else {
+                map_read(error)
+            }
         })
-        .collect::<Result<Vec<_>, CommandError>>()?;
-    let mut recovery = store
-        .execution_recovery(attempt_id, host.runtime.is_active(attempt_id))
-        .map_err(map_read)?;
-    // A unit can span pages. Return it on each page containing a member so its
-    // full scope remains explicit before an action is requested.
-    recovery.units.retain(|unit| {
-        items
-            .iter()
-            .any(|item| unit.item_ids.contains(&item.status.item_id))
-    });
-    if view.operation == tsumugi_core::ai::OPERATION {
-        for unit in &mut recovery.units {
-            unit.actions.retain(|a| {
-                !matches!(
-                    a,
-                    RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
-                )
-            });
-        }
-    }
-    let end = offset + items.len() as u32;
-    Ok(AttemptDetail {
-        attempt_id: view.attempt_id,
-        task_id: view.task_id,
-        operation: view.operation,
-        progress: view.progress,
-        items,
-        recovery,
-        next_offset: ((end as usize) < total).then_some(end),
-    })
 }
+
 fn source_failure(
     store: &ProjectStore,
     result: &ResultEnvelope,

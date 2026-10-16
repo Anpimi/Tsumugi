@@ -2295,6 +2295,69 @@ impl ProjectStore {
     ) -> Result<AttemptView, ExecutionError> {
         read_attempt(self.execution_connection()?, attempt, active)
     }
+    /// A bounded page from one snapshot; this projection never advances runtime
+    /// work or turns its recovery descriptions into execution authority.
+    pub fn execution_attempt_detail(
+        &self,
+        attempt_id: ExecutionId,
+        active: bool,
+        offset: u32,
+        limit: u32,
+    ) -> Result<AttemptDetail, ExecutionError> {
+        let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |_| {
+            if limit == 0 || limit > 100 {
+                return Err(error(ErrorCode::LimitExceeded, "execution-page-limit"));
+            }
+            let view = self.execution_attempt(attempt_id, active)?;
+            let input = self.execution_input(attempt_id)?;
+            let total = view.items.len();
+            if offset as usize > total {
+                return Err(error(ErrorCode::InvalidInput, "offset"));
+            }
+            let items = view
+                .items
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|status| {
+                    Ok(ItemView {
+                        scope: input.item(status.item_id)?.scope.clone(),
+                        result_id: self.execution_current_result(attempt_id, status.item_id)?,
+                        status,
+                    })
+                })
+                .collect::<Result<Vec<_>, ExecutionError>>()?;
+            let mut recovery = self.execution_recovery(attempt_id, active)?;
+            // A unit can span pages. Return it on each page containing a member so its
+            // full scope remains explicit before an action is requested.
+            recovery.units.retain(|unit| {
+                items
+                    .iter()
+                    .any(|item| unit.item_ids.contains(&item.status.item_id))
+            });
+            if view.operation == crate::ai::OPERATION {
+                for unit in &mut recovery.units {
+                    unit.actions.retain(|a| {
+                        !matches!(
+                            a,
+                            RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                        )
+                    });
+                }
+            }
+            let end = offset + items.len() as u32;
+            Ok(AttemptDetail {
+                attempt_id: view.attempt_id,
+                task_id: view.task_id,
+                operation: view.operation,
+                progress: view.progress,
+                items,
+                recovery,
+                next_offset: ((end as usize) < total).then_some(end),
+            })
+        })
+    }
     pub fn execution_tasks(
         &self,
         after: Revision,

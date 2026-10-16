@@ -198,6 +198,26 @@ pub(super) fn validate_result_in(
     Ok(())
 }
 
+/// Read provenance is checked against the original grant, without requiring a
+/// live process permit or renewing its independent execution consent.
+pub(super) fn validate_tool_read_in(
+    connection: &Connection,
+    input: &FixedInput,
+    expected: &crate::application::WorkPlanToolDelegation,
+) -> Result<(), ExecutionError> {
+    let record = for_attempt(connection, input.envelope().attempt_id)?
+        .ok_or_else(|| failure(ErrorCode::CorruptLedger, "work-plan-tool-grant"))?;
+    check_record(&record, input)?;
+    check_project(connection, input)?;
+    if record.delegation.as_ref() != Some(expected) {
+        return Err(failure(
+            ErrorCode::Unauthorized,
+            "work-plan-tool-association",
+        ));
+    }
+    super::application::validate_tool_input(connection, input, expected)
+}
+
 /// Runs inside the caller's existing read or write transaction. A query never
 /// writes the database, renews, or reconstructs a persisted authorization.
 pub(super) fn check_input_in(

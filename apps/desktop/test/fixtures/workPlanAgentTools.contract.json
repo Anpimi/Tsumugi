@@ -191,7 +191,7 @@
         "architecture": "aarch64"
       },
       "sdkVersion": "0.1.0-alpha.1",
-      "processProtocol": 1,
+      "processProtocol": 3,
       "profile": "node-system-libraries-v1",
       "toolVersion": "26.10.0",
       "tool": {
@@ -471,7 +471,7 @@
           "architecture": "aarch64"
         },
         "sdkVersion": "0.1.0-alpha.1",
-        "processProtocol": 1,
+        "processProtocol": 3,
         "profile": "node-system-libraries-v1",
         "toolVersion": "26.10.0",
         "tool": {
@@ -513,6 +513,38 @@
         ]
       },
       "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "attempt": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "tool": {
+        "taskId": "60000000-0000-4000-8000-000000000018",
+        "attemptId": "60000000-0000-4000-8000-000000000020",
+        "toolHandle": "60000000-0000-4000-8000-000000000019",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      },
+      "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "offset": 0,
+      "limit": 100
+    },
+    "output": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "tool": {
+        "taskId": "60000000-0000-4000-8000-000000000018",
+        "attemptId": "60000000-0000-4000-8000-000000000020",
+        "toolHandle": "60000000-0000-4000-8000-000000000019",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      },
+      "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "itemId": "60000000-0000-4000-8000-000000000021",
+      "resultId": "60000000-0000-4000-8000-000000000022"
     }
   },
   "responses": {
@@ -532,6 +564,122 @@
           "selectionId": null
         }
       ]
+    },
+    "attempt": {
+      "taskId": "60000000-0000-4000-8000-000000000018",
+      "attemptId": "60000000-0000-4000-8000-000000000020",
+      "operation": "plugin-tool-query",
+      "progress": {
+        "total": 1,
+        "queued": 0,
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "unknown": 0,
+        "adopted": 0
+      },
+      "items": [
+        {
+          "status": {
+            "itemId": "60000000-0000-4000-8000-000000000021",
+            "execution": "succeeded",
+            "validation": "valid",
+            "adoption": "unapplied",
+            "cancellationRequested": false,
+            "retrySafe": false,
+            "diagnostic": null
+          },
+          "scope": {
+            "kind": "translation-unit",
+            "id": "60000000-0000-4000-8000-000000000003",
+            "locale": "zh-CN"
+          },
+          "resultId": "60000000-0000-4000-8000-000000000022"
+        }
+      ],
+      "recovery": {
+        "attemptId": "60000000-0000-4000-8000-000000000020",
+        "units": []
+      },
+      "nextOffset": null
+    },
+    "output": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "attemptId": "60000000-0000-4000-8000-000000000020",
+      "itemId": "60000000-0000-4000-8000-000000000021",
+      "resultId": "60000000-0000-4000-8000-000000000022",
+      "dispatchToken": "60000000-0000-4000-8000-000000000023",
+      "capabilityId": "org.tsumugi.examples.philosophy-query",
+      "capabilityVersion": "1:1",
+      "outcome": "succeeded",
+      "output": {},
+      "diagnostic": null,
+      "supersedes": null,
+      "plugin": {
+        "authorizationId": "60000000-0000-4000-8000-000000000025",
+        "channel": {
+          "plugin": {
+            "publisher": "org.tsumugi.examples",
+            "id": "philosophy",
+            "version": "0.1.0-alpha.1"
+          },
+          "componentId": "knowledge",
+          "contributionId": "query",
+          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "instanceId": "60000000-0000-4000-8000-000000000024",
+          "activationGeneration": 1
+        },
+        "result": {
+          "provider": {
+            "plugin": {
+              "publisher": "org.tsumugi.examples",
+              "id": "philosophy",
+              "version": "0.1.0-alpha.1"
+            },
+            "componentId": "knowledge",
+            "contributionId": "query",
+            "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "instanceId": "60000000-0000-4000-8000-000000000024",
+            "activationGeneration": 1
+          },
+          "capability": {
+            "id": "org.tsumugi.examples.philosophy-query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profile": {
+            "id": "example.reference",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "context": {
+            "projectId": "60000000-0000-4000-8000-000000000001",
+            "attemptId": "60000000-0000-4000-8000-000000000020",
+            "itemId": "60000000-0000-4000-8000-000000000021",
+            "dispatchId": "60000000-0000-4000-8000-000000000023",
+            "operationId": "plugin-tool-query",
+            "scopeId": "60000000-0000-4000-8000-000000000001",
+            "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "scopeDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "environmentDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "configurationDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          "resultId": "60000000-0000-4000-8000-000000000022",
+          "outcome": {
+            "kind": "succeeded",
+            "output": {
+              "schema": {
+                "id": "example.query-output",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "utf8": "{}",
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+            }
+          }
+        }
+      }
     }
   }
 }
