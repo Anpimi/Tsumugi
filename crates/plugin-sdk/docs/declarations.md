@@ -2,9 +2,8 @@
 
 The [`tsumugi-plugin-sdk`](..) crate currently provides strict
 data declarations, exact declaration resolution and a public schema/validation
-harness. These contracts are experimental. The desktop still uses its existing
-built-in integrations; this SDK unit does not replace the production loader or
-establish runtime isolation.
+harness. These contracts are experimental. The SDK does not install packages,
+replace the runtime loader or establish runtime isolation.
 
 ## Identity, ownership and scope
 
@@ -19,8 +18,8 @@ Each contribution has one component owner. A package can contribute resources,
 Skills, UI and multiple capabilities under one package identity. Required and
 optional dependencies, lifecycle ownership and future result/input dependencies
 are different relationships. Parsing a dependency does not resolve it or activate
-an instance. Actual cycle detection, optional-service availability and cleanup
-belong to the runtime host.
+an instance. Activation-time cycle prevention, actual optional-service
+availability and cleanup belong to the runtime host.
 
 Identifiers are bounded lowercase ASCII namespace labels. Package references are
 relative, without parent traversal, empty segments, drive paths or backslashes.
@@ -62,6 +61,65 @@ Fixture profile names match the existing `smapi-i18n-flat` and
 `webvtt-captions` scopes. They preserve the absence of WebVTT translation import.
 They do not implement these capabilities, widen either format profile or prove
 domain fidelity. Their `example.*` schema IDs remain fixture declarations.
+
+## Component dependency closure diagnostics
+
+The Rust SDK can inspect the transitive component dependencies of explicitly
+selected roots. A root identifies an exact plugin version and component, so
+data and Skill components can be inspected without inventing a callable.
+Each dependency keeps the manifest's required flag and Single or
+CollectIndependent policy. An independent choice identifies its owner and exact
+contract, with an optional exact profile and selected provider keys. Omitting
+that choice uses the original resolver with no profile and no preferred provider;
+it does not guess a profile or resolve ambiguity by load order.
+
+Construct a `DependencyClosureRequest` from `ComponentKey` roots and independent
+`DependencyChoice` selections. `parse_dependency_closure_request` accepts bounded
+strict JSON; `validate()` applies the same rules to requests built directly in
+Rust. Each `DeclarationEntry` borrows a `ValidatedManifest` and carries the
+caller's observed `enabled` flag:
+
+```rust
+let report = tsumugi_plugin_sdk::diagnose_dependency_closure(&entries, &request)?;
+```
+
+The Host's `PackageCatalog::diagnose_dependencies(&request)` produces a
+`CatalogDependencyClosure`: `declarations` contains that SDK report, `packages`
+retains the catalog's exact package digests, approved origins and enabled flags,
+and `providers` retains the original `ProviderSelectionBinding` identities.
+Construct the catalog through its existing independently approved image owner;
+a manifest or this report cannot supply package approval.
+
+Unknown root packages or components are rejected with `MissingOwner`. A known
+disabled root is retained with `enabled=false`; its dependencies are still
+inspected as declarations. This does not admit that component for activation.
+
+The report retains nodes, edges, selected providers and closed cycle paths in
+canonical order. Shared components are traversed once. Missing required
+declarations, absent optional declarations, disabled selections and ambiguity
+remain distinct; optional absence alone is not a conclusion that the component
+cannot run. Duplicate roots or choices, duplicate provider selections and unused
+choices are rejected. Limits fail explicitly rather than truncating a report:
+
+| Input or traversal | Limit |
+|---|---:|
+| Validated manifests | 128 / 32 MiB total |
+| Root components | 32 |
+| Per-dependency choices | 128 |
+| Reachable components | 128 |
+| Dependency edges | 512 |
+| Request provider choices / reported edge provider references | 1024 each |
+| Providers in one explicit choice (existing resolver bound) | 128 |
+| Active traversal depth | 32 |
+| Encoded request / report | 64 KiB / 1 MiB |
+
+The report's `declaration-catalog-only` scope observes the supplied manifests and
+enabled state. External Host services are not included. For example, a missing
+`tsumugi.core` catalog declaration does not prove that the Host's original
+generation service is unavailable. The report grants no approval, instance,
+service handle or execution permission and does not relax Application scope
+restrictions. A real service binding must still validate its captured provider,
+runtime, scope, generation, permissions, cancellation and original deadline.
 
 ## Effects and requested permissions
 

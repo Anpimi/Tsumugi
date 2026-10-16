@@ -200,6 +200,28 @@ pub struct ResolvedCapability {
     package: RegisteredPackage,
     binding: sdk::CapabilityBinding,
 }
+
+/// The same captured catalog observation that supplied declaration eligibility.
+/// Origin remains independently supplied metadata, not publisher authentication.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogDependencyPackage {
+    pub plugin: sdk::PluginIdentity,
+    pub package_digest: String,
+    pub origin: PackageOrigin,
+    pub enabled: bool,
+}
+
+/// Captured identities for declaration diagnosis only. The provider index also
+/// includes ambiguous/disabled candidates; it creates no runtime service binding,
+/// instance, grant, current dispatch permission or adoption authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogDependencyClosure {
+    pub declarations: sdk::DependencyClosureReport,
+    pub packages: Vec<CatalogDependencyPackage>,
+    pub providers: Vec<sdk::ProviderSelectionBinding>,
+}
 impl ResolvedCapability {
     pub fn package(&self) -> &RegisteredPackage {
         &self.package
@@ -223,6 +245,58 @@ pub struct PackageCatalog {
     packages: BTreeMap<sdk::PluginIdentity, CatalogEntry>,
 }
 impl PackageCatalog {
+    /// Diagnose against this actual captured catalog and its current enablement
+    /// observation. External Host services are outside the declaration catalog;
+    /// their absence here does not establish runtime unavailability.
+    pub fn diagnose_dependencies(
+        &self,
+        request: &sdk::DependencyClosureRequest,
+    ) -> CatalogResult<CatalogDependencyClosure> {
+        let entries = self
+            .packages
+            .values()
+            .map(|entry| sdk::DeclarationEntry {
+                manifest: entry.package.image().manifest(),
+                enabled: entry.enabled,
+            })
+            .collect::<Vec<_>>();
+        let declarations = sdk::diagnose_dependency_closure(&entries, request)
+            .map_err(|error| resolution_error(error.code))?;
+        let referenced = declarations
+            .edges
+            .iter()
+            .flat_map(|edge| edge.resolution.referenced_providers().iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>();
+        let providers = referenced
+            .into_iter()
+            .map(|provider| {
+                let package = self.registered(&provider.plugin)?;
+                Ok(package.bind_capability(&provider.contribution_id)?.provider)
+            })
+            .collect::<CatalogResult<Vec<_>>>()?;
+        let packages = self
+            .packages
+            .values()
+            .map(|entry| CatalogDependencyPackage {
+                plugin: entry.package.plugin().clone(),
+                package_digest: entry.package.package_digest().into(),
+                origin: entry.package.origin().clone(),
+                enabled: entry.enabled,
+            })
+            .collect();
+        let report = CatalogDependencyClosure {
+            declarations,
+            packages,
+            providers,
+        };
+        let bytes = serde_json::to_vec(&report)
+            .map_err(|_| CatalogError::Contract(sdk::ContractErrorCode::InvalidSchema))?;
+        if bytes.len() > sdk::MAX_DEPENDENCY_REPORT_BYTES {
+            return Err(CatalogError::LimitExceeded);
+        }
+        Ok(report)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

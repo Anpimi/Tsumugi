@@ -104,6 +104,13 @@ or omitted profiles without selecting another implementation. The public Host's
 one actual captured package. These data reports grant no execution authority or
 guarantee about a domain implementation's behavior.
 
+The Rust SDK also provides [bounded component dependency closure
+diagnostics](docs/declarations.md#component-dependency-closure-diagnostics).
+Explicit roots and per-dependency profile/provider choices share the same
+resolver. Reports preserve missing or disabled declarations, ambiguity and
+cycles; the Host can attach actual captured package identities. Host-provided
+services and runtime authorization remain outside this declaration-only graph.
+
 The crate has its own experimental version and can be packaged independently.
 It has not been published. Plugin authors may use an explicitly pinned development
 SDK snapshot; a production distribution must use a verified SDK artifact.

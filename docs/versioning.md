@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+Component dependency closure diagnostics add Rust SDK and Host APIs for bounded
+declaration inspection. They reuse the existing exact resolver and captured
+catalog identities without changing manifest, Process, SDK wire, project or
+settings formats. Runtime service binding, permissions and Application scope
+restrictions retain their existing contracts. This stays in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+synchronized bilingual Unreleased entries and no additional version bump,
+dependency change or replacement SDK archive.
+
 Current QA diagnostic navigation adds a session-authorized, read-only Review
 location projection. The existing SDK converts captured UTF-8, UTF-16 and
 grapheme ranges to exact UTF-16 positions; the original Review evidence, issue

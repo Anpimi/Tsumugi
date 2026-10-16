@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Diagnose a bounded component dependency closure through the Rust SDK and
+  captured Host catalog. Reports retain exact provider/profile choices, missing
+  or disabled declarations, ambiguity and dependency cycles without activating
+  components or granting service access.
+
 - Open a current QA diagnostic at its exact source or selected-translation range,
   then return to the original review or pending-work queue. Range conversion uses
   the SDK's Unicode rules; changed evidence or newer draft text keeps its content

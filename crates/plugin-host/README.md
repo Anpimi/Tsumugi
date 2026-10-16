@@ -342,6 +342,14 @@ already captured selections remain unchanged. The lifecycle owner must separatel
 stop dispatch and revoke Core permits when required. This catalog is in memory
 and is not a second project store or a production installation/update service.
 
+Its Rust dependency closure diagnostic API adapts the same captured images and
+enabled state to the SDK's [bounded declaration
+graph](../plugin-sdk/docs/declarations.md#component-dependency-closure-diagnostics),
+then retains exact package digests and provider bindings. It does no package IO,
+activation or authorization. A missing declaration in this catalog does not
+establish whether an external Host service is available; Application and
+ProjectService execution restrictions still apply independently.
+
 Run the admission and selection tests without a worker runtime:
 
 ```sh
