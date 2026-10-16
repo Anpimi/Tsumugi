@@ -443,6 +443,9 @@ export interface AttemptDetail {
   recovery: RecoveryPlan;
   taskId: ExecutionId;
 }
+/**
+ * Read-only execution projection shared by human and bounded consumers.
+ */
 export interface ItemView {
   resultId: ExecutionId | null;
   scope: Scope;

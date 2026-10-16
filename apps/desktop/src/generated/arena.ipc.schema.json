@@ -1335,6 +1335,7 @@
       },
       "ItemView": {
         "additionalProperties": false,
+        "description": "Read-only execution projection shared by human and bounded consumers.",
         "properties": {
           "resultId": {
             "anyOf": [
