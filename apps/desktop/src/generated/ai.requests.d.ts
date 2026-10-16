@@ -90,9 +90,13 @@ export interface Requests {
   read: AiReadRequest;
   start: AiStartRequest;
   workPlanAction: WorkPlanActionRequest;
+  workPlanAgentDelegate: WorkPlanAgentDelegateRequest;
+  workPlanAgentGenerationAttempt: WorkPlanAgentGenerationAttemptRequest;
+  workPlanAgentGenerationOutput: WorkPlanAgentGenerationOutputRequest;
   workPlanAgentGuidance: WorkPlanAgentGuidanceRequest;
   workPlanAgentOpen: WorkPlanAgentOpenRequest;
   workPlanAgentPrepare: WorkPlanAgentPrepareRequest;
+  workPlanAgentReconcile: WorkPlanAgentReconcileRequest;
   workPlanAgentResource: WorkPlanAgentResourceRequest;
   workPlanAgentSkill: WorkPlanAgentSkillRequest;
   workPlanAgentStart: WorkPlanAgentStartRequest;
@@ -185,6 +189,55 @@ export interface WorkPlanActionRequest {
   projectId: ExecutionId;
   sessionToken: string;
 }
+export interface WorkPlanAgentDelegateRequest {
+  delegation: AgentDelegationRequest;
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+}
+export interface AgentDelegationRequest {
+  delegationId: ExecutionId;
+  /**
+   * @maxItems 32
+   */
+  toolHandles: ExecutionId[];
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
+}
+export interface WorkPlanAgentGenerationAttemptRequest {
+  generation: AgentGenerationRequest;
+  inputDigest: string;
+  limit: number;
+  offset: number;
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+}
+/**
+ * A bounded proposal within an already-authorized plan. It contains no model,
+ * destination, payload, effect, human confirmation or authority override.
+ */
+export interface AgentGenerationRequest {
+  attemptId: ExecutionId;
+  taskId: ExecutionId;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
+}
+export interface WorkPlanAgentGenerationOutputRequest {
+  generation: AgentGenerationRequest;
+  inputDigest: string;
+  itemId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+}
 export interface WorkPlanAgentGuidanceRequest {
   projectId: ExecutionId;
   scopeId: ExecutionId;
@@ -209,18 +262,13 @@ export interface WorkPlanAgentPrepareRequest {
   scopeId: ExecutionId;
   sessionToken: string;
 }
-/**
- * A bounded proposal within an already-authorized plan. It contains no model,
- * destination, payload, effect, human confirmation or authority override.
- */
-export interface AgentGenerationRequest {
+export interface WorkPlanAgentReconcileRequest {
   attemptId: ExecutionId;
+  inputDigest: string;
+  lease: AutomationLease;
+  projectId: ExecutionId;
+  sessionToken: string;
   taskId: ExecutionId;
-  /**
-   * @minItems 1
-   * @maxItems 100
-   */
-  unitIds: [ExecutionId, ...ExecutionId[]];
 }
 export interface WorkPlanAgentResourceRequest {
   projectId: ExecutionId;

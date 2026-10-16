@@ -371,7 +371,7 @@ fn real_work_plan_tool_broker_scoped(attempt_scope: bool) {
             assert_eq!(input.envelope().operation, "plugin-tool-query");
             assert_eq!(input.envelope().items[0].payload, expected_payload);
             assert_eq!(
-                serde_json::to_value(&input.envelope().settings["callerId"]).unwrap(),
+                serde_json::to_value(&input.envelope().settings["agent"]["callerId"]).unwrap(),
                 expected_caller
             );
             assert_eq!(

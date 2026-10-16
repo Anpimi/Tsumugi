@@ -1914,7 +1914,23 @@ impl ProjectStore {
         policy: RecoveryPolicy,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
-        self.enqueue_execution_with_authority(input, policy, parent, None, None)
+        self.enqueue_execution_with_authority(input, policy, parent, None, None, None)
+    }
+
+    pub(crate) fn enqueue_work_plan_agent_generation(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanAgentGeneration,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.check_prepared_agent_session(prepared)?;
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            Some(prepared.scope.parent_task()),
+            None,
+            None,
+            Some(prepared),
+        )
     }
 
     pub(crate) fn enqueue_work_plan_tool(
@@ -1932,6 +1948,7 @@ impl ProjectStore {
             None,
             Some((prepared, consent, grant_id, generation)),
             None,
+            None,
         )
     }
 
@@ -1946,6 +1963,7 @@ impl ProjectStore {
             Some(prepared.parent_task()),
             None,
             Some(prepared),
+            None,
         )
     }
 
@@ -1961,7 +1979,13 @@ impl ProjectStore {
             ExecutionId,
         )>,
         service: Option<&crate::application::PreparedWorkPlanServiceGeneration>,
+        agent: Option<&crate::application::PreparedWorkPlanAgentGeneration>,
     ) -> Result<(), ExecutionError> {
+        // Serialized provenance is data. Only the opaque Core preparation may
+        // admit a new Agent input through the existing transaction below.
+        if agent.is_none() && super::application::agent_binding(input)?.is_some() {
+            return Err(error(ErrorCode::Unauthorized, "work-plan-agent-admission"));
+        }
         let project = self
             .metadata()
             .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
@@ -1975,6 +1999,16 @@ impl ProjectStore {
         let tx = self.execution_write()?;
         let verified_build =
             super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
+        if let Some(prepared) = agent {
+            if service.is_some()
+                || tool.is_some()
+                || input.bytes() != prepared.input().bytes()
+                || parent != Some(prepared.scope.parent_task())
+            {
+                return Err(error(ErrorCode::Unauthorized, "work-plan-agent-admission"));
+            }
+            super::application::check_prepared_agent(&tx, prepared)?;
+        }
         if let Some(prepared) = service {
             if tool.is_some()
                 || prepared.input().bytes() != input.bytes()

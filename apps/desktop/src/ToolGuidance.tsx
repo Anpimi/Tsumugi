@@ -5,23 +5,23 @@ import { PluginPermissions } from "./PluginManager";
 import type { SessionRequest } from "./executionCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
-import { openWorkPlanAgent, type WorkPlanStatusView } from "./workPlanCommands";
+import { openWorkPlanAgent, type WorkPlanAgentLeaf, type WorkPlanStatusView } from "./workPlanCommands";
 import type { WorkPlanAgentGuidanceView } from "./generated/ai.responses";
 
-type Consumer = Awaited<ReturnType<typeof openWorkPlanAgent>>;
+type Consumer = WorkPlanAgentLeaf;
 type Reading = { toolHandle: string; kind: "skill" } | { toolHandle: string; kind: "resource"; resourceId: string };
-type Props = { context: SessionRequest; status: WorkPlanStatusView; open: boolean; disabled: boolean };
+type Props = { context: SessionRequest; status: WorkPlanStatusView; open: boolean; disabled: boolean; bounded?: Consumer };
 type CapturedConsumer = { scopeId: string; value: Consumer };
 const textKey = (scopeId: string, reading: Reading) => ["agent-tool-guidance-text", scopeId, reading];
 
 /** Guidance reads never join the preparation draft or pending execution owner. */
 export function ToolGuidance(props: Props) {
   const identity = jsonIdentity([props.context, props.status.lease, props.status.state, props.status.expiresAt,
-    props.status.plan.digest, props.status.plan.tools]);
+    props.status.plan.digest, props.status.plan.tools, props.bounded?.scope.scopeId]);
   return <ScopedToolGuidance key={identity} {...props} />;
 }
 
-function ScopedToolGuidance({ context, status, open, disabled }: Props) {
+function ScopedToolGuidance({ context, status, open, disabled, bounded }: Props) {
   const { t } = useTranslation(), reads = useSessionReads();
   const [expanded, setExpanded] = useState(false), [selected, setSelected] = useState<Reading | null>(null);
   // Keep bounded methods out of Query facts. The cache holds only Rust DTOs.
@@ -44,13 +44,15 @@ function ScopedToolGuidance({ context, status, open, disabled }: Props) {
     return () => { stop(); clearTimeout(timer); };
   }, [reads, status.expiresAt]);
   const available = useSyncExternalStore(subscribe, current, () => false);
+  const handles = bounded?.scope.delegation?.toolHandles;
+  const hasTools = !!status.plan.tools?.entries.some(tool => !handles || handles.includes(tool.handle));
   useLayoutEffect(() => { if (!available) { flight.current = null; consumer.current = null; } }, [available]);
-  const directory = useSessionQuery({ key: ["agent-tool-guidance", status.lease.planId, status.lease.generation, status.plan.digest],
-    scopes: ["execution"], enabled: expanded && available && !!status.plan.tools?.entries.length,
+  const directory = useSessionQuery({ key: ["agent-tool-guidance", status.lease.planId, status.lease.generation, status.plan.digest, ...(bounded ? [bounded.scope.scopeId] : [])],
+    scopes: ["execution"], enabled: expanded && available && hasTools,
     read: async () => {
       const ticket = {}; flight.current = ticket; consumer.current = null;
       const valid = () => mounted.current && flight.current === ticket && current();
-      const value = await openWorkPlanAgent({ ...context, lease: status.lease }, status.plan.scope, status.plan.tools?.entries ?? []);
+      const value = bounded ?? await openWorkPlanAgent({ ...context, lease: status.lease }, status.plan.scope, status.plan.tools?.entries ?? []);
       if (!valid()) throw new Error("Agent guidance scope changed");
       const catalog = await value.readGuidance();
       if (!valid()) throw new Error("Agent guidance scope changed");
@@ -71,9 +73,9 @@ function ScopedToolGuidance({ context, status, open, disabled }: Props) {
   const catalog = available && !directory.isFetching && !directory.error ? directory.data : undefined;
   return <section aria-label={t("ai.toolGuidance.title")}>
     <h4>{t("ai.toolGuidance.title")}</h4><p>{t("ai.toolGuidance.help")}</p>
-    {!status.plan.tools?.entries.length ? <p>{t("ai.toolGuidance.empty")}</p> : <button type="button" className="secondary-button" aria-expanded={expanded} disabled={!available}
+    {!hasTools ? <p>{t("ai.toolGuidance.empty")}</p> : <button type="button" className="secondary-button" aria-expanded={expanded} disabled={!available}
       onClick={() => { flight.current = null; consumer.current = null; setSelected(null); setExpanded(!expanded); }}>{t(expanded ? "ai.toolGuidance.hide" : "ai.toolGuidance.show")}</button>}
-    {!available && status.plan.tools?.entries.length ? <div role="status"><p>{t("ai.toolGuidance.unavailable")}</p>
+    {!available && hasTools ? <div role="status"><p>{t("ai.toolGuidance.unavailable")}</p>
       <button type="button" className="secondary-button" disabled={disabled || !open || reads.retired} onClick={() => reads.invalidate(["execution"])}>{t("ai.toolGuidance.refreshPlan")}</button></div> : null}
     {expanded && available ? <>
       {directory.isFetching ? <p role="status">{t("ai.toolGuidance.loading")}</p> : null}

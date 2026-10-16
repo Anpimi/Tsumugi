@@ -23,7 +23,7 @@ export type WorkspaceDestination =
   | { kind: "resource-context-return"; capture: ContextEditorTarget }
   | { kind: "attempt"; area: "source" | "translation" | "ai" | "arena"; attemptId: string };
 export interface SessionConsumer {
-  allowNavigate: () => Promise<boolean>;
+  allowNavigate: (destination?: WorkspaceDestination) => Promise<boolean>;
   allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>;
 }
 export interface ExitDisposition { area: WorkspaceArea; status: "ready" | "dirty" | "blocked"; revision: string }
@@ -72,11 +72,11 @@ export class SessionNavigation {
     try {
       const from = this.ports.area();
       const consumer = await this.ports.consumer(from);
-      if (!current() || (consumer && !await consumer.allowNavigate()) || !current()) return false;
+      if (!current() || (consumer && !await consumer.allowNavigate(fixed)) || !current()) return false;
       const accepted = await this.ports.accept(fixed, current);
       if (!accepted || !current()) return false;
       const latest = await this.ports.consumer(from);
-      if (!current() || (latest && !await latest.allowNavigate()) || !current()) return false;
+      if (!current() || (latest && !await latest.allowNavigate(fixed)) || !current()) return false;
       if (typeof accepted === "function" && !accepted()) return false;
       this.ports.show(destinationArea(fixed));
       return true;

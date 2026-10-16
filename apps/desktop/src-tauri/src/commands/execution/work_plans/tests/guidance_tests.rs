@@ -73,6 +73,9 @@ fn installed(
 }
 
 fn open(fixture: &Fixture, spec: WorkPlanToolSpec) -> Value {
+    open_tools(fixture, vec![spec])
+}
+fn open_tools(fixture: &Fixture, specs: Vec<WorkPlanToolSpec>) -> Value {
     let unit = fixture.unit;
     let lease = fixture
         .app
@@ -97,7 +100,7 @@ fn open(fixture: &Fixture, spec: WorkPlanToolSpec) -> Value {
                     PlanOptions::default(),
                     Some(WorkPlanTools {
                         max_invocations: 2,
-                        entries: vec![spec],
+                        entries: specs,
                     }),
                 )
                 .unwrap();
@@ -151,6 +154,62 @@ fn open(fixture: &Fixture, spec: WorkPlanToolSpec) -> Value {
     fixture
         .call("open_work_plan_agent_scope", json!({"lease":lease}))
         .unwrap()
+}
+
+#[test]
+fn agent_subset_registered_guidance_keeps_only_original_child_members() {
+    let fixture = Fixture::create();
+    let (_package, first) = installed(&fixture, |_, _| {});
+    let mut second = first.clone();
+    second.handle = ExecutionId::new();
+    let root = open_tools(&fixture, vec![first.clone(), second.clone()]);
+    let before = fixture.bytes();
+    let child = fixture.call("delegate_work_plan_agent_scope", json!({"scopeId":root["scopeId"],
+        "delegation":{"delegationId":ExecutionId::new(),"unitIds":[fixture.unit],"toolHandles":[first.handle]}})).unwrap();
+    let empty = fixture.call("delegate_work_plan_agent_scope", json!({"scopeId":root["scopeId"],
+        "delegation":{"delegationId":ExecutionId::new(),"unitIds":[fixture.unit],"toolHandles":[]}})).unwrap();
+    let snapshot = observable(&fixture, &child);
+    let directory = fixture
+        .call(
+            "read_work_plan_agent_guidance",
+            json!({"scopeId":child["scopeId"]}),
+        )
+        .unwrap();
+    assert_eq!(directory["tools"], json!([first.clone()]));
+    assert!(
+        fixture
+            .call("read_work_plan_agent_skill", skill(&child, &first))
+            .unwrap()["content"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Untrusted guidance")
+    );
+    assert!(
+        fixture
+            .call("read_work_plan_agent_resource", resource(&child, &first))
+            .is_ok()
+    );
+    assert!(
+        fixture
+            .call("read_work_plan_agent_skill", skill(&child, &second))
+            .is_err()
+    );
+    assert_eq!(
+        fixture
+            .call(
+                "read_work_plan_agent_guidance",
+                json!({"scopeId":empty["scopeId"]})
+            )
+            .unwrap()["tools"],
+        json!([])
+    );
+    assert!(
+        fixture
+            .call("read_work_plan_agent_skill", skill(&empty, &first))
+            .is_err()
+    );
+    assert_eq!(fixture.bytes(), before);
+    assert_eq!(observable(&fixture, &child), snapshot);
 }
 
 fn observable(fixture: &Fixture, opened: &Value) -> Value {

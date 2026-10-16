@@ -1,7 +1,13 @@
 //! A bounded Agent consumer of the original work-plan generation service.
 //! The trusted host opens a scope; Agent calls carry no authorizer or controls.
 use super::*;
-use tsumugi_core::{ProviderBudget, application::AgentGenerationRequest};
+use tsumugi_core::{
+    ProviderBudget,
+    application::{
+        AgentDelegationRequest, AgentGenerationRequest, WorkPlanAgentExecutionIdentity,
+        WorkPlanAgentReconciliation, WorkPlanAgentSubset,
+    },
+};
 
 const MAX_AGENT_SCOPES: usize = 128;
 
@@ -9,6 +15,47 @@ request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     WorkPlanAgentOpenRequest {
         lease: AutomationLease
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanAgentDelegateRequest {
+        scope_id: ExecutionId,
+        delegation: AgentDelegationRequest
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanAgentReconcileRequest {
+        lease: AutomationLease,
+        task_id: ExecutionId,
+        attempt_id: ExecutionId,
+        #[cfg_attr(feature = "wire-schema", schemars(regex(pattern = "^[a-f0-9]{64}$")))]
+        input_digest: String
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanAgentGenerationAttemptRequest {
+        scope_id: ExecutionId,
+        generation: AgentGenerationRequest,
+        #[cfg_attr(feature = "wire-schema", schemars(regex(pattern = "^[a-f0-9]{64}$")))]
+        input_digest: String,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        offset: u32,
+        #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 100)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanAgentGenerationOutputRequest {
+        scope_id: ExecutionId,
+        generation: AgentGenerationRequest,
+        #[cfg_attr(feature = "wire-schema", schemars(regex(pattern = "^[a-f0-9]{64}$")))]
+        input_digest: String,
+        item_id: ExecutionId,
+        result_id: ExecutionId
     }
 );
 request!(
@@ -37,6 +84,12 @@ pub struct WorkPlanAgentView {
     pub parent_task: ExecutionId,
     pub scope: Vec<PlanSelectionBasis>,
     pub budget: ProviderBudget,
+    #[serde(deserialize_with = "tsumugi_core::application::required_agent_subset")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "tsumugi_core::application::agent_subset_schema")
+    )]
+    pub delegation: Option<WorkPlanAgentSubset>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -138,12 +191,10 @@ pub async fn open_work_plan_agent_scope(
                 for id in stale {
                     host.work_plans.agent_scopes.remove(&id);
                 }
-                let id = if let Some((id, _)) = host
-                    .work_plans
-                    .agent_scopes
-                    .iter()
-                    .find(|(_, scope)| scope.lease() == opened.lease())
-                {
+                let id = if let Some((id, _)) =
+                    host.work_plans.agent_scopes.iter().find(|(_, scope)| {
+                        scope.lease() == opened.lease() && scope.delegation().is_none()
+                    }) {
                     *id
                 } else {
                     if host.work_plans.agent_scopes.len() >= MAX_AGENT_SCOPES {
@@ -165,6 +216,210 @@ pub async fn open_work_plan_agent_scope(
                     parent_task: opened.parent_task(),
                     scope: plan.selection_basis,
                     budget: budget(store, &opened)?,
+                    delegation: None,
+                })
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn delegate_work_plan_agent_scope(
+    state: State<'_, AppState>,
+    request: WorkPlanAgentDelegateRequest,
+) -> Result<WorkPlanAgentView, CommandError> {
+    state
+        .sessions
+        .run(
+            "delegate_work_plan_agent_scope",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let host = active.execution.as_mut().ok_or_else(|| {
+                    map_read(ExecutionError::new(
+                        ErrorCode::Unauthorized,
+                        "work-plan-agent-session",
+                    ))
+                })?;
+                host.allow_mutation()?;
+                let store = &active.store;
+                let parent = scope(host, store, request.scope_id)?;
+                let opened = store
+                    .delegate_work_plan_agent_scope(&parent, &request.delegation)
+                    .map_err(map_read)?;
+                let mut stale = Vec::new();
+                for (id, scope) in &host.work_plans.agent_scopes {
+                    match store.check_work_plan_agent_scope(scope) {
+                        Ok(()) => {}
+                        Err(error)
+                            if matches!(
+                                error.code,
+                                ErrorCode::Cancelled | ErrorCode::Unauthorized
+                            ) =>
+                        {
+                            stale.push(*id)
+                        }
+                        Err(error) => return Err(map_read(error)),
+                    }
+                }
+                for id in stale {
+                    host.work_plans.agent_scopes.remove(&id);
+                }
+                let existing = host.work_plans.agent_scopes.iter().find(|(_, scope)| {
+                    scope.delegation().is_some_and(|subset| {
+                        subset.parent_scope_id == parent.caller_id()
+                            && subset.delegation_id == request.delegation.delegation_id
+                    })
+                });
+                let child = if let Some((_, scope)) = existing {
+                    if scope.delegation() != opened.delegation() || scope.lease() != opened.lease()
+                    {
+                        return Err(map_read(ExecutionError::new(
+                            ErrorCode::ResultMismatch,
+                            "work-plan-agent-delegation",
+                        )));
+                    }
+                    scope.clone()
+                } else {
+                    if host.work_plans.agent_scopes.len() >= MAX_AGENT_SCOPES {
+                        return Err(map_read(ExecutionError::new(
+                            ErrorCode::LimitExceeded,
+                            "work-plan-agent-session",
+                        )));
+                    }
+                    host.work_plans
+                        .agent_scopes
+                        .insert(opened.caller_id(), opened.clone());
+                    opened
+                };
+                let plan = store.work_plan(child.lease().plan_id).map_err(map_read)?;
+                let subset = child.delegation().ok_or_else(|| {
+                    map_read(ExecutionError::new(
+                        ErrorCode::CorruptLedger,
+                        "work-plan-agent-subset",
+                    ))
+                })?;
+                Ok(WorkPlanAgentView {
+                    scope_id: child.caller_id(),
+                    lease: child.lease(),
+                    parent_task: child.parent_task(),
+                    scope: plan
+                        .selection_basis
+                        .into_iter()
+                        .filter(|basis| subset.unit_ids.contains(&basis.unit_id))
+                        .collect(),
+                    budget: budget(store, &child)?,
+                    delegation: child.delegation().cloned(),
+                })
+            },
+        )
+        .await
+}
+
+/// This human recovery read never restores a bounded consumer or its output.
+#[tauri::command]
+pub async fn reconcile_work_plan_agent_execution(
+    state: State<'_, AppState>,
+    request: WorkPlanAgentReconcileRequest,
+) -> Result<WorkPlanAgentReconciliation, CommandError> {
+    state
+        .sessions
+        .run(
+            "reconcile_work_plan_agent_execution",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .reconcile_work_plan_agent_execution(&WorkPlanAgentExecutionIdentity {
+                        lease: request.lease,
+                        task_id: request.task_id,
+                        attempt_id: request.attempt_id,
+                        input_digest: request.input_digest,
+                    })
+                    .map_err(map_read)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_work_plan_agent_generation_attempt(
+    state: State<'_, AppState>,
+    request: WorkPlanAgentGenerationAttemptRequest,
+) -> Result<AttemptDetail, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_work_plan_agent_generation_attempt",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let host = broker::read_host(active)?;
+                let scope = scope(host, &active.store, request.scope_id)?;
+                active
+                    .store
+                    .read_work_plan_agent_generation_attempt(
+                        &scope,
+                        &request.generation,
+                        &request.input_digest,
+                        host.runtime.is_active(request.generation.attempt_id),
+                        request.offset,
+                        request.limit,
+                    )
+                    .map_err(map_read)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_work_plan_agent_generation_output(
+    state: State<'_, AppState>,
+    request: WorkPlanAgentGenerationOutputRequest,
+) -> Result<ExecutionOutputView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_work_plan_agent_generation_output",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let host = broker::read_host(active)?;
+                let scope = scope(host, &active.store, request.scope_id)?;
+                let result = active
+                    .store
+                    .read_work_plan_agent_generation_output(
+                        &scope,
+                        &request.generation,
+                        &request.input_digest,
+                        request.item_id,
+                        request.result_id,
+                    )
+                    .map_err(map_read)?;
+                Ok(ExecutionOutputView {
+                    result: result.envelope().clone(),
+                    source_failure: None,
                 })
             },
         )
@@ -252,7 +507,7 @@ pub async fn start_work_plan_agent_generation(
                 let checker_revision = checker.as_ref().map(|consent| consent.settings_revision);
                 with_plan_environment_revision(&plugins, &plan, checker_revision, || {
                     host.runtime
-                        .submit_child(store, &input, scope.parent_task())
+                        .submit_work_plan_agent_generation(store, &input)
                         .map_err(map_recover)?;
                     host.ai.track(store, &input, checker).map_err(map_recover)?;
                     Ok(input.envelope().attempt_id)
@@ -280,10 +535,39 @@ mod tests {
             }};
         }
         round_trip!("requests", "open", WorkPlanAgentOpenRequest);
+        round_trip!("requests", "delegate", WorkPlanAgentDelegateRequest);
+        round_trip!("requests", "reconcile", WorkPlanAgentReconcileRequest);
+        round_trip!(
+            "requests",
+            "generationAttempt",
+            WorkPlanAgentGenerationAttemptRequest
+        );
+        round_trip!(
+            "requests",
+            "generationOutput",
+            WorkPlanAgentGenerationOutputRequest
+        );
         round_trip!("requests", "prepare", WorkPlanAgentPrepareRequest);
         round_trip!("requests", "start", WorkPlanAgentStartRequest);
         round_trip!("responses", "scope", WorkPlanAgentView);
+        round_trip!("responses", "child", WorkPlanAgentView);
+        round_trip!("responses", "reconciliation", WorkPlanAgentReconciliation);
+        round_trip!("responses", "generationAttempt", AttemptDetail);
+        // Output is the existing serialize-only projection; compare its stored frame.
+        let result: ResultEnvelope =
+            serde_json::from_value(fixture["responses"]["generationOutput"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(ExecutionOutputView {
+                result,
+                source_failure: None
+            })
+            .unwrap(),
+            fixture["responses"]["generationOutput"]
+        );
         round_trip!("responses", "generation", WorkPlanAgentGenerationView);
+        let mut missing = fixture["responses"]["scope"].clone();
+        missing.as_object_mut().unwrap().remove("delegation");
+        assert!(serde_json::from_value::<WorkPlanAgentView>(missing).is_err());
         for field in [
             "confirmed",
             "effects",

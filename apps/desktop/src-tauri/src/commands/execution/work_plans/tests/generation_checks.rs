@@ -842,7 +842,7 @@ fn generation_component_actual_joint_checks_and_tool_consent_preserve_original_s
                 .unwrap();
             assert_eq!(input.envelope().operation, "plugin-tool-query");
             assert_eq!(input.envelope().items[0].payload, expected_payload);
-            assert_eq!(input.envelope().settings["callerId"], caller);
+            assert_eq!(input.envelope().settings["agent"]["callerId"], caller);
             assert!(input.envelope().automation.is_some());
         });
     assert_eq!(

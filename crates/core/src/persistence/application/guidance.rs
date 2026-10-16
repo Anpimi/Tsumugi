@@ -24,7 +24,16 @@ impl ProjectStore {
             let tools = stored.plan.tools.ok_or_else(denied)?;
             Ok(CapturedWorkPlanToolGuidance {
                 scope: scope.clone(),
-                tools: tools.entries,
+                tools: tools
+                    .entries
+                    .into_iter()
+                    .filter(|tool| {
+                        scope
+                            .delegation
+                            .as_ref()
+                            .is_none_or(|subset| subset.tool_handles.contains(&tool.handle))
+                    })
+                    .collect(),
             })
         })
     }

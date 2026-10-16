@@ -1384,6 +1384,7 @@ pub async fn set_work_protection(
 
 #[cfg(test)]
 mod tests {
+    mod agent_subset_tests;
     mod broker_tests;
     mod generation_tests;
     #[cfg(any(target_os = "macos", target_os = "linux"))]

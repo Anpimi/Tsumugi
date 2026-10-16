@@ -369,6 +369,12 @@ struct AiRequests {
     work_plan_generation_discard:
         execution::work_plans::generation::WorkPlanGenerationDiscardRequest,
     work_plan_agent_open: execution::work_plans::agent::WorkPlanAgentOpenRequest,
+    work_plan_agent_delegate: execution::work_plans::agent::WorkPlanAgentDelegateRequest,
+    work_plan_agent_reconcile: execution::work_plans::agent::WorkPlanAgentReconcileRequest,
+    work_plan_agent_generation_attempt:
+        execution::work_plans::agent::WorkPlanAgentGenerationAttemptRequest,
+    work_plan_agent_generation_output:
+        execution::work_plans::agent::WorkPlanAgentGenerationOutputRequest,
     work_plan_agent_prepare: execution::work_plans::agent::WorkPlanAgentPrepareRequest,
     work_plan_agent_start: execution::work_plans::agent::WorkPlanAgentStartRequest,
     work_plan_agent_tool_prepare: execution::work_plans::broker::WorkPlanAgentToolPrepareRequest,
@@ -396,7 +402,10 @@ struct AiResponses {
     maintenance_assessment: tsumugi_core::application::MaintenanceAssessment,
     work_plan_generation_preflight: execution::work_plans::generation::WorkPlanGenerationPreflight,
     work_plan_agent: execution::work_plans::agent::WorkPlanAgentView,
+    work_plan_agent_reconcile: tsumugi_core::application::WorkPlanAgentReconciliation,
     work_plan_agent_generation: execution::work_plans::agent::WorkPlanAgentGenerationView,
+    work_plan_agent_generation_attempt: execution::AttemptDetail,
+    work_plan_agent_generation_output: execution::ExecutionOutputView,
     work_plan_agent_tool: execution::work_plans::broker::WorkPlanAgentToolView,
     work_plan_agent_tool_attempt: execution::AttemptDetail,
     work_plan_agent_tool_output: execution::ExecutionOutputView,

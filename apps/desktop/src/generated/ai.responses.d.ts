@@ -379,18 +379,6 @@ export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
 export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
-export type WorkPlanGuidanceContent =
-  | {
-      contributionId: string;
-      kind: "skill";
-      text: string;
-    }
-  | {
-      contributionId: string;
-      kind: "resource";
-      schema: ContractRef;
-      text: string;
-    };
 export type InvocationOutcome =
   | {
       kind: "succeeded";
@@ -409,6 +397,19 @@ export type InvocationOutcome =
  */
 export type SourceExtractionErrorCode =
   "invalid-input" | "unsupported-profile" | "invalid-source" | "unsupported-structure" | "limit-exceeded" | "cancelled";
+export type WorkPlanAgentReconciliationOutcome = "active" | "enqueued" | "not-enqueued";
+export type WorkPlanGuidanceContent =
+  | {
+      contributionId: string;
+      kind: "skill";
+      text: string;
+    }
+  | {
+      contributionId: string;
+      kind: "resource";
+      schema: ContractRef;
+      text: string;
+    };
 /**
  * Requested automatic effects, never a human language-review approval.
  */
@@ -431,7 +432,10 @@ export interface Responses {
   workPlanAction: WorkPlanReceiptView | null;
   workPlanAgent: WorkPlanAgentView;
   workPlanAgentGeneration: WorkPlanAgentGenerationView;
+  workPlanAgentGenerationAttempt: AttemptDetail;
+  workPlanAgentGenerationOutput: ExecutionOutputView;
   workPlanAgentGuidance: WorkPlanAgentGuidanceView;
+  workPlanAgentReconcile: WorkPlanAgentReconciliation;
   workPlanAgentResource: WorkPlanAgentGuidanceTextView;
   workPlanAgentSkill: WorkPlanAgentGuidanceTextView;
   workPlanAgentTool: WorkPlanAgentToolView;
@@ -1307,10 +1311,24 @@ export interface WorkPlanReceiptView {
 }
 export interface WorkPlanAgentView {
   budget: ProviderBudget;
+  delegation: WorkPlanAgentSubset | null;
   lease: AutomationLease;
   parentTask: ExecutionId;
   scope: PlanSelectionBasis[];
   scopeId: ExecutionId;
+}
+export interface WorkPlanAgentSubset {
+  delegationId: ExecutionId;
+  parentScopeId: ExecutionId;
+  /**
+   * @maxItems 32
+   */
+  toolHandles: ExecutionId[];
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
 }
 export interface WorkPlanAgentGenerationView {
   attemptId: ExecutionId;
@@ -1320,30 +1338,6 @@ export interface WorkPlanAgentGenerationView {
   scope: PlanSelectionBasis[];
   scopeId: ExecutionId;
   taskId: ExecutionId;
-}
-export interface WorkPlanAgentGuidanceView {
-  parentTask: ExecutionId;
-  scopeId: ExecutionId;
-  /**
-   * @minItems 1
-   * @maxItems 32
-   */
-  tools: [WorkPlanToolSpec, ...WorkPlanToolSpec[]];
-}
-export interface WorkPlanAgentGuidanceTextView {
-  content: WorkPlanGuidanceContent;
-  parentTask: ExecutionId;
-  scopeId: ExecutionId;
-  tool: WorkPlanToolSpec;
-}
-export interface WorkPlanAgentToolView {
-  attemptId: ExecutionId;
-  inputDigest: string;
-  parentTask: ExecutionId;
-  scope: PlanSelectionBasis[];
-  scopeId: ExecutionId;
-  taskId: ExecutionId;
-  toolHandle: ExecutionId;
 }
 /**
  * Read-only display projection. The stored ResultEnvelope remains unchanged.
@@ -1426,6 +1420,42 @@ export interface SourceExtractionError {
   artifactId: string | null;
   code: SourceExtractionErrorCode;
   detail: string;
+}
+export interface WorkPlanAgentGuidanceView {
+  parentTask: ExecutionId;
+  scopeId: ExecutionId;
+  /**
+   * @maxItems 32
+   */
+  tools: WorkPlanToolSpec[];
+}
+export interface WorkPlanAgentReconciliation {
+  identity: WorkPlanAgentExecutionIdentity;
+  outcome: WorkPlanAgentReconciliationOutcome;
+}
+/**
+ * Human recovery identity. It contains no scope or execution authority.
+ */
+export interface WorkPlanAgentExecutionIdentity {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  lease: AutomationLease;
+  taskId: ExecutionId;
+}
+export interface WorkPlanAgentGuidanceTextView {
+  content: WorkPlanGuidanceContent;
+  parentTask: ExecutionId;
+  scopeId: ExecutionId;
+  tool: WorkPlanToolSpec;
+}
+export interface WorkPlanAgentToolView {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  parentTask: ExecutionId;
+  scope: PlanSelectionBasis[];
+  scopeId: ExecutionId;
+  taskId: ExecutionId;
+  toolHandle: ExecutionId;
 }
 export interface WorkPlanGenerationPreflight {
   attemptId: ExecutionId;

@@ -17,6 +17,7 @@ fn derive(
     scope: &WorkPlanAgentScope,
     request: &AgentToolRequest,
 ) -> Result<PreparedWorkPlanTool, ExecutionError> {
+    super::agents::validate_scope_basis(plan, scope)?;
     let original = plan.fixed_input()?;
     let selected = request
         .unit_ids
@@ -35,6 +36,12 @@ fn derive(
                 .any(|basis| basis.unit_id == *id)
         })
     {
+        return Err(fail(ErrorCode::Unauthorized, "work-plan-tool-scope"));
+    }
+    if scope.delegation.as_ref().is_some_and(|subset| {
+        selected.iter().any(|id| !subset.unit_ids.contains(id))
+            || !subset.tool_handles.contains(&request.tool_handle)
+    }) {
         return Err(fail(ErrorCode::Unauthorized, "work-plan-tool-scope"));
     }
     let tool = plan
@@ -103,7 +110,7 @@ fn derive(
         "binding": tool.binding, "packageOrigin": tool.package_origin,
         "componentScope": tool.execution.component_scope, "environment": tool.execution.environment, "environmentDigest": tool.execution.environment.digest().map_err(|_| fail(ErrorCode::InvalidInput, "work-plan-tool-environment"))?,
         "runtimeOrigin": tool.runtime_origin
-    }, "query": {"target": tool.target, "selections": tool.selections}, "toolHandle": tool.handle, "callerId": scope.caller_id});
+    }, "query": {"target": tool.target, "selections": tool.selections}, "toolHandle": tool.handle, "agent": scope.execution_binding()});
     let input = FixedInput::capture(envelope)?;
     Ok(PreparedWorkPlanTool {
         scope: scope.clone(),
@@ -191,6 +198,7 @@ impl ProjectStore {
             tool_handle: request.tool_handle,
             caller: "work-plan-agent".into(),
             caller_id: scope.caller_id,
+            delegation: scope.delegation.clone(),
         };
         super::super::plugin_execution::validate_tool_read_in(connection, &input, &delegation)?;
         Ok(input)
@@ -383,6 +391,7 @@ pub(in crate::persistence) fn check_prepared_tool(
         tool_handle: prepared.request.tool_handle,
         caller: "work-plan-agent".into(),
         caller_id: prepared.scope.caller_id,
+        delegation: prepared.scope.delegation.clone(),
     })
 }
 
@@ -397,7 +406,7 @@ pub(in crate::persistence) fn record_tool_input(
             input.envelope().attempt_id.to_string(),
             delegation.lease.plan_id.to_string(),
             delegation.lease.generation.get() as i64,
-            codec::encode(delegation, 4096)?,
+            codec::encode(delegation, MAX_AGENT_DELEGATION_BYTES)?,
             delegation.root_task.to_string()
         ],
     )
@@ -415,7 +424,7 @@ pub(in crate::persistence) fn validate_tool_input(
     let Some((kind, bytes, root, plan, generation)) = association else {
         return Err(fail(ErrorCode::Unauthorized, "work-plan-tool-association"));
     };
-    let saved: WorkPlanToolDelegation = codec::decode(&bytes, 4096)?;
+    let saved: WorkPlanToolDelegation = codec::decode(&bytes, MAX_AGENT_DELEGATION_BYTES)?;
     if kind != "tool"
         || saved != *delegation
         || root != delegation.root_task.to_string()
@@ -437,6 +446,7 @@ pub(in crate::persistence) fn validate_tool_input(
         parent_task: delegation.root_task,
         store_epoch: String::new(),
         caller_id: delegation.caller_id,
+        delegation: delegation.delegation.clone(),
     };
     let request = AgentToolRequest {
         task_id: input.envelope().task_id,
@@ -459,7 +469,7 @@ pub(in crate::persistence) fn validate_tool_input(
         != Some((
             input.envelope().task_id.to_string().as_str(),
             input.digest(),
-            codec::encode(delegation, 4096)?.as_slice(),
+            codec::encode(delegation, MAX_AGENT_DELEGATION_BYTES)?.as_slice(),
         ))
     {
         return Err(fail(ErrorCode::CorruptLedger, "work-plan-tool-grant"));

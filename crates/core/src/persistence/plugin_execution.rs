@@ -13,7 +13,7 @@ use std::sync::Arc;
 // to a row that does not yet exist.
 pub(super) const TABLES: &[(&str, &str)] = &[(
     "plugin_execution_grants",
-    "CREATE TABLE plugin_execution_grants (grant_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL UNIQUE, task_id TEXT NOT NULL, input_digest TEXT NOT NULL CHECK(length(input_digest)=64), generation TEXT NOT NULL, expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0), unsandboxed_execution INTEGER NOT NULL CHECK(unsandboxed_execution=1), application_execution INTEGER NOT NULL CHECK(application_execution IN (0,1)), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 4096))",
+    "CREATE TABLE plugin_execution_grants (grant_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL UNIQUE, task_id TEXT NOT NULL, input_digest TEXT NOT NULL CHECK(length(input_digest)=64), generation TEXT NOT NULL, expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0), unsandboxed_execution INTEGER NOT NULL CHECK(unsandboxed_execution=1), application_execution INTEGER NOT NULL CHECK(application_execution IN (0,1)), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 8192))",
 )];
 
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
@@ -106,7 +106,12 @@ fn decode(raw: RawRecord) -> Result<GrantRecord, ExecutionError> {
         revoked: raw.8 == 1,
         delegation: raw
             .9
-            .map(|bytes| crate::execution::codec::decode(&bytes, 4096))
+            .map(|bytes| {
+                crate::execution::codec::decode(
+                    &bytes,
+                    crate::application::MAX_AGENT_DELEGATION_BYTES,
+                )
+            })
             .transpose()?,
     })
 }
@@ -643,7 +648,7 @@ pub(super) fn record_delegated_grant_in(
             input.digest(),
             generation.to_string(),
             expires_at_ms as i64,
-            crate::execution::codec::encode(delegation, 4096)?
+            crate::execution::codec::encode(delegation, crate::application::MAX_AGENT_DELEGATION_BYTES)?
         ],
     )
     .map_err(sql)?;

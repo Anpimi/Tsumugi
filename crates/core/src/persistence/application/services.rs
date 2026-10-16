@@ -322,13 +322,14 @@ fn derive_historical(
         parent_task: origin.parent_task,
         caller_id: origin.caller_id,
         store_epoch: String::new(),
+        delegation: None,
     };
     if plan.execution_input()?.task_id != origin.parent_task
         || plan.execution_input()?.project_id != origin.project_id
     {
         return Err(corrupt());
     }
-    control::derive_agent_generation(plan, &scope, request)
+    control::derive_service_generation(plan, &scope, request)
 }
 
 fn receipt(
@@ -432,6 +433,9 @@ impl ProjectStore {
         settings_revocation: &Cancellation,
     ) -> Result<WorkPlanServiceOrigin, ExecutionError> {
         self.check_work_plan_agent_scope(scope)?;
+        if scope.delegation().is_some() {
+            return Err(fail(ErrorCode::Unauthorized, "service-agent-subset"));
+        }
         let permit = dispatch
             .plugin_permit()
             .filter(|permit| {
@@ -527,7 +531,11 @@ impl ProjectStore {
                 });
             }
             check_origin(c, origin, &self.plugin_authority)?;
-            let input = self.prepare_work_plan_agent_generation(&origin.scope, &generation)?;
+            self.check_work_plan_agent_scope(&origin.scope)?;
+            let plan = control::load(c, origin.scope.lease.plan_id)?.plan;
+            self.verify_work_plan(&plan)?;
+            let input = control::derive_service_generation(&plan, &origin.scope, &generation)?;
+            control::check_enqueue(c, &input, Some(origin.scope.parent_task()))?;
             Ok(PreparedWorkPlanServiceGeneration {
                 origin: origin.clone(),
                 call: call.clone(),

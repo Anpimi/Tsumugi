@@ -7,9 +7,13 @@ export declare function validateRequestPreview(value: unknown): value is Request
 export declare function validateRequestRead(value: unknown): value is Requests["read"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
 export declare function validateRequestWorkPlanAction(value: unknown): value is Requests["workPlanAction"];
+export declare function validateRequestWorkPlanAgentDelegate(value: unknown): value is Requests["workPlanAgentDelegate"];
+export declare function validateRequestWorkPlanAgentGenerationAttempt(value: unknown): value is Requests["workPlanAgentGenerationAttempt"];
+export declare function validateRequestWorkPlanAgentGenerationOutput(value: unknown): value is Requests["workPlanAgentGenerationOutput"];
 export declare function validateRequestWorkPlanAgentGuidance(value: unknown): value is Requests["workPlanAgentGuidance"];
 export declare function validateRequestWorkPlanAgentOpen(value: unknown): value is Requests["workPlanAgentOpen"];
 export declare function validateRequestWorkPlanAgentPrepare(value: unknown): value is Requests["workPlanAgentPrepare"];
+export declare function validateRequestWorkPlanAgentReconcile(value: unknown): value is Requests["workPlanAgentReconcile"];
 export declare function validateRequestWorkPlanAgentResource(value: unknown): value is Requests["workPlanAgentResource"];
 export declare function validateRequestWorkPlanAgentSkill(value: unknown): value is Requests["workPlanAgentSkill"];
 export declare function validateRequestWorkPlanAgentStart(value: unknown): value is Requests["workPlanAgentStart"];
@@ -36,7 +40,10 @@ export declare function validateResponseWorkPlan(value: unknown): value is Respo
 export declare function validateResponseWorkPlanAction(value: unknown): value is Responses["workPlanAction"];
 export declare function validateResponseWorkPlanAgent(value: unknown): value is Responses["workPlanAgent"];
 export declare function validateResponseWorkPlanAgentGeneration(value: unknown): value is Responses["workPlanAgentGeneration"];
+export declare function validateResponseWorkPlanAgentGenerationAttempt(value: unknown): value is Responses["workPlanAgentGenerationAttempt"];
+export declare function validateResponseWorkPlanAgentGenerationOutput(value: unknown): value is Responses["workPlanAgentGenerationOutput"];
 export declare function validateResponseWorkPlanAgentGuidance(value: unknown): value is Responses["workPlanAgentGuidance"];
+export declare function validateResponseWorkPlanAgentReconcile(value: unknown): value is Responses["workPlanAgentReconcile"];
 export declare function validateResponseWorkPlanAgentResource(value: unknown): value is Responses["workPlanAgentResource"];
 export declare function validateResponseWorkPlanAgentSkill(value: unknown): value is Responses["workPlanAgentSkill"];
 export declare function validateResponseWorkPlanAgentTool(value: unknown): value is Responses["workPlanAgentTool"];

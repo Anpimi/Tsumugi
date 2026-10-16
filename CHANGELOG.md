@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Delegate a captured subset of entries and tools to a single-level child Agent. Child
+  work retains the original model, sharing decisions, permissions, deadline and
+  cumulative budget, and reads only its own generation or tool results. Uncertain
+  work keeps its original identity for reconciliation.
+- Advance the current development project format for exact Agent execution and
+  subset provenance. Earlier development projects are preserved and refused;
+  they are not migrated or reset automatically.
+
 - Inspect an authorized tool's attached guidance in stages: see its source and
   permission summary, explicitly load its Skill text, then request a declared
   reference. Guidance stays untrusted plain text, cannot grant execution or data

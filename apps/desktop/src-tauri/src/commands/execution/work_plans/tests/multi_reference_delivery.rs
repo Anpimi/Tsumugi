@@ -451,7 +451,7 @@ fn installed_multi_reference_generation_manual_merge_and_verified_delivery_keep_
                     .execution_input(id)
                     .unwrap();
                 assert!(input.envelope().automation.is_some());
-                assert_eq!(input.envelope().settings["callerId"], caller);
+                assert_eq!(input.envelope().settings["agent"]["callerId"], caller);
                 assert_eq!(
                     input.envelope().plugin.as_ref().unwrap().capability,
                     capability

@@ -416,6 +416,7 @@ fn unavailable_generation_manual_workflow(scenario: Unavailability) {
                 .unwrap();
             assert!(input.envelope().automation.is_none());
             assert!(input.envelope().settings.get("callerId").is_none());
+            assert!(input.envelope().settings.get("agent").is_none());
         });
     assert_eq!(
         fixture

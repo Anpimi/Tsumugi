@@ -1,4 +1,5 @@
 //! Work plans use the existing project and execution authorities.
+mod agents;
 mod control;
 mod guidance;
 mod maintenance;
@@ -10,6 +11,9 @@ use crate::{
     ai::{self, AiConfig},
     application::{PlanOptions, PlanSelectionBasis, WorkPlan},
     execution::{ErrorCode, ExecutionError, ExecutionId},
+};
+pub(in crate::persistence) use agents::{
+    binding as agent_binding, check_prepared as check_prepared_agent,
 };
 pub(super) use control::{
     allows_cancelled_ancestor, check_enqueue, check_input, initialize, protect_manual_in,
@@ -749,6 +753,96 @@ mod tests {
     }
 
     #[test]
+    fn agent_subset_generations_share_original_budget_and_unknown_reservations() {
+        use crate::{application::*, execution::*};
+        let (_temp, mut store, units) = fixture();
+        let mut config = config();
+        config.max_requests = 1;
+        let plan = store
+            .prepare_work_plan(Some(config), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let receipt = store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
+        let input = FixedInput::capture(receipt.input.unwrap()).unwrap();
+        assert!(
+            input
+                .envelope()
+                .settings
+                .get("agent")
+                .is_some_and(serde_json::Value::is_null)
+        );
+        store.enqueue_execution(&input).unwrap();
+        let root = store.work_plan_agent_scope(receipt.lease).unwrap();
+        let mut dispatches = Vec::new();
+        for unit in &units[..2] {
+            let child = store
+                .delegate_work_plan_agent_scope(
+                    &root,
+                    &AgentDelegationRequest {
+                        delegation_id: ExecutionId::new(),
+                        unit_ids: vec![*unit],
+                        tool_handles: vec![],
+                    },
+                )
+                .unwrap();
+            let prepared = store
+                .prepare_work_plan_agent_generation(
+                    &child,
+                    &AgentGenerationRequest {
+                        task_id: ExecutionId::new(),
+                        attempt_id: ExecutionId::new(),
+                        unit_ids: vec![*unit],
+                    },
+                )
+                .unwrap();
+            store
+                .enqueue_work_plan_agent_generation(&prepared, RecoveryPolicy::ExternalUnknown)
+                .unwrap();
+            assert_eq!(
+                store
+                    .provider_budget(prepared.envelope().task_id)
+                    .unwrap()
+                    .unwrap()
+                    .limit,
+                1
+            );
+            dispatches.push(
+                store
+                    .dispatch_execution_item(
+                        prepared.envelope().attempt_id,
+                        prepared.envelope().items[0].item_id,
+                    )
+                    .unwrap(),
+            );
+        }
+        store
+            .reserve_provider_request(&dispatches[0], ExecutionId::new(), 1)
+            .unwrap();
+        assert_eq!(
+            store
+                .reserve_provider_request(&dispatches[1], ExecutionId::new(), 1)
+                .unwrap_err()
+                .stage,
+            "ai-budget"
+        );
+        let budget = store.provider_budget(root.parent_task()).unwrap().unwrap();
+        assert_eq!(
+            (budget.limit, budget.dispatched, budget.unresolved),
+            (1, 1, 1)
+        );
+        let directory = store.directory().to_owned();
+        store.close().unwrap();
+        let reopened = ProjectStore::open(directory).unwrap();
+        assert_eq!(
+            reopened
+                .provider_budget(root.parent_task())
+                .unwrap()
+                .unwrap(),
+            budget
+        );
+        assert!(reopened.check_work_plan_agent_scope(&root).is_err());
+    }
+
+    #[test]
     fn agent_generation_derives_exact_subsets_without_expanding_authority() {
         use crate::application::AgentGenerationRequest;
         let (_temp, mut store, units) = fixture();
@@ -789,7 +883,9 @@ mod tests {
             .find(|item| item.scope.id == units[0].to_string())
             .unwrap();
         assert_eq!(&child.envelope().items[0], captured);
-        assert_eq!(child.envelope().settings, root.envelope().settings);
+        let mut expected_settings = root.envelope().settings.clone();
+        expected_settings["agent"] = serde_json::to_value(scope.execution_binding()).unwrap();
+        assert_eq!(child.envelope().settings, expected_settings);
         assert_eq!(child.envelope().limits, root.envelope().limits);
         assert_eq!(child.envelope().automation, Some(grant.lease));
         assert_eq!(scope.parent_task(), root.envelope().task_id);
@@ -817,10 +913,9 @@ mod tests {
             assert!(serde_json::from_value::<AgentGenerationRequest>(forged).is_err());
         }
         store
-            .enqueue_execution_with_policy(
+            .enqueue_work_plan_agent_generation(
                 &child,
                 crate::execution::RecoveryPolicy::ExternalUnknown,
-                Some(scope.parent_task()),
             )
             .unwrap();
         assert_eq!(
@@ -874,10 +969,9 @@ mod tests {
         );
         assert_eq!(
             store
-                .enqueue_execution_with_policy(
+                .enqueue_work_plan_agent_generation(
                     &prepared,
-                    crate::execution::RecoveryPolicy::ExternalUnknown,
-                    Some(old.parent_task())
+                    crate::execution::RecoveryPolicy::ExternalUnknown
                 )
                 .unwrap_err()
                 .code,
@@ -897,10 +991,9 @@ mod tests {
             .prepare_work_plan_agent_generation(&fresh, &request)
             .unwrap();
         store
-            .enqueue_execution_with_policy(
+            .enqueue_work_plan_agent_generation(
                 &child,
                 crate::execution::RecoveryPolicy::ExternalUnknown,
-                Some(fresh.parent_task()),
             )
             .unwrap();
         let before = store.provider_budget(fresh.parent_task()).unwrap().unwrap();

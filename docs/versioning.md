@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Single-level child Agent scopes add exact unit/tool subset provenance and
+caller-bound generation result reads. AI execution settings now require an
+explicit nullable Agent binding; dedicated opaque preparation and admission
+keep that binding under the Application owner. Tool delegation and grants retain
+the same exact subset witness. Existing project tables own these associations.
+
+This advances the current-only development project format to schema 46. Earlier
+development directories are preserved and refused without automatic migration,
+conversion or reset. WorkPlan3, SDK/Process3, package formats, dependencies and
+lockfiles remain unchanged. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1`
+remain the same undistributed batch; bilingual Unreleased entries are synchronized
+without another version bump. The following assessments describe earlier units.
+
 Tool-linked guidance adds bounded read-only Application/Desktop interfaces for
 the Skill and supporting Resources already declared by a captured tool. It
 reuses immutable package content and the original active Agent scope, without
