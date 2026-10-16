@@ -162,7 +162,8 @@ cargo test -p tsumugi-desktop --features wire-schema,bundled-runtime translation
 交互选择器使用已拥有的原生目录句柄 fixture；实际工作面界面验收另行完成。
 
 实验性的独立[插件 SDK](crates/plugin-sdk)提供数据契约与 schema/校验 harness，不依赖 Core。
-当前校验声明、内容/执行交换帧及固定检查覆盖；本单元尚未提供生产插件加载与运行绑定。详见[插件声明契约](crates/plugin-sdk/docs/declarations.md)与[内容交换契约](crates/plugin-sdk/docs/exchange.md)。[实验性进程 Host](crates/plugin-host)增加 SDK 所有的[帧协议](crates/plugin-sdk/docs/process.md)和 macOS 实际原生 conformance 进程；生产目录/Core 集成仍未完成。
+当前校验声明、内容/执行交换帧及固定检查覆盖；本单元不负责插件加载与运行绑定。详见[插件声明契约](crates/plugin-sdk/docs/declarations.md)与[内容交换契约](crates/plugin-sdk/docs/exchange.md)。[实验性进程 Host](crates/plugin-host)使用 SDK 所有的[帧协议](crates/plugin-sdk/docs/process.md)、固定包与运行环境身份，并提供可选 Core 执行适配；支持的组件 profile 和平台限制仍以实验契约明确界定。
+[插件开发指南（英文）](docs/plugin-authoring.md)串联固定 SDK、独立样例、预构建包检查与人工开发加载，无需私有工作区或内部 Core 依赖。
 
 桌面支持 Windows x64 和 macOS（Apple Silicon 与 Intel 构建目标），使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
 

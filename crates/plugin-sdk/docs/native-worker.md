@@ -83,10 +83,13 @@ is separately bounded by the actual Host.
 Package manifests still use the public declaration contract and harness.
 Installing/enabling a package, executing native code with operating-system user
 access, and each current scoped authorization remain independent Host decisions.
-This entry point neither creates those decisions nor freezes the actual native
-system-library environment. The current standalone Native Host route does not
-yet establish complete Core runtime-environment binding; do not substitute a
-Node descriptor for a native executable.
+This entry point neither creates those decisions nor captures the actual native
+system-library environment. The [public Host](../../plugin-host/README.md#desktop-native-environment-integration)
+separately binds the approved application Host and package bytes to the Core
+execution context. Native environments use their own descriptor; a Node
+descriptor cannot stand in for a native executable. The separate Application
+Tool profile supports one read-only callable without required dependencies or
+project services; the basic facade still rejects a larger roster or services.
 
 From the source repository root:
 

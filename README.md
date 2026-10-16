@@ -224,8 +224,12 @@ validates declarations, content/execution frames and captured check coverage;
 production plugin loading and runtime binding are not yet supplied by this SDK
 unit. See [plugin declarations](crates/plugin-sdk/docs/declarations.md) and
 [content exchange](crates/plugin-sdk/docs/exchange.md). The [experimental process Host](crates/plugin-host)
-adds SDK-owned [framing](crates/plugin-sdk/docs/process.md) and actual native/JavaScript
-conformance processes on macOS; production catalog/Core integration remains pending.
+uses SDK-owned [framing](crates/plugin-sdk/docs/process.md), captured package and
+runtime identities, and an optional Core execution adapter. Supported component
+profiles and platform limits remain explicit experimental contracts.
+The [plugin authoring walkthrough](docs/plugin-authoring.md) connects the fixed
+SDK, independent examples, prebuilt-package inspection and manual development
+loading without a private workspace or an internal Core dependency.
 
 The desktop supports Windows x64 and macOS (Apple Silicon and Intel build targets), and uses Rust 1.98+, React 19, TypeScript 7, Vite 8, Tauri 2, and pnpm 12. The native Windows build requires Visual Studio C++ Build Tools, a Windows SDK, and the Microsoft Edge WebView2 Runtime. The macOS build requires Xcode Command Line Tools and uses the system WKWebView. Install the platform prerequisites from the [Tauri guide](https://v2.tauri.app/start/prerequisites/). macOS application bundles target macOS 11 or later; each architecture must be built with its corresponding Rust target.
 

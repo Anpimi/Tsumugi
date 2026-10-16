@@ -1,5 +1,8 @@
 # Experimental process Host
 
+The [plugin authoring walkthrough](../../docs/plugin-authoring.md) covers fixed
+SDK consumption, package inspection and explicit manual development loading.
+
 `tsumugi-plugin-host` launches captured plugin artifacts through the standalone
 SDK process protocol. Its default feature set depends on the SDK without Core;
 the optional `core-adapter` feature implements Core's trusted execution port.
@@ -151,7 +154,8 @@ It opens every path component relative to a held directory descriptor with
 `O_NOFOLLOW`, rejects links, hard-linked regular files and special files, and
 requires two complete scans to agree on identities, metadata and file contents.
 The snapshot keeps binary bytes and executable flags. The policy bounds captured
-files to 256, total manifest/file bytes to 64 MiB, directories to 256, package
+non-manifest files to 256 plus `manifest.json`, total manifest/file bytes to
+64 MiB, directories to 256, package
 depth to 16 and observed processing time to ten seconds. The read guard is checked
 between reads; synchronous filesystem calls themselves cannot be preempted.
 macOS maps only the system `/var` and `/tmp` aliases to `/private`; arbitrary
