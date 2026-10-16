@@ -843,6 +843,20 @@ This proves the current bounded selection/dispatch policy, not execution of an
 arbitrary future SDK artifact, automatic project environment adoption or a
 permanent promise to freeze all future contracts.
 
+The `knowledge_generation` test uses a freshly prepared Philosophy package with
+the independent [Generation service client](https://github.com/Anpimi/tsumugi-plugins/blob/main/examples/philosophy/README.md#generation-service-client).
+Set `TSUMUGI_TEST_GENERATION_PACKAGE` and `TSUMUGI_TEST_GENERATION_DIGEST` to that
+reviewed prebuilt directory and its Host inspection digest, alongside the same
+`TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST` and
+`TSUMUGI_TEST_RUNTIME_APPROVAL` used above. It runs real query/check workers and
+refuses the required-service component before staging when no broker exists.
+The query instance remains usable and static Resources/Skills remain readable.
+It makes no model request and does not prove application generation authority.
+
+```sh
+cargo test -p tsumugi-plugin-host --features javascript-conformance --test knowledge_generation --locked -- --test-threads=1
+```
+
 ```sh
 cargo test -p tsumugi-plugin-host --features conformance-worker --locked
 ```

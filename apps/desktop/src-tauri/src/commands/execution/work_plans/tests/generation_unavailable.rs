@@ -357,7 +357,8 @@ fn unavailable_generation_manual_workflow(scenario: Unavailability) {
     let query = fixture.call("prepare_plugin_tool", json!({"attemptId":ExecutionId::new(),
         "tool":{"package":knowledge_package,"resourceId":"agent-query-tool","environmentDigest":environment},
         "payloads":[payload]})).unwrap();
-    let query_consent = ordinary_consent(&query);
+    let mut query_consent = ordinary_consent(&query);
+    query_consent["applicationExecution"] = json!(false);
     let query_attempt = fixture
         .call("start_plugin_tool", query_consent.clone())
         .unwrap();

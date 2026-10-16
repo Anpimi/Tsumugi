@@ -101,7 +101,7 @@ import {readFile, writeFile} from 'node:fs/promises';
 const observer = await readFile(new URL('./observer.txt', import.meta.url), 'utf8');
 export default { async activate(api) {
   if (api.services.length !== 1) throw new Error('Missing original generation service');
-  api.register(async (input, metadata) => {
+  api.register(api.contributions[0].id, async (input, metadata) => {
     const response = await metadata.services.call(api.services[0].handleId, input.utf8, 'generation-call');
     if (response.outcome.kind !== 'succeeded') throw new Error('Child enqueue was not acknowledged');
     await writeFile(observer, JSON.stringify({stage: 'holding', pid: process.pid,

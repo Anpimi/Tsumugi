@@ -46,6 +46,14 @@ mod receipt_recovery;
     target_os = "macos",
     target_arch = "aarch64"
 ))]
+#[path = "philosophy_generation.rs"]
+mod philosophy_generation;
+
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
 struct ComponentAction {
     scope: Value,
     preparing: Value,
@@ -216,7 +224,7 @@ catch (error) { if (error.code !== 'ENOENT') throw error; }
 const observe = async stage => { if (observer) await writeFile(observer, stage); };
 export default { async activate(api) {
   if (api.services.length !== 1) throw new Error('Missing original generation service');
-  api.register(async (input, metadata) => {
+  api.register(api.contributions[0].id, async (input, metadata) => {
     await observe('calling');
     const response = await metadata.services.call(api.services[0].handleId, input.utf8, 'generation-call');
     const payload = response.outcome.kind === 'succeeded' ? response.outcome.output : response.outcome.error;

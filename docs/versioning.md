@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The independently versioned Philosophy example adds an Attempt-scoped client
+for the existing work-plan generation service while retaining its separate
+knowledge component. Application changes document that path and correct
+Process-3 test fixtures; production Core, SDK/IPC fields, project/settings/Store
+formats and dependencies remain unchanged. The plugin owns its new requested
+permission and bilingual Unreleased entries in the same undistributed alpha.1
+batch. This creates no application bump, replacement SDK archive, default-bundle
+selection or new application release entry for documentation/test-only changes.
+
 Explicit package capability diagnostics add a read-only CLI operation and an
 additive Rust SDK reporting API. They reuse the original exact contract/profile
 predicate; existing resolution errors and ordinary inspection output remain

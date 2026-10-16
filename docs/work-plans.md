@@ -81,7 +81,7 @@ Desktop's `read_plugin_generation_component` observes one installed generation
 component through the existing package and approved-runtime owner. The request
 contains the complete provider identity, an explicit profile (`null` only for
 a profile-independent declaration) and the exact environment digest. Selection
-requires a Project-scoped JavaScript component, a required Single dependency on
+requires a Project- or Attempt-scoped JavaScript component, a required Single dependency on
 the canonical generation service, matching ProjectService permission, External
 effect and the exact SDK input/receipt/error references. The response keeps the
 actual binding, settings revision and package/runtime provenance. This read does
@@ -117,6 +117,26 @@ execution records and never repeats generation or adoption.
 Discard confirms that an unused preparation is absent, including a repeat after
 a lost reply or owner shutdown; it refuses the original started action and
 does not cancel execution, release child authority or erase ledger records.
+
+The independent Philosophy package's
+[Generation service client](https://github.com/Anpimi/tsumugi-plugins/blob/main/examples/philosophy/README.md#generation-service-client)
+is a concrete author example for this path. Its Attempt-scoped
+`generation-delegate` contribution forwards the original bounded request to the
+Core service and preserves its receipt or finite failure/unknown result. Its
+separate knowledge component retains read-only query/check permissions and does
+not require the generation service. The package declares the union of requested
+permissions; each capability still has its own exact permission boundary.
+
+A missing required service descriptor blocks that generation component before
+activation. An actual model backend failure after enqueue belongs to the saved
+child attempt and original shared budget. Receiving a successful enqueue receipt
+does not mean that child generated a candidate, completed successfully or adopted
+anything. Neither failure changes the package's independent knowledge capability
+or grants permission to repeat the original model request. This example cannot
+add model settings, prompts, extra context or source units to the fixed request.
+Pausing a plan can leave a completed in-flight response and known usage readable
+in the original history. Its automatic candidate save remains revoked, and the
+consumed dispatch budget is retained.
 
 The original project executor supplies a weak callback and the original installation
 owner. Cached capability runners keep a scope-neutral service factory. Every actual
@@ -385,6 +405,29 @@ retain explicit manual candidate saving. Standalone automated checks, resource
 adoption and delivery remain unavailable. The API is not a stable plugin SDK. A model or plugin must not receive unrestricted access to human-authorization
 methods, `ProjectStore` or the raw runtime; its host must carry the issued lease
 and parent identity through the scoped application entry points.
+
+## Installed generation-client conformance
+
+On macOS/aarch64, the `generation_tests::philosophy_generation` desktop tests
+run the actual independent package through registered commands, the original
+generation factory/broker and synthetic local HTTP responses. Set
+`TSUMUGI_TEST_GENERATION_PACKAGE` / `TSUMUGI_TEST_GENERATION_DIGEST` to a newly
+prepared, packaged and reviewed Philosophy Generation client, and
+`TSUMUGI_TEST_PLUGIN_PACKAGE` / `TSUMUGI_TEST_PLUGIN_DIGEST` to the compatible
+WebVTT package. Supply `TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST`
+and `TSUMUGI_TEST_RUNTIME_APPROVAL` as described in the
+[Host conformance documentation](../crates/plugin-host/README.md).
+
+```sh
+cargo test -p tsumugi-desktop --bin tsumugi-desktop --features execution-test-host \
+  generation_tests::philosophy_generation --locked -- --test-threads=1
+```
+
+These tests distinguish a successful enqueue receipt from child completion,
+retain original service origins and shared budgets through success, network
+disconnection and in-flight pause, and exercise independent manual knowledge
+queries and review checks. They use temporary profiles and make no external
+model calls. They do not establish a rendered native workflow or other platforms.
 
 ## Installed shared-query conformance
 
