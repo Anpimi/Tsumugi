@@ -12,6 +12,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   position when returning. Unselected candidates and their saved check evidence
   do not become the current translation or QA.
 
+- Restoring AI execution budget defaults preserves connection and data-sharing
+  choices, including source context categories and limits. Preview and confirm
+  the resulting request again before execution.
+
 - Save AI candidates and automatically run their explicitly authorized checks
   while leaving translation selection to a person. Candidate check evidence
   retains its findings and execution history without becoming current QA,
