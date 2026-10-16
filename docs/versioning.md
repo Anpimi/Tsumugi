@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Current QA diagnostic navigation adds a session-authorized, read-only Review
+location projection. The existing SDK converts captured UTF-8, UTF-16 and
+grapheme ranges to exact UTF-16 positions; the original Review evidence, issue
+identity and editor mutation boundaries remain authoritative. Returning to the
+captured review or pending-work view preserves its scope and editing guards.
+This additive experimental Desktop IPC changes no persisted format, SDK/Process3,
+WorkPlan3, dependency or SDK artifact. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain in the same undistributed batch, with synchronized bilingual
+Unreleased entries and no additional version bump.
+
 Project-local context strategies add immutable candidates from saved manual
 corrections, fixed calibration/holdout experiments, independent candidate checks,
 human judgments and explicit adoption or withdrawal for future AI drafts. The

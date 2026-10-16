@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import wire from "../test/fixtures/reviewCommands.contract.json";
 import { ReviewDiagnosticDetails } from "./ReviewCheckers";
 import { validateResponseCheck } from "./generated/review.validators";
@@ -12,6 +12,16 @@ import { textReviewViewFixture } from "./testSupport/textReviewFixture";
 afterEach(async () => {
   cleanup();
   await i18n.changeLanguage("en-US");
+});
+
+it("offers only an explicit read-only location for the exact current SDK diagnostic", async () => {
+  const { run, rule, code } = diagnosticFixture(), locate = vi.fn();
+  const ui = render(<ReviewDiagnosticDetails run={run} rule={rule} code={code} onLocate={locate} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Locate in translation" }));
+  expect(locate).toHaveBeenCalledOnce(); expect(locate).toHaveBeenCalledWith(run.evidence!.diagnostics[0]);
+  ui.rerender(<ReviewDiagnosticDetails run={run} rule={rule} code={code} />);
+  expect(screen.queryByRole("button", { name: "Locate in translation" })).not.toBeInTheDocument();
+  expect(screen.getByText(/Historical range/)).toBeVisible();
 });
 
 function diagnosticFixture() {

@@ -336,6 +336,7 @@ struct ResourceResponses {
 struct ReviewRequests {
     page: execution::review::ReviewPageRequest,
     target: execution::review::ReviewTargetRequest,
+    diagnostic_location: execution::review::ReviewDiagnosticLocationRequest,
     summary: execution::review::ReviewSummaryPageRequest,
     neighbor: execution::review::ReviewNeighborRequest,
     scope: execution::review::ReviewScopeRequest,
@@ -358,6 +359,7 @@ struct ReviewRequests {
 struct ReviewResponses {
     page: tsumugi_core::ReviewPage,
     target: tsumugi_core::ReviewTarget,
+    diagnostic_location: tsumugi_core::ReviewDiagnosticLocation,
     summary: tsumugi_core::ReviewSummaryPage,
     neighbor: tsumugi_core::ReviewNeighbor,
     scope: tsumugi_core::ReviewScopeCapture,

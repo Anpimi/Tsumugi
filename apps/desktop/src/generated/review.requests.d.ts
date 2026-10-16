@@ -3,12 +3,24 @@
 export type ExecutionId = string;
 export type UnsignedDecimal = string;
 export type ReviewDecisionKind = "approve" | "request-changes";
+export type CheckImplementation =
+  | {
+      kind: "core";
+      validator: ContractRef;
+    }
+  | {
+      kind: "plugin";
+      provider: ProviderSelectionBinding;
+    };
+export type TextReviewField = "source" | "translation";
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type ReviewFindingDisposition = "rejected" | "restored" | "repair-requested";
 
 export interface Requests {
   cancelCheck: ReviewCancelCheckRequest;
   check: ReviewCheckStartRequest;
   decision: ReviewWriteRequest;
+  diagnosticLocation: ReviewDiagnosticLocationRequest;
   eligibility: EligibilityRequest;
   fallback: FallbackRequest;
   finding: ReviewFindingWriteRequest;
@@ -98,6 +110,58 @@ export interface ReviewWrite {
   projectId: ExecutionId;
   reason: string;
   unitId: ExecutionId;
+}
+export interface ReviewDiagnosticLocationRequest {
+  diagnostic: TextReviewDiagnostic;
+  locale: string;
+  projectId: ExecutionId;
+  runId: ExecutionId;
+  sessionToken: string;
+  unitId: ExecutionId;
+}
+/**
+ * Optional public presentation associated with one actual finding. Diagnostic
+ * prose is not authenticated or sanitized by these structural checks.
+ */
+export interface TextReviewDiagnostic {
+  code: string;
+  detail?: string | null;
+  key: CheckKey;
+  location?: TextReviewLocation | null;
+  resourceEntry?: TextReviewResourceEntry | null;
+  suggestion?: string | null;
+  target: string;
+}
+export interface CheckKey {
+  implementation: CheckImplementation;
+  rule: ContractRef;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+export interface TextReviewLocation {
+  field: TextReviewField;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
+}
+export interface TextReviewResourceEntry {
+  contributionId: string;
+  entryId: string;
 }
 export interface EligibilityRequest {
   locales: string[];

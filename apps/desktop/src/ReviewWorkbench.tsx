@@ -18,6 +18,8 @@ import { useWorkbenchCommands, type ReviewFallbackCommandPayload, type ReviewWai
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { ChangeScope } from "./sessionReads";
 import type { ReviewHandoffPresentation } from "./sessionNavigation";
+import { currentDiagnosticRun, reviewDiagnostics, type ReviewEditorHandoff, type ReviewEditorReturn } from "./reviewDiagnosticNavigation";
+import type { TextReviewDiagnostic } from "./generated/review.responses";
 
 type Tab = "review" | "work" | "eligibility";
 const MAX_BATCH = 100;
@@ -40,7 +42,7 @@ const HISTORY_FIRST_SCOPES: ChangeScope[] = ["source", "translation", "resources
 const HISTORY_LATER_SCOPES: ChangeScope[] = ["source", "translation", "resources"];
 
 export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenExtensions, onReturnToAi, handoff, ref }: {
-  project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string) => boolean | Promise<boolean>;
+  project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string, handoff?: ReviewEditorHandoff) => boolean | Promise<boolean>;
   ref?: Ref<ReviewHandle>;
   onOpenExtensions?: () => void;
   onReturnToAi?: () => Promise<boolean>;
@@ -73,6 +75,9 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
   const [pageAfter, setPageAfter] = useWorkbenchState("review", "pageAfter", 0);
   const [historyCursor, setHistoryCursor] = useWorkbenchState("review", "historyCursor", { unitId: "", locale: "", offset: 0 });
   const [workCursor, setWorkCursor] = useWorkbenchState("review", "workCursor", { locale, offset: 0 });
+  const [editorOrigin, setEditorOrigin] = useWorkbenchState<ReviewEditorReturn | null>("review", "editorOrigin", null);
+  const [editorReturned, setEditorReturned] = useWorkbenchState<ReviewEditorReturn | null>("review", "editorReturned", null);
+  const returnFocus = useRef<HTMLButtonElement>(null), focusedReturn = useRef<ReviewEditorReturn | null>(null);
   const [languages, setLanguages] = useWorkbenchState<string[]>("review", "languages", project.metadata.targetLocales);
   const [assessment, setAssessment] = useWorkbenchState<{ projectId: string; sessionToken: string; reviewLocale: string; locales: string[] } | null>("review", "assessment", null);
   const reason = failureReason(reasonValue) ?? "";
@@ -206,6 +211,25 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
     const version = query?.state.dataUpdateCount;
     return () => alive.current && !reads.retired && generation.current === ticket && !!value && !!target
       && currentTarget() === value && query?.state.dataUpdateCount === version && sameTargetBasis(value, target);
+  }
+  function editorReturn(unitId: string): ReviewEditorReturn {
+    if (tab === "review" && editorOrigin?.locale === locale && editorOrigin.unitId === unitId) return editorOrigin;
+    return { ...session, locale, unitId, tab: tab === "work" ? "work" : "review", summaryScope, pageAfter, workOffset };
+  }
+  async function openEditor(target: ReviewTarget, diagnostic?: { runId: string; diagnostic: TextReviewDiagnostic }) {
+    if (!alive.current || reads.retired || disabled || !targetAvailable || owner.inFlight() || owner.current().pending) return false;
+    if (diagnostic) {
+      const latest = owner.current().selected, run = target.currentCheck;
+      if (!latest || !sameTargetBasis(target, latest) || !run || run.runId !== diagnostic.runId || !currentDiagnosticRun(target, run)
+        || !run.rules.some(rule => reviewDiagnostics(run, rule, diagnostic.diagnostic.code).some(value => JSON.stringify(value) === JSON.stringify(diagnostic.diagnostic)))) {
+        setNotice("error"); setReason("diagnostic-stale"); return false;
+      }
+    }
+    const opened = await onOpenTranslation({ unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, target.locale,
+      { returnTo: editorReturn(target.unitId), ...(diagnostic ? { diagnostic: { ...diagnostic, basis: target.basis,
+        basisEvidence: target.basisEvidence, translationText: target.translationText } } : {}) });
+    if (!opened && alive.current && !reads.retired) { setNotice("error"); setReason("editor-unavailable"); }
+    return opened;
   }
   function runFreshAction(run: (proof: () => boolean) => Promise<void>) {
     const before = owner.current(), target = before.selected, ticket = generation.current;
@@ -439,6 +463,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
   }), [reads]);
   useEffect(() => { if (open) heading.current?.focus(); }, [open, tab]);
   useEffect(() => {
+    if (!open || !editorReturned || editorReturned.locale !== locale || editorReturned.tab !== tab || focusedReturn.current === editorReturned
+      || (tab === "work" ? workBusy : summaryBusy)) return;
+    focusedReturn.current = editorReturned;
+    (returnFocus.current ?? heading.current)?.focus();
+  }, [open, tab, locale, editorReturned, workBusy, summaryBusy, work, page]);
+  useEffect(() => {
     // First entry into a language retains the existing explicit capture boundary.
     // A failed/cancelled capture needs an explicit retry, including after remount.
     if (open && tab === "review" && targetAvailable && !scopeId && captureLocale.current !== locale) {
@@ -467,7 +497,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
     setCompletedComparison(null);
   }, [completedComparison, currentFacts, selected, pending, owner.state.completionVersion]);
   useImperativeHandle(ref, () => ({
-    showWork() { setTab("work"); setOpen(true); if (open && tab === "work" && targetAvailable) void workRead.refetch(); },
+    showWork() { setEditorOrigin(null); setEditorReturned(null); setTab("work"); setOpen(true); if (open && tab === "work" && targetAvailable) void workRead.refetch(); },
     allowLeave(current: () => boolean = () => true) {
       leaveProof.current = current;
       const currentOwner = owner.current();
@@ -523,6 +553,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
   async function selectUnit(unitId: string) {
     if (!currentLocale(locale) || reads.retired) return;
     const capture = captureSelected();
+    const origin = tab === "work" ? editorReturn(unitId) : null;
     const ticket = ++generation.current;
     setCaptureBusy(false);
     selecting.current = true; setSelectionBusy(true); setSelectionFailure(null); setSelectionIntent({ unitId, locale });
@@ -548,6 +579,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
         const selectedNow = owner.current().selected;
         setComparisonIntent(selectedNow ? { unitId: selectedNow.unitId, locale: selectedNow.locale, basis: selectedNow.basis,
           currentBasis: value.basis, fallbackId: value.currentFallback?.fallbackId ?? null } : null);
+        setEditorOrigin(origin); setEditorReturned(null);
         setHistoryCursor({ unitId, locale, offset: 0 }); setTab("review");
       }
     } catch (error) {
@@ -625,19 +657,22 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
         {project.metadata.targetLocales.length === 0 ? <p>{t("review.noLocale")}</p> : null}
         {project.metadata.targetLocales.length > 0 || retainedReview ? <>
           <div className="review-header-fields">
-            <label>{t("review.targetLocale")}<select value={locale} disabled={busyMutation} onChange={event => { setLocale(event.target.value); setSelected(null); }}>
+            <label>{t("review.targetLocale")}<select value={locale} disabled={disabled || busyMutation} onChange={event => { setEditorOrigin(null); setEditorReturned(null); setLocale(event.target.value); setSelected(null); }}>
               {targetRemoved ? <option value={locale}>{locale}</option> : null}
               {project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}
             </select></label>
             <label>{t("review.reviewer")}<input value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
           </div>
           <div className="form-actions" role="tablist" aria-label={t("review.title")}>
-            {(["review", "work", "eligibility"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => setTab(value)}>
+            {(["review", "work", "eligibility"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => { setEditorOrigin(null); setEditorReturned(null); setTab(value); }}>
               {t(value === "review" ? "review.reviewTab" : value === "work" ? "review.workTab" : "review.eligibilityTab")}
             </button>)}
           </div>
+          {editorReturned?.locale === locale && editorReturned.tab === tab ? <><p role="status">{t("review.diagnosticNavigation.returned")}</p>
+            {tab === "work" && work && !workBusy && !workFailure && !work.items.some(item => item.unitId === editorReturned.unitId)
+              ? <p role="status">{t("review.diagnosticNavigation.returnedMissing")}</p> : null}</> : null}
           {removedLocale ? <p role="status">{t("review.removedTarget", { locale: removedLocale })}</p> : null}
-          {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "checkUnknown" ? t("review.checkUnknownHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
+          {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "checkUnknown" ? t("review.checkUnknownHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "diagnostic-stale" ? t("review.diagnosticNavigation.stale") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
           {pending && !owner.inFlight() && notice !== "unknown" ? <p role="status">{t("review.unknown")}</p> : null}
           {notice ? <CommandFailureDetails failure={reasonValue} /> : null}
           {pending?.kind === "finding" ? <section aria-label={t("review.advisoryFindings.originalAction")}>
@@ -663,7 +698,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
               {!page ? !summaryBusy && !summaryFailure ? <p>{t("review.noSource")}</p> : null : <><div className="review-list">{page.rows.map(target => <div className="review-list-row" key={target.unitId}>
                 <input type="checkbox" aria-label={`${t("review.batch")}: ${target.nativeKey}`} checked={!!chosen[draftKey(target)]} disabled={busy || summaryBusy || !targetAvailable || !target.selectionId || (!chosen[draftKey(target)] && chosenCount >= MAX_BATCH)}
                   onChange={event => owner.toggleChosen(target, event.target.checked)} />
-                <button className="text-button" aria-current={selected?.unitId === target.unitId ? "true" : undefined} disabled={busy || !targetAvailable} onClick={() => void selectUnit(target.unitId)}>{target.nativeKey}</button>
+                <button ref={editorReturned?.unitId === target.unitId ? returnFocus : undefined} className="text-button" aria-current={selected?.unitId === target.unitId ? "true" : undefined} disabled={busy || !targetAvailable} onClick={() => void selectUnit(target.unitId)}>{target.nativeKey}</button>
               </div>)}</div></>}
               {page || pageAfter > 0 ? <div className="form-actions"><button className="secondary-button" disabled={busy || summaryBusy || !targetAvailable || pageAfter === 0} onClick={() => loadPage(0)}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || summaryBusy || !targetAvailable || !page || page.nextOrdinal === null} onClick={() => { if (page?.nextOrdinal != null) loadPage(page.nextOrdinal); }}>{t("review.nextPage")}</button></div> : null}
             </section>
@@ -679,10 +714,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
                 {selectedStale || fallbackIdentityChanged ? <strong>{t("review.earlierContent")}</strong> : null}
                 <h3>{displayTarget.nativeKey}</h3><p><strong>{t("review.source")}</strong> {displayTarget.sourceText}</p>
                 <p><strong>{t("review.translation")}</strong> {displayTarget.translationText ?? t("review.missingTranslation")}</p>
-                <button className="text-button" disabled={!targetAvailable} onClick={async () => {
-                  const destination = { target: { unitId: displayTarget.unitId, sourceRevisionId: displayTarget.sourceRevisionId, key: displayTarget.nativeKey, sourceText: displayTarget.sourceText }, locale: displayTarget.locale };
-                  if (!await onOpenTranslation(destination.target, destination.locale) && alive.current) { setNotice("error"); setReason("editor-unavailable"); }
-                }}>{t("review.openTranslation")}</button>
+                <button className="text-button" disabled={!targetAvailable} onClick={() => void openEditor(displayTarget)}>{t("review.openTranslation")}</button>
                 <p>{displayTarget.currentDecision?.kind === "approve" ? t("review.currentApproval") : displayTarget.currentDecision?.kind === "request-changes" ? t("review.changesRequested") : t("review.approvalMissing")}</p>
                 {displayTarget.currentFallback ? <p>{t("review.fallbackActive")}</p> : null}
                 {selectedStale || fallbackIdentityChanged ? <div role="status" className="execution-feedback">
@@ -714,12 +746,14 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
                   {rule.findings.map(finding => {
                     const waiver = checkTarget.currentWaivers.find(value => value.issueId === finding.issueId);
                     const payload = waiverPayload(selected, finding.issueId, waiver?.waiverId ?? null);
-                    return <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.detail ? `: ${finding.detail}` : ""}</p><ReviewDiagnosticDetails run={displayedCheck} rule={rule} code={finding.code} />
+                    return <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.detail ? `: ${finding.detail}` : ""}</p><ReviewDiagnosticDetails run={displayedCheck} rule={rule} code={finding.code}
+                      onLocate={currentTarget() && currentDiagnosticRun(displayTarget, displayedCheck) ? diagnostic => { void openEditor(displayTarget, { runId: displayedCheck.runId, diagnostic }); } : undefined} />
                       {waiver ? <><p>{t("review.waived")}</p><button className="text-button" disabled={!waiverAvailability(payload, false).enabled} onClick={() => commandRegistry.dispatch("review.revoke-waiver", commandScope, payload)}>{t("review.revokeWaiver")}</button></> : finding.waivable ? <button className="text-button" disabled={!waiverAvailability(payload, true).enabled} onClick={() => commandRegistry.dispatch("review.grant-waiver", commandScope, payload)}>{t("review.waive")}</button> : null}</div>;
                   })}
                 </div>)}
                 <ReviewFindings project={project} target={displayTarget} active={open && tab === "review" && targetAvailable}
-                  available={() => reviewActionAvailability(false)} currentTarget={currentTarget} freshReadProof={freshReadProof} onOpenTranslation={onOpenTranslation} />
+                  available={() => reviewActionAvailability(false)} currentTarget={currentTarget} freshReadProof={freshReadProof}
+                  onOpenTranslation={() => openEditor(displayTarget)} onLocateDiagnostic={(target, runId, diagnostic) => openEditor(target, { runId, diagnostic })} />
                 <details><summary>{t("review.history")}</summary>
                   {historyLoading ? <p role="status">{t("review.historyLoading")}</p> : null}
                   {historyFailure && !historyRead.isFetching ? <div role="alert">{t("review.historyUnavailable")}
@@ -745,7 +779,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
           {tab === "work" ? <section><div className="form-actions"><button className="secondary-button" disabled={busy || workBusy || !targetAvailable} onClick={() => void workRead.refetch()}>{t("review.refresh")}</button></div>
             {workLoading ? <p role="status">{t("review.workLoading")}</p> : null}
             {workFailure && !workRead.isFetching ? <div role="alert">{t("review.error", { reason: failureReason(workFailure) ?? "failed" })}<CommandFailureDetails failure={workFailure} /></div> : null}
-            {work ? <><p>{t("review.workCount", { count: work.total })}</p>{work.items.length === 0 ? <p>{t("review.workEmpty")}</p> : work.items.map(item => <div key={item.unitId} className="review-work-item"><button className="text-button" disabled={!targetAvailable} onClick={() => void selectUnit(item.unitId)}>{item.nativeKey}</button><ul>{[...new Set(item.reasons.map(queueReason))].map(value => <li key={value}>{value}</li>)}</ul></div>)}</> : targetAvailable && !workLoading && !workFailure ? <p>{t("review.selectEntry")}</p> : null}
+            {work ? <><p>{t("review.workCount", { count: work.total })}</p>{work.items.length === 0 ? <p>{t("review.workEmpty")}</p> : work.items.map(item => <div key={item.unitId} className="review-work-item"><button ref={editorReturned?.unitId === item.unitId ? returnFocus : undefined} className="text-button" disabled={!targetAvailable} onClick={() => void selectUnit(item.unitId)}>{item.nativeKey}</button><ul>{[...new Set(item.reasons.map(queueReason))].map(value => <li key={value}>{value}</li>)}</ul></div>)}</> : targetAvailable && !workLoading && !workFailure ? <p>{t("review.selectEntry")}</p> : null}
             {work || workOffset > 0 ? <div className="form-actions"><button className="secondary-button" disabled={busy || workBusy || !targetAvailable || workOffset === 0} onClick={() => setWorkCursor({ locale, offset: 0 })}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || workBusy || !targetAvailable || !work || work.nextOffset === null} onClick={() => { if (work?.nextOffset != null) setWorkCursor({ locale, offset: work.nextOffset }); }}>{t("review.nextPage")}</button></div> : null}
           </section> : null}
           {tab === "eligibility" ? <section><p>{t("review.policy")}</p><p>{t("review.buildWarning")}</p><fieldset><legend>{t("review.chooseLanguages")}</legend>{project.metadata.targetLocales.map(value => <label key={value}><input type="checkbox" checked={languages.includes(value)} onChange={event => { setAssessment(null); setLanguages(previous => event.target.checked ? [...previous, value] : previous.filter(item => item !== value)); }} />{value}</label>)}</fieldset>

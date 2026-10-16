@@ -4,6 +4,7 @@ import nativeEnvironment from "../test/fixtures/nativeRuntime.contract.json";
 import { reviewCommands, confirmReviewFindingBasis, confirmReviewFindingEvidence, type ReviewFindingWrite, type ReviewFindingDecision } from "./reviewCommands";
 import * as validators from "./generated/review.validators";
 import { hasUnknownOutcome } from "./projectCommands";
+import { reviewDiagnosticFixture } from "./testSupport/reviewDiagnosticFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -14,6 +15,27 @@ function decisionRequest() {
   return request;
 }
 beforeEach(() => invoke.mockReset());
+
+it.each(["unit", "locale", "run", "field", "encoding"])("rejects an unrelated normalized diagnostic %s acknowledgement", async changed => {
+  const { target, run, diagnostic, location } = reviewDiagnosticFixture();
+  const request = { ...session, unitId: target.unitId, locale: target.locale, runId: run.runId, diagnostic };
+  expect(validators.validateRequestDiagnosticLocation(request)).toBe(true);
+  const response = structuredClone(location);
+  if (changed === "unit") response.unitId = fixture.requests.target.projectId;
+  if (changed === "locale") response.locale = "fr";
+  if (changed === "run") response.runId = fixture.requests.target.unitId;
+  if (changed === "field") response.location.field = "source";
+  if (changed === "encoding") response.location.range.encoding = "utf8-byte";
+  expect(validators.validateResponseDiagnosticLocation(response)).toBe(true);
+  invoke.mockResolvedValue(response); await expect(reviewCommands.diagnosticLocation(request)).rejects.toThrow();
+});
+
+it("dispatches the complete original diagnostic through the official read-only boundary", async () => {
+  const { target, run, diagnostic, location } = reviewDiagnosticFixture("grapheme");
+  const request = { ...session, unitId: target.unitId, locale: target.locale, runId: run.runId, diagnostic };
+  invoke.mockResolvedValue(location); expect(await reviewCommands.diagnosticLocation(request)).toEqual(location);
+  expect(invoke).toHaveBeenCalledOnce(); expect(invoke).toHaveBeenCalledWith("read_review_diagnostic_location", { request });
+});
 
 it.each(["scope", "locale", "duplicate", "excluded"])("rejects a shape-valid but mismatched fixed scope acknowledgement: %s", async kind => {
   const request = { ...fixture.requests.scope, excluded: [] as string[] }, response = structuredClone(fixture.responses.scope);

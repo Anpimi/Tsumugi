@@ -90,8 +90,8 @@ mod contracts {
     }
 }
 use tsumugi_core::{
-    CheckRun, Eligibility, FallbackDecision, FallbackWrite, ReviewDecision, ReviewEditorSnapshot,
-    ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewSummaryPage,
+    CheckRun, Eligibility, FallbackDecision, FallbackWrite, ReviewDecision, ReviewDiagnosticLocation,
+    ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewSummaryPage,
     ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkPage,
 };
 
@@ -106,6 +106,15 @@ request!(
     ReviewTargetRequest {
         unit_id: ExecutionId,
         locale: String
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewDiagnosticLocationRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        run_id: ExecutionId,
+        diagnostic: sdk::TextReviewDiagnostic
     }
 );
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ReviewSummaryPageRequest {
@@ -361,6 +370,37 @@ pub async fn read_review_target(
                 )?
                 .store
                 .review_target(request.project_id, request.unit_id, &request.locale)
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_review_diagnostic_location(
+    state: State<'_, AppState>,
+    request: ReviewDiagnosticLocationRequest,
+) -> Result<ReviewDiagnosticLocation, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_diagnostic_location",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_diagnostic_location(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.run_id,
+                    &request.diagnostic,
+                )
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )

@@ -117,6 +117,19 @@ pub struct ReviewEditorSnapshot {
     pub read_version: String,
 }
 
+/// Read-only coordinates for one exact diagnostic in the current saved QA run.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReviewDiagnosticLocation {
+    pub unit_id: ExecutionId,
+    pub locale: String,
+    pub run_id: ExecutionId,
+    pub basis: String,
+    pub basis_evidence: ReviewBasis,
+    pub location: tsumugi_plugin_sdk::TextReviewLocation,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -178,6 +191,76 @@ fn view_version(targets: &[ReviewTarget]) -> Result<String, ExecutionError> {
 }
 
 impl ProjectStore {
+    /// Converts only original current QA evidence, never caller-supplied text.
+    pub fn review_diagnostic_location(
+        &self,
+        project_id: ExecutionId,
+        unit_id: ExecutionId,
+        locale: &str,
+        run_id: ExecutionId,
+        diagnostic: &tsumugi_plugin_sdk::TextReviewDiagnostic,
+    ) -> Result<ReviewDiagnosticLocation, ExecutionError> {
+        use tsumugi_plugin_sdk::{
+            TextEncoding, TextReviewField, TextReviewLocation, convert_text_range,
+        };
+
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
+        read_snapshot(connection, |connection| {
+            // This owner validates original ledger frames and the complete QA
+            // material basis, which is distinct from the manual review basis.
+            let target = target_in(connection, project_id, unit_id, locale)?;
+            let run = target
+                .current_check
+                .as_ref()
+                .filter(|run| {
+                    run.run_id == run_id
+                        && run.unit_id == unit_id
+                        && run.locale == locale
+                        && run.basis == target.basis
+                        && run.basis_evidence == target.basis_evidence
+                })
+                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?;
+            let evidence = run
+                .evidence
+                .as_ref()
+                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?;
+            if !evidence.diagnostics.contains(diagnostic)
+                || !evidence.required_checks.requirements.iter().any(|requirement| {
+                    requirement.key == diagnostic.key
+                        && requirement.targets.contains(&diagnostic.target)
+                })
+            {
+                return Err(failure(ErrorCode::InvalidInput, "review-diagnostic-evidence"));
+            }
+            let original = diagnostic
+                .location
+                .as_ref()
+                .ok_or_else(|| failure(ErrorCode::InvalidInput, "review-diagnostic-location"))?;
+            let text = match original.field {
+                TextReviewField::Source => &target.source_text,
+                TextReviewField::Translation => target
+                    .translation_text
+                    .as_ref()
+                    .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?,
+            };
+            let range = convert_text_range(text, original.range, TextEncoding::Utf16)
+                .map_err(|_| failure(ErrorCode::InvalidInput, "review-diagnostic-range"))?;
+            Ok(ReviewDiagnosticLocation {
+                unit_id,
+                locale: target.locale,
+                run_id,
+                basis: target.basis,
+                basis_evidence: target.basis_evidence,
+                location: TextReviewLocation {
+                    field: original.field,
+                    range,
+                },
+            })
+        })
+    }
+
     fn retained_review_scope(
         &self,
         connection: &Connection,

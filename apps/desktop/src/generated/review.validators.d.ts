@@ -4,6 +4,7 @@ import type { Responses } from "./review.responses";
 export declare function validateRequestCancelCheck(value: unknown): value is Requests["cancelCheck"];
 export declare function validateRequestCheck(value: unknown): value is Requests["check"];
 export declare function validateRequestDecision(value: unknown): value is Requests["decision"];
+export declare function validateRequestDiagnosticLocation(value: unknown): value is Requests["diagnosticLocation"];
 export declare function validateRequestEligibility(value: unknown): value is Requests["eligibility"];
 export declare function validateRequestFallback(value: unknown): value is Requests["fallback"];
 export declare function validateRequestFinding(value: unknown): value is Requests["finding"];
@@ -21,6 +22,7 @@ export declare function validateRequestWork(value: unknown): value is Requests["
 export declare function validateResponseCancelCheck(value: unknown): value is Responses["cancelCheck"];
 export declare function validateResponseCheck(value: unknown): value is Responses["check"];
 export declare function validateResponseDecision(value: unknown): value is Responses["decision"];
+export declare function validateResponseDiagnosticLocation(value: unknown): value is Responses["diagnosticLocation"];
 export declare function validateResponseEditor(value: unknown): value is Responses["editor"];
 export declare function validateResponseEligibility(value: unknown): value is Responses["eligibility"];
 export declare function validateResponseFallback(value: unknown): value is Responses["fallback"];

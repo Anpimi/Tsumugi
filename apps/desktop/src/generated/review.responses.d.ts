@@ -128,6 +128,7 @@ export interface Responses {
   cancelCheck: boolean;
   check: CheckRun;
   decision: ReviewDecision;
+  diagnosticLocation: ReviewDiagnosticLocation;
   editor: ReviewEditorSnapshot;
   eligibility: Eligibility;
   fallback: FallbackDecision;
@@ -473,6 +474,17 @@ export interface ReviewDecision {
   revisionId: ExecutionId;
   selectionId: ExecutionId;
   sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+/**
+ * Read-only coordinates for one exact diagnostic in the current saved QA run.
+ */
+export interface ReviewDiagnosticLocation {
+  basis: string;
+  basisEvidence: ReviewBasis;
+  locale: string;
+  location: TextReviewLocation;
+  runId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface ReviewEditorSnapshot {

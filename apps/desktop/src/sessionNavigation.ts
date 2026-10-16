@@ -2,6 +2,7 @@ import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { EditorTarget } from "./TranslationWorkbench";
 import type { ContentSelection } from "./contentSelection";
 import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
+import type { ReviewEditorHandoff, ReviewEditorReturn } from "./reviewDiagnosticNavigation";
 
 export interface AiReviewOrigin { attemptId: string; taskId: string; itemId: string; editSeq: number }
 export interface ReviewHandoffPresentation { unitId: string; locale: string; basis: string; currentBasis: string; fallbackId: string | null }
@@ -13,6 +14,8 @@ export type WorkspaceDestination =
   | { kind: "task"; taskId: string; attemptId: string }
   | { kind: "task-list" }
   | { kind: "translation"; target: EditorTarget; locale: string; suggestedText?: string; returnTo?: "ai" }
+  | { kind: "review-edit"; target: EditorTarget; locale: string; handoff: ReviewEditorHandoff }
+  | { kind: "review-return"; capture: ReviewEditorReturn }
   | { kind: "review-work" }
   | { kind: "review-target"; target: EditorTarget; locale: string; origin: AiReviewOrigin }
   | { kind: "ai-selection"; selection: ContentSelection; expectedEditSeq: number }
@@ -45,7 +48,7 @@ export interface SessionNavigationPorts {
 }
 export function destinationArea(destination: WorkspaceDestination): WorkspaceArea {
   return destination.kind === "area" || destination.kind === "attempt" ? destination.area
-    : destination.kind === "translation" ? "translation" : destination.kind === "ai-selection" || destination.kind === "maintenance-notice" ? "ai" : destination.kind === "saved-build" ? "release"
+    : destination.kind === "translation" || destination.kind === "review-edit" ? "translation" : destination.kind === "ai-selection" || destination.kind === "maintenance-notice" ? "ai" : destination.kind === "saved-build" ? "release"
       : destination.kind === "tool-query" || destination.kind === "resource-context" || destination.kind === "resource-correction" ? "resources" : destination.kind === "resource-context-return" || destination.kind === "resource-correction-return" ? "translation" : destination.kind === "arena-comparison" ? "arena" : destination.kind === "task" || destination.kind === "task-list" ? "tasks" : "review";
 }
 
@@ -65,7 +68,8 @@ export class SessionNavigation {
     const intent = this.acquire("navigation"); if (!intent) return false;
     const current = () => this.current(intent);
     // Capture the user target before any asynchronous view or read work.
-    const fixed: WorkspaceDestination = Object.freeze(destination.kind === "resource-context" || destination.kind === "resource-context-return"
+    const fixed: WorkspaceDestination = Object.freeze(destination.kind === "review-edit" || destination.kind === "review-return" ? freezeNavigation(structuredClone(destination))
+      : destination.kind === "resource-context" || destination.kind === "resource-context-return"
       ? {...destination,capture:Object.freeze({...destination.capture,target:Object.freeze({...destination.capture.target})})}
       : destination.kind === "resource-correction" || destination.kind === "resource-correction-return"
       ? {...destination,capture:Object.freeze({...destination.capture,target:Object.freeze({...destination.capture.target})})}
@@ -124,4 +128,9 @@ export class SessionNavigation {
       if (!issued) this.release(intent);
     }
   }
+}
+
+function freezeNavigation<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) { Object.values(value).forEach(freezeNavigation); Object.freeze(value); }
+  return value;
 }

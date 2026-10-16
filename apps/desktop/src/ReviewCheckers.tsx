@@ -4,6 +4,8 @@ import { PluginPermissions } from "./PluginPermissions";
 import { reviewRuleLabel } from "./reviewLabels";
 import type { CheckRuleResult, CheckRun, ReviewCheckerView } from "./generated/review.responses";
 import { contractIdentity, providerIdentity, ruleIdentity } from "./reviewIdentity";
+import { reviewDiagnostics } from "./reviewDiagnosticNavigation";
+import type { TextReviewDiagnostic } from "./generated/review.responses";
 export { checkerIdentity, ruleIdentity } from "./reviewIdentity";
 export function capturedRuleLabel(t: TFunction, run: CheckRun, rule: CheckRuleResult): string {
   if (rule.key.implementation.kind === "plugin") {
@@ -37,17 +39,18 @@ export function ReviewCheckerDetails({ view }: { view: ReviewCheckerView }) {
   </>;
 }
 
-export function ReviewDiagnosticDetails({ run, rule, code }: { run: CheckRun; rule: CheckRuleResult; code: string }) {
+export function ReviewDiagnosticDetails({ run, rule, code, onLocate }: { run: CheckRun; rule: CheckRuleResult; code: string;
+  onLocate?: (diagnostic: TextReviewDiagnostic) => void }) {
   const { t } = useTranslation();
-  const identity = ruleIdentity(rule.key);
   // SDK diagnostics retain the input's operation unit IDs. The owning Core
   // UUID is separate; join only this exact rule's captured target scope.
-  const targets = new Set(run.evidence?.requiredChecks.requirements.find(requirement => ruleIdentity(requirement.key) === identity)?.targets ?? []);
-  const diagnostics = run.evidence?.diagnostics.filter(diagnostic => ruleIdentity(diagnostic.key) === identity
-    && diagnostic.code === code && targets.has(diagnostic.target)) ?? [];
+  const diagnostics = reviewDiagnostics(run, rule, code);
   return <>{diagnostics.map((diagnostic, index) => <div key={JSON.stringify([ruleIdentity(diagnostic.key), diagnostic.code, diagnostic.target, diagnostic.location, index])}>
     {diagnostic.detail ? <p>{diagnostic.detail}</p> : null}
     {diagnostic.suggestion ? <p>{t("review.advisorySuggestion", { suggestion: diagnostic.suggestion })}</p> : null}
+    {diagnostic.location ? onLocate ? <button type="button" className="text-button" onClick={() => onLocate(diagnostic)}>
+      {t(diagnostic.location.field === "source" ? "review.diagnosticNavigation.locateSource" : "review.diagnosticNavigation.locateTranslation")}
+    </button> : <p>{t("review.diagnosticNavigation.historical")}</p> : null}
     {diagnostic.location || diagnostic.resourceEntry ? <details><summary>{t("execution.diagnostic")}</summary>
       {diagnostic.location ? <p>{t("review.diagnosticRange", { field: t(diagnostic.location.field === "source" ? "review.source" : "review.translation"),
         encoding: diagnostic.location.range.encoding, rangeStart: String(diagnostic.location.range.start), rangeEnd: String(diagnostic.location.range.end) })}</p> : null}

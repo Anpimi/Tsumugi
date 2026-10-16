@@ -82,7 +82,7 @@ macro_rules! handlers {
         resource::decide_context_fact,resource::read_context_fact_decisions,resource::read_context_fact_action,resource::read_context_fact_history,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
         review::read_review_findings,review::read_review_finding_action,review::write_review_finding,
-        review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
+        review::read_review_page,review::read_review_target,review::read_review_diagnostic_location,review::read_review_history,review::write_review_decision,
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
         review::plugin::prepare_review_checks,review::plugin::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,

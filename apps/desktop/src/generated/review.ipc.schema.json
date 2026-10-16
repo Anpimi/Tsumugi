@@ -2,6 +2,60 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "CheckImplementation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "core",
+                "type": "string"
+              },
+              "validator": {
+                "$ref": "#/definitions/ContractRef"
+              }
+            },
+            "required": [
+              "kind",
+              "validator"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "plugin",
+                "type": "string"
+              },
+              "provider": {
+                "$ref": "#/definitions/ProviderSelectionBinding"
+              }
+            },
+            "required": [
+              "kind",
+              "provider"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CheckKey": {
+        "additionalProperties": false,
+        "properties": {
+          "implementation": {
+            "$ref": "#/definitions/CheckImplementation"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "implementation"
+        ],
+        "type": "object"
+      },
       "ContractRef": {
         "additionalProperties": false,
         "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
@@ -224,6 +278,31 @@
         ],
         "type": "object"
       },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
       "ReviewCancelCheckRequest": {
         "additionalProperties": false,
         "properties": {
@@ -316,6 +395,38 @@
           "request-changes"
         ],
         "type": "string"
+      },
+      "ReviewDiagnosticLocationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostic": {
+            "$ref": "#/definitions/TextReviewDiagnostic"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "runId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "runId",
+          "diagnostic"
+        ],
+        "type": "object"
       },
       "ReviewFindingActionRequest": {
         "additionalProperties": false,
@@ -743,6 +854,131 @@
         ],
         "type": "object"
       },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "TextReviewDiagnostic": {
+        "additionalProperties": false,
+        "description": "Optional public presentation associated with one actual finding. Diagnostic\nprose is not authenticated or sanitized by these structural checks.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TextReviewLocation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resourceEntry": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TextReviewResourceEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "code",
+          "target"
+        ],
+        "type": "object"
+      },
+      "TextReviewField": {
+        "enum": [
+          "source",
+          "translation"
+        ],
+        "type": "string"
+      },
+      "TextReviewLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "$ref": "#/definitions/TextReviewField"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "field",
+          "range"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourceEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "entryId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "entryId"
+        ],
+        "type": "object"
+      },
       "UnsignedDecimal": {
         "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
         "type": "string"
@@ -832,6 +1068,9 @@
       "decision": {
         "$ref": "#/definitions/ReviewWriteRequest"
       },
+      "diagnosticLocation": {
+        "$ref": "#/definitions/ReviewDiagnosticLocationRequest"
+      },
       "eligibility": {
         "$ref": "#/definitions/EligibilityRequest"
       },
@@ -878,6 +1117,7 @@
     "required": [
       "page",
       "target",
+      "diagnosticLocation",
       "summary",
       "neighbor",
       "scope",
@@ -2561,6 +2801,39 @@
         ],
         "type": "object"
       },
+      "ReviewDiagnosticLocation": {
+        "additionalProperties": false,
+        "description": "Read-only coordinates for one exact diagnostic in the current saved QA run.",
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "basisEvidence": {
+            "$ref": "#/definitions/ReviewBasis"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "location": {
+            "$ref": "#/definitions/TextReviewLocation"
+          },
+          "runId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "runId",
+          "basis",
+          "basisEvidence",
+          "location"
+        ],
+        "type": "object"
+      },
       "ReviewEditorSnapshot": {
         "additionalProperties": false,
         "properties": {
@@ -4231,6 +4504,9 @@
       "decision": {
         "$ref": "#/definitions/ReviewDecision"
       },
+      "diagnosticLocation": {
+        "$ref": "#/definitions/ReviewDiagnosticLocation"
+      },
       "editor": {
         "$ref": "#/definitions/ReviewEditorSnapshot"
       },
@@ -4287,6 +4563,7 @@
     "required": [
       "page",
       "target",
+      "diagnosticLocation",
       "summary",
       "neighbor",
       "scope",

@@ -96,6 +96,7 @@ enum Response {
     Failed,
     Unknown,
     BadRange,
+    Diagnostic(sdk::TextReviewField, sdk::TextRange),
     ForeignProvider,
     MissingResult,
     MissingFormat,
@@ -180,8 +181,10 @@ impl Runner for Checker {
                 let input: sdk::TextReviewCheckInput =
                     serde_json::from_value(payload.clone()).unwrap();
                 input.validate().unwrap();
-                if matches!(self.response, Response::Finding | Response::BadRange)
-                    && input.selections[0].translation_text.is_some()
+                if matches!(
+                    self.response,
+                    Response::Finding | Response::BadRange | Response::Diagnostic(..)
+                ) && input.selections[0].translation_text.is_some()
                 {
                     let result = &mut results[0];
                     let target = result.covered_targets[0].clone();
@@ -196,16 +199,21 @@ impl Runner for Checker {
                         key: result.key.clone(),
                         code: "preferred-form".into(),
                         target,
-                        location: Some(sdk::TextReviewLocation {
-                            field: sdk::TextReviewField::Translation,
-                            range: sdk::TextRange {
-                                encoding: sdk::TextEncoding::Utf16,
-                                start: if matches!(self.response, Response::BadRange) {
-                                    1
-                                } else {
-                                    2
+                        location: Some(match self.response {
+                            Response::Diagnostic(field, range) => {
+                                sdk::TextReviewLocation { field, range }
+                            }
+                            _ => sdk::TextReviewLocation {
+                                field: sdk::TextReviewField::Translation,
+                                range: sdk::TextRange {
+                                    encoding: sdk::TextEncoding::Utf16,
+                                    start: if matches!(self.response, Response::BadRange) {
+                                        1
+                                    } else {
+                                        2
+                                    },
+                                    end: 6,
                                 },
-                                end: 6,
                             },
                         }),
                         detail: Some("Synthetic editorial suggestion".into()),
@@ -1098,3 +1106,6 @@ fn advisory_review_captures_execution_scope_without_changing_required_policy() {
 
 #[path = "review_advisory/candidate_checks.rs"]
 mod candidate_checks;
+
+#[path = "review_advisory/diagnostic_location.rs"]
+mod diagnostic_location;

@@ -1,9 +1,10 @@
 import type { SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
-import type { ReviewFindingWrite, ReviewFindingActionRequest, ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
+import type { Requests, ReviewFindingWrite, ReviewFindingActionRequest, ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
 import * as validators from "./generated/review.validators";
 import { checkerIdentity, contractIdentity, ruleIdentity } from "./reviewIdentity";
-import type { AdvisoryFinding, ReviewBasis, ReviewFindingDecision, ReviewFindingView, ReviewSummaryPage, ReviewScopeCapture } from "./generated/review.responses";
+import type { Responses, AdvisoryFinding, ReviewBasis, ReviewFindingDecision, ReviewFindingView, ReviewSummaryPage, ReviewScopeCapture } from "./generated/review.responses";
+export type ReviewDiagnosticLocation = Responses["diagnosticLocation"];
 
 export type { ReviewFindingWrite, ReviewWrite, WaiverWrite, FallbackWrite, ReviewCheckRequest, ReviewCheckStartRequest } from "./generated/review.requests";
 export type { ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingView, ReviewFindingRepair, ReviewRepairStatus, AdvisoryFinding, ReviewCheckPreparation, ReviewPluginCheckView, ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
@@ -50,6 +51,10 @@ export function confirmReviewFindingEvidence(receipt: ReviewFindingDecision, exp
 }
 
 export const reviewCommands = {
+  diagnosticLocation: (request: Requests["diagnosticLocation"]) => checkedInvoke("read_review_diagnostic_location", request,
+    (value): value is ReviewDiagnosticLocation => validators.validateResponseDiagnosticLocation(value)
+      && value.unitId === request.unitId && value.locale === request.locale && value.runId === request.runId
+      && value.location.field === request.diagnostic.location?.field && value.location.range.encoding === "utf16"),
   findings: (request: ReviewHistoryRequest) => checkedInvoke("read_review_findings", request,
     (value): value is ReviewFindingView => validators.validateResponseFindings(value)
       && value.unitId === request.unitId && value.locale === request.locale

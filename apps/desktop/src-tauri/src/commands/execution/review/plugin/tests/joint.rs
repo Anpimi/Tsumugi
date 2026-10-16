@@ -849,6 +849,43 @@ fn reopen_joint_review_fixture(fixture: &JointReviewFixture<'_>) -> (Value, Valu
 }
 
 #[test]
+fn actual_current_diagnostic_location_ipc_preserves_saved_qa_and_session_scope() {
+    with_joint_review_fixture(|fixture| {
+        let run: tsumugi_core::CheckRun = serde_json::from_value(fixture.checked.clone()).unwrap();
+        let diagnostic = &run.evidence.as_ref().unwrap().diagnostics[0];
+        let target_request = scoped(fixture.context, json!({ "unitId": run.unit_id, "locale": run.locale }));
+        let before = call(fixture.window, "read_review_target", Some(target_request.clone())).unwrap();
+        let location_request = scoped(fixture.context, json!({
+            "unitId": run.unit_id, "locale": run.locale, "runId": run.run_id,
+            "diagnostic": diagnostic,
+        }));
+        let resolved: tsumugi_core::ReviewDiagnosticLocation = serde_json::from_value(
+            call(fixture.window, "read_review_diagnostic_location", Some(location_request.clone())).unwrap(),
+        ).unwrap();
+        assert_eq!(resolved.unit_id, run.unit_id);
+        assert_eq!(resolved.locale, run.locale);
+        assert_eq!(resolved.run_id, run.run_id);
+        assert_eq!(resolved.basis, run.basis);
+        assert_eq!(resolved.basis_evidence, run.basis_evidence);
+        assert_eq!(Some(&resolved.location), diagnostic.location.as_ref());
+        assert_eq!(resolved.location.range.encoding, sdk::TextEncoding::Utf16);
+        assert_eq!(resolved.location.range.end, 13, "DOM offsets count UTF-16 code units, not UTF-8 bytes or graphemes");
+        let mut missing_session = location_request.clone();
+        missing_session.as_object_mut().unwrap().remove("sessionToken");
+        assert!(call(fixture.window, "read_review_diagnostic_location", Some(missing_session)).is_err());
+        let mut wrong_session = location_request.clone();
+        wrong_session["sessionToken"] = json!("not-the-active-session");
+        assert!(call(fixture.window, "read_review_diagnostic_location", Some(wrong_session)).is_err());
+        let mut forged_target = location_request;
+        forged_target["diagnostic"]["target"] = json!(run.unit_id);
+        assert!(call(fixture.window, "read_review_diagnostic_location", Some(forged_target)).is_err());
+        let after = call(fixture.window, "read_review_target", Some(target_request)).unwrap();
+        assert_eq!(after, before, "location reads cannot change saved QA or approval");
+        assert_eq!(after["currentCheck"], *fixture.checked);
+    });
+}
+
+#[test]
 fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa_across_reopen() {
     review_phase("joint: start");
     with_joint_review_fixture(|fixture| {

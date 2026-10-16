@@ -9,15 +9,18 @@ import { reviewCommands, type ReviewTarget, type ReviewFindingView, type ReviewF
 import { useSessionAlive, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { useWorkbenchCommands, type ReviewFindingCommandPayload } from "./workbenchCommands";
+import { currentDiagnosticRun, reviewDiagnostics } from "./reviewDiagnosticNavigation";
+import type { TextReviewDiagnostic } from "./generated/review.responses";
 
 const key = (unit: string, locale: string, offset: number) => ["review-findings", unit, locale, offset, 20] as const;
 
 /** Current evidence stays in Query; mutation/recovery and reason edits stay in
  * the original Review owner, including when this panel is unmounted. */
-export function ReviewFindings({ project, target, active, available, currentTarget, freshReadProof, onOpenTranslation }: {
+export function ReviewFindings({ project, target, active, available, currentTarget, freshReadProof, onOpenTranslation, onLocateDiagnostic }: {
   project: ProjectView; target: ReviewTarget; active: boolean; available: () => { enabled: boolean };
   currentTarget: () => ReviewTarget | null; freshReadProof: () => () => boolean;
   onOpenTranslation: (target: EditorTarget, locale: string) => boolean | Promise<boolean>;
+  onLocateDiagnostic?: (target: ReviewTarget, runId: string, diagnostic: TextReviewDiagnostic) => boolean | Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const owner = useReviewDraftSession(), reads = useSessionReads(), commands = useWorkbenchCommands();
@@ -78,7 +81,14 @@ export function ReviewFindings({ project, target, active, available, currentTarg
       && (owner.current().editSeq[reviewDraftKey(target)] ?? 0) === seq + 1 && !owner.current().drafts[reviewDraftKey(target)]) {
       // The durable request remains awaiting a real recheck even if navigation
       // is declined by the manual editor's existing draft protection.
-      if (!await onOpenTranslation({ unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, target.locale)) {
+      const run = view?.runId === target.currentCheck?.runId ? target.currentCheck : null;
+      const rule = run?.rules.find(rule => ruleIdentity(rule.key) === ruleIdentity(evidence.requirement.key));
+      const locations = run && rule ? reviewDiagnostics(run, rule, evidence.finding.code).filter(diagnostic => diagnostic.location) : [];
+      const diagnostic = locations.length === 1 ? locations[0] : null;
+      const opened = diagnostic && run && onLocateDiagnostic
+        ? await onLocateDiagnostic(target, run.runId, diagnostic)
+        : await onOpenTranslation({ unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, target.locale);
+      if (!opened) {
         owner.setNotice("error"); owner.setReason("editor-unavailable");
       }
     }
@@ -125,7 +135,9 @@ export function ReviewFindings({ project, target, active, available, currentTarg
       return <article key={item.finding.issueId}><p><strong>{item.requirement.key.rule.id}</strong>: {item.finding.detail}</p>
         {evidenceDetails(item.requirement, findingRunId, target.sourceRevisionId)}
         {item.decision && item.decision.request.runId !== findingRunId ? <p>{t("review.advisoryFindings.associated")}</p> : null}
-        {diagnosticRun && rule ? <ReviewDiagnosticDetails run={diagnosticRun} rule={rule} code={item.finding.code} /> : null}
+        {diagnosticRun && rule ? <ReviewDiagnosticDetails run={diagnosticRun} rule={rule} code={item.finding.code}
+          onLocate={onLocateDiagnostic && currentView() && currentDiagnosticRun(target, diagnosticRun)
+            ? diagnostic => { void onLocateDiagnostic(target, diagnosticRun.runId, diagnostic); } : undefined} /> : null}
         {item.decision ? <><p>{t(item.decision.request.disposition === "rejected" ? "review.advisoryFindings.rejected" : item.decision.request.disposition === "restored" ? "review.advisoryFindings.restored" : "review.advisoryFindings.awaiting")}</p>
           <p>{item.decision.request.actor}: {item.decision.request.reason}</p>{historyDetails(item.decision)}</> : null}
         <div className="form-actions"><button className="secondary-button" disabled={!availability(payload, rejected ? "restored" : "rejected").enabled}

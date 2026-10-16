@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Open a current QA diagnostic at its exact source or selected-translation range,
+  then return to the original review or pending-work queue. Range conversion uses
+  the SDK's Unicode rules; changed evidence or newer draft text keeps its content
+  and asks for a fresh check instead of selecting an unrelated passage.
+
 - Propose a project-local source-context strategy from a saved manual correction,
   compare it with a direct baseline on fixed calibration and held-out entries,
   and review independently checked results before adopting it for new AI drafts.

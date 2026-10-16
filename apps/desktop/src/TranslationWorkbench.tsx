@@ -29,6 +29,8 @@ import { validateResponseHistory } from "./generated/translation.validators";
 import { validateResponseEditor } from "./generated/review.validators";
 import type { ChangeScope } from "./sessionReads";
 import type { QueryKey } from "@tanstack/react-query";
+import type { WorkspaceDestination } from "./sessionNavigation";
+import { diagnosticMatchesEditor, diagnosticTextareaSelection, textareaDisplayText, type ReviewDiagnosticAnchor } from "./reviewDiagnosticNavigation";
 
 export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
 type EditorReadIntent = { id: number; unitId: string; locale: string };
@@ -41,7 +43,7 @@ export interface TranslationHandle {
   showAttempt: (id: string) => void;
   openUnit: (target: EditorTarget, locale: string, suggestedText?: string) => boolean;
   allowLeave: (current?: () => boolean) => Promise<boolean>;
-  allowNavigate: () => Promise<boolean>;
+  allowNavigate: (destination?: WorkspaceDestination) => Promise<boolean>;
   saveCurrent: () => void;
 }
 
@@ -74,13 +76,15 @@ const targetFromTranslation = (row: TranslationPreviewRow): EditorTarget | null 
   ? { unitId: row.unitId, sourceRevisionId: row.sourceRevisionId, key: row.entry.nativeKey, sourceText: row.sourceText ?? "" }
   : null;
 
-export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, onOpenComparison, onEditContext, onProposeTerm, ref }: {
+export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, onReturnToReview, diagnosticAnchor, onOpenComparison, onEditContext, onProposeTerm, ref }: {
   project: ProjectView; disabled: boolean; onOpenExtensions?: () => void; onQueryText?: (text: string) => boolean | Promise<boolean>;
   aiSelection?: { count: number; locale: string; editSeq: number; available: boolean };
   onPrepareSelection?: (selection: ContentSelection, expectedEditSeq: number) => Promise<boolean>; onReturnToAi?: () => void; ref?: Ref<TranslationHandle>;
   onOpenComparison?: (target: EditorTarget, locale: string, revision: Pick<TranslationRevision, "revisionId" | "ordinal">) => Promise<boolean>;
   onEditContext?: (capture: ContextEditorTarget) => Promise<boolean>;
   onProposeTerm?: (capture: CorrectionEditorTarget) => Promise<boolean>;
+  diagnosticAnchor?: ReviewDiagnosticAnchor | null;
+  onReturnToReview?: () => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const context = executionContext(project);
@@ -156,6 +160,10 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const heading = useRef<HTMLHeadingElement>(null);
   const entryList = useRef<HTMLUListElement>(null);
   const draftField = useRef<HTMLTextAreaElement>(null);
+  const sourceField = useRef<HTMLTextAreaElement>(null);
+  const locatedAnchor = useWorkbenchRef<ReviewDiagnosticAnchor | null>("translation", "locatedDiagnostic", null);
+  const [locationStatus, setLocationStatus] = useState<"waiting" | "located" | "invalid">("waiting");
+  const [returnBlocked, setReturnBlocked] = useState(false);
   const draft = editorDraft?.text ?? "";
   const pendingSave = editorDraft?.pending?.request ?? null;
   const pendingSelection = editorDraft?.pendingSelection ?? null;
@@ -273,6 +281,31 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     const result = reads.client.getQueryState<T>(reads.key(key));
     return !reads.retired && result?.status === "success" && result.fetchStatus === "idle" && !result.isInvalidated && result.error === null && result.data === value;
   }
+  function diagnosticCurrent(anchor: ReviewDiagnosticAnchor) {
+    const current = draftSession.current();
+    return anchor.projectId === context.projectId && anchor.sessionToken === context.sessionToken && !!snapshot && !!current
+      && anchor.value.unitId === current.unitId && anchor.value.locale === current.locale && current.locale === targetLocale
+      && current.sourceRevisionId === anchor.value.basisEvidence.sourceRevisionId
+      && current.baseSelectionId === anchor.value.basisEvidence.selectionId && current.baseRevisionId === anchor.value.basisEvidence.revisionId
+      && current.editSeq === anchor.editSeq && current.text === (anchor.translationText ?? "") && current.baseText === anchor.translationText
+      && diagnosticMatchesEditor(anchor, snapshot) && readyEditorRead === editorIntent?.id
+      && checkedRead(editorKey(editorIntent), snapshot) && sourceReady(anchor.value.basisEvidence.sourceSnapshotId);
+  }
+  useEffect(() => {
+    if (!diagnosticAnchor || !open || tab !== "edit" || disabled || composing || readBusy || editorRead.isFetching || sourceRead.isFetching
+      || !snapshot || readyEditorRead !== editorIntent?.id) return;
+    if (locatedAnchor.current === diagnosticAnchor || !diagnosticCurrent(diagnosticAnchor)) return;
+    const location = diagnosticAnchor.value.location;
+    const field = location.field === "source" ? sourceField.current : draftField.current;
+    const text = location.field === "source" ? diagnosticAnchor.sourceText : diagnosticAnchor.translationText;
+    // Only the standard textarea newline projection may differ from the exact
+    // checked string. Boundaries inside a collapsed CRLF remain unselectable.
+    locatedAnchor.current = diagnosticAnchor;
+    const selection = text === null ? null : diagnosticTextareaSelection(text, location.range);
+    if (!selection || !field || field.value !== selection.text) { setLocationStatus("invalid"); return; }
+    field.focus(); field.setSelectionRange(selection.start, selection.end);
+    setLocationStatus("located");
+  }, [diagnosticAnchor, open, tab, disabled, composing, readBusy, editorRead.isFetching, sourceRead.isFetching, snapshot, readyEditorRead, editorIntent, editorDraft]);
   const retainedSourceChanged = !!editorDraft && !!source && !!draftSourceBasis.current
     && draftSourceBasis.current.projectId === context.projectId && draftSourceBasis.current.sessionToken === context.sessionToken
     && draftSourceBasis.current.unitId === editorDraft.unitId && draftSourceBasis.current.locale === editorDraft.locale
@@ -804,6 +837,24 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     ];
     return () => { removeBusiness.forEach(dispose=>dispose()); removeReconcile(); removeRetry(); removeSaveNext(); removeSave(); };
   });
+  function allowProjectLeave(current: () => boolean = () => true) {
+    leaveProof.current = current;
+    const manual = draftSession.current(), imported = importSession.current();
+    if (resourceDrafts.factBlocked() || composing || draftSession.protection.blocked() || candidates.blocked() || importSession.hasActive() || imported.busy || manual?.saving || manual?.selecting) { setOpen(true); return Promise.resolve(false); }
+    if (manual?.pending || manual?.pendingSelection || importSession.hasPending()) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
+    if (candidates.hasDraft()) {
+      setOpen(true);setTab("edit");setLeaveIntent({kind:"candidate-project"});
+      return new Promise<boolean>(resolve=>{leaveResolver.current?.(false);leaveResolver.current=resolve;});
+    }
+    generation.current++; running.current = false; readRunning.current = false; readFlight.current = null; setEditorActivation(null); setReadBusy(false); setBusy(false);
+    if ((!manual || (manual.text === (manual.baseText ?? "") && !manual.newerDraftSaved)) && (imported.folder || imported.preflight) && !imported.attempt) {
+      setOpen(true); setTab("import"); setLeaveIntent({ kind: "import-project" });
+      return new Promise<boolean>(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
+    }
+    if (!manual || (manual.text === (manual.baseText ?? "") && !manual.newerDraftSaved)) return Promise.resolve(true);
+    setOpen(true); setLeaveIntent({ kind: "project" });
+    return new Promise<boolean>(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
+  }
   useImperativeHandle(ref, () => ({
     saveCurrent() {
       commandRegistry.dispatch("translation.save", commandScope);
@@ -830,31 +881,15 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
       setEditorActivation({ target, locale, suggestedText });
       return true;
     },
-    allowLeave(current: () => boolean = () => true) {
-      leaveProof.current = current;
-      const manual = draftSession.current(), imported = importSession.current();
-      if (resourceDrafts.factBlocked() || composing || draftSession.protection.blocked() || candidates.blocked() || importSession.hasActive() || imported.busy || manual?.saving || manual?.selecting) { setOpen(true); return Promise.resolve(false); }
-      if (manual?.pending || manual?.pendingSelection || importSession.hasPending()) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
-      if (candidates.hasDraft()) {
-        setOpen(true);setTab("edit");setLeaveIntent({kind:"candidate-project"});
-        return new Promise(resolve=>{leaveResolver.current?.(false);leaveResolver.current=resolve;});
-      }
-      // Remounting starts view reads. Stop their UI continuation, while the
-      // independent owners above retain authority over actual business work.
-      generation.current++; running.current = false; readRunning.current = false; readFlight.current = null; setEditorActivation(null); setReadBusy(false); setBusy(false);
-      if ((!manual || (manual.text === (manual.baseText ?? "") && !manual.newerDraftSaved)) && (imported.folder || imported.preflight) && !imported.attempt) {
-        setOpen(true); setTab("import"); setLeaveIntent({ kind: "import-project" });
-        return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
-      }
-      if (!manual || (manual.text === (manual.baseText ?? "") && !manual.newerDraftSaved)) return Promise.resolve(true);
-      setOpen(true);
-      setLeaveIntent({ kind: "project" });
-      return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
-    },
-    allowNavigate() {
+    allowLeave: allowProjectLeave,
+    allowNavigate(destination) {
       const confirmingSelection = selectionAction !== null && (selectionAction.kind !== "ai" || selectionTransfer.current !== selectionAction.value
         || contentSelection !== selectionAction.value || selectionVersion.current !== selectionAction.version);
       if (resourceDrafts.factBlocked() || composing || draftSession.protection.blocked() || candidates.blocked() || leaveIntent || confirmingSelection || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
+      if (destination?.kind === "review-return") {
+        const draft = draftSession.current();
+        return allowProjectLeave(() => mounted.current && !reads.retired && draftSession.current()?.editSeq === draft?.editSeq && draftSession.current()?.text === draft?.text);
+      }
       return Promise.resolve(true);
     },
   }));
@@ -1101,6 +1136,13 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
           <ContextFactDecisionFields context={context} disabled={disabled}/>
           {onReturnToAi ? <button type="button" className="secondary-button" disabled={disabled || composing || draftSession.protection.blocked()}
             onClick={onReturnToAi}>{t("ai.workspace.returnToWork")}</button> : null}
+          {onReturnToReview ? <button type="button" className="secondary-button" disabled={disabled || composing || draftSession.protection.blocked()}
+            onClick={() => { void onReturnToReview().then(accepted => { if (mounted.current && !accepted) setReturnBlocked(true); }); }}>{t("review.diagnosticNavigation.returnToQueue")}</button> : null}
+          {returnBlocked ? <p role="status">{t("review.diagnosticNavigation.returnBlocked")}</p> : null}
+          {diagnosticAnchor ? <p role="status">{t(editorRead.error ? "review.diagnosticNavigation.readFailed"
+            : snapshot && readyEditorRead === editorIntent?.id && !diagnosticCurrent(diagnosticAnchor) ? "review.diagnosticNavigation.stale"
+            : locatedAnchor.current === diagnosticAnchor && locationStatus === "invalid" ? "review.diagnosticNavigation.invalid"
+            : locatedAnchor.current === diagnosticAnchor && locationStatus === "located" ? "review.diagnosticNavigation.located" : "review.diagnosticNavigation.waiting")}</p> : null}
           {(history?.rows.some(revision=>revision.originKind === "ai") || candidates.blocked() || candidates.hasDraft() || candidates.state.recorded) ? <section aria-label={t("candidateDecisions.title")}>
                 <h4>{t("candidateDecisions.title")}</h4><p>{t("candidateDecisions.help")}</p>
                 <TranslationCandidateDecisionFields canCheck={candidatePendingAvailability(candidatePendingPayload()).enabled} canRetry={candidatePendingAvailability(candidatePendingPayload(),true).enabled}
@@ -1186,7 +1228,9 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     </button>;
                   })}</div>
                   {navigationEnd ? <p role="status">{t("workbench.scopeEnd")}</p> : null}
-                  <section className="editor-source"><h3>{t("translation.sourceText")}</h3><pre>{displayedTarget.sourceText || t("translation.empty")}</pre></section>
+                  <section className="editor-source"><h3>{t("translation.sourceText")}</h3>{diagnosticAnchor?.value.location.field === "source"
+                    ? <label>{t("review.diagnosticNavigation.sourceText")}<textarea ref={sourceField} readOnly value={textareaDisplayText(displayedTarget.sourceText)} /></label>
+                    : <pre>{displayedTarget.sourceText || t("translation.empty")}</pre>}</section>
                   {onQueryText ? <div className="execution-actions"><p>{t("toolQuery.editorHelp")}</p><button className="text-button" disabled={busy || readBusy || composing || protectionBlocked || !!pendingSave || !!pendingSelection} onClick={() => { void queryEditorText(displayedTarget.sourceText); }}>{t("toolQuery.querySource")}</button>
                     <button className="text-button" disabled={busy || readBusy || composing || protectionBlocked || !!pendingSave || !!pendingSelection || !hasDraftSelection} onClick={() => {
                       const input = draftField.current; if (input && input.selectionStart < input.selectionEnd) void queryEditorText(input.value.slice(input.selectionStart, input.selectionEnd));
@@ -1203,13 +1247,14 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     selectionId={editorDraft.baseSelectionId} selectionText={editorDraft.baseText} open={open && tab === "edit"} disabled={disabled || !!pendingSave || !!pendingSelection}
                     draftBlocked={dirty || !!pendingSave || !!pendingSelection} run={perform} onBlockedChange={() => {}}
                     onEditingReadyChange={(scope, ready) => setEditingReady(before => before?.scope === scope && before.ready === ready ? before : { scope, ready })} />
-                  <label>{t("translation.draft")}<textarea ref={draftField} value={draft}
+                  <label>{t("translation.draft")}<textarea ref={draftField} value={textareaDisplayText(draft)}
                     readOnly={protectionBlocked || editingReady?.scope !== editingProtectionScope(context, displayedTarget, targetLocale) || !editingReady.ready}
                     onCompositionStart={event => {
                       setComposing(true);
                       // Composition is newer input even before its first text
                       // change. A pending immutable selection cannot replace it.
-                      if (!event.currentTarget.readOnly) draftSession.edit(event.currentTarget.value);
+                      const current = draftSession.current();
+                      if (!event.currentTarget.readOnly && current) draftSession.edit(current.text);
                     }} onCompositionEnd={() => setComposing(false)}
                     onSelect={event => setHasDraftSelection(event.currentTarget.selectionStart < event.currentTarget.selectionEnd)}
                     onChange={event => draftSession.edit(event.target.value)} /></label>

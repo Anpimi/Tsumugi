@@ -141,12 +141,15 @@ it.each(["zh-CN", "ja-JP"])("opens the exact %s current selection rather than th
     status.plan.locale = locale; status.plan.preview!.items[0].targetLocale = locale;
   }
   const user = userEvent.setup(); await openAi();
+  const earlierQueue = { ...reads.context, locale, unitId: target.unitId, tab: "work", summaryScope: null, pageAfter: 0, workOffset: 50 };
+  memory.write("review", "editorOrigin", earlierQueue); memory.write("review", "editorReturned", earlierQueue);
   act(() => ai.setConfig(before => ({ ...before, model: "AI newer B" })));
   const before = ai.current(), cursor = memory.read("ai", "after");
   expect(target.revisionId).not.toBe(view.rows[0].savedRevisionId);
   await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
   await screen.findByText("Current human translation", { exact: false });
   expect(area).toBe("review"); expect(review.current().selected?.revisionId).toBe(target.revisionId);
+  expect(memory.read("review", "editorOrigin")).toBeNull(); expect(memory.read("review", "editorReturned")).toBeNull();
   expect(review.current().selected?.currentCheck).toBeNull(); expect(review.current().selected?.currentDecision).toBeNull();
   expect(screen.getByText(/unselected AI candidate and its candidate checks/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Return to AI work" }));

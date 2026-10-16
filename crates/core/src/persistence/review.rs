@@ -41,8 +41,8 @@ mod query_tests;
 mod views;
 pub(super) use views::ReadScopes;
 pub use views::{
-    ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary,
-    ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+    ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture,
+    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
 };
 
 fn check_outcome(rules: &[CheckRuleResult]) -> ReviewCheckOutcome {
