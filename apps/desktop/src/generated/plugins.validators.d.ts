@@ -10,7 +10,11 @@ export declare function validateRequestInstall(value: unknown): value is Request
 export declare function validateRequestInventory(value: unknown): value is Requests["inventory"];
 export declare function validateRequestLookup(value: unknown): value is Requests["lookup"];
 export declare function validateRequestNativeHostApproval(value: unknown): value is Requests["nativeHostApproval"];
+export declare function validateRequestPackInstall(value: unknown): value is Requests["packInstall"];
 export declare function validateRequestPackage(value: unknown): value is Requests["package"];
+export declare function validateRequestRepositoryInstall(value: unknown): value is Requests["repositoryInstall"];
+export declare function validateRequestRepositoryRefresh(value: unknown): value is Requests["repositoryRefresh"];
+export declare function validateRequestRepositoryResume(value: unknown): value is Requests["repositoryResume"];
 export declare function validateRequestRuntimeInstall(value: unknown): value is Requests["runtimeInstall"];
 export declare function validateRequestRuntimeLookup(value: unknown): value is Requests["runtimeLookup"];
 export declare function validateRequestSource(value: unknown): value is Requests["source"];
@@ -24,7 +28,11 @@ export declare function validateResponseCandidate(value: unknown): value is Resp
 export declare function validateResponseError(value: unknown): value is Responses["error"];
 export declare function validateResponseGenerationComponent(value: unknown): value is Responses["generationComponent"];
 export declare function validateResponseInventory(value: unknown): value is Responses["inventory"];
+export declare function validateResponsePackCandidate(value: unknown): value is Responses["packCandidate"];
 export declare function validateResponsePackage(value: unknown): value is Responses["package"];
+export declare function validateResponseRepositorySelection(value: unknown): value is Responses["repositorySelection"];
+export declare function validateResponseRepositorySources(value: unknown): value is Responses["repositorySources"];
+export declare function validateResponseRepositoryVerified(value: unknown): value is Responses["repositoryVerified"];
 export declare function validateResponseRuntime(value: unknown): value is Responses["runtime"];
 export declare function validateResponseSource(value: unknown): value is Responses["source"];
 export declare function validateResponseTextReview(value: unknown): value is Responses["textReview"];

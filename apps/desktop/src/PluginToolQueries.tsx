@@ -11,7 +11,7 @@ import { executionCommands, executionContext, type PluginToolPrepareRequest, typ
 import { readCompleteAttempt } from "./executionRead";
 import { pluginCommands, type PluginToolRequest, type PluginToolView } from "./pluginCommands";
 import { matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
-import { PluginPermissions } from "./PluginManager";
+import { PluginPermissions } from "./PluginPermissions";
 import { jsonIdentity, queryField as field, matchesTool as matches, readPluginToolChoices } from "./pluginToolChoices";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";

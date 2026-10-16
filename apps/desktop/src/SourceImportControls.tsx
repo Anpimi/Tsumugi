@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { QueryKey, UseQueryResult } from "@tanstack/react-query";
-import { PluginPermissions } from "./PluginManager";
+import { PluginPermissions } from "./PluginPermissions";
 import { matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
 import type { PluginSourceView } from "./pluginCommands";
 import { executionContext, type AttemptDetail } from "./executionCommands";

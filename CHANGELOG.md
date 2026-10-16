@@ -534,6 +534,15 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Review offline Packs with separate consent for each captured package; install only selected members disabled and recover partial installations with their original requests. Pack contents do not authenticate publishers or grant execution rights.
+- Enroll an independently obtained root for a captured offline repository and
+  verify signed, expiring update metadata before reviewing packages. Retain
+  trusted root rotations and rollback/time watermarks through partial failures
+  and original-action recovery. Package installation and deliberate version
+  rollback require separate choices; neither changes execution permissions.
+- Experimental Rust Host consumers must handle `InstallError::Repository` in
+  exhaustive installation-error matches. SDK wire contracts remain unchanged.
+
 - Experimental joint QA captures mandatory source-format rules and explicitly
   selected advisory text rules in one fixed check set. Independent checker
   inputs and permissions retain original ledger provenance. Current QA and

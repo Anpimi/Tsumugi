@@ -1,5 +1,7 @@
 # Fixed offline extension preparation
 
+For explicitly selected local collections, see [manual offline Packs](offline-packs.md).
+For authenticated local update catalogs, see [signed offline repositories](offline-repositories.md).
 The optional Apple silicon macOS desktop bundle carries a fixed Node/Host
 runtime and two independent prebuilt packages: WebVTT and SMAPI. Its bundled
 runtime requires macOS 13.5 or later. End users of an assembled application do

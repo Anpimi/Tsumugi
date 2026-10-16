@@ -6,6 +6,10 @@ members = [
     "crates/plugin-host",
     "apps/desktop/src-tauri",
 ]
+exclude = ["third_party/tough"]
+
+[patch.crates-io]
+tough = { path = "third_party/tough" }
 
 [workspace.package]
 version = "0.2.0-alpha.1"

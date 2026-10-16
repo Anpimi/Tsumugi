@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { PluginPermissions } from "./PluginManager";
+import { PluginPermissions } from "./PluginPermissions";
 import { pluginEnvironmentVersion } from "./pluginEnvironments";
 import type { PluginBuildView } from "./pluginCommands";
 

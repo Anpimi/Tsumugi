@@ -253,6 +253,23 @@ impl Store {
         Ok(())
     }
 
+    pub(super) fn retained_package_origins(
+        &self,
+        authorized: &impl Fn() -> bool,
+    ) -> InstallResult<crate::catalog::PackageApprovalIndex> {
+        let mut origins = crate::catalog::PackageApprovalIndex::default();
+        if let Some(journal) = self.journal(authorized)? {
+            for tx in journal.entries {
+                // A completed removal retires bytes, not the independently
+                // recorded source. Repeated same-origin installations are legal.
+                origins
+                    .observe_origin(&tx.receipt.installation.approval())
+                    .map_err(|_| InstallError::CorruptStore)?;
+            }
+        }
+        Ok(origins)
+    }
+
     pub(super) fn check_uninstall_load(
         &self,
         approval: &PackageApproval,

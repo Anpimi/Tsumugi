@@ -88,7 +88,7 @@ impl Drop for CleanupClaim {
     }
 }
 
-pub(super) fn original_required(mut error: CommandError) -> CommandError {
+pub(in crate::commands::plugins) fn original_required(mut error: CommandError) -> CommandError {
     // Retaining an accepted intent is distinct from an unknown Store commit.
     // Preserve its original classification and require the same request.
     error.recovery_required = true;

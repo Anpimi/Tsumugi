@@ -215,6 +215,8 @@ export type NativeHostUnavailableReason = "unsupported-platform" | "identity-una
 export type PluginObjectState = "sealed" | "recovery-required";
 export type RuntimeAvailability =
   "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
+export type PluginRepositoryState = "pending" | "verified" | "rejected";
+export type PluginRepositoryInstallKind = "install" | "update" | "rollback";
 /**
  * Selecting a check is not adopting its resource or requiring its findings.
  * Blocking checks continue to use the original mandatory Review contract.
@@ -238,7 +240,11 @@ export interface Responses {
   error: CommandError;
   generationComponent: PluginGenerationComponentView;
   inventory: PluginInventoryView;
+  packCandidate: PluginPackCandidateView | null;
   package: PluginPackageDetailsView;
+  repositorySelection: PluginRepositorySelectionView | null;
+  repositorySources: PluginRepositorySourcesView;
+  repositoryVerified: PluginRepositoryVerifiedView;
   runtime: RuntimeEnvironmentDescriptor;
   source: PluginSourceView;
   textReview: PluginTextReviewView;
@@ -533,9 +539,534 @@ export interface PluginUninstallView {
   settingsRevision: UnsignedDecimal;
   state: PluginObjectState;
 }
+export interface PluginPackCandidateView {
+  descriptorDigest: string;
+  displayName: string;
+  id: string;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  packages:
+    | [PluginPackMemberView]
+    | [PluginPackMemberView, PluginPackMemberView]
+    | [PluginPackMemberView, PluginPackMemberView, PluginPackMemberView]
+    | [PluginPackMemberView, PluginPackMemberView, PluginPackMemberView, PluginPackMemberView]
+    | [PluginPackMemberView, PluginPackMemberView, PluginPackMemberView, PluginPackMemberView, PluginPackMemberView]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ]
+    | [
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView,
+        PluginPackMemberView
+      ];
+  ticket: ExecutionId;
+}
+export interface PluginPackMemberView {
+  byteCount: UnsignedDecimal;
+  fileCount: number;
+  manifest: PluginManifest;
+  packageDigest: string;
+}
 export interface PluginPackageDetailsView {
   enabled: boolean;
   manifest: PluginManifest;
+  packageDigest: string;
+}
+export interface PluginRepositorySelectionView {
+  captureDigest: string;
+  revision: UnsignedDecimal;
+  rootFingerprint: string;
+  sourceId: string;
+  ticket: ExecutionId;
+}
+export interface PluginRepositorySourcesView {
+  /**
+   * @maxItems 16
+   */
+  sources:
+    | []
+    | [PluginRepositorySourceView]
+    | [PluginRepositorySourceView, PluginRepositorySourceView]
+    | [PluginRepositorySourceView, PluginRepositorySourceView, PluginRepositorySourceView]
+    | [PluginRepositorySourceView, PluginRepositorySourceView, PluginRepositorySourceView, PluginRepositorySourceView]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ]
+    | [
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView,
+        PluginRepositorySourceView
+      ];
+}
+export interface PluginRepositorySourceView {
+  actionId: ExecutionId | null;
+  displayName: string | null;
+  expectedRevision: UnsignedDecimal | null;
+  revision: UnsignedDecimal;
+  rootFingerprint: string;
+  sourceId: string;
+  state: PluginRepositoryState;
+}
+export interface PluginRepositoryVerifiedView {
+  actionId: ExecutionId;
+  captureDigest: string;
+  displayName: string;
+  /**
+   * Decimal UTC epoch milliseconds. Negative dates are never admitted.
+   */
+  expiresAtUnixMilliseconds: UnsignedDecimal;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  packages:
+    | [PluginRepositoryMemberView]
+    | [PluginRepositoryMemberView, PluginRepositoryMemberView]
+    | [PluginRepositoryMemberView, PluginRepositoryMemberView, PluginRepositoryMemberView]
+    | [PluginRepositoryMemberView, PluginRepositoryMemberView, PluginRepositoryMemberView, PluginRepositoryMemberView]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ]
+    | [
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView,
+        PluginRepositoryMemberView
+      ];
+  revision: UnsignedDecimal;
+  rootVersion: UnsignedDecimal;
+  snapshotVersion: UnsignedDecimal;
+  sourceId: string;
+  targetsVersion: UnsignedDecimal;
+  ticket: ExecutionId;
+  timestampVersion: UnsignedDecimal;
+}
+export interface PluginRepositoryMemberView {
+  byteCount: UnsignedDecimal;
+  fileCount: number;
+  kind: PluginRepositoryInstallKind;
+  manifest: PluginManifest;
+  origin: PluginOriginView;
   packageDigest: string;
 }
 export interface PluginSourceView {

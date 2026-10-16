@@ -16,6 +16,10 @@ tempfile = "=3.27.0"
 uuid = { version = "=1.26.1", features = ["v4"] }
 tokio = { version = "=1.53.1", features = ["rt", "macros", "process", "io-util", "sync", "time"] }
 serde = { version = "=1.0.229", features = ["derive"] }
+tough = { version = "=0.24.0", default-features = false }
+url = "=2.5.8"
+jiff = { version = "=0.2.37", features = ["serde"] }
+futures-util = { version = "=0.3.34", features = ["io"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
@@ -37,4 +41,5 @@ native-application-conformance = ["tsumugi-plugin-sdk/native-worker"]
 core-adapter = ["dep:tsumugi-core"]
 
 [dev-dependencies]
+aws-lc-rs = "=1.18.1"
 tsumugi-core = { path = "../core", features = ["execution-test-host"] }

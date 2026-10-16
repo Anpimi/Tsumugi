@@ -1,5 +1,23 @@
 # Application versioning and changelog maintenance
 
+Manual offline Pack installation captures bounded immutable package bytes and
+requires separate consent for each selected member. New packages remain disabled;
+existing source/publisher conflicts, settings CAS and original-action recovery
+use the existing Catalog and PackageStore. The additive experimental Desktop IPC
+also adds explicit offline signed-repository trust and version selection. Its
+new versioned trust-action namespace belongs to the existing PackageStore;
+existing settings, receipts, SDK/process and project schema remain unchanged.
+The Host uses pinned `tough` 0.24.0 with a documented optional metadata-storage
+adapter patch, preserving upstream TUF verification and update ordering. The
+existing lockfile records its required dependencies; Desktop uses the already
+locked SemVer implementation for explicit software rollback decisions. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same undistributed batch;
+both Unreleased changelogs are synchronized without an additional version bump.
+The experimental Host's new `InstallError::Repository` variant requires external
+exhaustive error matches to handle repository failures. This source-level change
+is marked in the implementation commit; it changes no SDK wire protocol.
+
+
 Manual inbound MCP terminology retrieval adds explicit discovery, fixed-query
 preview and consent, one external request and result recovery. Its trusted
 adapter uses the existing project execution runtime and ledger; saved results

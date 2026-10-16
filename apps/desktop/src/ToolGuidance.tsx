@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
-import { PluginPermissions } from "./PluginManager";
+import { PluginPermissions } from "./PluginPermissions";
 import type { SessionRequest } from "./executionCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";

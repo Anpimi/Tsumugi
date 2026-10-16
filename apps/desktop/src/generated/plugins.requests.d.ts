@@ -2,6 +2,7 @@
 
 export type ExecutionId = string;
 export type UnsignedDecimal = string;
+export type PluginRepositoryInstallKind = "install" | "update" | "rollback";
 
 export interface Requests {
   approvalRemoval: PluginApprovalRemovalRequest;
@@ -13,7 +14,11 @@ export interface Requests {
   inventory: PluginInventoryRequest;
   lookup: PluginLookupRequest;
   nativeHostApproval: PluginNativeHostApprovalRequest;
+  packInstall: PluginPackInstallRequest;
   package: PluginPackageRequest;
+  repositoryInstall: PluginRepositoryInstallRequest;
+  repositoryRefresh: PluginRepositoryRefreshRequest;
+  repositoryResume: PluginRepositoryResumeRequest;
   runtimeInstall: PluginRuntimeInstallRequest;
   runtimeLookup: PluginRuntimeLookupRequest;
   source: PluginSourceRequest;
@@ -100,6 +105,347 @@ export interface PluginNativeHostApprovalRequest {
   approved: boolean;
   environmentDigest: string;
   expectedRevision: UnsignedDecimal;
+}
+export interface PluginPackInstallRequest {
+  actionId: ExecutionId;
+  expectedRevision: UnsignedDecimal;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  members:
+    | [PluginPackageRequest]
+    | [PluginPackageRequest, PluginPackageRequest]
+    | [PluginPackageRequest, PluginPackageRequest, PluginPackageRequest]
+    | [PluginPackageRequest, PluginPackageRequest, PluginPackageRequest, PluginPackageRequest]
+    | [PluginPackageRequest, PluginPackageRequest, PluginPackageRequest, PluginPackageRequest, PluginPackageRequest]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ]
+    | [
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest,
+        PluginPackageRequest
+      ];
+  ticket: ExecutionId;
+}
+export interface PluginRepositoryInstallRequest {
+  actionId: ExecutionId;
+  expectedRevision: UnsignedDecimal;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  members:
+    | [PluginRepositoryMemberRequest]
+    | [PluginRepositoryMemberRequest, PluginRepositoryMemberRequest]
+    | [PluginRepositoryMemberRequest, PluginRepositoryMemberRequest, PluginRepositoryMemberRequest]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ]
+    | [
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest,
+        PluginRepositoryMemberRequest
+      ];
+  ticket: ExecutionId;
+}
+export interface PluginRepositoryMemberRequest {
+  kind: PluginRepositoryInstallKind;
+  package: PluginPackageRequest;
+}
+export interface PluginRepositoryRefreshRequest {
+  actionId: ExecutionId;
+  expectedRevision: UnsignedDecimal;
+  ticket: ExecutionId;
+}
+export interface PluginRepositoryResumeRequest {
+  actionId: ExecutionId;
+  expectedRevision: UnsignedDecimal;
+  sourceId: string;
 }
 export interface PluginRuntimeInstallRequest {
   actionId: ExecutionId;

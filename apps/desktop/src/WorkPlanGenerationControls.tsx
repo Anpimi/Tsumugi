@@ -7,7 +7,7 @@ import { pluginCommands } from "./pluginCommands";
 import { pluginEnvironmentVersion } from "./pluginEnvironments";
 import { readPluginGenerationChoices } from "./pluginGenerationChoices";
 import { jsonIdentity } from "./pluginToolChoices";
-import { PluginPermissions } from "./PluginManager";
+import { PluginPermissions } from "./PluginPermissions";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { openWorkPlanAgentScope, type WorkPlanStatusView } from "./workPlanCommands";

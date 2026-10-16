@@ -24,18 +24,23 @@ impl PackageImage {
         authorized: impl Fn() -> bool,
     ) -> HostResult<PackageInspection> {
         let image = Self::read_directory(root, None, authorized)?;
-        Ok(PackageInspection {
-            plugin: image.manifest().manifest().plugin.clone(),
-            package_digest: image.digest.clone(),
-            manifest_sha256: format!("{:x}", Sha256::digest(&image.manifest_bytes)),
-            file_count: (image.files.len() + 1) as u32,
-            byte_count: image.manifest_bytes.len() as u64
-                + image
+        Ok(image.inspection())
+    }
+
+    /// Describe this already captured image without touching its former source.
+    pub fn inspection(&self) -> PackageInspection {
+        PackageInspection {
+            plugin: self.manifest().manifest().plugin.clone(),
+            package_digest: self.digest.clone(),
+            manifest_sha256: format!("{:x}", Sha256::digest(&self.manifest_bytes)),
+            file_count: (self.files.len() + 1) as u32,
+            byte_count: self.manifest_bytes.len() as u64
+                + self
                     .files
                     .values()
                     .map(|file| file.bytes.len() as u64)
                     .sum::<u64>(),
-        })
+        }
     }
 
     /// Read a prebuilt local directory through held directory descriptors. The

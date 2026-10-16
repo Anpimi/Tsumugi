@@ -12,11 +12,25 @@ pub(crate) struct TreeLimits {
     pub special_file_limit: Option<(&'static str, usize)>,
 }
 
+pub(crate) struct CapturedTree {
+    pub files: BTreeMap<String, RuntimeArtifactFile>,
+    /// Directory paths, including the empty root, from the same verified scans.
+    pub directories: Vec<String>,
+}
+
 pub(crate) fn capture_tree(
     root: &Path,
     limits: &TreeLimits,
     authorized: impl Fn() -> bool,
 ) -> HostResult<BTreeMap<String, RuntimeArtifactFile>> {
+    capture_tree_with_layout(root, limits, authorized).map(|tree| tree.files)
+}
+
+pub(crate) fn capture_tree_with_layout(
+    root: &Path,
+    limits: &TreeLimits,
+    authorized: impl Fn() -> bool,
+) -> HostResult<CapturedTree> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         platform::capture(root, limits, authorized)
@@ -239,7 +253,7 @@ mod platform {
         root: &Path,
         limits: &TreeLimits,
         authorized: F,
-    ) -> HostResult<BTreeMap<String, RuntimeArtifactFile>> {
+    ) -> HostResult<CapturedTree> {
         let guard = Guard {
             authorized,
             deadline: Instant::now()
@@ -264,6 +278,14 @@ mod platform {
         }
         unchanged(&held, &before)?;
         guard.check()?;
-        Ok(snapshot.files)
+        let directories = snapshot
+            .entries
+            .into_iter()
+            .filter_map(|(path, entry)| entry.digest.is_none().then_some(path))
+            .collect();
+        Ok(CapturedTree {
+            files: snapshot.files,
+            directories,
+        })
     }
 }

@@ -12,7 +12,8 @@ use std::{
 use tauri::State;
 use tsumugi_core::execution::{Cancellation, UnsignedDecimal};
 use tsumugi_plugin_host::{
-    HostError, InstallError, InstalledObjectState, PackageStore, catalog::PackageOrigin,
+    HostError, InstallError, InstalledObjectState, PackageStore,
+    catalog::{CatalogError, PackageOrigin},
 };
 use tsumugi_plugin_sdk as sdk;
 pub(in crate::commands) mod application;
@@ -23,6 +24,8 @@ pub(super) mod generation;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(in crate::commands) use environment::test_support::Fixture as InstalledFixture;
 pub(in crate::commands) mod packages;
+pub(super) mod packs;
+pub(super) mod repositories;
 pub(super) mod reviews;
 pub(super) mod runtimes;
 pub(super) mod sources;
@@ -36,6 +39,11 @@ pub use generation::{PluginGenerationComponentRequest, PluginGenerationComponent
 pub use packages::{
     PluginApprovalRemovalRequest, PluginCandidateView, PluginEnableRequest, PluginInstallRequest,
     PluginLookupRequest, PluginPackageDetailsView, PluginPackageRequest, PluginUninstallRequest,
+};
+pub use packs::{PluginPackCandidateView, PluginPackInstallRequest};
+pub use repositories::{
+    PluginRepositoryInstallRequest, PluginRepositoryRefreshRequest, PluginRepositoryResumeRequest,
+    PluginRepositorySelectionView, PluginRepositorySourcesView, PluginRepositoryVerifiedView,
 };
 pub use reviews::{
     PluginTextReviewAvailability, PluginTextReviewListEntry, PluginTextReviewListView,
@@ -214,6 +222,9 @@ struct PluginManager {
         std::sync::Arc<AtomicBool>,
     )>,
     candidate: Option<packages::Candidate>,
+    pack_candidate: Option<packs::Candidate>,
+    repository_candidate: Option<repositories::Candidate>,
+    repository_verified: Option<repositories::VerifiedCandidate>,
     pending: Option<packages::PendingMutation>,
     bundle: Option<runtimes::Bundle>,
     defaults: Option<defaults::Bundle>,
@@ -536,11 +547,12 @@ fn map_store_error(error: InstallError) -> CommandError {
             CommandErrorCode::DependencyConflict,
             "plugin-identity-conflict",
         ),
-        InstallError::SourceConflict => (
+        InstallError::SourceConflict | InstallError::Catalog(CatalogError::SourceConflict) => (
             CommandErrorCode::DependencyConflict,
             "plugin-source-conflict",
         ),
-        InstallError::PublisherConflict => (
+        InstallError::PublisherConflict
+        | InstallError::Catalog(CatalogError::PublisherConflict) => (
             CommandErrorCode::DependencyConflict,
             "plugin-publisher-conflict",
         ),
@@ -548,6 +560,7 @@ fn map_store_error(error: InstallError) -> CommandError {
             CommandErrorCode::DependencyConflict,
             "plugin-candidate-changed",
         ),
+        InstallError::Repository(error) => return repositories::repository_error(error),
         InstallError::Host(_) | InstallError::Catalog(_) => {
             (CommandErrorCode::OutputInvalid, "plugin-metadata-invalid")
         }

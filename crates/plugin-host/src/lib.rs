@@ -8,26 +8,32 @@ pub mod core;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod filesystem;
 mod native_runtime;
+mod pack;
 mod package;
+pub mod repository;
 mod runtime;
 mod service;
 mod session;
 mod staging;
 mod tree;
 pub use native_runtime::CapturedNativeRuntime;
+pub use pack::{
+    CapturedOfflinePack, MAX_PACK_BYTES, MAX_PACK_MEMBERS, OfflinePackDescriptor, OfflinePackMember,
+};
 pub use package::installation::{
     ApprovedPackageSetting, InstallError, InstallReceipt, InstallResult, InstalledInventory,
     InstalledObjectState, InstalledPackage, InstalledPackageRecord, InstalledRuntime,
-    InstalledRuntimeRecord, MAX_INSTALLED_PACKAGES, MAX_INSTALLED_RUNTIMES, PackageStore,
-    PluginSettings, PluginSettingsUpdate, RuntimeApproval, RuntimeInstallReceipt, UninstallReceipt,
-    UninstallRecord,
+    InstalledRuntimeRecord, MAX_INSTALLED_PACKAGES, MAX_INSTALLED_RUNTIMES, MAX_REPOSITORY_SOURCES,
+    MAX_REPOSITORY_TRUST_ACTIONS, PackageStore, PluginSettings, PluginSettingsUpdate,
+    RepositoryPendingAction, RepositoryRefreshRequest, RepositorySourceRecord, RuntimeApproval,
+    RuntimeInstallReceipt, UninstallReceipt, UninstallRecord, repository_source_id,
 };
 pub use package::{PackageFile, PackageImage, PackageInspection};
 pub use runtime::{CapturedRuntime, RuntimeInspection, RuntimeInspectionRequest};
 pub use service::*;
 pub use session::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HostError {
     InvalidContract,
     PackageLimit,

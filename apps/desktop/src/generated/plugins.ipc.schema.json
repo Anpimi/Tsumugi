@@ -246,6 +246,35 @@
         ],
         "type": "object"
       },
+      "PluginPackInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/PluginPackageRequest"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "members",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
       "PluginPackageRequest": {
         "additionalProperties": false,
         "properties": {
@@ -259,6 +288,99 @@
         "required": [
           "plugin",
           "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryInstallKind": {
+        "enum": [
+          "install",
+          "update",
+          "rollback"
+        ],
+        "type": "string"
+      },
+      "PluginRepositoryInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/PluginRepositoryMemberRequest"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "members",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryMemberRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/PluginRepositoryInstallKind"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          }
+        },
+        "required": [
+          "package",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryRefreshRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryResumeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "expectedRevision",
+          "actionId"
         ],
         "type": "object"
       },
@@ -465,8 +587,20 @@
       "nativeHostApproval": {
         "$ref": "#/definitions/PluginNativeHostApprovalRequest"
       },
+      "packInstall": {
+        "$ref": "#/definitions/PluginPackInstallRequest"
+      },
       "package": {
         "$ref": "#/definitions/PluginPackageRequest"
+      },
+      "repositoryInstall": {
+        "$ref": "#/definitions/PluginRepositoryInstallRequest"
+      },
+      "repositoryRefresh": {
+        "$ref": "#/definitions/PluginRepositoryRefreshRequest"
+      },
+      "repositoryResume": {
+        "$ref": "#/definitions/PluginRepositoryResumeRequest"
       },
       "runtimeInstall": {
         "$ref": "#/definitions/PluginRuntimeInstallRequest"
@@ -493,6 +627,10 @@
     "required": [
       "inventory",
       "install",
+      "packInstall",
+      "repositoryRefresh",
+      "repositoryResume",
+      "repositoryInstall",
       "enable",
       "approvalRemoval",
       "uninstall",
@@ -2090,6 +2228,66 @@
         ],
         "type": "object"
       },
+      "PluginPackCandidateView": {
+        "additionalProperties": false,
+        "properties": {
+          "descriptorDigest": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/definitions/PluginPackMemberView"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "id",
+          "displayName",
+          "descriptorDigest",
+          "packages"
+        ],
+        "type": "object"
+      },
+      "PluginPackMemberView": {
+        "additionalProperties": false,
+        "properties": {
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "manifest": {
+            "$ref": "#/definitions/PluginManifest"
+          },
+          "packageDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "packageDigest",
+          "fileCount",
+          "byteCount"
+        ],
+        "type": "object"
+      },
       "PluginPackageDecisionView": {
         "additionalProperties": false,
         "properties": {
@@ -2175,6 +2373,220 @@
           "packageDigest",
           "origin",
           "state"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryInstallKind": {
+        "enum": [
+          "install",
+          "update",
+          "rollback"
+        ],
+        "type": "string"
+      },
+      "PluginRepositoryMemberView": {
+        "additionalProperties": false,
+        "properties": {
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/definitions/PluginRepositoryInstallKind"
+          },
+          "manifest": {
+            "$ref": "#/definitions/PluginManifest"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "packageDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "packageDigest",
+          "fileCount",
+          "byteCount",
+          "origin",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "PluginRepositorySelectionView": {
+        "additionalProperties": false,
+        "properties": {
+          "captureDigest": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "rootFingerprint": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "sourceId",
+          "rootFingerprint",
+          "captureDigest",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "PluginRepositorySourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedRevision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "rootFingerprint": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/definitions/PluginRepositoryState"
+          }
+        },
+        "required": [
+          "sourceId",
+          "displayName",
+          "rootFingerprint",
+          "revision",
+          "actionId",
+          "expectedRevision",
+          "state"
+        ],
+        "type": "object"
+      },
+      "PluginRepositorySourcesView": {
+        "additionalProperties": false,
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/definitions/PluginRepositorySourceView"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryState": {
+        "enum": [
+          "pending",
+          "verified",
+          "rejected"
+        ],
+        "type": "string"
+      },
+      "PluginRepositoryVerifiedView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "captureDigest": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "expiresAtUnixMilliseconds": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              }
+            ],
+            "description": "Decimal UTC epoch milliseconds. Negative dates are never admitted."
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/definitions/PluginRepositoryMemberView"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "rootVersion": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "snapshotVersion": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "targetsVersion": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "timestampVersion": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "ticket",
+          "sourceId",
+          "revision",
+          "actionId",
+          "captureDigest",
+          "displayName",
+          "rootVersion",
+          "timestampVersion",
+          "snapshotVersion",
+          "targetsVersion",
+          "expiresAtUnixMilliseconds",
+          "packages"
         ],
         "type": "object"
       },
@@ -3295,8 +3707,34 @@
       "inventory": {
         "$ref": "#/definitions/PluginInventoryView"
       },
+      "packCandidate": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginPackCandidateView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "package": {
         "$ref": "#/definitions/PluginPackageDetailsView"
+      },
+      "repositorySelection": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginRepositorySelectionView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "repositorySources": {
+        "$ref": "#/definitions/PluginRepositorySourcesView"
+      },
+      "repositoryVerified": {
+        "$ref": "#/definitions/PluginRepositoryVerifiedView"
       },
       "runtime": {
         "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
@@ -3320,6 +3758,10 @@
     "required": [
       "inventory",
       "candidate",
+      "packCandidate",
+      "repositorySelection",
+      "repositorySources",
+      "repositoryVerified",
       "package",
       "binding",
       "runtime",

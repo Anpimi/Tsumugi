@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { PluginPermissions } from "./PluginManager";
+import { PluginPermissions } from "./PluginPermissions";
 import { reviewRuleLabel } from "./reviewLabels";
 import type { CheckRuleResult, CheckRun, ReviewCheckerView } from "./generated/review.responses";
 import { contractIdentity, providerIdentity, ruleIdentity } from "./reviewIdentity";

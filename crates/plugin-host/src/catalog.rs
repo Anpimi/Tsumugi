@@ -56,7 +56,7 @@ pub(crate) struct PackageApprovalIndex {
     origins: BTreeMap<String, (String, String, String)>,
 }
 impl PackageApprovalIndex {
-    pub(crate) fn insert(&mut self, approval: &PackageApproval) -> CatalogResult<()> {
+    pub(crate) fn check_origin(&self, approval: &PackageApproval) -> CatalogResult<()> {
         approval.validate()?;
         let origin = (
             approval.origin.source_id.clone(),
@@ -71,6 +71,26 @@ impl PackageApprovalIndex {
                 return Err(CatalogError::PublisherConflict);
             }
         }
+        Ok(())
+    }
+
+    /// Retained receipts constrain provenance without reserving an exact
+    /// identity or action: reinstalling the same bytes remains independent.
+    pub(crate) fn observe_origin(&mut self, approval: &PackageApproval) -> CatalogResult<()> {
+        self.check_origin(approval)?;
+        self.origins.insert(
+            approval.plugin.id.clone(),
+            (
+                approval.origin.source_id.clone(),
+                approval.origin.publisher_id.clone(),
+                approval.plugin.publisher.clone(),
+            ),
+        );
+        Ok(())
+    }
+
+    pub(crate) fn insert(&mut self, approval: &PackageApproval) -> CatalogResult<()> {
+        self.observe_origin(approval)?;
         if let Some(digest) = self.plugins.get(&approval.plugin) {
             return Err(if digest == &approval.package_digest {
                 CatalogError::DuplicatePackage
@@ -78,7 +98,6 @@ impl PackageApprovalIndex {
                 CatalogError::IdentityDigestConflict
             });
         }
-        self.origins.insert(approval.plugin.id.clone(), origin);
         self.plugins
             .insert(approval.plugin.clone(), approval.package_digest.clone());
         Ok(())

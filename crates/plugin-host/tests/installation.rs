@@ -1644,6 +1644,216 @@ fn settings_reject_invalid_and_conflicting_decisions_before_writing() {
 }
 
 #[test]
+fn settings_reject_retained_object_conflicts_after_approval_removal_before_writing() {
+    const APPROVE: &str = "00000000-0000-4000-8000-000000000003";
+    const REVOKE: &str = "00000000-0000-4000-8000-000000000004";
+    for conflict in [
+        "source",
+        "publisher",
+        "digest",
+        "source-same-bytes",
+        "publisher-same-bytes",
+    ] {
+        let root = OwnedRoot::new();
+        let (original, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        let receipt = install(&mut store, &original, &approval, ACTION).unwrap();
+        store
+            .update_settings(0, APPROVE, &settings_update(&approval, true), || true)
+            .unwrap();
+        let revoked = store
+            .update_settings(1, REVOKE, &Default::default(), || true)
+            .unwrap();
+        let settings_bytes = fs::read(root.root.join("settings.json")).unwrap();
+        let mut foreign_origin = origin();
+        let expected = match conflict {
+            "source" | "source-same-bytes" => {
+                foreign_origin.source_id = "other-registry".into();
+                InstallError::SourceConflict
+            }
+            "publisher" | "publisher-same-bytes" => {
+                foreign_origin.publisher_id = "other-key".into();
+                InstallError::PublisherConflict
+            }
+            _ => InstallError::IdentityConflict,
+        };
+        let (foreign, foreign_approval) = fixture(
+            "example.resource",
+            if conflict == "digest" || conflict.ends_with("same-bytes") {
+                "0.1.0"
+            } else {
+                "0.2.0"
+            },
+            if conflict.ends_with("same-bytes") {
+                "original bytes"
+            } else {
+                "different bytes"
+            },
+            foreign_origin,
+        );
+        assert_eq!(
+            store
+                .update_settings(
+                    2,
+                    OTHER_ACTION,
+                    &settings_update(&foreign_approval, false),
+                    || true,
+                )
+                .unwrap_err(),
+            expected,
+            "{conflict}"
+        );
+        assert_eq!(store.settings(|| true).unwrap(), revoked);
+        assert_eq!(
+            fs::read(root.root.join("settings.json")).unwrap(),
+            settings_bytes
+        );
+        assert!(settings_candidates(&root).is_empty());
+        assert_eq!(
+            install(&mut store, &foreign, &foreign_approval, OTHER_ACTION).unwrap_err(),
+            expected,
+            "{conflict}"
+        );
+        assert_eq!(store.load(&approval, || true).unwrap().receipt(), &receipt);
+        assert!(root.candidates().is_empty());
+    }
+}
+
+#[test]
+fn settings_and_direct_install_reject_source_changes_after_completed_uninstall() {
+    const APPROVE: &str = "00000000-0000-4000-8000-000000000003";
+    const REVOKE: &str = "00000000-0000-4000-8000-000000000004";
+    const REMOVE: &str = "00000000-0000-4000-8000-000000000005";
+    for conflict in ["source", "publisher"] {
+        let root = OwnedRoot::new();
+        let (original, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        install(&mut store, &original, &approval, ACTION).unwrap();
+        store
+            .update_settings(0, APPROVE, &settings_update(&approval, false), || true)
+            .unwrap();
+        let revoked = store
+            .update_settings(1, REVOKE, &Default::default(), || true)
+            .unwrap();
+        let removal = store.uninstall(2, REMOVE, &approval, || true).unwrap();
+        assert!(!root.object(&approval).exists());
+        let settings_bytes = fs::read(root.root.join("settings.json")).unwrap();
+        let removal_path = root
+            .root
+            .join("uninstalls")
+            .join(REMOVE)
+            .join("receipt.json");
+        let removal_bytes = fs::read(&removal_path).unwrap();
+        drop(store);
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        let mut foreign_origin = origin();
+        let expected = if conflict == "source" {
+            foreign_origin.source_id = "other-registry".into();
+            InstallError::SourceConflict
+        } else {
+            foreign_origin.publisher_id = "other-key".into();
+            InstallError::PublisherConflict
+        };
+        let (foreign, foreign_approval) = fixture(
+            "example.resource",
+            "0.2.0",
+            "different bytes",
+            foreign_origin,
+        );
+        assert_eq!(
+            store
+                .update_settings(
+                    2,
+                    OTHER_ACTION,
+                    &settings_update(&foreign_approval, false),
+                    || true,
+                )
+                .unwrap_err(),
+            expected,
+            "{conflict}"
+        );
+        assert_eq!(
+            install(&mut store, &foreign, &foreign_approval, OTHER_ACTION).unwrap_err(),
+            expected,
+            "{conflict}"
+        );
+        assert_eq!(store.settings(|| true).unwrap(), revoked);
+        assert_eq!(
+            fs::read(root.root.join("settings.json")).unwrap(),
+            settings_bytes
+        );
+        assert_eq!(fs::read(removal_path).unwrap(), removal_bytes);
+        let history = store.uninstallations(|| true).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].state, InstalledObjectState::Sealed);
+        assert_eq!(history[0].receipt, removal);
+        assert!(store.inventory(|| true).unwrap().packages.is_empty());
+        assert!(settings_candidates(&root).is_empty());
+        assert!(root.candidates().is_empty());
+    }
+}
+
+#[test]
+fn same_origin_reinstallation_and_versions_survive_repeated_retained_receipts() {
+    const APPROVE: &str = "00000000-0000-4000-8000-000000000003";
+    const REVOKE: &str = "00000000-0000-4000-8000-000000000004";
+    const REMOVE: &str = "00000000-0000-4000-8000-000000000005";
+    const REMOVE_AGAIN: &str = "00000000-0000-4000-8000-000000000006";
+    const REINSTALL: &str = "00000000-0000-4000-8000-000000000007";
+    const APPROVE_BOTH: &str = "00000000-0000-4000-8000-000000000008";
+    const INSTALL_VERSION: &str = "00000000-0000-4000-8000-000000000009";
+    let root = OwnedRoot::new();
+    let (original, approval) = basic();
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    install(&mut store, &original, &approval, ACTION).unwrap();
+    store
+        .update_settings(0, APPROVE, &settings_update(&approval, false), || true)
+        .unwrap();
+    store
+        .update_settings(1, REVOKE, &Default::default(), || true)
+        .unwrap();
+    store.uninstall(2, REMOVE, &approval, || true).unwrap();
+    let reinstalled = install(&mut store, &original, &approval, OTHER_ACTION).unwrap();
+    assert_eq!(reinstalled.action_id(), OTHER_ACTION);
+    assert_eq!(
+        install(&mut store, &original, &approval, OTHER_ACTION).unwrap(),
+        reinstalled
+    );
+    store
+        .uninstall(2, REMOVE_AGAIN, &approval, || true)
+        .unwrap();
+    let reinstalled = install(&mut store, &original, &approval, REINSTALL).unwrap();
+    let (new, new_approval) = fixture("example.resource", "0.2.0", "new bytes", origin());
+    let mut update = settings_update(&approval, true);
+    update
+        .packages
+        .extend(settings_update(&new_approval, false).packages);
+    let saved = store
+        .update_settings(2, APPROVE_BOTH, &update, || true)
+        .unwrap();
+    assert_eq!(
+        store
+            .update_settings(2, APPROVE_BOTH, &update, || true)
+            .unwrap(),
+        saved
+    );
+    let new_receipt = install(&mut store, &new, &new_approval, INSTALL_VERSION).unwrap();
+    assert_eq!(
+        store.load(&approval, || true).unwrap().receipt(),
+        &reinstalled
+    );
+    assert_eq!(
+        store.load(&new_approval, || true).unwrap().receipt(),
+        &new_receipt
+    );
+    assert_eq!(store.uninstallations(|| true).unwrap().len(), 2);
+    assert_eq!(store.inventory(|| true).unwrap().packages.len(), 2);
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    assert!(saved.packages()[0].enabled);
+    assert!(!saved.packages()[1].enabled);
+}
+
+#[test]
 fn malformed_settings_are_preserved_and_never_rebuilt_from_installation_receipts() {
     for damage in [
         "unknown",

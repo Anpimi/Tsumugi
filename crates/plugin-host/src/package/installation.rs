@@ -16,7 +16,12 @@ pub const MAX_INSTALLED_PACKAGES: usize = 128;
 pub const MAX_INSTALLED_RUNTIMES: usize = 128;
 const RECEIPT_VERSION: u32 = 1;
 const MAX_RECEIPT_BYTES: usize = 4096;
+mod repository;
 mod settings;
+pub use repository::{
+    MAX_REPOSITORY_SOURCES, MAX_REPOSITORY_TRUST_ACTIONS, RepositoryPendingAction,
+    RepositoryRefreshRequest, RepositorySourceRecord, repository_source_id,
+};
 use settings::MAX_SETTINGS_BYTES;
 pub use settings::{ApprovedPackageSetting, PluginSettings, PluginSettingsUpdate};
 
@@ -50,6 +55,7 @@ pub enum InstallError {
     UnknownCommit,
     Host(HostError),
     Catalog(CatalogError),
+    Repository(crate::repository::RepositoryError),
 }
 
 pub type InstallResult<T> = Result<T, InstallError>;
@@ -300,6 +306,71 @@ impl fmt::Debug for PackageStore {
 }
 
 impl PackageStore {
+    /// Observe repository trust without creating storage or confirming an
+    /// uncertain action. Reopened owners require explicit original-action resume.
+    pub fn repository_sources(
+        &self,
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<Vec<RepositorySourceRecord>> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner.repository_sources(&authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = authorized;
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
+    /// Authenticate explicitly pinned, frozen repository input. This does not
+    /// approve, install, enable or run any plugin. All intermediate TUF state is
+    /// retained, including on a rejected update. Call only on a blocking worker.
+    pub fn refresh_repository(
+        &mut self,
+        request: &RepositoryRefreshRequest,
+        captured: &crate::repository::CapturedOfflineRepository,
+        authorized: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> InstallResult<crate::repository::VerifiedOfflineRepository> {
+        request.validate()?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner
+                .refresh_repository(request, captured, std::sync::Arc::new(authorized))
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (captured, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
+    /// Resume or confirm only this retained action using its original persisted
+    /// input. Source paths and a new picker selection are never consulted.
+    pub fn resume_repository(
+        &mut self,
+        source_id: &str,
+        expected_revision: u64,
+        action_id: &str,
+        authorized: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> InstallResult<crate::repository::VerifiedOfflineRepository> {
+        validate_action(action_id)?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner.resume_repository(
+                source_id,
+                expected_revision,
+                action_id,
+                std::sync::Arc::new(authorized),
+            )
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (source_id, expected_revision, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
     /// Remove one sealed installation from the active namespace after a separate
     /// settings decision has removed its approval (disabled is insufficient).
     /// `Busy` means it is still approved; a stale initial revision is refused.
@@ -547,6 +618,7 @@ fn valid_digest(value: &str) -> bool {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod platform {
+    mod repository;
     mod uninstall;
     use super::super::{MAX_DEPTH, MAX_DIRECTORIES};
     use super::*;
@@ -626,6 +698,7 @@ mod platform {
         objects_id: (u64, u64),
         runtimes: File,
         runtimes_id: (u64, u64),
+        repository_confirmed: BTreeMap<String, String>,
         #[cfg(test)]
         fail_commit_checkpoint: Option<CommitCheckpoint>,
     }
@@ -806,6 +879,25 @@ mod platform {
             self.approvals
                 .insert(&receipt.approval())
                 .map_err(|_| InstallError::CorruptStore)
+        }
+    }
+
+    fn approval_conflict(error: CatalogError) -> InstallError {
+        match error {
+            CatalogError::SourceConflict => InstallError::SourceConflict,
+            CatalogError::PublisherConflict => InstallError::PublisherConflict,
+            CatalogError::IdentityDigestConflict => InstallError::IdentityConflict,
+            other => other.into(),
+        }
+    }
+
+    fn check_package_approval(
+        index: &mut crate::catalog::PackageApprovalIndex,
+        approval: &PackageApproval,
+    ) -> InstallResult<()> {
+        match index.insert(approval) {
+            Ok(()) | Err(CatalogError::DuplicatePackage) => Ok(()),
+            Err(error) => Err(approval_conflict(error)),
         }
     }
 
@@ -1006,6 +1098,30 @@ mod platform {
             )
         }
 
+        fn check_package_settings(
+            &self,
+            packages: &[ApprovedPackageSetting],
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            self.check(authorized)?;
+            let before = Stamp::from(&metadata(&self.objects)?);
+            let mut index = PackageReceiptIndex {
+                approvals: self.retained_package_origins(authorized)?,
+                ..PackageReceiptIndex::default()
+            };
+            for digest in self.names(authorized)? {
+                let object = self.open_object(&digest, authorized)?;
+                self.inspect_package_index(&digest, &object, authorized)?;
+                index.insert(&object.receipt)?;
+            }
+            self.check(authorized)?;
+            unchanged(&self.objects, &before)?;
+            for package in packages {
+                check_package_approval(&mut index.approvals, &package.approval)?;
+            }
+            Ok(())
+        }
+
         fn update_settings_inner(
             &mut self,
             expected_revision: u64,
@@ -1037,6 +1153,10 @@ mod platform {
             if current.settings.revision() != expected_revision {
                 return Err(InstallError::RevisionConflict);
             }
+            // Reject deterministic provenance/identity conflicts before any
+            // approval is promoted. Receipts constrain decisions but never
+            // become an independent source of approval or enablement.
+            self.check_package_settings(&desired.packages, authorized)?;
             self.check_settings_snapshot(&current, authorized)?;
             let candidate = format!(".settings-candidate-{}", uuid::Uuid::new_v4());
             let file = new_file(&self.root, OsStr::new(&candidate))?;
@@ -1334,6 +1454,7 @@ mod platform {
                 objects,
                 runtimes,
                 runtimes_id,
+                repository_confirmed: BTreeMap::new(),
                 #[cfg(test)]
                 fail_commit_checkpoint: None,
             };
@@ -1702,7 +1823,7 @@ mod platform {
             let runtimes_before = Stamp::from(&metadata(&self.runtimes)?);
             let mut index = PackageReceiptIndex {
                 actions: self.runtime_actions(action_id, authorized)?,
-                ..PackageReceiptIndex::default()
+                approvals: self.retained_package_origins(authorized)?,
             };
             let names = self.names(authorized)?;
             let receipt = InstallReceipt {
@@ -1726,16 +1847,10 @@ mod platform {
                 if prior.action_id == action_id && prior != &receipt {
                     return Err(InstallError::ActionConflict);
                 }
-                if prior.plugin.id == receipt.plugin.id {
-                    if prior.origin.source_id != receipt.origin.source_id {
-                        return Err(InstallError::SourceConflict);
-                    }
-                    if prior.origin.publisher_id != receipt.origin.publisher_id
-                        || prior.plugin.publisher != receipt.plugin.publisher
-                    {
-                        return Err(InstallError::PublisherConflict);
-                    }
-                }
+                index
+                    .approvals
+                    .check_origin(&receipt.approval())
+                    .map_err(approval_conflict)?;
                 if prior.plugin == receipt.plugin && prior.package_digest != receipt.package_digest
                 {
                     return Err(InstallError::IdentityConflict);
@@ -1751,6 +1866,7 @@ mod platform {
                     unrelated_pending = true;
                 }
             }
+            check_package_approval(&mut index.approvals, &receipt.approval())?;
             self.check(authorized)?;
             unchanged(&self.objects, &objects_before)?;
             unchanged(&self.runtimes, &runtimes_before)?;

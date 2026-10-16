@@ -3,7 +3,7 @@ import { ReviewCheckerDetails, checkerIdentity } from "./ReviewCheckers";
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { useTranslation } from "react-i18next";
 import { enUS } from "./i18n/en-US";
-import { PluginPermissions } from "./PluginManager";
+import { PluginPermissions } from "./PluginPermissions";
 import { aiCommands } from "./aiCommands";
 import { executionCommands, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome } from "./projectCommands";

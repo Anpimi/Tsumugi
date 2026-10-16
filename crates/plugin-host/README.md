@@ -882,3 +882,26 @@ Core/domain rule union, Core release refusal for an empty selection, manual
 correction and retained translation history, and exact output bytes without an
 installed Node runtime. It is an IPC/process test, not a native GUI observation.
 No model call, network request or user project is part of that fixture.
+
+## Manual offline Packs
+
+The application can review [bounded offline Pack directories](../../docs/offline-packs.md)
+through the same immutable capture, Catalog and PackageStore owners. Each selected
+member needs its own explicit approval; a Pack supplies no authenticated origin,
+execution grant or shared trust. New packages start disabled. Settings promotion
+preflights the complete installed receipt set and retained uninstall origins,
+so a deterministic identity/source/publisher conflict is rejected before saving
+new approvals. Removing an approval or installation does not silently change a
+logical package's retained origin. Same-origin version coexistence and original
+installation-action recovery remain separate from source migration.
+
+## Signed offline repositories
+
+[Offline repository catalogs](../../docs/offline-repositories.md) are captured
+without executing code or enrolling trust. Explicit root enrollment and refresh
+use the pinned upstream TUF verifier with a narrow, documented metadata-storage
+adapter. The existing PackageStore owns durable trust actions, frozen inputs,
+root/role/time progress and exact original-action recovery; a read projection or
+installation receipt cannot create a verified repository witness. Failed later
+metadata cannot discard previously verified progress. Only a verified exact
+member can supply its repository origin to a separate package decision.

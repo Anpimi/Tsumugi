@@ -13,7 +13,7 @@ use tsumugi_plugin_host::{
     },
 };
 
-const CANDIDATE_LIFETIME: Duration = Duration::from_secs(600);
+pub(super) const CANDIDATE_LIFETIME: Duration = Duration::from_secs(600);
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -76,8 +76,8 @@ pub(super) struct Candidate {
     expires: Instant,
 }
 
-struct PickerLease {
-    id: ExecutionId,
+pub(super) struct PickerLease {
+    pub(super) id: ExecutionId,
     cancelled: std::sync::Arc<AtomicBool>,
 }
 impl Drop for PickerLease {
@@ -86,9 +86,36 @@ impl Drop for PickerLease {
     }
 }
 
+pub(super) fn take_picker(
+    manager: &mut PluginManager,
+    picker: ExecutionId,
+) -> Result<std::sync::Arc<AtomicBool>, CommandError> {
+    if manager
+        .picker
+        .as_ref()
+        .is_none_or(|(id, cancelled)| *id != picker || cancelled.load(Ordering::Acquire))
+    {
+        return Err(failure(
+            CommandErrorCode::Cancelled,
+            "plugin-selection-expired",
+            CommandStage::Read,
+        ));
+    }
+    Ok(manager.picker.take().expect("current picker").1)
+}
+
+pub(super) fn manual_origin() -> PackageOrigin {
+    PackageOrigin {
+        source_id: "manual-local".into(),
+        publisher_id: "manual-approval".into(),
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub(in crate::commands) enum MutationRequest {
     Install(PluginInstallRequest),
+    PackInstall(packs::PluginPackInstallRequest),
+    RepositoryInstall(repositories::PluginRepositoryInstallRequest),
     Enable(PluginEnableRequest),
     Runtime(PluginRuntimeInstallRequest),
     NativeHost(PluginNativeHostApprovalRequest),
@@ -100,9 +127,12 @@ pub(in crate::commands) enum MutationRequest {
 impl MutationRequest {
     pub(in crate::commands) fn stage(&self) -> CommandStage {
         match self {
-            Self::Install(_) | Self::Runtime(_) | Self::Defaults(_) | Self::Uninstall(_) => {
-                CommandStage::PluginInstall
-            }
+            Self::Install(_)
+            | Self::PackInstall(_)
+            | Self::RepositoryInstall(_)
+            | Self::Runtime(_)
+            | Self::Defaults(_)
+            | Self::Uninstall(_) => CommandStage::PluginInstall,
             Self::Enable(_) | Self::NativeHost(_) | Self::ApprovalRemoval(_) => {
                 CommandStage::PluginSettings
             }
@@ -111,6 +141,8 @@ impl MutationRequest {
     fn action_id(&self) -> ExecutionId {
         match self {
             Self::Install(r) => r.action_id,
+            Self::PackInstall(r) => r.action_id,
+            Self::RepositoryInstall(r) => r.action_id,
             Self::Enable(r) => r.action_id,
             Self::Runtime(r) => r.action_id,
             Self::NativeHost(r) => r.action_id,
@@ -122,6 +154,8 @@ impl MutationRequest {
     fn expected_revision(&self) -> u64 {
         match self {
             Self::Install(r) => r.expected_revision.get(),
+            Self::PackInstall(r) => r.expected_revision.get(),
+            Self::RepositoryInstall(r) => r.expected_revision.get(),
             Self::Enable(r) => r.expected_revision.get(),
             Self::Runtime(r) => r.expected_revision.get(),
             Self::NativeHost(r) => r.expected_revision.get(),
@@ -155,6 +189,12 @@ struct PendingRuntime {
     original: Option<String>,
 }
 impl PendingMutation {
+    pub(super) fn blocks_new_operation(&self) -> bool {
+        !self.complete
+            || !self.handoff_complete
+            || self.unknown
+            || self.running.load(Ordering::Acquire)
+    }
     pub(super) fn settings_outcome_unknown(&self) -> bool {
         self.unknown && !self.settings_confirmed
     }
@@ -167,12 +207,12 @@ impl PendingMutation {
     }
 }
 
-fn failure(code: CommandErrorCode, reason: &str, stage: CommandStage) -> CommandError {
+pub(super) fn failure(code: CommandErrorCode, reason: &str, stage: CommandStage) -> CommandError {
     let mut error = CommandError::simple(code, stage);
     error.reason = Some(reason.into());
     error
 }
-fn at_stage(error: InstallError, stage: CommandStage) -> CommandError {
+pub(super) fn at_stage(error: InstallError, stage: CommandStage) -> CommandError {
     let mut error = map_store_error(error);
     error.stage = stage;
     error
@@ -232,6 +272,44 @@ fn install_package_pending(
     }
 }
 
+/// Both manual collections and verified repositories retain exact existing
+/// decisions. The Store still preflights all historical origin/identity facts
+/// before promotion; this helper only builds the selected disabled additions.
+fn approve_selected_packages(
+    desired: &mut PluginSettingsUpdate,
+    captured: &[RegisteredPackage],
+    stage: CommandStage,
+) -> Result<(), CommandError> {
+    for package in captured {
+        let approval = PackageApproval {
+            plugin: package.plugin().clone(),
+            package_digest: package.package_digest().into(),
+            origin: package.origin().clone(),
+        };
+        if let Some(prior) = desired
+            .packages
+            .iter()
+            .find(|p| p.approval.plugin == approval.plugin)
+        {
+            if prior.approval.origin.source_id != approval.origin.source_id {
+                return Err(at_stage(InstallError::SourceConflict, stage));
+            }
+            if prior.approval.origin.publisher_id != approval.origin.publisher_id {
+                return Err(at_stage(InstallError::PublisherConflict, stage));
+            }
+            if prior.approval != approval {
+                return Err(at_stage(InstallError::ApprovalMismatch, stage));
+            }
+        } else {
+            desired.packages.push(ApprovedPackageSetting {
+                approval,
+                enabled: false,
+            });
+        }
+    }
+    Ok(())
+}
+
 impl ApplicationPlugins {
     /// MockRuntime does not deliver the destruction event that releases Tauri's
     /// managed application owner. After the test has closed its project and
@@ -289,7 +367,7 @@ impl ApplicationPlugins {
             })
     }
 
-    fn begin_picker(&self) -> Result<PickerLease, CommandError> {
+    pub(super) fn begin_picker(&self) -> Result<PickerLease, CommandError> {
         let mut manager = self.try_manager()?;
         if manager
             .picker
@@ -327,18 +405,7 @@ impl ApplicationPlugins {
         directory: Option<PathBuf>,
     ) -> Result<Option<PluginCandidateView>, CommandError> {
         let mut manager = self.try_manager()?;
-        if manager
-            .picker
-            .as_ref()
-            .is_none_or(|(id, cancelled)| *id != picker || cancelled.load(Ordering::Acquire))
-        {
-            return Err(failure(
-                CommandErrorCode::Cancelled,
-                "plugin-selection-expired",
-                CommandStage::Read,
-            ));
-        }
-        let (_, cancelled) = manager.picker.take().expect("current picker");
+        let cancelled = take_picker(&mut manager, picker)?;
         let Some(directory) = directory else {
             return Ok(None);
         };
@@ -366,6 +433,9 @@ impl ApplicationPlugins {
             view: view.clone(),
             expires: Instant::now() + CANDIDATE_LIFETIME,
         });
+        manager.pack_candidate = None;
+        manager.repository_candidate = None;
+        manager.repository_verified = None;
         Ok(Some(view))
     }
 
@@ -478,10 +548,7 @@ impl ApplicationPlugins {
                     let approval = PackageApproval {
                         plugin: candidate.view.manifest.plugin.clone(),
                         package_digest: candidate.view.package_digest.clone(),
-                        origin: PackageOrigin {
-                            source_id: "manual-local".into(),
-                            publisher_id: "manual-approval".into(),
-                        },
+                        origin: manual_origin(),
                     };
                     let mut catalog = PackageCatalog::new();
                     catalog
@@ -507,6 +574,19 @@ impl ApplicationPlugins {
                             .map_err(catalog_error)?
                             .clone(),
                     )
+                }
+                MutationRequest::PackInstall(request) => {
+                    let captured = packs::capture_offer(&manager, request)?;
+                    approve_selected_packages(&mut desired, &captured, stage)?;
+                    bundled_packages = captured;
+                    None
+                }
+                MutationRequest::RepositoryInstall(request) => {
+                    let captured =
+                        repositories::capture_offer(&manager, request, &settings, allowed)?;
+                    approve_selected_packages(&mut desired, &captured, stage)?;
+                    bundled_packages = captured;
+                    None
                 }
                 MutationRequest::Enable(request) => {
                     let decision = desired
@@ -937,3 +1017,7 @@ pub async fn lookup_plugin_capability(
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests;
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[path = "packages/offline_pack_tests.rs"]
+mod offline_pack_tests;

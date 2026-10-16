@@ -5,7 +5,6 @@ use tsumugi_plugin_sdk::*;
 
 const MAX_FILES: usize = 256;
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) const MAX_DIRECTORIES: usize = 256;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) const MAX_DEPTH: usize = 16;

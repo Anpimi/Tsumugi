@@ -95,6 +95,10 @@ struct ConnectionResponses {
 struct PluginRequests {
     inventory: plugins::PluginInventoryRequest,
     install: plugins::PluginInstallRequest,
+    pack_install: plugins::PluginPackInstallRequest,
+    repository_refresh: plugins::PluginRepositoryRefreshRequest,
+    repository_resume: plugins::PluginRepositoryResumeRequest,
+    repository_install: plugins::PluginRepositoryInstallRequest,
     enable: plugins::PluginEnableRequest,
     approval_removal: plugins::PluginApprovalRemovalRequest,
     uninstall: plugins::PluginUninstallRequest,
@@ -117,6 +121,10 @@ struct PluginRequests {
 struct PluginResponses {
     inventory: plugins::PluginInventoryView,
     candidate: Option<plugins::PluginCandidateView>,
+    pack_candidate: Option<plugins::PluginPackCandidateView>,
+    repository_selection: Option<plugins::PluginRepositorySelectionView>,
+    repository_sources: plugins::PluginRepositorySourcesView,
+    repository_verified: plugins::PluginRepositoryVerifiedView,
     package: plugins::PluginPackageDetailsView,
     binding: tsumugi_plugin_sdk::CapabilityBinding,
     runtime: tsumugi_plugin_sdk::RuntimeEnvironmentDescriptor,

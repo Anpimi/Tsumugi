@@ -5,14 +5,36 @@ import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, Dial
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome, isCommandError } from "./projectCommands";
-import { pluginCommands, type PluginCandidateView, type PluginApprovalRemovalRequest, type PluginUninstallRequest, type PluginInstallRequest, type PluginEnableRequest, type PluginNativeHostApprovalRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
+import { pluginCommands, type PluginCandidateView, type PluginApprovalRemovalRequest, type PluginUninstallRequest, type PluginInstallRequest, type PluginEnableRequest, type PluginNativeHostApprovalRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView } from "./pluginCommands";
 import "./PluginManager.css";
+import { PluginPermissions } from "./PluginPermissions";
+import { OfflinePackReview } from "./OfflinePackReview";
+import { RepositoryControls } from "./RepositoryControls";
+import { RepositoryReview } from "./RepositoryReview";
+import type { PluginPackCandidateView, PluginPackInstallRequest } from "./pluginCommands";
+import type { PluginRepositorySelectionView, PluginRepositoryVerifiedView, PluginRepositorySourceView, PluginRepositoryRefreshRequest, PluginRepositoryResumeRequest, PluginRepositoryInstallRequest } from "./pluginCommands";
 import type { TranslationKey } from "./i18n/types";
+import { validateRequestPackInstall, validateRequestRepositoryInstall } from "./generated/plugins.validators";
 
 const inventoryKey = ["application", "plugins", "inventory"] as const;
+const repositoriesKey = ["application", "plugins", "repositories"] as const;
 type CleanupIntent = { kind: "approval-removal"; request: PluginApprovalRemovalRequest } | { kind: "uninstall"; request: PluginUninstallRequest };
-type Intent = CleanupIntent | { kind: "native-host"; request: PluginNativeHostApprovalRequest } | { kind: "defaults"; request: PluginDefaultsInstallRequest } | { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
+type RepositoryIntent = { kind: "repository-refresh"; request: PluginRepositoryRefreshRequest; selection: PluginRepositorySelectionView }
+  | { kind: "repository-resume"; request: PluginRepositoryResumeRequest }
+  | { kind: "repository-install"; request: PluginRepositoryInstallRequest; repository: PluginRepositoryVerifiedView };
+type Intent = CleanupIntent | RepositoryIntent | { kind: "pack"; request: PluginPackInstallRequest } | { kind: "native-host"; request: PluginNativeHostApprovalRequest } | { kind: "defaults"; request: PluginDefaultsInstallRequest } | { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
 const reasonMessages: Partial<Record<string, TranslationKey>> = {
+  "plugin-repository-expired": "plugins.repositoryExpired",
+  "plugin-repository-clock": "plugins.repositoryClock",
+  "plugin-repository-rollback": "plugins.repositoryRollbackRejected",
+  "plugin-repository-signature": "plugins.repositorySignatureFailed",
+  "plugin-repository-metadata": "plugins.repositoryMetadataInvalid",
+  "plugin-repository-state": "plugins.repositoryStateFailed",
+  "plugin-repository-selection": "plugins.repositorySelectionInvalid",
+  "plugin-repository-rollback-consent": "plugins.repositoryRollbackRequired",
+  "plugin-pack-selection": "plugins.packSelectionInvalid",
+  "plugin-source-conflict": "plugins.packSourceConflict",
+  "plugin-publisher-conflict": "plugins.packSourceConflict",
   "plugin-defaults-unavailable": "plugins.defaultsUnavailable",
   "plugin-defaults-changed": "plugins.defaultsChanged",
   "plugin-selection-expired": "plugins.selectionExpired",
@@ -26,25 +48,17 @@ const reasonMessages: Partial<Record<string, TranslationKey>> = {
   "plugin-runtime-unavailable": "plugins.runtimeUnavailable",
   "plugin-runtime-changed": "plugins.runtimeChanged",
 };
-function failureMessage(failure: CommandFailure, unknown: boolean): TranslationKey {
-  if (unknown) return "plugins.unknown";
+function failureMessage(failure: CommandFailure, unknown: boolean, trust = false): TranslationKey {
+  if (unknown) return trust ? "plugins.repositoryUnknown" : "plugins.unknown";
+  if (typeof failure === "string" && reasonMessages[failure]) return reasonMessages[failure];
   if (typeof failure !== "string") {
-    if (failure.code === "stale-revision") return "plugins.conflict";
+    if (failure.code === "stale-revision") return trust ? "plugins.repositoryTrustConflict" : "plugins.conflict";
     const known = failure.reason ? reasonMessages[failure.reason] : undefined;
     if (known) return known;
   }
   return "plugins.failed";
 }
 
-export function PluginPermissions({ permissions }: { permissions: PermissionRequest[] }) {
-  const { t } = useTranslation();
-  if (!permissions.length) return <p>{t("plugins.noPermissions")}</p>;
-  return <ul>{permissions.map((permission, index) => <li key={index}>{t(`plugins.permissions.${permission.kind}`)}
-    {permission.kind === "network" ? <>: <code>{permission.destination}</code></> : null}
-    {permission.kind === "process" ? <>: <code>{permission.program}</code></> : null}
-    {permission.kind === "project-service" ? <>: <code>{permission.contract.id}</code> ({permission.contract.schemaVersion}/{permission.contract.behaviorVersion})</> : null}
-  </li>)}</ul>;
-}
 
 /** Application configuration stays mounted across project switches and panel
  * close. A rejected/unknown mutation retains its original request for recovery. */
@@ -59,6 +73,19 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   const mounted = useRef(true);
   const [candidate, setCandidate] = useState<PluginCandidateView | null>(null);
   const [consent, setConsent] = useState(false);
+  const [pack, setPack] = useState<PluginPackCandidateView | null>(null);
+  const [packMembers, setPackMembers] = useState<string[]>([]);
+  const packFocus = useRef<HTMLHeadingElement>(null);
+  const packTrigger = useRef<HTMLButtonElement>(null);
+  const [repositoriesVisible, setRepositoriesVisible] = useState(false);
+  const [repositorySelection, setRepositorySelection] = useState<PluginRepositorySelectionView | null>(null);
+  const [repositoryConsent, setRepositoryConsent] = useState(false);
+  const [repository, setRepository] = useState<PluginRepositoryVerifiedView | null>(null);
+  const [repositoryMembers, setRepositoryMembers] = useState<string[]>([]);
+  const [repositoryRollbacks, setRepositoryRollbacks] = useState<string[]>([]);
+  const repositoryFocus = useRef<HTMLHeadingElement>(null);
+  const repositoryReviewFocus = useRef<HTMLHeadingElement>(null);
+  const repositoryTrigger = useRef<HTMLButtonElement>(null);
   // Bind consent to the complete environment, rather than an old checkbox.
   const [nativeHostConsent, setNativeHostConsent] = useState<string | null>(null);
   const [runtimeConsent, setRuntimeConsent] = useState<string | null>(null);
@@ -76,9 +103,15 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   const cleanupTrigger = useRef<HTMLButtonElement | null>(null);
   const returnCleanupFocus = useRef(false);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const focusAfterSuccess = useRef(false);
   const query = useQuery({ queryKey: inventoryKey, enabled: open, queryFn: async ({ signal }) => {
     const result = await pluginCommands.inventory();
     if (signal.aborted) throw new Error("Plugin read cancelled");
+    return result;
+  } }, client);
+  const repositoriesQuery = useQuery({ queryKey: repositoriesKey, enabled: open && repositoriesVisible, queryFn: async ({ signal }) => {
+    const result = await pluginCommands.repositories();
+    if (signal.aborted) throw new Error("Repository read cancelled");
     return result;
   } }, client);
   useEffect(() => { onBusyChange(busy || originalRequired); }, [busy, originalRequired, onBusyChange]);
@@ -92,6 +125,12 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
     }
   }, [cleanupIntent]);
   useEffect(() => { setVerifiedRuntime(null); }, [query.dataUpdatedAt]);
+  useEffect(() => { if (pack) packFocus.current?.focus(); }, [pack]);
+  useEffect(() => { if (repositoriesVisible || repositorySelection) repositoryFocus.current?.focus(); }, [repositoriesVisible, repositorySelection]);
+  useEffect(() => { if (repository) repositoryReviewFocus.current?.focus(); }, [repository]);
+  useEffect(() => {
+    if (!busy && focusAfterSuccess.current) { focusAfterSuccess.current = false; closeButton.current?.focus(); }
+  }, [busy]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, [client]);
 
   async function operation(work: () => Promise<void>) {
@@ -107,15 +146,36 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   async function submit(next: Intent) {
     await operation(async () => {
       setIntent(next);
-      await client.cancelQueries({ queryKey: inventoryKey });
+      await Promise.all([client.cancelQueries({ queryKey: inventoryKey }), client.cancelQueries({ queryKey: repositoriesKey })]);
       try {
-        const result = next.kind === "approval-removal" ? await pluginCommands.removeApproval(next.request) : next.kind === "uninstall" ? await pluginCommands.uninstall(next.request) : next.kind === "defaults" ? await pluginCommands.installDefaults(next.request) : next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : next.kind === "native-host" ? await pluginCommands.nativeHostApproval(next.request) : await pluginCommands.enable(next.request);
+        if (next.kind === "repository-refresh" || next.kind === "repository-resume") {
+          const result = next.kind === "repository-refresh" ? await pluginCommands.refreshRepository(next.request, next.selection) : await pluginCommands.resumeRepository(next.request);
+          if (!mounted.current) return;
+          setRepository(result);
+          setRepositorySelection(null);
+          setRepositoryConsent(false);
+          setRepositoryMembers([]);
+          setRepositoryRollbacks([]);
+          setCandidate(null);
+          setPack(null);
+          setPackMembers([]);
+          setConsent(false);
+          setIntent(null);
+          setRecovery("none");
+          setSaved("plugins.repositoryTrustSaved");
+          void client.invalidateQueries({ queryKey: repositoriesKey });
+          return;
+        }
+        const result = next.kind === "repository-install" ? await pluginCommands.installRepository(next.request, next.repository) : next.kind === "pack" ? await pluginCommands.installPack(next.request) : next.kind === "approval-removal" ? await pluginCommands.removeApproval(next.request) : next.kind === "uninstall" ? await pluginCommands.uninstall(next.request) : next.kind === "defaults" ? await pluginCommands.installDefaults(next.request) : next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : next.kind === "native-host" ? await pluginCommands.nativeHostApproval(next.request) : await pluginCommands.enable(next.request);
         if (!mounted.current) return;
         client.setQueryData(inventoryKey, result);
         setIntent(null);
         setRecovery("none");
         setCleanupSelection(null);
         setCandidate(null);
+        setPack(null);
+        setPackMembers([]);
+        clearRepositoryReview();
         setConsent(false);
         setRuntimeConsent(null);
         setNativeHostConsent(null);
@@ -123,7 +183,7 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         setVerifiedRuntime(null);
         setDetails(null);
         setSaved(next.kind === "approval-removal" ? "plugins.approvalRemoved" : next.kind === "uninstall" ? "plugins.installationRemoved" : "plugins.saved");
-        if (next.kind === "approval-removal" || next.kind === "uninstall") closeButton.current?.focus();
+        if (next.kind === "approval-removal" || next.kind === "uninstall" || next.kind === "pack" || next.kind === "repository-install") focusAfterSuccess.current = true;
       } catch (error) {
         if (mounted.current) setRecovery(previous => {
           if (previous === "unknown" || hasUnknownOutcome(error)) return "unknown";
@@ -135,16 +195,59 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
       }
     });
   }
+  function clearRepositoryReview() {
+    setRepositorySelection(null);
+    setRepositoryConsent(false);
+    setRepository(null);
+    setRepositoryMembers([]);
+    setRepositoryRollbacks([]);
+  }
+  function selectRepositoryMember(digest: string, checked: boolean) {
+    const member = repository?.packages.find(item => item.packageDigest === digest);
+    if (!member || !repository) return;
+    const versions = new Set(repository.packages.filter(item => item.manifest.plugin.id === member.manifest.plugin.id).map(item => item.packageDigest));
+    setRepositoryMembers(current => checked ? [...current.filter(item => !versions.has(item)), digest] : current.filter(item => item !== digest));
+    setRepositoryRollbacks(current => current.filter(item => checked ? !versions.has(item) : item !== digest));
+  }
+  function installRepositoryMembers() {
+    if (!repository || !query.data) return;
+    const members = repository.packages.filter(member => repositoryMembers.includes(member.packageDigest));
+    if (members.some(member => member.kind === "rollback" && !repositoryRollbacks.includes(member.packageDigest))) {
+      setFailure("plugin-repository-rollback-consent"); return;
+    }
+    const request = { ticket: repository.ticket, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID(),
+      members: members.map(member => ({ package: { plugin: member.manifest.plugin, packageDigest: member.packageDigest }, kind: member.kind })),
+    };
+    if (!validateRequestRepositoryInstall(request)) { setFailure("plugin-repository-selection"); return; }
+    void submit({ kind: "repository-install", request, repository });
+  }
+  function resumeRepository(source: PluginRepositorySourceView) {
+    if (source.actionId === null || source.expectedRevision === null) return;
+    void submit({ kind: "repository-resume", request: { sourceId: source.sourceId, expectedRevision: source.expectedRevision, actionId: source.actionId } });
+  }
+  function installSelectedPack() {
+    if (!pack || !query.data) return;
+    const request = {
+      ticket: pack.ticket, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID(),
+      members: pack.packages.filter(member => packMembers.includes(member.packageDigest)).map(member => ({ plugin: member.manifest.plugin, packageDigest: member.packageDigest })),
+    };
+    // Use the generated bounded contract to narrow the selected subset without
+    // asserting that an arbitrary array is a valid one-to-sixteen-member tuple.
+    if (!validateRequestPackInstall(request)) { setFailure("plugin-pack-selection"); return; }
+    void submit({ kind: "pack", request });
+  }
   function reviewCleanup(next: CleanupIntent, trigger: HTMLButtonElement, original = false) {
     cleanupTrigger.current = trigger;
     setCleanupSelection({ intent: next, consent: false, original });
     setFailure(null);
     setSaved(null);
   }
-  const unavailable = busy || originalRequired || query.isFetching || !query.data || query.isError;
+  const unavailable = busy || originalRequired || query.isFetching || repositoriesQuery.isFetching || !query.data || query.isError;
   const blocked = unavailable || cleanupSelection !== null;
+  const trustBlocked = busy || originalRequired || query.isFetching || repositoriesQuery.isFetching || cleanupSelection !== null;
   const inventory = query.data;
-  const retainedMessage = intent?.kind === "approval-removal" || intent?.kind === "uninstall" ? "plugins.cleanupPending" : "plugins.pending";
+  const trustIntent = intent?.kind === "repository-refresh" || intent?.kind === "repository-resume";
+  const retainedMessage = trustIntent ? "plugins.repositoryPending" : intent?.kind === "approval-removal" || intent?.kind === "uninstall" ? "plugins.cleanupPending" : "plugins.pending";
   return <Dialog open={open} onOpenChange={next => { if (!running.current) setOpen(next); }}>
     <DialogTrigger asChild><button type="button" className="secondary-button" disabled={disabled}>{t("plugins.open")}</button></DialogTrigger>
     <DialogPortal><DialogOverlay className="dialog-backdrop"/><DialogContent className="execution-dialog plugin-manager" aria-busy={busy}
@@ -154,16 +257,37 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
       <div className="execution-actions"><button type="button" className="primary-button" disabled={blocked} onClick={() => void operation(async () => {
         setConsent(false);
         const selected = await pluginCommands.select();
-        if (mounted.current && selected) { setCandidate(selected); setConsent(false); setIntent(null); }
+        if (mounted.current && selected) { setCandidate(selected); setConsent(false); setPack(null); setPackMembers([]); clearRepositoryReview(); setIntent(null); }
       })}>{t("plugins.choose")}</button>
+        <button type="button" ref={packTrigger} className="secondary-button" disabled={blocked} onClick={() => void operation(async () => {
+          setPackMembers([]);
+          const selected = await pluginCommands.selectPack();
+          if (mounted.current && selected) { setPack(selected); setPackMembers([]); setCandidate(null); setConsent(false); clearRepositoryReview(); setIntent(null); }
+        })}>{t("plugins.choosePack")}</button>
+        <button type="button" className="secondary-button" disabled={busy} aria-expanded={repositoriesVisible} aria-controls="plugin-repositories" onClick={() => setRepositoriesVisible(true)}>{t("plugins.repositoryTitle")}</button>
         <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void query.refetch()}>{t("plugins.refresh")}</button></div>
       {busy || query.isFetching ? <p role="status">{t("plugins.loading")}</p> : null}
       {query.isError ? <div role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
       {saved ? <p role="status">{t(saved)}</p> : null}
-      {failure ? <div role="alert"><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown))}</p>
-        <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
-        {!originalRequired && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCleanupSelection(null); setCandidate(null); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
+      {failure ? <div role="alert"><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown, trustIntent))}</p>
+        <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching || repositoriesQuery.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
+        {!originalRequired && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCleanupSelection(null); setCandidate(null); setPack(null); setPackMembers([]); clearRepositoryReview(); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); if (repositoriesVisible) void repositoriesQuery.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
       </div> : null}
+      {repositoriesVisible ? <RepositoryControls sources={repositoriesQuery.data} reading={repositoriesQuery.isFetching} readFailure={repositoriesQuery.isError ? commandFailure(repositoriesQuery.error) : null}
+        selection={repositorySelection} consent={repositoryConsent} disabled={trustBlocked || intent !== null} readDisabled={busy} headingRef={repositoryFocus} chooseRef={repositoryTrigger}
+        onChoose={() => void operation(async () => {
+          setRepositoryConsent(false); setRepositoryMembers([]); setRepositoryRollbacks([]);
+          const selected = await pluginCommands.selectRepository();
+          if (mounted.current && selected) {
+            setRepositorySelection(selected); setRepository(null); setCandidate(null); setConsent(false); setPack(null); setPackMembers([]); setIntent(null);
+          }
+        })}
+        onRead={() => void repositoriesQuery.refetch()} onConsent={setRepositoryConsent}
+        onRefresh={() => { if (repositorySelection && repositoryConsent) void submit({ kind: "repository-refresh", selection: repositorySelection,
+          request: { ticket: repositorySelection.ticket, expectedRevision: repositorySelection.revision, actionId: crypto.randomUUID() } }); }} onResume={resumeRepository}/> : null}
+      {repository ? <>{!inventory || query.isError ? <p role="alert">{t("plugins.repositoryInventoryUnavailable")}</p> : null}<RepositoryReview repository={repository} selected={repositoryMembers} rollbacks={repositoryRollbacks} inventory={inventory} disabled={blocked || intent !== null}
+        discardDisabled={busy || originalRequired || intent !== null} headingRef={repositoryReviewFocus} onSelect={selectRepositoryMember} onRollback={(digest, checked) => setRepositoryRollbacks(current => checked ? [...current, digest] : current.filter(item => item !== digest))}
+        onInstall={installRepositoryMembers} onDiscard={() => { clearRepositoryReview(); if (repositoryTrigger.current && !repositoryTrigger.current.disabled) repositoryTrigger.current.focus(); else closeButton.current?.focus(); }}/></> : null}
       {inventory?.defaultsOffer ? <section className="plugin-section" aria-label={t("plugins.defaultsTitle")}>
         <h3>{t("plugins.defaultsTitle")}</h3><p>{t("plugins.defaultsDescription")}</p>
         <ul className="plugin-list">{inventory.defaultsOffer.packages.map(package_ => <li key={package_.packageDigest}>
@@ -182,6 +306,10 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
             } }); }}>{t("plugins.installDefaults")}</button>
         </>}
       </section> : null}
+      {pack && inventory ? <OfflinePackReview pack={pack} selected={packMembers} inventory={inventory} disabled={blocked || intent !== null} headingRef={packFocus}
+        onSelect={(digest, checked) => setPackMembers(current => checked ? [...current, digest] : current.filter(member => member !== digest))}
+        onDiscard={() => { setPack(null); setPackMembers([]); packTrigger.current?.focus(); }}
+        onInstall={installSelectedPack}/> : null}
       {candidate ? <section className="plugin-section" aria-label={t("plugins.candidate")}><h3>{t("plugins.candidate")}</h3>
         <p><strong>{candidate.manifest.plugin.id}</strong> · {candidate.manifest.plugin.version}</p>
         <p>{t("plugins.declaredPublisher", { publisher: candidate.manifest.plugin.publisher })}</p>

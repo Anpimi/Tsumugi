@@ -1,5 +1,5 @@
 import { checkedInvoke } from "./ipc";
-import { validateResponseInventory, validateResponseCandidate, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation, validateResponseTool, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
+import { validateResponseInventory, validateResponseCandidate, validateResponsePackCandidate, validateResponseRepositorySelection, validateResponseRepositorySources, validateResponseRepositoryVerified, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation, validateResponseTool, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
 import type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest, PluginTextReviewRequest } from "./generated/plugins.requests";
 import type { ReviewCheckRequest } from "./generated/review.requests";
 import type { PluginInventoryView, PluginPackageDetailsView } from "./generated/plugins.responses";
@@ -13,9 +13,58 @@ export type { PluginTextReviewView, PluginTextReviewListView, PluginTextReviewLi
 export type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest } from "./generated/plugins.requests";
 export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest, PluginSourceView, PluginBuildView, PluginTranslationView, PluginToolView } from "./generated/plugins.responses";
 
+import type { PluginPackInstallRequest } from "./generated/plugins.requests";
+import type { PluginRepositoryRefreshRequest, PluginRepositoryResumeRequest, PluginRepositoryInstallRequest } from "./generated/plugins.requests";
+import type { PluginRepositorySelectionView, PluginRepositoryVerifiedView } from "./generated/plugins.responses";
+export type { PluginPackInstallRequest } from "./generated/plugins.requests";
+export type { PluginPackCandidateView } from "./generated/plugins.responses";
+export type { PluginRepositoryRefreshRequest, PluginRepositoryResumeRequest, PluginRepositoryInstallRequest } from "./generated/plugins.requests";
+export type { PluginRepositorySelectionView, PluginRepositorySourcesView, PluginRepositorySourceView, PluginRepositoryVerifiedView, PluginRepositoryMemberView } from "./generated/plugins.responses";
+
 export const pluginCommands = {
   inventory: () => checkedInvoke("read_plugin_inventory", {}, validateResponseInventory),
   select: () => checkedInvoke("select_plugin_package", {}, validateResponseCandidate),
+  selectPack: () => checkedInvoke("select_plugin_pack", {}, validateResponsePackCandidate),
+  selectRepository: () => checkedInvoke("select_plugin_repository", {}, validateResponseRepositorySelection),
+  repositories: () => checkedInvoke("read_plugin_repositories", {}, validateResponseRepositorySources),
+  refreshRepository: async (request: PluginRepositoryRefreshRequest, selection: PluginRepositorySelectionView) => {
+    const view = await checkedInvoke("refresh_plugin_repository", request, validateResponseRepositoryVerified);
+    if (view.sourceId !== selection.sourceId || view.captureDigest !== selection.captureDigest
+      || view.actionId !== request.actionId || BigInt(view.revision) !== BigInt(request.expectedRevision) + 1n) {
+      throw new Error("Invalid IPC acknowledgement: repository trust refresh");
+    }
+    return view;
+  },
+  resumeRepository: async (request: PluginRepositoryResumeRequest) => {
+    const view = await checkedInvoke("resume_plugin_repository", request, validateResponseRepositoryVerified);
+    if (view.sourceId !== request.sourceId || view.actionId !== request.actionId
+      || BigInt(view.revision) !== BigInt(request.expectedRevision) + 1n) {
+      throw new Error("Invalid IPC acknowledgement: repository trust recovery");
+    }
+    return view;
+  },
+  installRepository: async (request: PluginRepositoryInstallRequest, repository: PluginRepositoryVerifiedView) => {
+    const view = await checkedInvoke("install_repository_packages", request, validateResponseInventory);
+    if (request.ticket !== repository.ticket || view.lastSettingsAction !== request.actionId || BigInt(view.settingsRevision) !== BigInt(request.expectedRevision) + 1n
+      || !request.members.every(member => {
+        const expected = repository.packages.find(item => samePackage({ plugin: item.manifest.plugin, packageDigest: item.packageDigest }, member.package) && item.kind === member.kind);
+        return expected && view.packages.some(item => item.state === "sealed" && samePackage(item, member.package) && sameOrigin(item.origin, expected.origin))
+          && view.packageDecisions.some(item => samePackage(item, member.package) && sameOrigin(item.origin, expected.origin));
+      })) {
+      throw new Error("Invalid IPC acknowledgement: repository package installation");
+    }
+    return view;
+  },
+  installPack: async (request: PluginPackInstallRequest) => {
+    const view = await checkedInvoke("install_plugin_pack", request, validateResponseInventory);
+    if (view.lastSettingsAction !== request.actionId || BigInt(view.settingsRevision) !== BigInt(request.expectedRevision) + 1n
+      || !request.members.every(member => view.packages.some(item => item.state === "sealed" && samePackage(item, member)
+        && item.origin.sourceId === "manual-local" && item.origin.publisherId === "manual-approval")
+        && view.packageDecisions.some(item => samePackage(item, member) && item.origin.sourceId === "manual-local" && item.origin.publisherId === "manual-approval"))) {
+      throw new Error("Invalid IPC acknowledgement: offline Pack installation");
+    }
+    return view;
+  },
   install: (request: PluginInstallRequest) => checkedInvoke("install_plugin_package", request, validateResponseInventory),
   removeApproval: async (request: PluginApprovalRemovalRequest) => {
     const view = await checkedInvoke("remove_plugin_approval", request, validateResponseInventory);
