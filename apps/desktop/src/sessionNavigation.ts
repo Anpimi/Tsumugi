@@ -3,12 +3,16 @@ import type { EditorTarget } from "./TranslationWorkbench";
 import type { ContentSelection } from "./contentSelection";
 import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
 
+export interface AiReviewOrigin { attemptId: string; taskId: string; itemId: string; editSeq: number }
+export interface ReviewHandoffPresentation { unitId: string; locale: string; basis: string; currentBasis: string; fallbackId: string | null }
+
 export type WorkspaceDestination =
   | { kind: "area"; area: WorkspaceArea }
   | { kind: "task"; taskId: string; attemptId: string }
   | { kind: "task-list" }
   | { kind: "translation"; target: EditorTarget; locale: string; suggestedText?: string; returnTo?: "ai" }
   | { kind: "review-work" }
+  | { kind: "review-target"; target: EditorTarget; locale: string; origin: AiReviewOrigin }
   | { kind: "ai-selection"; selection: ContentSelection; expectedEditSeq: number }
   | { kind: "arena-comparison"; target: EditorTarget; locale: string; revisionId: string; revisionOrdinal: string; returnTo: "translation" | "ai" }
   | { kind: "saved-build"; attemptId: string }
@@ -30,7 +34,8 @@ export interface SessionNavigationPorts {
   show: (area: WorkspaceArea) => void;
   consumer: (area: WorkspaceArea) => Promise<SessionConsumer | null>;
   inspect: () => ExitDisposition[];
-  accept: (destination: WorkspaceDestination, current: () => boolean) => Promise<boolean>;
+  /** A captured handoff can defer its owner update until all asynchronous source guards settle. */
+  accept: (destination: WorkspaceDestination, current: () => boolean) => Promise<boolean | (() => boolean)>;
   blocked: (area: WorkspaceArea) => void;
   busy: (value: boolean, kind?: "navigation" | "exit") => void;
   failure: (value: unknown) => void;
@@ -61,15 +66,18 @@ export class SessionNavigation {
       ? {...destination,capture:Object.freeze({...destination.capture,target:Object.freeze({...destination.capture.target})})}
       : destination.kind === "resource-correction" || destination.kind === "resource-correction-return"
       ? {...destination,capture:Object.freeze({...destination.capture,target:Object.freeze({...destination.capture.target})})}
+      : destination.kind === "review-target" ? { ...destination, target: Object.freeze({ ...destination.target }), origin: Object.freeze({ ...destination.origin }) }
       : destination.kind === "translation" || destination.kind === "arena-comparison"
       ? { ...destination, target: Object.freeze({ ...destination.target }) } : { ...destination });
     try {
       const from = this.ports.area();
       const consumer = await this.ports.consumer(from);
       if (!current() || (consumer && !await consumer.allowNavigate()) || !current()) return false;
-      if (!await this.ports.accept(fixed, current) || !current()) return false;
+      const accepted = await this.ports.accept(fixed, current);
+      if (!accepted || !current()) return false;
       const latest = await this.ports.consumer(from);
       if (!current() || (latest && !await latest.allowNavigate()) || !current()) return false;
+      if (typeof accepted === "function" && !accepted()) return false;
       this.ports.show(destinationArea(fixed));
       return true;
     } catch (value) { if (current()) this.ports.failure(value); return false; }

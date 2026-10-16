@@ -800,6 +800,17 @@ ai: {
     page: "{{first}}–{{last}} of {{total}} original entries", editEntry: "Edit {{key}} manually",
     rewrite: "Rewrite this candidate", returnToWork: "Return to AI work", noTargets: "Add a target language in Project overview before preparing a plan.",
   },
+  reviewHandoff: {
+    open: "Review current selected translation",
+    currentOnly: "This workspace reviews the current selected translation. An unselected AI candidate and its candidate checks do not establish current QA or approval.",
+    noSelection: "This entry has no current selected translation. Open the editor to make an explicit selection before reviewing it.",
+    source: "The original source for this result changed or is no longer current. Open current translations to find the current entry; the saved AI result is retained.",
+    unavailable: "This review target is no longer available in the current project language. Choose an available language or open current translations.",
+    blocked: "Review has an unfinished action or prepared checks. Open retained review to reconcile or finish that work before opening another target.",
+    changed: "The entry or a draft changed while review was opening. Both drafts are retained. Check the current entry and request review again.",
+    readFailed: "Current review evidence could not be read. Your AI work is retained. Try Review current selected translation again, or open the editor.",
+    openCurrent: "Open current translations", retained: "Open retained review",
+  },
   effects: {
     title: "Automatic candidate work", policy: "Policy: {{policy}}. This receipt records past work; review the editor for the current translation. Human approval remains separate.",
     candidateChecksOnly: "These checks describe this saved candidate. They do not select a translation, establish current QA, approve it or make it ready for delivery.",

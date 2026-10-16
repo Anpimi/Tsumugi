@@ -52,6 +52,7 @@ interface ReviewSession {
   setLocale: (value: string) => void;
   setActor: (value: string) => void;
   setSelected: (target: ReviewTarget | null) => void;
+  receiveTarget: (target: ReviewTarget, expected: ReviewDraftState) => boolean;
   observeProjection: (target: ReviewTarget, capture: { unitId: string; locale: string; basis: string; editSeq: number }) => void;
   editReason: (target: ReviewTarget, value: string) => void;
   adoptCurrent: () => boolean;
@@ -124,6 +125,16 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         && before.checkReview.request.locale === target.locale && before.checkReview.request.expectedBasis === target.basis ? before.checkReview : null,
       checkConsent: before.checkReview && target && before.checkReview.request.unitId === target.unitId && before.checkReview.request.locale === target.locale
         && before.checkReview.request.expectedBasis === target.basis ? before.checkConsent : [] }));
+  }
+  function receiveTarget(target: ReviewTarget, expected: ReviewDraftState) {
+    const before = current();
+    if (!mounted.current || reads.retired || before !== expected || running.current || before.busyMutation || before.pending
+      || before.batchRunning || before.checkReview || before.checkConsent.length > 0 || !localeAvailable(target.locale)
+      || !target.selectionId || !target.revisionId || target.translationText === null) return false;
+    // A fresh query is the projection. A retained reason stays attached to its
+    // earlier evidence until the human explicitly adopts the current basis.
+    update(value => ({ ...value, locale: target.locale, selected: value.draftTargets[reviewDraftKey(target)] ?? target, projection: target }));
+    return true;
   }
   function observeProjection(target: ReviewTarget, capture: { unitId: string; locale: string; basis: string; editSeq: number }) {
     update(before => {
@@ -466,7 +477,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }, [targetScope, state.locale, state.pending, state.busyMutation, state.chosen, state.drafts]);
 
   const owner: ReviewSession = { state, current, inFlight: () => running.current,
-    setLocale, setActor, setSelected, observeProjection, editReason, adoptCurrent, toggleChosen, clear, setNotice, setReason,
+    setLocale, setActor, setSelected, receiveTarget, observeProjection, editReason, adoptCurrent, toggleChosen, clear, setNotice, setReason,
     decide, prepareCheck, check, setAdvisoryChecks, observeSettingsRevision, slotConsentKey, setCheckerConsent, checkersConfirmed, waive, finding, fallback, retryPending, cancelCheck, approveBatch, stopBatch };
   return <ReviewContext.Provider value={owner}>{children}</ReviewContext.Provider>;
 }

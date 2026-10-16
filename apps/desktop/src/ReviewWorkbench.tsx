@@ -17,6 +17,7 @@ import { reviewDraftKey, useReviewDraftSession } from "./ReviewDraftSession";
 import { useWorkbenchCommands, type ReviewFallbackCommandPayload, type ReviewWaiverCommandPayload } from "./workbenchCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { ChangeScope } from "./sessionReads";
+import type { ReviewHandoffPresentation } from "./sessionNavigation";
 
 type Tab = "review" | "work" | "eligibility";
 const MAX_BATCH = 100;
@@ -38,10 +39,12 @@ const HISTORY_FIRST_SCOPES: ChangeScope[] = ["source", "translation", "resources
 // cannot refetch while that cursor transition is committing.
 const HISTORY_LATER_SCOPES: ChangeScope[] = ["source", "translation", "resources"];
 
-export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenExtensions, ref }: {
+export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenExtensions, onReturnToAi, handoff, ref }: {
   project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string) => boolean | Promise<boolean>;
   ref?: Ref<ReviewHandle>;
   onOpenExtensions?: () => void;
+  onReturnToAi?: () => Promise<boolean>;
+  handoff?: ReviewHandoffPresentation;
 }) {
   const { t } = useTranslation();
   const session = executionContext(project);
@@ -412,6 +415,14 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
   useLayoutEffect(() => { setComparisonIntent(null); setCompletedComparison(null); }, [open, locale, targetScope]);
   useLayoutEffect(() => { if (tab !== "review") { setComparisonIntent(null); setCompletedComparison(null); } }, [tab]);
   useLayoutEffect(() => {
+    const target = owner.current().selected;
+    if (handoff && target?.unitId === handoff.unitId && target.locale === handoff.locale && target.basis === handoff.basis) {
+      // This exact fresh comparison was explicitly requested from the AI row.
+      // A later query basis still requires the original comparison action.
+      setComparisonIntent(handoff);
+    }
+  }, [handoff]);
+  useLayoutEffect(() => {
     setWorkCursor(current => current.locale === locale ? current : { locale, offset: 0 });
   }, [locale]);
   useLayoutEffect(() => {
@@ -609,6 +620,8 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
 
   return <>
     <WorkbenchPanel open={open} title={t("review.title")} description={t("review.description")} className="source-dialog review-dialog" onBack={requestClose} backDisabled={disabled}>
+        {onReturnToAi ? <><p>{t("ai.reviewHandoff.currentOnly")}</p><button className="secondary-button" disabled={disabled || owner.inFlight() || busyMutation || batchRunning || !!pending}
+          onClick={() => { void onReturnToAi(); }}>{t("ai.workspace.returnToWork")}</button></> : null}
         {project.metadata.targetLocales.length === 0 ? <p>{t("review.noLocale")}</p> : null}
         {project.metadata.targetLocales.length > 0 || retainedReview ? <>
           <div className="review-header-fields">

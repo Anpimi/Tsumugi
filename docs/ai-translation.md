@@ -75,6 +75,16 @@ Requests contain text only: a fixed translation system instruction and a user me
 
 Results are saved per unit. **Save candidate** adds an immutable AI revision to the ordinary translation history without selecting it or approving it. **Compare and select in editor** lets you compare, select, edit and run the normal checks. Manual saves and selections protect the entry from automatic selection. The editor displays this protection and requires a separate, scoped confirmation to release it; unsaved drafts and pending saves block release. Changed source or removed target languages prevent stale candidate adoption. Automatic plans show saving, checking, checked, selected or blocked states beside each result. Checked candidates retain complete findings and execution evidence without changing the selected translation, current QA or human approval. Checking completed does not mean all checks passed. Protected entries and check findings retain the candidate and mechanical evidence. Policy receipts describe past work without asserting the current selection or human approval. A permitted storage retry checks durable evidence and reuses its original action identities, without another provider request.
 
+From an AI result, open human Review for the exact entry and target language
+using its current selected translation. The application reads the current source
+and Review target before navigating; an unselected AI candidate or its saved
+checks cannot supply that selection. With no selected translation, keep the
+result and use the ordinary editor to choose or edit one. Read failures or changed
+source keep the AI workspace available for recovery. Existing Review reasons,
+checked bases and unresolved actions are preserved, and returning retains the AI
+position and preparation. This navigation performs no selection, QA, approval or
+model request.
+
 Tasks retains input, recipe, model, output and adoption receipts after reopening a project. Reopening does not send requests. Use **Pause automation**, **Stop this plan** or **Take over manually** to invalidate old permissions and stop new work. In-flight requests may still execute or be billed. Pause and takeover can continue only after renewed explicit consent and a new expiry; continuation uses the original remaining shared budget, including unknown exposure. Changed source, selection or shared resources require a new plan. A stopped plan requires a new plan. A prior AI attempt cannot use generic resume or retry actions to bypass these permissions.
 
 If authorization or control has an uncertain result, check the original action receipt before retrying that same request. Historical receipts do not override newer control state. A saved authorization is retained if queue admission fails, so **Start authorized work** retries the existing grant instead of creating a new budget. If a start or adoption response is lost, check the saved attempt or receipt before retrying. Closing a project pauses active grants and preserves evidence. A fresh host also pauses grants retained after an unexpected exit; reopening requires explicit continuation.

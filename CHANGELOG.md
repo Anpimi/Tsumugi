@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Open the current selected translation for an AI result directly in human
+  Review. The handoff verifies the exact entry, language and current source,
+  preserves both workspaces' drafts and unresolved actions, and retains the AI
+  position when returning. Unselected candidates and their saved check evidence
+  do not become the current translation or QA.
+
 - Save AI candidates and automatically run their explicitly authorized checks
   while leaving translation selection to a person. Candidate check evidence
   retains its findings and execution history without becoming current QA,

@@ -364,6 +364,7 @@ interface WorkbenchCommandPayloads {
   "ai.cancel-task": ExecutionCancellationCommandPayload;
   "ai.retry-cancellation": ExecutionCancellationRetryCommandPayload;
   "ai.open-translation": AiTranslationCommandPayload;
+  "ai.open-review": AiTranslationCommandPayload;
   "ai.rewrite-translation": AiTranslationCommandPayload;
   "ai.inspect-candidate": AiSavedCandidateCommandPayload;
   "ai.open-comparison": AiSavedCandidateCommandPayload;
@@ -434,7 +435,7 @@ interface CommandMetadata {
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
     | "cancels-review-checks" | "retries-review-action" | "stops-review-batch"
-    | "writes-resources" | "captures-resources" | "reads-resources" | "runs-resource-tool" | "stops-application-component" | "retries-resource-action" | "opens-translation"
+    | "writes-resources" | "captures-resources" | "reads-resources" | "runs-resource-tool" | "stops-application-component" | "retries-resource-action" | "opens-translation" | "opens-review"
     | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"
     | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task"
     | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft"
@@ -538,7 +539,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task" | "release.cancel-task" | "resource.cancel-tool">
   | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "release.retry-cancellation" | "resource.retry-tool-cancellation">
   | ResourceCommand<"ai-saved-candidate", "ai.inspect-candidate" | "ai.open-comparison">
-  | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation">
+  | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation" | "ai.open-review">
   | ResourceCommand<"resource-tool-preparation", "resource.prepare-tool">
   | ResourceCommand<"resource-tool-capture", "resource.start-tool" | "resource.stop-tool-instance" | "resource.discard-tool">
   | ResourceCommand<"resource-tool-pending", "resource.retry-tool">
