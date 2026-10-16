@@ -65,7 +65,7 @@ export interface ResourceCaptureCommandPayload { kind: "resource-capture"; captu
 export interface ResourceDecisionCommandPayload { kind: "resource-decision"; captureId: string; digest: string; locale: string; entryId: string;
   expectedRevisionId: string | null; decision: "adopt" | "keep" | "ignore" | "override";
   rowKind: "added" | "edited" | "unchanged" | "override" | "removed"; scopeUnitId: string | null }
-export interface ResourcePendingCommandPayload { kind: "resource-pending"; pendingKind: "term" | "context" | "decision" | "capture"; actionId: string }
+export interface ResourcePendingCommandPayload { kind: "resource-pending"; pendingKind: "term" | "context" | "decision" | "capture" | "correction"; actionId: string }
 export interface ResourceTranslationCommandPayload { kind: "resource-translation"; locale: string;
   target: { unitId: string; sourceRevisionId: string; key: string; sourceText: string };
   evidenceKind: "tm" | "impact"; evidenceId: string; selectionId: string | null }
@@ -74,6 +74,12 @@ export interface ContextEditorTarget {
   locale: string; sourceSnapshotId: string; contextRevisionId: string | null; readVersion: string; editSeq: number;
 }
 export interface TranslationContextCommandPayload extends ContextEditorTarget { kind: "translation-context" }
+export interface CorrectionEditorTarget {
+  target: { unitId: string; sourceRevisionId: string; key: string; sourceText: string };
+  locale: string; sourceSnapshotId: string; selectionId: string; revisionId: string; readVersion: string; editSeq: number;
+}
+export interface TranslationCorrectionCommandPayload extends CorrectionEditorTarget { kind: "translation-correction" }
+export interface ResourceCorrectionCommandPayload { kind: "resource-correction"; locale: string; afterSelectionId: string; editSeq: number }
 export interface ResourceToolPreparationCommandPayload { kind: "resource-tool-preparation"; editSeq: number; tool: PluginToolRequest; view: PluginToolView }
 export interface ResourceToolCaptureCommandPayload { kind: "resource-tool-capture"; editSeq: number; attemptId: string; inputDigest: string }
 export interface ResourceToolPendingCommandPayload { kind: "resource-tool-pending"; intent: ToolQueryIntent }
@@ -292,6 +298,7 @@ interface WorkbenchCommandPayloads {
   "translation.select-revision": TranslationRevisionCommandPayload;
   "translation.open-comparison": TranslationRevisionCommandPayload;
   "translation.edit-context": TranslationContextCommandPayload;
+  "translation.propose-term": TranslationCorrectionCommandPayload;
   "translation.check-selection": TranslationSelectionPendingCommandPayload;
   "translation.retry-selection": TranslationSelectionPendingCommandPayload;
   "translation.decide-candidate": TranslationCandidateCommandPayload;
@@ -383,6 +390,8 @@ interface WorkbenchCommandPayloads {
   "resource.refresh-preview": ResourceCaptureCommandPayload;
   "resource.decide-entry": ResourceDecisionCommandPayload;
   "resource.retry-pending": ResourcePendingCommandPayload;
+  "resource.check-pending": ResourcePendingCommandPayload;
+  "resource.capture-correction": ResourceCorrectionCommandPayload;
   "resource.open-translation": ResourceTranslationCommandPayload;
   "source.select": SourceSelectionCommandPayload;
   "source.preflight": SourceCaptureCommandPayload;
@@ -489,6 +498,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"translation-import-pending", "translation.check-import-receipt" | "translation.retry-import-action">
   | ResourceCommand<"translation-revision", "translation.select-revision" | "translation.open-comparison">
   | ResourceCommand<"translation-context", "translation.edit-context">
+  | ResourceCommand<"translation-correction", "translation.propose-term">
   | ResourceCommand<"translation-candidate", "translation.decide-candidate" | "ai.decide-candidate">
   | ResourceCommand<"translation-candidate-pending", "translation.check-candidate-decision" | "translation.retry-candidate-decision" | "ai.check-candidate-decision" | "ai.retry-candidate-decision">
   | ResourceCommand<"translation-selection-pending", "translation.check-selection" | "translation.retry-selection">
@@ -539,7 +549,8 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"resource-locale", "resource.choose-file">
   | ResourceCommand<"resource-capture", "resource.open-preview" | "resource.refresh-preview">
   | ResourceCommand<"resource-decision", "resource.decide-entry">
-  | ResourceCommand<"resource-pending", "resource.retry-pending">
+  | ResourceCommand<"resource-pending", "resource.retry-pending" | "resource.check-pending">
+  | ResourceCommand<"resource-correction", "resource.capture-correction">
   | ResourceCommand<"resource-translation", "resource.open-translation">
   | ResourceCommand<"source-selection", "source.select">
   | ResourceCommand<"source-capture", "source.preflight" | "source.start">
@@ -588,6 +599,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "translation-import-batch": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-import-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-revision": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-correction": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-context": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-candidate": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-candidate-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
@@ -691,6 +703,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "resource-tool-preparation": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-tool-capture": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-tool-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "resource-correction": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-term": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-fact": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "resource-context": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
@@ -779,6 +792,10 @@ function validTranslationPayload(payload: CommandPayload | undefined): payload i
       && [payload.unitId,payload.locale,payload.sourceRevisionId,payload.revisionId,payload.revisionActionId,payload.revisionSourceRevisionId,payload.revisionSourceSnapshotId].every(validIdentity)
       && taskRevision(payload.revisionOrdinal) && payload.revisionOrdinal !== "0";
     case "translation-selection-pending": return validateRequestSelect(payload.request) && editSequence(payload.submittedSeq);
+    case "translation-correction": return !!payload.target && typeof payload.target === "object"
+      && validIdentity(payload.target.unitId) && validIdentity(payload.target.sourceRevisionId) && validIdentity(payload.target.key)
+      && typeof payload.target.sourceText === "string" && validIdentity(payload.locale) && validIdentity(payload.sourceSnapshotId)
+      && validIdentity(payload.selectionId) && validIdentity(payload.revisionId) && validIdentity(payload.readVersion) && editSequence(payload.editSeq);
     case "translation-context": return !!payload.target && typeof payload.target==="object"
       && [payload.target.unitId,payload.target.sourceRevisionId,payload.target.key,payload.locale,payload.sourceSnapshotId,payload.readVersion].every(validIdentity)
       && typeof payload.target.sourceText==="string" && nullableIdentity(payload.contextRevisionId) && editSequence(payload.editSeq);
@@ -952,12 +969,13 @@ function validResourcePayload(payload: CommandPayload | undefined): payload is E
     case "resource-context": return validIdentity(payload.unitId) && validIdentity(payload.locale) && validIdentity(payload.sourceRevisionId) && nullableIdentity(payload.expectedRevisionId) && editSequence(payload.editSeq);
     case "resource-context-basis": return validIdentity(payload.unitId) && validIdentity(payload.locale) && validIdentity(payload.sourceRevisionId)
       && nullableIdentity(payload.expectedRevisionId) && nullableIdentity(payload.currentRevisionId) && editSequence(payload.editSeq);
+    case "resource-correction": return validIdentity(payload.locale) && validIdentity(payload.afterSelectionId) && editSequence(payload.editSeq);
     case "resource-locale": return validIdentity(payload.locale);
     case "resource-capture": return validIdentity(payload.captureId) && validIdentity(payload.digest) && validIdentity(payload.locale);
     case "resource-decision": return validIdentity(payload.captureId) && validIdentity(payload.digest) && validIdentity(payload.locale) && validIdentity(payload.entryId)
       && nullableIdentity(payload.expectedRevisionId) && nullableIdentity(payload.scopeUnitId)
       && ["adopt", "keep", "ignore", "override"].includes(payload.decision) && ["added", "edited", "unchanged", "override", "removed"].includes(payload.rowKind);
-    case "resource-pending": return validIdentity(payload.actionId) && ["term", "context", "decision", "capture"].includes(payload.pendingKind);
+    case "resource-pending": return validIdentity(payload.actionId) && ["term", "context", "decision", "capture", "correction"].includes(payload.pendingKind);
     case "resource-translation": return !!payload.target && typeof payload.target === "object" && validIdentity(payload.locale)
       && validIdentity(payload.target.unitId) && validIdentity(payload.target.sourceRevisionId) && validIdentity(payload.target.key)
       && typeof payload.target.sourceText === "string" && validIdentity(payload.evidenceId)
@@ -1054,6 +1072,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "release-build-discard" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-protection" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-protection-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-correction" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-context" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-plugin" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-plugin-pending" && payload?.kind === command.payloadKind) command.handler(payload);
@@ -1115,6 +1134,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "resource-tool-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-tool-capture" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-tool-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "resource-correction" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-term" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-fact" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-context" && payload?.kind === command.payloadKind) command.handler(payload);

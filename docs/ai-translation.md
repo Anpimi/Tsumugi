@@ -98,7 +98,7 @@ During a save you can continue editing. A successful older save does not discard
 
 The internal Rust and desktop IPC interfaces remain experimental. Producer callers now obtain `DispatchRequest` from the execution runtime or store dispatch boundary rather than constructing its fields directly; the runtime supplies the private durable-budget channel. `ExecutionRuntime::register` and `ProjectStore::enqueue_execution` conservatively record `external-unknown` effects. A trusted host must explicitly use `register_read_only` / `enqueue_read_only_execution`, or `register_with_policy` for another reviewed effect contract. A producer's own claim or operation name cannot authorize replay. Persisted policies cannot be changed by resubmitting the same identity.
 
-Current development projects use schema 43 only. Durable budgets, reservations,
+Current development projects use schema 44 only. Durable budgets, reservations,
 ancestry, effect policies and exact continuation identities retain their original
 owners. Other development schemas are refused without an application upgrade,
 rebuild or reset; SQLite may complete its own hot-journal recovery. Preserve those
@@ -134,3 +134,19 @@ reuses exactly the same identity and payload; editing the next reason does not
 change the original request. Project close and other translation mutations stay
 blocked while the original decision is unresolved. Unsaved translation text is
 kept when the decision settles.
+
+## Terms from saved manual corrections
+
+A saved manual correction can explicitly seed a term proposal for that entry
+and target language. Review the recorded source and the original before/after
+revisions, then enter the exact source term, preferred target and reason. A first
+manual save without a preceding selected revision is not a correction pair.
+Creating or ignoring a proposal does not adopt a term. A stale proposal remains
+readable but cannot be newly adopted; capture the current saved correction when
+needed. Adoption uses the existing term conflict check and records its original
+action and provenance. Adopted terms follow the existing manual entry/language
+scope, including through later normal edits.
+
+New AI preparations use the normal term resolution and term-sharing choice.
+Saved inputs and previous results do not change, and no proposal authorizes
+cross-project sharing, external training or a model request.

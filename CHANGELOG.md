@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Propose a term from a saved manual correction for the current entry and target
+  language. Review its exact source, before/after text and scope before adopting.
+  Unadopted, ignored or stale proposals leave project terms unchanged. New AI
+  preparations capture adopted terms only when term sharing is enabled; earlier
+  inputs and results remain unchanged.
+
 - Shared JavaScript Application reference tools activate an exact component
   capability set and register every handler before becoming callable. Each query
   still requires its own captured binding and project consent; stopping any

@@ -13,6 +13,11 @@ const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
 mod context_facts;
+mod correction;
+pub use correction::{
+    CaptureCorrectionTerm, CorrectionTermBasis, CorrectionTermEvidence, CorrectionTermPreview,
+    CorrectionTermReceipt, GlossaryCaptureOrigin, RevisionSelectionRef,
+};
 mod exchange_xml;
 pub use context_facts::{
     ContextFactDecision, ContextFactDisposition, ContextFactHistory, ContextFactPosition,
@@ -145,9 +150,7 @@ pub struct GlossaryEntry {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GlossaryCapture {
     pub capture_id: ExecutionId,
-    pub resource_id: String,
-    pub revision: String,
-    pub license: String,
+    pub origin: GlossaryCaptureOrigin,
     pub source_locale: String,
     pub target_locale: String,
     pub digest: String,
@@ -247,6 +250,12 @@ pub struct ResourcePreview {
     pub capture: GlossaryCapture,
     pub rows: Vec<ResourcePreviewRow>,
     pub removed: Vec<TermRevision>,
+    #[serde(deserialize_with = "correction::required_preview")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "correction::preview_schema")
+    )]
+    pub correction: Option<CorrectionTermPreview>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -292,6 +301,7 @@ pub struct ResourceDecision {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceDecisionResult {
+    pub request: ResourceDecision,
     pub action_id: ExecutionId,
     pub decision: ResourceDecisionKind,
     pub revision: Option<TermRevision>,
@@ -547,16 +557,20 @@ const TABLES: &[(&str, &str)] = &[
     ("resource_captures", "CREATE TABLE resource_captures (
         capture_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
-        resource_id TEXT NOT NULL,
-        resource_revision TEXT NOT NULL,
+        capture_kind TEXT NOT NULL CHECK(capture_kind IN ('file','correction')),
+        correction_key TEXT UNIQUE,
+        resource_id TEXT,
+        resource_revision TEXT,
         source_locale TEXT NOT NULL,
         target_locale TEXT NOT NULL,
-        license TEXT NOT NULL,
+        license TEXT,
         digest TEXT NOT NULL CHECK(length(digest)=64),
         bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 131072),
         action_id TEXT NOT NULL UNIQUE,
         request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
-        UNIQUE(project_id,resource_id,resource_revision))"),
+        UNIQUE(project_id,resource_id,resource_revision),
+        CHECK((capture_kind='file' AND correction_key IS NULL AND resource_id IS NOT NULL AND resource_revision IS NOT NULL AND license IS NOT NULL)
+           OR (capture_kind='correction' AND correction_key IS NOT NULL AND length(correction_key)=64 AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)))"),
     ("term_revisions", "CREATE TABLE term_revisions (
         revision_id TEXT PRIMARY KEY NOT NULL,
         term_id TEXT NOT NULL,
@@ -575,7 +589,7 @@ const TABLES: &[(&str, &str)] = &[
         removed INTEGER NOT NULL CHECK(removed IN (0,1)),
         action_id TEXT NOT NULL UNIQUE,
         request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
-        CHECK((origin_kind='manual' AND capture_id IS NULL AND external_entry_id IS NULL)
+        CHECK((origin_kind='manual' AND external_entry_id IS NULL)
            OR (origin_kind='external' AND capture_id IS NOT NULL AND external_entry_id IS NOT NULL)))"),
     ("term_current", "CREATE TABLE term_current (
         term_id TEXT NOT NULL,
@@ -718,6 +732,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         serde_json::from_str::<ContextCapture>(&json?)
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
     }
+    correction::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(())
 }
 
@@ -920,54 +935,94 @@ fn capture_by_id(
     connection: &Connection,
     project_id: ExecutionId,
     capture_id: ExecutionId,
-) -> Result<(GlossaryCapture, GlossaryFile), ExecutionError> {
-    let row: Option<(String, String, String, String, String, String, Vec<u8>)> = connection
-        .query_row(
-            "SELECT resource_id,resource_revision,source_locale,target_locale,license,digest,bytes
-             FROM resource_captures WHERE capture_id=?1 AND project_id=?2",
-            params![capture_id.to_string(), project_id.to_string()],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(sql)?;
-    let Some((resource_id, revision, source_locale, target_locale, license, file_digest, bytes)) =
-        row
-    else {
-        return Err(failure(ErrorCode::DependencyConflict, "resource-capture"));
-    };
+) -> Result<(GlossaryCapture, correction::CapturedGlossary), ExecutionError> {
+    let row = connection.query_row(
+        "SELECT capture_kind,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest
+         FROM resource_captures WHERE capture_id=?1 AND project_id=?2",
+        params![capture_id.to_string(), project_id.to_string()],
+        |row| Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,
+            row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,String>(6)?,
+            row.get::<_,Vec<u8>>(7)?,row.get::<_,String>(8)?,row.get::<_,String>(9)?)),
+    ).optional().map_err(sql)?.ok_or_else(||failure(ErrorCode::DependencyConflict,"resource-capture"))?;
+    let (
+        kind,
+        resource_id,
+        revision,
+        source_locale,
+        target_locale,
+        license,
+        file_digest,
+        bytes,
+        action,
+        request_digest,
+    ) = row;
     if codec::digest(&bytes) != file_digest {
         return Err(failure(ErrorCode::CorruptLedger, "resource-capture"));
     }
-    let file = GlossaryFile::parse(&bytes)?;
-    if file.resource_id != resource_id
-        || file.revision != revision
-        || file.source_locale != source_locale
-        || file.target_locale != target_locale
-        || file.license != license
-    {
-        return Err(failure(ErrorCode::CorruptLedger, "resource-capture"));
-    }
-    let view = GlossaryCapture {
-        capture_id,
-        resource_id,
-        revision,
-        license,
-        source_locale,
-        target_locale,
-        digest: file_digest,
-        count: file.entries.len() as u32,
+    let action = id(action)?;
+    let (origin, count, data) = match kind.as_str() {
+        "file" => {
+            let file = GlossaryFile::parse(&bytes)?;
+            if Some(&file.resource_id) != resource_id.as_ref()
+                || Some(&file.revision) != revision.as_ref()
+                || Some(&file.license) != license.as_ref()
+                || file.source_locale != source_locale
+                || file.target_locale != target_locale
+                || digest(&(project_id, action, &file_digest))? != request_digest
+            {
+                return Err(failure(ErrorCode::CorruptLedger, "resource-capture"));
+            }
+            (
+                GlossaryCaptureOrigin::File {
+                    resource_id: file.resource_id.clone(),
+                    revision: file.revision.clone(),
+                    license: file.license.clone(),
+                },
+                file.entries.len() as u32,
+                correction::CapturedGlossary::File(file),
+            )
+        }
+        "correction" => {
+            let request: CaptureCorrectionTerm = codec::decode(&bytes, MAX_RESOURCE_BYTES)
+                .map_err(|_| failure(ErrorCode::CorruptLedger, "correction-capture"))?;
+            if resource_id.is_some()
+                || revision.is_some()
+                || license.is_some()
+                || request.action_id != action
+                || request.basis.project_id != project_id
+                || request.basis.locale != target_locale
+                || digest(&request)? != request_digest
+                || codec::encode(&request, MAX_RESOURCE_BYTES)? != bytes
+            {
+                return Err(failure(ErrorCode::CorruptLedger, "correction-capture"));
+            }
+            let metadata = super::read_metadata_from(connection)
+                .map_err(|_| failure(ErrorCode::CorruptLedger, "resource-project"))?;
+            if metadata.source_locale().as_str() != source_locale {
+                return Err(failure(ErrorCode::CorruptLedger, "correction-capture"));
+            }
+            correction::validate_request(connection, &request)?;
+            (
+                GlossaryCaptureOrigin::Correction {
+                    basis: request.basis.clone(),
+                },
+                1,
+                correction::CapturedGlossary::Correction(request),
+            )
+        }
+        _ => return Err(failure(ErrorCode::CorruptLedger, "resource-capture")),
     };
-    Ok((view, file))
+    Ok((
+        GlossaryCapture {
+            capture_id,
+            origin,
+            source_locale,
+            target_locale,
+            digest: file_digest,
+            count,
+        },
+        data,
+    ))
 }
 
 fn external_term_id(resource_id: &str, entry_id: &str) -> String {
@@ -1826,9 +1881,9 @@ impl ProjectStore {
         let request_digest = digest(&(project_id, action_id, &file_digest))?;
         tx.execute(
             "INSERT INTO resource_captures
-             (capture_id,project_id,resource_id,resource_revision,source_locale,target_locale,
+             (capture_id,project_id,capture_kind,resource_id,resource_revision,source_locale,target_locale,
               license,digest,bytes,action_id,request_digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+             VALUES (?1,?2,'file',?3,?4,?5,?6,?7,?8,?9,?10,?11)",
             params![
                 capture_id.to_string(),
                 project_id.to_string(),
@@ -1850,9 +1905,11 @@ impl ProjectStore {
         })?;
         Ok(GlossaryCapture {
             capture_id,
-            resource_id: file.resource_id,
-            revision: file.revision,
-            license: file.license,
+            origin: GlossaryCaptureOrigin::File {
+                resource_id: file.resource_id,
+                revision: file.revision,
+                license: file.license,
+            },
             source_locale: file.source_locale,
             target_locale: file.target_locale,
             digest: file_digest,
@@ -1882,50 +1939,16 @@ impl ProjectStore {
         if project.is_none() {
             return Err(failure(ErrorCode::DependencyConflict, "resource-project"));
         }
-        let mut statement = connection
-            .prepare(
-                "SELECT capture_id,resource_id,resource_revision,license,source_locale,
-                    target_locale,digest,bytes
-             FROM resource_captures WHERE project_id=?1 ORDER BY rowid DESC LIMIT ?2",
-            )
-            .map_err(sql)?;
-        statement
-            .query_map(params![project_id.to_string(), i64::from(limit)], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, Vec<u8>>(7)?,
-                ))
+        let mut statement=connection.prepare("SELECT capture_id FROM resource_captures WHERE project_id=?1 ORDER BY rowid DESC LIMIT ?2").map_err(sql)?;
+        let ids = statement
+            .query_map(params![project_id.to_string(), i64::from(limit)], |r| {
+                r.get::<_, String>(0)
             })
             .map_err(sql)?
-            .map(|result| {
-                let (
-                    capture_id,
-                    resource_id,
-                    revision,
-                    license,
-                    source_locale,
-                    target_locale,
-                    digest,
-                    bytes,
-                ) = result.map_err(sql)?;
-                let count = GlossaryFile::parse(&bytes)?.entries.len() as u32;
-                Ok(GlossaryCapture {
-                    capture_id: id(capture_id)?,
-                    resource_id,
-                    revision,
-                    license,
-                    source_locale,
-                    target_locale,
-                    digest,
-                    count,
-                })
-            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        ids.into_iter()
+            .map(|raw| Ok(capture_by_id(connection, project_id, id(raw)?)?.0))
             .collect()
     }
 
@@ -1937,7 +1960,13 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?;
-        let (capture, file) = capture_by_id(connection, project_id, capture_id)?;
+        let (capture, data) = capture_by_id(connection, project_id, capture_id)?;
+        let file = match data {
+            correction::CapturedGlossary::Correction(request) => {
+                return correction::preview(connection, capture, request);
+            }
+            correction::CapturedGlossary::File(file) => file,
+        };
         check_project(connection, project_id, &file.target_locale)?;
         current_snapshot(connection)?;
         let mut incoming = BTreeSet::new();
@@ -2004,6 +2033,7 @@ impl ProjectStore {
             capture,
             rows,
             removed,
+            correction: None,
         })
     }
 
@@ -2125,6 +2155,13 @@ impl ProjectStore {
         &mut self,
         request: &ResourceDecision,
     ) -> Result<ResourceDecisionResult, ExecutionError> {
+        if let Some(prior) = self.resource_decision_action(request.project_id, request.action_id)? {
+            return if &prior.request == request {
+                Ok(prior)
+            } else {
+                Err(failure(ErrorCode::ResultMismatch, "resource-action"))
+            };
+        }
         if self.is_reconciling() {
             return Err(failure(ErrorCode::OutcomeUnknown, "resource-session"));
         }
@@ -2137,140 +2174,126 @@ impl ProjectStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
         let commit_observer = change_clock.observe(&tx, super::ChangeScope::Resources);
-        let prior: Option<(String, Option<String>)> = tx
-            .query_row(
-                "SELECT request_digest,result_revision_id FROM resource_decisions
-                 WHERE action_id=?1 AND project_id=?2",
-                params![
-                    request.action_id.to_string(),
-                    request.project_id.to_string()
-                ],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(sql)?;
-        if let Some((saved_digest, revision_id)) = prior {
-            if saved_digest != request_digest {
-                return Err(failure(ErrorCode::ResultMismatch, "resource-action"));
-            }
-            let revision = revision_id
-                .map(id)
-                .transpose()?
-                .map(|revision_id| term_by_revision(&tx, request.project_id, revision_id))
-                .transpose()?
-                .flatten();
-            return Ok(ResourceDecisionResult {
-                action_id: request.action_id,
-                decision: request.decision.clone(),
-                revision,
-            });
-        }
-        let (_, file) = capture_by_id(&tx, request.project_id, request.capture_id)?;
-        check_project(&tx, request.project_id, &file.target_locale)?;
-        current_snapshot(&tx)?;
-        let term_id = external_term_id(&file.resource_id, &request.entry_id);
-        let current = current_term(&tx, request.project_id, &term_id)?;
-        if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
-            return Err(
-                failure(ErrorCode::DependencyConflict, "resource-current").with_conflict(
-                    ConflictEvidence::TermRevision {
-                        expected: request.expected_revision_id,
-                        current: current.as_ref().map(|value| value.revision_id),
-                    },
-                ),
-            );
-        }
-        let incoming = file
-            .entries
-            .iter()
-            .find(|entry| entry.id == request.entry_id);
-        if incoming.is_none() && current.is_none() {
-            return Err(failure(ErrorCode::DependencyConflict, "resource-entry"));
-        }
-        if current
-            .as_ref()
-            .is_some_and(|value| value.origin_kind == TermOrigin::Manual)
-            && matches!(request.decision, ResourceDecisionKind::Adopt)
+        if let Some(prior) =
+            correction::decision_action_in(&tx, request.project_id, request.action_id)?
         {
-            return Err(failure(ErrorCode::DependencyConflict, "resource-override"));
-        }
-        let revision = if matches!(
-            request.decision,
-            ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
-        ) {
-            current
-        } else {
-            let scope = if let Some(entry) = incoming {
-                entry
-                    .native_key
-                    .as_deref()
-                    .map(|key| unit_for_native_key(&tx, request.project_id, key))
-                    .transpose()?
+            return if &prior.request == request {
+                Ok(prior)
             } else {
-                current.as_ref().and_then(|value| value.scope_unit_id)
+                Err(failure(ErrorCode::ResultMismatch, "resource-action"))
             };
-            let source = incoming
-                .map(|entry| entry.source.as_str())
-                .or_else(|| current.as_ref().map(|value| value.source.as_str()))
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-            let target = incoming
-                .map(|entry| entry.target.as_str())
-                .or_else(|| current.as_ref().map(|value| value.target.as_str()))
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-            let aliases = incoming
-                .map(|entry| entry.aliases.as_slice())
-                .or_else(|| current.as_ref().map(|value| value.aliases.as_slice()))
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-            let reason = incoming
-                .map(|entry| entry.reason.as_str())
-                .unwrap_or("Removed from external resource");
-            let protected = incoming
-                .map(|entry| entry.protected)
-                .or_else(|| current.as_ref().map(|value| value.protected))
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-            let changed = current.as_ref().is_none_or(|value| {
-                value.source != source
-                    || value.target != target
-                    || value.aliases != aliases
-                    || value.protected != protected
-                    || value.scope_unit_id != scope
-                    || value.removed != incoming.is_none()
-            });
-            let revision = insert_term(
-                &tx,
-                request.project_id,
-                &term_id,
-                &file.target_locale,
-                source,
-                aliases,
-                target,
-                protected,
-                scope,
-                reason,
-                "external",
-                Some(request.capture_id),
-                Some(&request.entry_id),
-                request.expected_revision_id,
-                incoming.is_none(),
-                request.action_id,
-                &request_digest,
-            )?;
-            if changed {
-                write_change(
-                    &tx,
-                    request.project_id,
-                    "term",
-                    &file.target_locale,
-                    scope,
-                    current.as_ref().and_then(|value| value.scope_unit_id),
-                    Some(source),
-                    current.as_ref().map(|value| value.source.as_str()),
-                    request.expected_revision_id,
-                    revision.revision_id,
-                    request.action_id,
-                )?;
+        }
+        let (_, data) = capture_by_id(&tx, request.project_id, request.capture_id)?;
+        let revision = match data {
+            correction::CapturedGlossary::Correction(capture) => {
+                correction::decide(&tx, request, &capture, &request_digest)?
             }
-            Some(revision)
+            correction::CapturedGlossary::File(file) => {
+                check_project(&tx, request.project_id, &file.target_locale)?;
+                current_snapshot(&tx)?;
+                let term_id = external_term_id(&file.resource_id, &request.entry_id);
+                let current = current_term(&tx, request.project_id, &term_id)?;
+                if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
+                    return Err(failure(ErrorCode::DependencyConflict, "resource-current")
+                        .with_conflict(ConflictEvidence::TermRevision {
+                            expected: request.expected_revision_id,
+                            current: current.as_ref().map(|value| value.revision_id),
+                        }));
+                }
+                let incoming = file
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == request.entry_id);
+                if incoming.is_none() && current.is_none() {
+                    return Err(failure(ErrorCode::DependencyConflict, "resource-entry"));
+                }
+                if current
+                    .as_ref()
+                    .is_some_and(|value| value.origin_kind == TermOrigin::Manual)
+                    && matches!(request.decision, ResourceDecisionKind::Adopt)
+                {
+                    return Err(failure(ErrorCode::DependencyConflict, "resource-override"));
+                }
+                let revision = if matches!(
+                    request.decision,
+                    ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
+                ) {
+                    current
+                } else {
+                    let scope = if let Some(entry) = incoming {
+                        entry
+                            .native_key
+                            .as_deref()
+                            .map(|key| unit_for_native_key(&tx, request.project_id, key))
+                            .transpose()?
+                    } else {
+                        current.as_ref().and_then(|value| value.scope_unit_id)
+                    };
+                    let source = incoming
+                        .map(|entry| entry.source.as_str())
+                        .or_else(|| current.as_ref().map(|value| value.source.as_str()))
+                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
+                    let target = incoming
+                        .map(|entry| entry.target.as_str())
+                        .or_else(|| current.as_ref().map(|value| value.target.as_str()))
+                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
+                    let aliases = incoming
+                        .map(|entry| entry.aliases.as_slice())
+                        .or_else(|| current.as_ref().map(|value| value.aliases.as_slice()))
+                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
+                    let reason = incoming
+                        .map(|entry| entry.reason.as_str())
+                        .unwrap_or("Removed from external resource");
+                    let protected = incoming
+                        .map(|entry| entry.protected)
+                        .or_else(|| current.as_ref().map(|value| value.protected))
+                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
+                    let changed = current.as_ref().is_none_or(|value| {
+                        value.source != source
+                            || value.target != target
+                            || value.aliases != aliases
+                            || value.protected != protected
+                            || value.scope_unit_id != scope
+                            || value.removed != incoming.is_none()
+                    });
+                    let revision = insert_term(
+                        &tx,
+                        request.project_id,
+                        &term_id,
+                        &file.target_locale,
+                        source,
+                        aliases,
+                        target,
+                        protected,
+                        scope,
+                        reason,
+                        "external",
+                        Some(request.capture_id),
+                        Some(&request.entry_id),
+                        request.expected_revision_id,
+                        incoming.is_none(),
+                        request.action_id,
+                        &request_digest,
+                    )?;
+                    if changed {
+                        write_change(
+                            &tx,
+                            request.project_id,
+                            "term",
+                            &file.target_locale,
+                            scope,
+                            current.as_ref().and_then(|value| value.scope_unit_id),
+                            Some(source),
+                            current.as_ref().map(|value| value.source.as_str()),
+                            request.expected_revision_id,
+                            revision.revision_id,
+                            request.action_id,
+                        )?;
+                    }
+                    Some(revision)
+                };
+                revision
+            }
         };
         tx.execute(
             "INSERT INTO resource_decisions
@@ -2303,6 +2326,7 @@ impl ProjectStore {
         #[cfg(test)]
         super::migration_crash_hook("after-resource-decision-commit");
         Ok(ResourceDecisionResult {
+            request: request.clone(),
             action_id: request.action_id,
             decision: request.decision.clone(),
             revision,

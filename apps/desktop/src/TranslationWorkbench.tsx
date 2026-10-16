@@ -1,5 +1,6 @@
 import { ContextFactDecisionFields } from "./ContextFactDecisions";
 import { useResourceDraftSession } from "./ResourceDraftSession";
+import { resourceCommands } from "./resourceCommands";
 import { useSessionQuery, useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
@@ -19,7 +20,7 @@ import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useWorkbenchCommands, type CommandAvailability, type TranslationImportPreviewCommandPayload, type TranslationImportRowTarget,
   type TranslationImportRowCommandPayload, type TranslationImportBatchCommandPayload, type TranslationImportPendingCommandPayload,
   type TranslationRevisionCommandPayload, type TranslationSelectionPendingCommandPayload, type TranslationContentRowCommandPayload,
-  type TranslationCandidateCommandPayload, type TranslationCandidatePendingCommandPayload, type TranslationContextCommandPayload, type ContextEditorTarget } from "./workbenchCommands";
+  type TranslationCandidateCommandPayload, type TranslationCandidatePendingCommandPayload, type TranslationContextCommandPayload, type ContextEditorTarget, type CorrectionEditorTarget, type TranslationCorrectionCommandPayload } from "./workbenchCommands";
 import { contentSelectionIds, fixedContentSelection, type ContentSelection } from "./contentSelection";
 import { EditorMemoryReferences } from "./EditorMemoryReferences";
 import { EditorSourceContext } from "./EditorSourceContext";
@@ -72,12 +73,13 @@ const targetFromTranslation = (row: TranslationPreviewRow): EditorTarget | null 
   ? { unitId: row.unitId, sourceRevisionId: row.sourceRevisionId, key: row.entry.nativeKey, sourceText: row.sourceText ?? "" }
   : null;
 
-export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, onOpenComparison, onEditContext, ref }: {
+export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, onReturnToAi, onOpenComparison, onEditContext, onProposeTerm, ref }: {
   project: ProjectView; disabled: boolean; onOpenExtensions?: () => void; onQueryText?: (text: string) => boolean | Promise<boolean>;
   aiSelection?: { count: number; locale: string; editSeq: number; available: boolean };
   onPrepareSelection?: (selection: ContentSelection, expectedEditSeq: number) => Promise<boolean>; onReturnToAi?: () => void; ref?: Ref<TranslationHandle>;
   onOpenComparison?: (target: EditorTarget, locale: string, revision: Pick<TranslationRevision, "revisionId" | "ordinal">) => Promise<boolean>;
   onEditContext?: (capture: ContextEditorTarget) => Promise<boolean>;
+  onProposeTerm?: (capture: CorrectionEditorTarget) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const context = executionContext(project);
@@ -274,6 +276,23 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     && draftSourceBasis.current.unitId === editorDraft.unitId && draftSourceBasis.current.locale === editorDraft.locale
     && draftSourceBasis.current.sourceRevisionId === editorDraft.sourceRevisionId
     && checkedRead(sourceScopeKey, source) && source.currentSnapshot !== draftSourceBasis.current.sourceSnapshotId;
+  const correctionSelection = snapshot?.translations.current;
+  const correctionEligibilityKey = ["resource-correction-basis", snapshot?.target.unitId ?? "", targetLocale,
+    correctionSelection?.eventId ?? "", "editor-eligibility"];
+  const correctionEligibilityEnabled = !!onProposeTerm && referencesOpen && open && tab === "edit" && targetAvailable
+    && !!snapshot && !!editorDraft && !!correctionSelection && correctionSelection.previousEventId !== null && !retainedSourceChanged
+    && editorDraft.unitId === snapshot.target.unitId && editorDraft.locale === targetLocale
+    && editorDraft.baseSelectionId === correctionSelection.eventId && editorDraft.baseRevisionId === correctionSelection.revisionId
+    && snapshot.target.selectionId === correctionSelection.eventId && snapshot.target.revisionId === correctionSelection.revisionId
+    && checkedRead(editorKey(editorIntent), snapshot) && sourceReady(snapshot.target.sourceSnapshotId);
+  // Eligibility has its own observer lifetime. Hiding References must not
+  // invalidate the explicit handoff's separately checked resource comparison.
+  const correctionEligibility = useSessionQuery({ key: correctionEligibilityKey, scopes: ["source", "translation", "project"],
+    enabled: correctionEligibilityEnabled,
+    read: () => {
+      if (!snapshot || !correctionSelection) throw new Error("Missing saved correction selection");
+      return resourceCommands.correctionBasis({ ...context, unitId: snapshot.target.unitId, locale: targetLocale, afterSelectionId: correctionSelection.eventId });
+    } });
   function confirmedList() {
     if (!listIntent || !readyListRead || readyListRead.intent !== listIntent || reads.retired) return false;
     const query = reads.client.getQueryCache().find({ queryKey: reads.key(listKey(listIntent)), exact: true });
@@ -613,6 +632,28 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
       && draft.sourceRevisionId===snapshot.target.sourceRevisionId && checkedRead(editorKey(editorIntent),snapshot)
       && sourceReady(snapshot.target.sourceSnapshotId) ? {enabled:true} : unavailableCommand;
   }
+  function correctionPayload(): TranslationCorrectionCommandPayload | undefined {
+    const draft = draftSession.current();
+    return draft?.baseSelectionId && draft.baseRevisionId && snapshot ? { kind: "translation-correction",
+      target: { unitId: draft.unitId, sourceRevisionId: draft.sourceRevisionId, key: draft.key, sourceText: draft.sourceText },
+      locale: draft.locale, sourceSnapshotId: snapshot.target.sourceSnapshotId, selectionId: draft.baseSelectionId,
+      revisionId: draft.baseRevisionId, readVersion: snapshot.readVersion, editSeq: draft.editSeq } : undefined;
+  }
+  function correctionAvailability(input?: TranslationCorrectionCommandPayload): CommandAvailability {
+    const allowed = businessGate("edit"); if (!allowed.enabled) return allowed;
+    const expected = correctionPayload(), evidence = correctionEligibility.data;
+    return onProposeTerm && expected && input && sameCommandValue(input, expected) && snapshot && !retainedSourceChanged
+      && snapshot.translations.current?.eventId === expected.selectionId && snapshot.translations.current.revisionId === expected.revisionId
+      && snapshot.translations.current.previousEventId !== null
+      && correctionEligibilityEnabled && evidence && checkedRead(correctionEligibilityKey, evidence) && evidence.current
+      && evidence.basis.projectId === context.projectId && evidence.basis.unitId === expected.target.unitId && evidence.basis.locale === expected.locale
+      && evidence.basis.after.selectionId === expected.selectionId && evidence.basis.after.revisionId === expected.revisionId
+      && evidence.basis.before.selectionId === snapshot.translations.current.previousEventId
+      && evidence.basis.sourceSnapshotId === expected.sourceSnapshotId && evidence.basis.sourceRevisionId === expected.target.sourceRevisionId
+      && evidence.sourceText === expected.target.sourceText && evidence.afterText === snapshot.translations.currentText
+      && evidence.afterText === snapshot.target.translationText
+      && checkedRead(editorKey(editorIntent), snapshot) && sourceReady(expected.sourceSnapshotId) ? { enabled: true } : unavailableCommand;
+  }
   function revisionPayload(revision: TranslationRevision): TranslationRevisionCommandPayload | undefined {
     const value = draftSession.current();
     return value ? { kind: "translation-revision", unitId: value.unitId, locale: value.locale, sourceRevisionId: value.sourceRevisionId,
@@ -740,6 +781,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
         payloadKind: "translation-import-pending", availability: payload => importPendingAvailability(payload,true), handler: payload => { void importSession.retryAction(payload.request.actionId); } }),
       commandRegistry.register({ ...metadata, id: "translation.select-revision", nameKey: "translation.selectRevision", risk: "writes-translation",
         payloadKind: "translation-revision", availability: revisionAvailability, handler: payload => { void perform(current => selectRevision(payload,current)); } }),
+      commandRegistry.register({ ...metadata, id: "translation.propose-term", payloadKind: "translation-correction", nameKey: "correctionFeedback.open", risk: "reads-resources",
+        availability: correctionAvailability, handler: input => { if (correctionAvailability(input).enabled) { const { kind: _, ...capture } = input; void onProposeTerm?.(capture); } } }),
       commandRegistry.register({...metadata,id:"translation.edit-context",nameKey:"resource.editFromEntry",risk:"reads-resources",payloadKind:"translation-context",
         availability:contextEditorAvailability,handler:input=>{if(contextEditorAvailability(input).enabled){const {kind:_,...capture}=input;void onEditContext?.(capture);}}}),
       commandRegistry.register({ ...metadata, id: "translation.check-selection", nameKey: "translation.checkSelection", risk: "reconciles-execution-action",
@@ -1173,6 +1216,13 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                 {editorRead.error ? <p role="status">{t("resource.editorLoadFailed")}</p> : null}
                 {editorResources?.terms ? <><h6>{t("resource.applicableTerms")}</h6>{editorResources.terms.entries.length ? <ul>{editorResources.terms.entries.map(entry => <li key={entry.source}>{entry.source}: {entry.selected ? <>{entry.selected.target} · {entry.selected.originKind === "manual" ? t("resource.manual") : t("resource.external")} · {entry.selected.reason}</> : t("resource.conflict")}</li>)}</ul> : <p>{t("resource.noApplicableTerms")}</p>}</> : null}
                 {editorResources ? <><h6>{t("resource.manualContext")}</h6>{editorResources.context ? <p>{editorResources.context.text} · {editorResources.context.reason}</p> : <p>{t("resource.noManualContext")}</p>}</> : null}
+                {onProposeTerm ? <><p>{t("correctionFeedback.entryHelp")}</p>
+                  {correctionEligibilityEnabled && correctionEligibility.isFetching ? <p role="status">{t("correctionFeedback.checking")}</p> : null}
+                  {correctionEligibilityEnabled && correctionEligibility.error ? <div role="alert"><p>{t("correctionFeedback.readFailed")}</p><CommandFailureDetails failure={commandFailure(correctionEligibility.error)} />
+                    <button type="button" className="secondary-button" disabled={busy || protectionBlocked || correctionEligibility.isFetching} onClick={() => { void correctionEligibility.refetch(); }}>{t("resource.retryRead")}</button></div> : null}
+                  {correctionEligibilityEnabled && correctionEligibility.isSuccess && !correctionEligibility.isFetching && correctionEligibility.data?.current === false ? <p role="status">{t("correctionFeedback.unavailable")}</p> : null}
+                  <button type="button" className="secondary-button" disabled={!correctionAvailability(correctionPayload()).enabled}
+                  onClick={() => { const input = correctionPayload(); if (input) commandRegistry.dispatch("translation.propose-term", commandScope, input); }}>{t("correctionFeedback.open")}</button></> : null}
                 {onEditContext ? <><p>{t("resource.editFromEntryHelp")}</p><button type="button" className="secondary-button" disabled={!contextEditorAvailability(contextEditorPayload()).enabled}
                   onClick={()=>{const input=contextEditorPayload();if(input)commandRegistry.dispatch("translation.edit-context",commandScope,input);}}>{t("resource.editFromEntry")}</button></>:null}
               </section>

@@ -3,14 +3,19 @@
 use super::*;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::{
-    CaptureContext, ContextCapture, ContextRevision, GlossaryCapture, ImpactPage, ResourceDecision,
-    ResourceDecisionResult, ResourcePreview, SaveContext, SaveTerm, TbxExchangePreview,
-    TermResolution, TermRevision, TmSuggestion, TmxExchangePreview,
+    CaptureContext, CaptureCorrectionTerm, ContextCapture, ContextRevision, CorrectionTermEvidence,
+    CorrectionTermReceipt, GlossaryCapture, ImpactPage, ResourceDecision, ResourceDecisionResult,
+    ResourcePreview, SaveContext, SaveTerm, TbxExchangePreview, TermResolution, TermRevision,
+    TmSuggestion, TmxExchangePreview,
 };
 
 #[cfg(test)]
 #[path = "resource_exchange_tests.rs"]
 mod exchange_tests;
+
+#[cfg(test)]
+#[path = "resource_correction_tests.rs"]
+mod correction_tests;
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -59,6 +64,26 @@ request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     DecisionRequest {
         decision: ResourceDecision
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    CorrectionBasisRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        after_selection_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    CorrectionCaptureRequest {
+        capture: CaptureCorrectionTerm
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ResourceActionRequest {
+        action_id: ExecutionId
     }
 );
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TermListRequest {
@@ -666,6 +691,119 @@ pub async fn read_resource_preview(
 }
 
 #[tauri::command]
+pub async fn read_correction_term_basis(
+    state: State<'_, AppState>,
+    request: CorrectionBasisRequest,
+) -> Result<CorrectionTermEvidence, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_correction_term_basis",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .correction_term_basis(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.after_selection_id,
+                )
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn capture_correction_term(
+    state: State<'_, AppState>,
+    request: CorrectionCaptureRequest,
+) -> Result<CorrectionTermReceipt, CommandError> {
+    state
+        .sessions
+        .run(
+            "capture_correction_term",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                if request.capture.basis.project_id != request.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "correction-term-project"),
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .capture_correction_term(&request.capture)
+                    .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_correction_term_action(
+    state: State<'_, AppState>,
+    request: ResourceActionRequest,
+) -> Result<Option<CorrectionTermReceipt>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_correction_term_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .correction_term_capture_action(request.project_id, request.action_id)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_resource_decision_action(
+    state: State<'_, AppState>,
+    request: ResourceActionRequest,
+) -> Result<Option<ResourceDecisionResult>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_resource_decision_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .resource_decision_action(request.project_id, request.action_id)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
 pub async fn decide_resource_entry(
     state: State<'_, AppState>,
     request: DecisionRequest,
@@ -682,6 +820,12 @@ pub async fn decide_resource_entry(
                     request.project_id,
                     CommandStage::ExecutionAdopt,
                 )?;
+                if request.decision.project_id != request.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "resource-decision-project"),
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 store
@@ -988,6 +1132,9 @@ mod contracts {
         round_trip!("requests", "capture", CaptureRequest);
         round_trip!("requests", "term", TermRequest);
         round_trip!("requests", "decision", DecisionRequest);
+        round_trip!("requests", "correctionBasis", CorrectionBasisRequest);
+        round_trip!("requests", "correctionCapture", CorrectionCaptureRequest);
+        round_trip!("requests", "resourceAction", ResourceActionRequest);
         round_trip!("requests", "terms", TermListRequest);
         round_trip!("requests", "termHistory", TermHistoryRequest);
         round_trip!("requests", "unitLocale", UnitLocaleRequest);
@@ -1001,6 +1148,18 @@ mod contracts {
         round_trip!("responses", "capture", Option<GlossaryCapture>);
         round_trip!("responses", "preview", ResourcePreview);
         round_trip!("responses", "decision", ResourceDecisionResult);
+        round_trip!("responses", "correctionBasis", CorrectionTermEvidence);
+        round_trip!("responses", "correctionCapture", CorrectionTermReceipt);
+        round_trip!(
+            "responses",
+            "correctionAction",
+            Option<CorrectionTermReceipt>
+        );
+        round_trip!(
+            "responses",
+            "decisionAction",
+            Option<ResourceDecisionResult>
+        );
         round_trip!("responses", "term", TermRevision);
         round_trip!("responses", "terms", Vec<TermRevision>);
         round_trip!("responses", "resolution", TermResolution);
@@ -1053,6 +1212,12 @@ mod contracts {
         let mut unknown = fixture["requests"]["decision"].clone();
         unknown["decision"]["decision"] = serde_json::json!("apply-all");
         assert!(serde_json::from_value::<DecisionRequest>(unknown).is_err());
+        let mut missing = fixture["responses"]["decision"].clone();
+        missing.as_object_mut().unwrap().remove("request");
+        assert!(serde_json::from_value::<ResourceDecisionResult>(missing).is_err());
+        let mut missing = fixture["responses"]["preview"].clone();
+        missing.as_object_mut().unwrap().remove("correction");
+        assert!(serde_json::from_value::<ResourcePreview>(missing).is_err());
         let mut unknown = fixture["responses"]["term"].clone();
         unknown["originKind"] = serde_json::json!("import");
         assert!(serde_json::from_value::<TermRevision>(unknown).is_err());

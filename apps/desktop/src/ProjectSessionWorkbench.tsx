@@ -30,7 +30,8 @@ import type { ContentScope } from "./sourceCommands";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { SessionNavigation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination } from "./sessionNavigation";
 import type { ContentSelection } from "./contentSelection";
-import type { ContextEditorTarget } from "./workbenchCommands";
+import { resourceCommands, type CorrectionTermEvidence } from "./resourceCommands";
+import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
 
 /** The same project owners are shared by production assembly and isolated consumer tests. */
 export function ProjectSessionOwners({ project, children, bridge = true }: { project: ProjectView; children: ReactNode; bridge?: boolean }) {
@@ -134,8 +135,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
         translation.candidates.hasDraft() || !!manual && (manual.text !== (manual.baseText ?? "") || manual.newerDraftSaved),
         [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.protection.current().pending,
           translation.candidates.current().editSeq,translation.candidates.current().pending]),
-      row("resources", resources.factBlocked() || resources.inFlight() || !!res.pending || resources.tool.blocked(), resources.factDirty() || resources.termDirty() || resources.contextDirty() || resources.tool.hasDraft(),
-        [res.termSeq, res.contextSeq, res.factDraft, res.factPending, resources.tool.draftSequence.current, resources.tool.current().capture?.review.inputDigest, resources.tool.current().pending]),
+      row("resources", resources.factBlocked() || resources.inFlight() || !!res.pending || resources.tool.blocked(), resources.factDirty() || resources.termDirty() || resources.contextDirty() || resources.correctionDirty() || resources.tool.hasDraft(),
+        [res.termSeq, res.contextSeq, res.correctionDraft, res.factDraft, res.factPending, resources.tool.draftSequence.current, resources.tool.current().capture?.review.inputDigest, resources.tool.current().pending]),
       row("review", review.inFlight() || rev.batchRunning || !!rev.pending,
         Object.values(rev.drafts).some(value => value.length > 0) || Object.keys(rev.chosen).length > 0 || !!rev.checkReview || rev.checkConsent.length > 0 || rev.advisoryChecks.length > 0,
         [rev.locale, rev.actor, rev.editSeq, rev.checkReview?.request, rev.checkConsent, rev.advisoryChecks, Object.values(rev.chosen).map(value => [value.unitId, value.locale, value.basis]),
@@ -189,6 +190,59 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       return true;
     }
     if (destination.kind === "review-work") { committed.current.view.memory.write("review", "tab", "work"); return true; }
+    if (destination.kind === "resource-correction-return") {
+      const capture = destination.capture, original = committed.current.view.memory.read<CorrectionEditorTarget | null>("resources", "correctionEditorReturn"), draft = translation.current();
+      if (!original || JSON.stringify(original) !== JSON.stringify(capture) || !draft || draft.unitId !== capture.target.unitId || draft.locale !== capture.locale
+        || resources.inFlight() || resources.current().pending || resources.factBlocked() || resources.tool.blocked() || resources.tool.hasDraft()
+        || translation.mutationReserved || translation.protection.blocked() || translation.candidates.blocked()) {
+        setFailure("correction-editor-blocked"); return false;
+      }
+      committed.current.view.memory.write("translation", "tab", "edit");
+      committed.current.view.memory.write("resources", "correctionEditorReturn", null);
+      return true;
+    }
+    if (destination.kind === "resource-correction") {
+      const capture = destination.capture, before = resources.current();
+      const editorCurrent = () => {
+        const draft = translation.current();
+        return !!draft && draft.unitId === capture.target.unitId && draft.locale === capture.locale
+          && draft.sourceRevisionId === capture.target.sourceRevisionId && draft.editSeq === capture.editSeq
+          && draft.baseSelectionId === capture.selectionId && draft.baseRevisionId === capture.revisionId
+          && !draft.pending && !draft.pendingSelection && !draft.saving && !draft.selecting
+          && !translation.mutationReserved && !translation.protection.blocked() && !translation.candidates.blocked();
+      };
+      if (!editorCurrent() || !resources.canReceiveCorrection(capture.locale)) { setFailure("correction-editor-blocked"); return false; }
+      const source = sourceReads.scope(scope), key = ["resource-correction-basis", capture.target.unitId, capture.locale, capture.selectionId];
+      let invalidated = false;
+      const exactKeys = [reads.key(source.key), reads.key(key)];
+      const uncache = reads.client.getQueryCache().subscribe(event => {
+        if (exactKeys.some(queryKey => matchQuery({ queryKey, exact: true }, event.query))
+          && (event.type === "removed" || event.type === "updated" && event.action.type === "invalidate")) invalidated = true;
+      });
+      const unchange = reads.subscribeChanges(scopes => { if (scopes.some(value => ["project", "source", "translation"].includes(value))) invalidated = true; });
+      try {
+        await Promise.all([
+          reads.client.fetchQuery({ queryKey: reads.key(source.key), staleTime: 0, meta: { scopes: source.scopes }, queryFn: source.read }),
+          reads.client.fetchQuery({ queryKey: reads.key(key), staleTime: 0, meta: { scopes: ["source", "translation"] },
+            queryFn: () => resourceCommands.correctionBasis({ ...scope, unitId: capture.target.unitId, locale: capture.locale, afterSelectionId: capture.selectionId }) }),
+        ]);
+        const evidence = reads.client.getQueryData<CorrectionTermEvidence>(reads.key(key)), sourceValue = reads.client.getQueryData<ContentScope>(reads.key(source.key));
+        const checked = (queryKey: readonly unknown[], data: unknown) => { const query = reads.client.getQueryState(reads.key(queryKey));
+          return query?.status === "success" && !query.error && query.fetchStatus === "idle" && !query.isInvalidated && query.data === data; };
+        const fresh = () => current() && !invalidated && editorCurrent() && !!evidence && !!sourceValue && checked(key, evidence) && checked(source.key, sourceValue)
+          && sourceValue.currentSnapshot === capture.sourceSnapshotId && evidence.current && evidence.basis.sourceSnapshotId === capture.sourceSnapshotId
+          && evidence.basis.sourceRevisionId === capture.target.sourceRevisionId && evidence.basis.unitId === capture.target.unitId
+          && evidence.basis.locale === capture.locale && evidence.basis.after.selectionId === capture.selectionId
+          && evidence.basis.after.revisionId === capture.revisionId && evidence.sourceText === capture.target.sourceText;
+        if (!evidence || !fresh() || !resources.receiveCorrection(evidence, before, fresh)) { setFailure("correction-editor-changed"); return false; }
+        committed.current.view.memory.write("resources", "tab", "updates");
+        committed.current.view.memory.write("resources", "correctionEditorReturn", structuredClone(capture));
+        return true;
+      } catch (error) {
+        if (current() && invalidated) { setFailure("correction-editor-changed"); return false; }
+        throw error;
+      } finally { uncache(); unchange(); }
+    }
     if (destination.kind === "resource-context-return") {
       const capture=destination.capture, original=committed.current.view.memory.read<ContextEditorTarget|null>("resources","contextEditorReturn"), draft=translation.current();
       if (!original || JSON.stringify(original)!==JSON.stringify(capture) || !draft || draft.unitId!==capture.target.unitId || draft.locale!==capture.locale
@@ -391,17 +445,20 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       tasks: { cancellation: tasks.state, adoption: tasks.currentActivity() },
     }, null, 2)} /></label>
   </section>;
-  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : failureReason(failure)==="context-editor-blocked" ? "resource.contextEditorBlocked" : failureReason(failure)==="context-editor-changed" ? "resource.contextEditorChanged" : "workbench.navigationBlocked")}</p><CommandFailureDetails failure={failure} /></div> : null}
+  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : failureReason(failure)==="correction-editor-blocked" ? "correctionFeedback.blocked" : failureReason(failure)==="correction-editor-changed" ? "correctionFeedback.changed" : failureReason(failure)==="context-editor-blocked" ? "resource.contextEditorBlocked" : failureReason(failure)==="context-editor-changed" ? "resource.contextEditorChanged" : "workbench.navigationBlocked")}</p><CommandFailureDetails failure={failure} /></div> : null}
     {view.area === "overview" && !reads.retired ? <OverviewSourceObserver project={project} onSourceState={onSourceState} /> : null}
     {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} onOpenExtensions={onOpenExtensions}
       onOpenComparison={openComparison("translation")}
       onEditContext={capture=>navigation.navigate({kind:"resource-context",capture})}
+      onProposeTerm={capture => navigation.navigate({ kind: "resource-correction", capture })}
       onQueryText={text => navigation.navigate({ kind: "tool-query", text })}
       onReturnToAi={view.memory.read<boolean>("translation", "returnToAi") ? () => { void navigation.navigate({ kind: "area", area: "ai" }); } : undefined}
       aiSelection={{ count: ai.selected.length, locale: ai.locale, editSeq: ai.editSeq, available: ai.contentRangeAvailable }}
       onPrepareSelection={(selection, expectedEditSeq) => navigation.navigate({ kind: "ai-selection", selection, expectedEditSeq })} /> : null}
     {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation}
+      correctionEditorReturn={view.memory.read<CorrectionEditorTarget | null>("resources", "correctionEditorReturn")}
+      onReturnFromCorrection={capture => navigation.navigate({ kind: "resource-correction-return", capture })}
       contextEditorReturn={view.memory.read<ContextEditorTarget|null>("resources","contextEditorReturn")}
       onReturnToEditor={capture=>navigation.navigate({kind:"resource-context-return",capture})} /> : null}
     {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}

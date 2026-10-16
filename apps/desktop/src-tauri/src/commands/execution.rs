@@ -59,6 +59,7 @@ macro_rules! handlers {
         source::translation::save_translation_revision,source::translation::select_translation_revision,
         source::translation::decide_translation_candidate,source::translation::read_translation_candidate_action,
         resource::preview_tmx_exchange,resource::preview_tbx_exchange,resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
+        resource::read_correction_term_basis,resource::capture_correction_term,resource::read_correction_term_action,resource::read_resource_decision_action,
         resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
         resource::read_context_revision,resource::save_context,resource::capture_context,
         resource::decide_context_fact,resource::read_context_fact_decisions,resource::read_context_fact_action,resource::read_context_fact_history,

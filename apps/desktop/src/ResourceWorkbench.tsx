@@ -1,7 +1,7 @@
 import { ContextFactDecisionFields } from "./ContextFactDecisions";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView, useWorkbenchState } from "./WorkbenchFrame";
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useId, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import type { ProjectView } from "./projectCommands";
@@ -14,7 +14,7 @@ import { TmxExchangePreviewPanel } from "./TmxExchangePreviewPanel";
 import { useSessionInfiniteQuery, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { resourceReads } from "./resourceQueries";
 import { useWorkbenchCommands, type ResourceTermCommandPayload, type ResourceContextCommandPayload,
-  type ResourceContextBasisCommandPayload,
+  type ResourceContextBasisCommandPayload, type ResourceCorrectionCommandPayload, type CorrectionEditorTarget,
   type ResourceCaptureCommandPayload, type ResourceDecisionCommandPayload, type ResourcePendingCommandPayload,
   type ResourceTranslationCommandPayload, type CommandAvailability, type ContextEditorTarget } from "./workbenchCommands";
 import type { QueryKey } from "@tanstack/react-query";
@@ -25,18 +25,25 @@ type Tab = "terms" | "updates" | "context" | "impact" | "queries";
 export interface ResourceHandle { allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean>; addQueryText: (text: string) => boolean }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
-export function ResourceWorkbench({ project, disabled, onOpenTranslation, contextEditorReturn, onReturnToEditor, ref }: {
+export function ResourceWorkbench({ project, disabled, onOpenTranslation, contextEditorReturn, onReturnToEditor, correctionEditorReturn, onReturnFromCorrection, ref }: {
   project: ProjectView; disabled: boolean;
   onOpenTranslation: (target: EditorTarget, locale: string, suggestedText?: string) => boolean | Promise<boolean>;
+  correctionEditorReturn?: CorrectionEditorTarget | null;
+  onReturnFromCorrection?: (capture: CorrectionEditorTarget) => Promise<boolean>;
   contextEditorReturn?: ContextEditorTarget | null;
   onReturnToEditor?: (capture: ContextEditorTarget) => Promise<boolean>;
   ref?: Ref<ResourceHandle>;
 }) {
   const { t } = useTranslation();
+  const correctionFieldId = useId();
   const session = executionContext(project), owner = useResourceDraftSession(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const commandScope = { ...session, area: "resources" as const };
   const { locale, selectedTerm, termDraft, aliasInput, selectedUnit, contextDraft, contextReason,
-    previewCapture, preview, previewNeedsRefresh, fixedContext, pending, notice, busyMutation, completionVersion } = owner.state;
+    previewCapture, preview, previewNeedsRefresh, fixedContext, pending, notice, busyMutation, completionVersion, correctionDraft } = owner.state;
+  const correctionSourceInvalid = !!correctionDraft?.source && (!correctionDraft.source.trim() || !correctionDraft.evidence.sourceText.includes(correctionDraft.source));
+  const correctionTargetInvalid = !!correctionDraft?.target && (!correctionDraft.target.trim() || !correctionDraft.evidence.afterText.includes(correctionDraft.target));
+  const correctionFieldsTooLarge = !!correctionDraft && [correctionDraft.source, correctionDraft.target, correctionDraft.reason].some(text => new TextEncoder().encode(text).length > 16 * 1024);
+  const pendingChecked = pending && owner.state.pendingUncertain && (pending.kind === "correction" || pending.kind === "decision" && owner.state.previewCapture?.origin.kind === "correction");
   const pendingTerm = pending?.kind === "term" ? pending.request : null;
   const pendingContext = pending?.kind === "context" ? pending.request : null;
   const pendingDecision = pending?.kind === "decision" ? pending.request : null;
@@ -58,15 +65,17 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   const lastCompletion = useRef(completionVersion);
   const targetScope = project.metadata.targetLocales.join("\u0000");
   const targetAvailable = locale !== "" && project.metadata.targetLocales.includes(locale);
-  const active = open && targetAvailable;
+  const readableCorrection = !!previewCapture && previewCapture.origin.kind === "correction" && owner.canReadCapture(previewCapture);
+  const active = open && (targetAvailable || readableCorrection);
   const busy = readBusy || busyMutation;
   useLayoutEffect(() => {
     committed.current = { open, locale, project, disabled, tab };
     generation.current++; running.current = false; setReadBusy(false);
   }, [open, locale, project, targetScope, tab]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; generation.current++; leaveResolver.current?.(false); }; }, []);
-  function currentLocale(value: string) { return alive.current && committed.current.open && committed.current.locale === value && committed.current.project.sessionToken === session.sessionToken
-    && committed.current.project.metadata.projectId === session.projectId && owner.localeAvailable(value); }
+  function currentLocale(value: string) { const capture = owner.current().previewCapture; return alive.current && committed.current.open && committed.current.locale === value && committed.current.project.sessionToken === session.sessionToken
+    && committed.current.project.metadata.projectId === session.projectId && (owner.localeAvailable(value)
+      || capture?.origin.kind === "correction" && owner.canReadCapture(capture)); }
 
   const sourceScopeKey = ["resource-source-scope"];
   const scopeRead = useSessionQuery<ContentScope>({ key: sourceScopeKey, scopes: ["source"], enabled: active, read: () => sourceCommands.scope(session) });
@@ -93,6 +102,10 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   const termHistory = historyRead.data?.pages.flat() ?? [];
   const capturesRead = useSessionQuery<GlossaryCapture[]>({ key: ["resource-captures", 100], scopes: ["resources"], enabled: active && tab === "updates", read: () => commands.captures({ ...session, limit: 100 }) });
   const captures = capturesRead.data ?? [];
+  const correctionKey = ["resource-correction-basis", correctionDraft?.evidence.basis.unitId ?? "", locale, correctionDraft?.evidence.basis.after.selectionId ?? ""];
+  const correctionRead = useSessionQuery({ key: correctionKey, scopes: ["source", "translation"], enabled: active && tab === "updates" && !!correctionDraft,
+    read: () => { if (!correctionDraft) throw new Error("Missing correction basis");
+      return commands.correctionBasis({ ...session, unitId: correctionDraft.evidence.basis.unitId, locale, afterSelectionId: correctionDraft.evidence.basis.after.selectionId }); } });
   const unitActive = active && tab === "context" && !!selectedUnit?.unitId && !!selectedUnit.sourceRevisionId;
   const contextOptions = resourceReads.context(session, selectedUnit?.unitId ?? "", locale, selectedUnit?.sourceRevisionId ?? "");
   const contextRead = useSessionQuery({ ...contextOptions, enabled: unitActive });
@@ -116,8 +129,8 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     read: () => commands.impacts({ ...session, locale, offset: impactOffset, limit: 50 }) });
   const impact = active && tab === "impact" && !impactRead.error ? impactRead.data ?? null : null;
   const previewKey = ["resource-preview-current", previewCapture?.captureId ?? ""];
-  const previewActive = open && tab === "updates" && !!preview && !previewNeedsRefresh && !!previewCapture && owner.localeAvailable(previewCapture.targetLocale);
-  const previewRead = useSessionQuery<ResourcePreview>({ key: previewKey, scopes: ["source", "resources"], enabled: previewActive,
+  const previewActive = open && tab === "updates" && !!preview && !previewNeedsRefresh && !!previewCapture && owner.canReadCapture(previewCapture);
+  const previewRead = useSessionQuery<ResourcePreview>({ key: previewKey, scopes: ["source", "translation", "resources"], enabled: previewActive,
     read: async () => {
       const result = await commands.preview({ ...session, captureId: previewCapture!.captureId });
       if (result.capture.captureId !== previewCapture!.captureId || result.capture.digest !== previewCapture!.digest || result.capture.targetLocale !== previewCapture!.targetLocale) throw { reason: "resource-basis" };
@@ -128,7 +141,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   }, [completionVersion, reads]);
   useEffect(() => { setReadFailure(null); }, [locale, targetScope]);
   useEffect(() => open ? reads.subscribeChanges(scopes => {
-    if (scopes.some(scope => scope === "source" || scope === "resources" || scope === "project")) {
+    if (scopes.some(scope => scope === "source" || scope === "resources" || scope === "translation" || scope === "project")) {
       // Only invalidate the view wait. Captured drafts and pending business work
       // remain in the session owner while automatic reads refresh their projection.
       generation.current++; running.current = false; setReadBusy(false);
@@ -157,7 +170,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     const resourceCurrent = () => intentCurrent() && alive.current && !reads.retired
       && committed.current.project.sessionToken === session.sessionToken && committed.current.project.metadata.projectId === session.projectId
       && owner.current().locale === original.locale && owner.current().termSeq === original.termSeq
-      && owner.current().contextSeq === original.contextSeq && owner.current().factDraft === original.factDraft && !owner.factBlocked() && !owner.inFlight() && !owner.current().pending;
+      && owner.current().contextSeq === original.contextSeq && owner.current().correctionDraft === original.correctionDraft && owner.current().factDraft === original.factDraft && !owner.factBlocked() && !owner.inFlight() && !owner.current().pending;
     if (owner.factBlocked() || owner.inFlight() || owner.current().pending) { setOpen(true); return Promise.resolve(false); }
     if (queryRef.current && !await queryRef.current.allowLeave(current, resourceCurrent)) return false;
     // The Tool confirmation may settle its own capture and advance its draft sequence.
@@ -166,7 +179,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     const toolSequence = owner.tool.draftSequence.current;
     leaveProof.current = () => resourceCurrent() && owner.tool.draftSequence.current === toolSequence
       && !owner.tool.blocked() && !owner.tool.hasDraft();
-    if (!owner.termDirty() && !owner.contextDirty() && !owner.factDirty()) return Promise.resolve(true);
+    if (!owner.termDirty() && !owner.contextDirty() && !owner.factDirty() && !owner.correctionDirty()) return Promise.resolve(true);
     setOpen(true); setLeavePrompt(true);
     return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
   } }));
@@ -215,6 +228,15 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     if (!owner.localeAvailable(locale) || owner.inFlight() || owner.current().pending) return;
     if (!await onOpenTranslation(target, locale, suggestion) && alive.current) setReadFailure("translation-draft");
   }
+  async function openTermSource(term: TermRevision, current: () => boolean) {
+    if (!term.captureId || term.originKind !== "manual") return;
+    const before = owner.current();
+    const result = await commands.preview({ ...session, captureId: term.captureId });
+    if (!current() || owner.current() !== before || result.capture.captureId !== term.captureId || result.capture.targetLocale !== term.locale
+      || result.capture.origin.kind !== "correction" || result.capture.origin.basis.unitId !== term.scopeUnitId) return;
+    await owner.openPreview(result.capture, current);
+    if (current()) setTab("updates");
+  }
   function ready(key: QueryKey) { const value = reads.client.getQueryState(reads.key(key)); return value?.status === "success" && value.fetchStatus === "idle" && !value.isInvalidated; }
   function sourceReady() { return !!scope?.currentSnapshot && !!sourcePage && ready(sourceScopeKey) && ready(sourceKey); }
   function proof(keys: QueryKey[]) {
@@ -226,6 +248,34 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     if (disabled || busyMutation || owner.inFlight()) return { enabled: false, reason: "busy" };
     if (fresh && owner.current().pending) return { enabled: false, reason: "pending-action" };
     return { enabled: true };
+  }
+  function correctionPayload(): ResourceCorrectionCommandPayload | undefined {
+    const draft = owner.current().correctionDraft;
+    return draft ? { kind: "resource-correction", locale: draft.evidence.basis.locale, afterSelectionId: draft.evidence.basis.after.selectionId, editSeq: draft.editSeq } : undefined;
+  }
+  function correctionCurrent() {
+    const draft = owner.current().correctionDraft, value = reads.client.getQueryData<import("./resourceCommands").CorrectionTermEvidence>(reads.key(correctionKey));
+    return !!draft && !!value && ready(correctionKey) && ready(sourceScopeKey) && value.current
+      && same(value.basis, draft.evidence.basis) && scope?.currentSnapshot === value.basis.sourceSnapshotId;
+  }
+  function correctionAvailability(input?: ResourceCorrectionCommandPayload): CommandAvailability {
+    const base = common("updates"); if (!base.enabled) return base;
+    const draft = owner.current().correctionDraft;
+    const bytes = (text: string) => new TextEncoder().encode(text).length;
+    return input && same(input, correctionPayload()) && draft && correctionCurrent()
+      && [draft.source, draft.target, draft.reason].every(text => text.trim().length > 0 && bytes(text) <= 16 * 1024)
+      && draft.evidence.sourceText.includes(draft.source) && draft.evidence.afterText.includes(draft.target) ? base : unavailable;
+  }
+  async function captureCorrection() {
+    const current = currentView();
+    const evidence = proof([sourceScopeKey, correctionKey]);
+    await owner.captureCorrection(() => evidence() && correctionCurrent());
+    if (current() && !owner.current().pending && owner.current().correctionReceipt) await owner.retryPreview(current);
+  }
+  async function checkPending() {
+    const current = currentView();
+    await owner.checkPending();
+    if (current() && !owner.current().pending && owner.current().previewCapture) await owner.retryPreview(current);
   }
   function termPayload(): ResourceTermCommandPayload { const value = owner.current(); return { kind: "resource-term", locale: value.locale, termId: value.selectedTerm?.termId ?? null, expectedRevisionId: value.selectedTerm?.revisionId ?? null, editSeq: value.termSeq }; }
   function contextPayload(): ResourceContextCommandPayload | null { const value = owner.current(); return value.selectedUnit?.unitId && value.selectedUnit.sourceRevisionId ? { kind: "resource-context", unitId: value.selectedUnit.unitId, locale: value.locale,
@@ -257,15 +307,17 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   }
   function captureAvailability(input: ResourceCaptureCommandPayload | undefined, refreshing = false) {
     const allowed = common("updates"); if (!allowed.enabled) return allowed;
-    if (!input || !owner.localeAvailable(input.locale)) return unavailable;
+    if (!input) return unavailable;
     const capture = refreshing ? owner.current().previewCapture : captures.find(value => value.captureId === input.captureId);
-    return capture && same(input, capturePayload(capture)) && (refreshing || ready(["resource-captures", 100])) ? allowed : unavailable;
+    return capture && owner.canReadCapture(capture) && same(input, capturePayload(capture)) && (refreshing || ready(["resource-captures", 100])) ? allowed : unavailable;
   }
   function decisionPayload(entryId: string, revision: string | null, decision: ResourceDecisionCommandPayload["decision"], rowKind: ResourceDecisionCommandPayload["rowKind"], scopeUnitId: string | null): ResourceDecisionCommandPayload | null {
     const capture = owner.current().previewCapture; return capture ? { kind: "resource-decision", captureId: capture.captureId, digest: capture.digest, locale: capture.targetLocale, entryId, expectedRevisionId: revision, decision, rowKind, scopeUnitId } : null;
   }
   function matchesDecision(value: ResourcePreview | null | undefined, input: ResourceDecisionCommandPayload) {
     if (!value || value.capture.captureId !== input.captureId || value.capture.digest !== input.digest || value.capture.targetLocale !== input.locale) return false;
+    if (value.correction && (input.decision === "override" || input.decision === "adopt" && (!value.correction.evidence.current
+      || value.rows.some(row => row.entry.id === input.entryId && row.current !== null)))) return false;
     if (input.rowKind === "removed") return value.removed.some(row => row.externalEntryId === input.entryId && row.revisionId === input.expectedRevisionId && (row.scopeUnitId ?? null) === input.scopeUnitId) && (input.decision === "adopt" || input.decision === "keep");
     const row = value.rows.find(item => item.entry.id === input.entryId);
     return !!row && row.kind === input.rowKind && (row.current?.revisionId ?? null) === input.expectedRevisionId && (row.scopeUnitId ?? null) === input.scopeUnitId
@@ -284,7 +336,10 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   function decisionAvailability(input?: ResourceDecisionCommandPayload) {
     const allowed = common("updates"); if (!allowed.enabled) return allowed;
     const value = owner.current(), current = reads.client.getQueryData<ResourcePreview>(reads.key(previewKey));
-    return input && owner.localeAvailable(input.locale) && !value.previewNeedsRefresh && previewSourceCurrent() && sourceReady() && ready(previewKey)
+    const localeAllowed = input && (owner.localeAvailable(input.locale) || value.previewCapture?.origin.kind === "correction"
+      && owner.canReadCapture(value.previewCapture) && (input.decision === "keep" || input.decision === "ignore"));
+    return input && localeAllowed && !value.previewNeedsRefresh && previewSourceCurrent() && (value.preview?.correction ? ready(sourceScopeKey) : sourceReady()) && ready(previewKey)
+      && !(value.preview?.correction && !value.preview.correction.evidence.current && (input.decision === "adopt" || input.decision === "override"))
       && matchesDecision(value.preview, input) && matchesDecision(current, input) && sameDecisionRow(value.preview, current, input) ? allowed : unavailable;
   }
   function translationPayload(target: EditorTarget, evidenceKind: "tm" | "impact", evidenceId: string, selectionId: string | null): ResourceTranslationCommandPayload {
@@ -305,6 +360,10 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   useLayoutEffect(() => {
     const metadata = { category: "resources" as const, binding: null, scope: commandScope, confirmation: "none" as const };
     const removals = [
+      registry.register({ ...metadata, id: "resource.capture-correction", nameKey: "correctionFeedback.capture", risk: "captures-resources", payloadKind: "resource-correction", availability: correctionAvailability,
+        handler: () => { void captureCorrection(); } }),
+      registry.register({ ...metadata, id: "resource.check-pending", nameKey: "correctionFeedback.check", risk: "reads-resources", payloadKind: "resource-pending",
+        availability: input => { const base = common(undefined, false); return base.enabled && input && same(input, pendingPayload()) && pendingChecked ? base : unavailable; }, handler: () => { void checkPending(); } }),
       registry.register({ ...metadata, id: "resource.save-term", nameKey: "resource.save", risk: "writes-resources", payloadKind: "resource-term", availability: termAvailability,
         handler: () => { void owner.saveTerm(proof([sourceScopeKey, sourceKey, termsKey])); } }),
       registry.register({ ...metadata, id: "resource.save-context", nameKey: "resource.saveContext", risk: "writes-resources", payloadKind: "resource-context", availability: input => contextAvailability(input),
@@ -321,18 +380,18 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
       registry.register({ ...metadata, id: "resource.refresh-preview", nameKey: "resource.retryPreview", risk: "reads-resources", payloadKind: "resource-capture", availability: input => captureAvailability(input, true),
         handler: () => { void owner.retryPreview(currentView()); } }),
       registry.register({ ...metadata, id: "resource.decide-entry", nameKey: "resource.actions", risk: "writes-resources", payloadKind: "resource-decision", availability: decisionAvailability,
-        handler: input => { const current = proof([sourceScopeKey, sourceKey, previewKey]); void refreshDecision(() => owner.decide(input.entryId, input.expectedRevisionId, input.decision, () => current() && previewSourceCurrent() && matchesDecision(reads.client.getQueryData<ResourcePreview>(reads.key(previewKey)), input))); } }),
+        handler: input => { const current = proof(preview?.correction ? [sourceScopeKey, previewKey] : [sourceScopeKey, sourceKey, previewKey]); void refreshDecision(() => owner.decide(input.entryId, input.expectedRevisionId, input.decision, () => current() && previewSourceCurrent() && matchesDecision(reads.client.getQueryData<ResourcePreview>(reads.key(previewKey)), input))); } }),
       registry.register({ ...metadata, id: "resource.retry-pending", nameKey: "resource.retry", risk: "retries-resource-action", payloadKind: "resource-pending",
-        availability: input => { const allowed = common(undefined, false); return !allowed.enabled ? allowed : input && same(input, pendingPayload()) ? allowed : unavailable; }, handler: () => { void retryPending(); } }),
+        availability: input => { const allowed = common(undefined, false); return !allowed.enabled ? allowed : input && same(input, pendingPayload()) && (!pendingChecked || owner.state.pendingCheckedMissing) ? allowed : unavailable; }, handler: () => { void retryPending(); } }),
       registry.register({ ...metadata, id: "resource.open-translation", nameKey: "resource.openTranslation", risk: "opens-translation", payloadKind: "resource-translation", availability: translationAvailability,
         handler: input => openTranslation(input.target, input.evidenceKind === "tm" ? suggestions.find(item => item.translationRevisionId === input.evidenceId)?.translationText : undefined) }),
     ];
     return () => removals.forEach(remove => remove());
   });
   function chooseFileAvailability() {
-    const allowed = common("updates"); return !allowed.enabled ? allowed : owner.localeAvailable(locale) && sourceReady() && !owner.termDirty() && !owner.contextDirty() ? allowed : unavailable;
+    const allowed = common("updates"); return !allowed.enabled ? allowed : owner.localeAvailable(locale) && sourceReady() && !owner.termDirty() && !owner.contextDirty() && !owner.correctionDirty() ? allowed : unavailable;
   }
-  function retryAvailable() { const input = pendingPayload(); return !!input && common(undefined, false).enabled; }
+  function retryAvailable() { const input = pendingPayload(); return !!input && common(undefined, false).enabled && (!pendingChecked || owner.state.pendingCheckedMissing); }
   function dispatchRetry() { const input = pendingPayload(); if (input) registry.dispatch("resource.retry-pending", commandScope, input); }
   function decideEntry(entryId: string, revision: string | null, decision: ResourceDecisionCommandPayload["decision"], rowKind: ResourceDecisionCommandPayload["rowKind"], scopeUnitId: string | null) {
     const input = decisionPayload(entryId, revision, decision, rowKind, scopeUnitId); if (input) registry.dispatch("resource.decide-entry", commandScope, input);
@@ -347,9 +406,9 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   return <>
     <WorkbenchPanel open={open} title={t("resource.title")} description={t("resource.description")} className="source-dialog" onBack={requestClose} backDisabled={disabled}>
         <div className="execution-content" aria-busy={busy}>
-          {failure ? <div role="alert"><p>{t("resource.error", { reason: t(`resource.errors.${failure}`, { defaultValue: failure }) })}</p><CommandFailureDetails failure={failureValue} /></div> : null}
+          {failure ? <div role="alert">{failure === "correction-existing" ? <p>{t("correctionFeedback.existing")}</p> : null}<p>{t("resource.error", { reason: t(`resource.errors.${failure}`, { defaultValue: failure }) })}</p><CommandFailureDetails failure={failureValue} /></div> : null}
           <ContextFactDecisionFields context={session} disabled={disabled}/>
-          {notice ? <p role="status">{t(notice === "saved" ? "resource.saved" : notice === "savedNewer" ? "resource.saved" : notice === "decisionSaved" ? "resource.decisionSaved" : notice === "previewReady" ? "resource.previewReady" : notice === "captureSaved" ? "resource.captureSaved" : notice === "pickerUnknown" ? "resource.pickerUnknown" : notice === "unknown" ? "resource.uncertainAction" : "resource.actionFailed")}</p> : null}
+          {notice ? <p role="status">{t(notice === "correctionSaved" ? "correctionFeedback.saved" : notice === "correctionSavedNewer" ? "correctionFeedback.savedNewer" : notice === "saved" ? "resource.saved" : notice === "savedNewer" ? "resource.saved" : notice === "decisionSaved" ? "resource.decisionSaved" : notice === "previewReady" ? "resource.previewReady" : notice === "captureSaved" ? "resource.captureSaved" : notice === "pickerUnknown" ? "resource.pickerUnknown" : notice === "unknown" ? "resource.uncertainAction" : "resource.actionFailed")}</p> : null}
           {notice === "savedNewer" ? <p role="status">{t("resource.savedNewer")}</p> : null}
           {readFailure ? <div role="alert"><p>{t("resource.readFailed", { reason: t(`resource.errors.${failureReason(readFailure)}`, { defaultValue: failureReason(readFailure) ?? "" }) })}</p><CommandFailureDetails failure={readFailure} /></div> : null}
           {contextEditorReturn && onReturnToEditor ? <><p>{t("resource.contextEditorHelp")}</p><button type="button" className="secondary-button"
@@ -357,7 +416,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
             onClick={()=>{if(contextEditorReturn&&!owner.inFlight()&&!owner.current().pending)void onReturnToEditor(contextEditorReturn);}}>{t("resource.returnToEditor",{key:contextEditorReturn.target.key,locale:contextEditorReturn.locale})}</button></>:null}
           {!targetAvailable && locale ? <p role="status">{t("resource.removedTarget", { locale })} <button className="text-button" onClick={requestClose}>{t("resource.returnSettings")}</button></p> : null}
           {previewCapture && previewCapture.targetLocale !== locale && !owner.localeAvailable(previewCapture.targetLocale) ? <p role="status">{t("resource.removedPreviewTarget", { locale: previewCapture.targetLocale })} <button className="text-button" onClick={requestClose}>{t("resource.returnSettings")}</button></p> : null}
-          {pending && (pending.kind === "capture" || (pending.kind === "term" && tab !== "terms") || (pending.kind === "context" && tab !== "context") || (pending.kind === "decision" && tab !== "updates")) ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button></div> : null}
+          {pending && !pendingChecked && (pending.kind === "capture" || (pending.kind === "term" && tab !== "terms") || (pending.kind === "context" && tab !== "context") || (pending.kind === "decision" && tab !== "updates")) ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button></div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           <label>{t("resource.targetLocale")}<select value={locale} disabled={busyMutation || !!pending} onChange={event => switchLocale(event.target.value)}>{!targetAvailable && locale ? <option value={locale} disabled>{t("resource.removedTargetOption", { locale })}</option> : null}{project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
           {!locale ? <p>{t("resource.noLocale")}</p> : null}
@@ -381,19 +440,50 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
               <label className="source-check"><input type="checkbox" checked={termDraft.protected} onChange={event => owner.editTerm({ ...owner.current().termDraft, protected: event.target.checked })} />{t("resource.protected")}</label>
               <label>{t("resource.reason")}<input value={termDraft.reason} onChange={event => owner.editTerm({ ...owner.current().termDraft, reason: event.target.value })} /></label>
               <div className="execution-actions"><button className="primary-button" disabled={pendingTerm ? !retryAvailable() : !termAvailability(termPayload()).enabled} onClick={() => { if (pendingTerm) dispatchRetry(); else registry.dispatch("resource.save-term", commandScope, termPayload()); }}>{pendingTerm ? t("resource.retry") : t("resource.save")}</button><button className="secondary-button" disabled={busyMutation || !termDirty || !!pending} onClick={() => owner.discardTerm()}>{t("resource.discardDraft")}</button></div>
-              {selectedTerm ? <><p>{t("resource.provenance")}: {selectedTerm.originKind} · {selectedTerm.reason}</p><details><summary>{t("resource.history")}</summary>{readStatus(historyRead.error, historyRead.isFetching, () => { void (historyRead.isFetchNextPageError ? historyRead.fetchNextPage() : historyRead.refetch()); })}<ul>{termHistory.map(revision => <li key={revision.revisionId}>{revision.source} → {revision.target} · {revision.reason}</li>)}</ul>{historyRead.hasNextPage ? <button className="secondary-button" disabled={busy || !targetAvailable || historyRead.isFetching} onClick={() => void historyRead.fetchNextPage()}>{t("execution.nextPage")}</button> : null}</details></> : null}
+              {selectedTerm ? <><p>{t("resource.provenance")}: {selectedTerm.originKind} · {selectedTerm.reason}</p>{selectedTerm.originKind === "manual" && selectedTerm.captureId ? <button type="button" disabled={busy || !!pending} onClick={() => { void run(current => openTermSource(selectedTerm, current)); }}>{t("correctionFeedback.viewCandidate")}</button> : null}<details><summary>{t("resource.history")}</summary>{readStatus(historyRead.error, historyRead.isFetching, () => { void (historyRead.isFetchNextPageError ? historyRead.fetchNextPage() : historyRead.refetch()); })}<ul>{termHistory.map(revision => <li key={revision.revisionId}>{revision.source} → {revision.target} · {revision.reason}{revision.originKind === "manual" && revision.captureId ? <button type="button" disabled={busy || !!pending} onClick={() => { void run(current => openTermSource(revision, current)); }}>{t("correctionFeedback.viewCandidate")}</button> : null}</li>)}</ul>{historyRead.hasNextPage ? <button className="secondary-button" disabled={busy || !targetAvailable || historyRead.isFetching} onClick={() => void historyRead.fetchNextPage()}>{t("execution.nextPage")}</button> : null}</details></> : null}
             </div>
           </section> : null}
+          {tab === "updates" && correctionDraft ? <section aria-label={t("correctionFeedback.title")}>
+            <h3>{t("correctionFeedback.title")}</h3><p>{t("correctionFeedback.help")}</p>
+            <p>{t("correctionFeedback.scope", { unit: correctionEditorReturn?.target.key ?? correctionDraft.evidence.basis.unitId, locale: correctionDraft.evidence.basis.locale })}</p>
+            <p role="status">{t(correctionCurrent() ? "correctionFeedback.current" : "correctionFeedback.stale")}</p>
+            {readStatus(correctionRead.error, correctionRead.isFetching, () => { void correctionRead.refetch(); })}
+            <details><summary>{t("correctionFeedback.evidence")}</summary><label>{t("correctionFeedback.sourceText")}<textarea readOnly rows={4} value={correctionDraft.evidence.sourceText} /></label>
+              <label>{t("correctionFeedback.before")}<textarea readOnly rows={4} value={correctionDraft.evidence.beforeText} /></label><label>{t("correctionFeedback.after")}<textarea readOnly rows={4} value={correctionDraft.evidence.afterText} /></label>
+              <p>{t("correctionFeedback.savedSources")}</p><code>{correctionDraft.evidence.beforeSourceSnapshotId} / {correctionDraft.evidence.beforeSourceRevisionId}</code><code>{correctionDraft.evidence.basis.sourceSnapshotId} / {correctionDraft.evidence.basis.sourceRevisionId}</code>
+            </details>
+            <label>{t("correctionFeedback.sourceTerm")}<input aria-invalid={correctionSourceInvalid} aria-describedby={correctionSourceInvalid ? `${correctionFieldId}-source` : undefined} value={correctionDraft.source} onChange={event => owner.editCorrection({ source: event.target.value })} /></label>
+            <label>{t("correctionFeedback.targetTerm")}<input aria-invalid={correctionTargetInvalid} aria-describedby={correctionTargetInvalid ? `${correctionFieldId}-target` : undefined} value={correctionDraft.target} onChange={event => owner.editCorrection({ target: event.target.value })} /></label>
+            <label>{t("correctionFeedback.reason")}<textarea rows={3} value={correctionDraft.reason} onChange={event => owner.editCorrection({ reason: event.target.value })} /></label>
+            <label><input type="checkbox" checked={correctionDraft.protected} onChange={event => owner.editCorrection({ protected: event.target.checked })} />{t("resource.protected")}</label>
+            {correctionSourceInvalid ? <p role="alert" id={`${correctionFieldId}-source`}>{t("correctionFeedback.sourceMismatch")}</p> : null}
+            {correctionTargetInvalid ? <p role="alert" id={`${correctionFieldId}-target`}>{t("correctionFeedback.targetMismatch")}</p> : null}
+            {correctionFieldsTooLarge ? <p role="alert">{t("correctionFeedback.fieldLimit")}</p> : null}
+            <p>{t("correctionFeedback.literalHelp")}</p><div className="execution-actions"><button type="button" disabled={!correctionAvailability(correctionPayload()).enabled} onClick={() => { const payload = correctionPayload(); if (payload) registry.dispatch("resource.capture-correction", commandScope, payload); }}>{t("correctionFeedback.capture")}</button>
+              <button type="button" disabled={!!pending || busyMutation} onClick={() => owner.discardCorrection()}>{t("resource.discardDraft")}</button></div>
+          </section> : null}
+          {correctionEditorReturn && onReturnFromCorrection ? <button type="button" disabled={busyMutation || !!pending || disabled || owner.tool.blocked() || owner.tool.hasDraft()} onClick={() => { void onReturnFromCorrection(correctionEditorReturn); }}>{t("correctionFeedback.return")}</button> : null}
+          {pendingChecked ? <div role="status"><p>{t(owner.state.pendingCheckedMissing ? "correctionFeedback.missing" : "correctionFeedback.unknown")}</p>
+            <button type="button" disabled={busyMutation || disabled} onClick={() => { const input = pendingPayload(); if (input) registry.dispatch("resource.check-pending", commandScope, input); }}>{t("correctionFeedback.check")}</button>
+            {owner.state.pendingCheckedMissing ? <button type="button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button> : null}</div> : null}
           {tab === "updates" && locale ? <section><h3>{t("resource.resourceUpdates")}</h3><p>{t("resource.fileHelp")}</p><button className="primary-button" disabled={!chooseFileAvailability().enabled} onClick={() => registry.dispatch("resource.choose-file", commandScope, { kind: "resource-locale", locale })}>{t("resource.chooseFile")}</button>
-            {readStatus(capturesRead.error, capturesRead.isFetching, () => { void capturesRead.refetch(); })}{captures.length ? <div><h4>{t("resource.savedCaptures")}</h4><ul>{captures.filter(item => item.targetLocale === locale).map(item => <li key={item.captureId}><button className="text-button" disabled={!captureAvailability(capturePayload(item)).enabled} onClick={() => registry.dispatch("resource.open-preview", commandScope, capturePayload(item))}>{item.resourceId} · {item.revision}</button></li>)}</ul></div> : null}
+            {readStatus(capturesRead.error, capturesRead.isFetching, () => { void capturesRead.refetch(); })}{captures.length ? <div><h4>{t("resource.savedCaptures")}</h4><ul>{captures.filter(item => item.targetLocale === locale || item.origin.kind === "correction").map(item => <li key={item.captureId}><button className="text-button" disabled={!captureAvailability(capturePayload(item)).enabled} onClick={() => registry.dispatch("resource.open-preview", commandScope, capturePayload(item))}>{item.origin.kind === "file" ? `${item.origin.resourceId} · ${item.origin.revision}` : t("correctionFeedback.candidateScope", { unit: item.origin.basis.unitId, locale: item.targetLocale })}</button></li>)}</ul></div> : null}
             {previewCapture && (!preview || previewNeedsRefresh || !previewSourceCurrent() || !same(preview, previewRead.data) || !!previewRead.error) ? <p>{t(preview && !previewNeedsRefresh && !previewRead.error ? "resource.previewChanged" : "resource.previewUnavailable")} <button className="secondary-button" disabled={!captureAvailability(capturePayload(previewCapture), true).enabled} onClick={() => registry.dispatch("resource.refresh-preview", commandScope, capturePayload(previewCapture))}>{t("resource.retryPreview")}</button></p> : null}
             {previewActive ? readStatus(previewRead.error, previewRead.isFetching, () => { void previewRead.refetch(); }) : null}
-            {preview ? <><p>{preview.capture.resourceId} · {preview.capture.revision} · {preview.capture.license} · {preview.capture.targetLocale} · {preview.capture.count}</p><details><summary>{t("resource.evidence")}</summary><code>{preview.capture.digest}</code></details>
+            {preview ? <>{preview.capture.origin.kind === "file" ? <p>{preview.capture.origin.resourceId} · {preview.capture.origin.revision} · {preview.capture.origin.license} · {preview.capture.targetLocale} · {preview.capture.count}</p> : <p>{t("correctionFeedback.candidate")} · {preview.capture.targetLocale}</p>}
+              {preview.correction ? <section aria-label={t("correctionFeedback.evidence")}><p role="status">{t(preview.correction.evidence.current ? "correctionFeedback.current" : "correctionFeedback.stale")}</p>
+                <p>{t("correctionFeedback.scope", { unit: preview.correction.evidence.basis.unitId, locale: preview.correction.evidence.basis.locale })}</p>
+                <details><summary>{t("correctionFeedback.evidence")}</summary><label>{t("correctionFeedback.sourceText")}<textarea readOnly rows={4} value={preview.correction.evidence.sourceText} /></label>
+                  <label>{t("correctionFeedback.before")}<textarea readOnly rows={4} value={preview.correction.evidence.beforeText} /></label><label>{t("correctionFeedback.after")}<textarea readOnly rows={4} value={preview.correction.evidence.afterText} /></label>
+                  {preview.rows.map(row => <div key={row.entry.id}><label>{t("resource.reason")}<textarea readOnly rows={3} value={row.entry.reason} /></label><label><input type="checkbox" checked={row.entry.protected} disabled />{t("resource.protected")}</label></div>)}
+                  <p>{t("correctionFeedback.savedSources")}</p><code>{preview.correction.evidence.beforeSourceSnapshotId} / {preview.correction.evidence.beforeSourceRevisionId}</code><code>{preview.correction.evidence.basis.sourceSnapshotId} / {preview.correction.evidence.basis.sourceRevisionId}</code>
+                </details>{preview.rows.some(row => row.current !== null) ? <p>{t("correctionFeedback.adoptedHelp")}</p> : null}{preview.correction.decision ? <p>{t("correctionFeedback.decided", { decision: t(`correctionFeedback.decisions.${preview.correction.decision.decision}`) })}</p> : <p>{t("correctionFeedback.notAdopted")}</p>}
+              </section> : null}<details><summary>{t("resource.evidence")}</summary><code>{preview.capture.digest}</code></details>
               <p>{t("resource.previewHelp")}</p>
-              <div className="source-table-scroll"><table className="source-table"><thead><tr><th>{t("resource.sourceTerm")}</th><th>{t("resource.currentValue")}</th><th>{t("resource.newValue")}</th><th>{t("resource.change")}</th><th>{t("resource.actions")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.id}><th scope="row">{row.entry.source}<small> · {row.entry.nativeKey ?? t("resource.projectScope")}</small></th><td>{row.current?.target ?? "—"}</td><td>{row.entry.target}</td><td>{t(`resource.changeKind.${row.kind}`)}</td><td><button className="text-button" disabled={!canDecide(row.entry.id, row.current?.revisionId ?? null, row.kind === "override" ? "override" : "adopt", row.kind, row.scopeUnitId ?? null)} onClick={() => decideEntry(row.entry.id, row.current?.revisionId ?? null, row.kind === "override" ? "override" : "adopt", row.kind, row.scopeUnitId ?? null)}>{row.kind === "override" ? t("resource.setOverride") : t("resource.adopt")}</button><button className="text-button" disabled={!canDecide(row.entry.id, row.current?.revisionId ?? null, "keep", row.kind, row.scopeUnitId ?? null)} onClick={() => decideEntry(row.entry.id, row.current?.revisionId ?? null, "keep", row.kind, row.scopeUnitId ?? null)}>{t("resource.keep")}</button><button className="text-button" disabled={!canDecide(row.entry.id, row.current?.revisionId ?? null, "ignore", row.kind, row.scopeUnitId ?? null)} onClick={() => decideEntry(row.entry.id, row.current?.revisionId ?? null, "ignore", row.kind, row.scopeUnitId ?? null)}>{t("resource.ignore")}</button></td></tr>)}</tbody></table></div>
+              <div className="source-table-scroll"><table className="source-table"><thead><tr><th>{t("resource.sourceTerm")}</th><th>{t("resource.currentValue")}</th><th>{t("resource.newValue")}</th><th>{t("resource.change")}</th><th>{t("resource.actions")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.id}><th scope="row">{row.entry.source}<small> · {row.entry.nativeKey ?? t(row.scopeUnitId ? "resource.unitScope" : "resource.projectScope")}</small></th><td>{row.current?.target ?? "—"}</td><td>{row.entry.target}</td><td>{t(`resource.changeKind.${row.kind}`)}</td><td><button className="text-button" disabled={!canDecide(row.entry.id, row.current?.revisionId ?? null, preview.correction ? "adopt" : row.kind === "override" ? "override" : "adopt", row.kind, row.scopeUnitId ?? null)} onClick={() => decideEntry(row.entry.id, row.current?.revisionId ?? null, preview.correction ? "adopt" : row.kind === "override" ? "override" : "adopt", row.kind, row.scopeUnitId ?? null)}>{!preview.correction && row.kind === "override" ? t("resource.setOverride") : t("resource.adopt")}</button><button className="text-button" disabled={!canDecide(row.entry.id, row.current?.revisionId ?? null, "keep", row.kind, row.scopeUnitId ?? null)} onClick={() => decideEntry(row.entry.id, row.current?.revisionId ?? null, "keep", row.kind, row.scopeUnitId ?? null)}>{t("resource.keep")}</button><button className="text-button" disabled={!canDecide(row.entry.id, row.current?.revisionId ?? null, "ignore", row.kind, row.scopeUnitId ?? null)} onClick={() => decideEntry(row.entry.id, row.current?.revisionId ?? null, "ignore", row.kind, row.scopeUnitId ?? null)}>{t("resource.ignore")}</button></td></tr>)}</tbody></table></div>
               {preview.removed.length ? <><h4>{t("resource.removed")}</h4><ul>{preview.removed.map(term => <li key={term.termId}>{term.source} → {term.target}<button className="text-button" disabled={!canDecide(term.externalEntryId!, term.revisionId, "adopt", "removed", term.scopeUnitId ?? null)} onClick={() => decideEntry(term.externalEntryId!, term.revisionId, "adopt", "removed", term.scopeUnitId ?? null)}>{t("resource.adoptRemoval")}</button><button className="text-button" disabled={!canDecide(term.externalEntryId!, term.revisionId, "keep", "removed", term.scopeUnitId ?? null)} onClick={() => decideEntry(term.externalEntryId!, term.revisionId, "keep", "removed", term.scopeUnitId ?? null)}>{t("resource.keep")}</button></li>)}</ul></> : null}
             </> : <p>{t("resource.noPreview")}</p>}
-            {pendingDecision ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button></div> : null}
+            {pendingDecision && !pendingChecked ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button></div> : null}
             <TmxExchangePreviewPanel context={session} sourceLocale={project.metadata.sourceLocale} locale={locale}
               enabled={open && tab === "updates" && targetAvailable && !disabled} />
             <TbxExchangePreviewPanel context={session} sourceLocale={project.metadata.sourceLocale} locale={locale}
