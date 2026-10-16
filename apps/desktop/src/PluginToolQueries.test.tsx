@@ -7,11 +7,14 @@ import { useResourceDraftSession } from "./ResourceDraftSession";
 import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSupport/pluginToolFixture";
+import { nativeInventory, nativePackage, nativeEnvironment, nativeDigest, nativeOrigin } from "./testSupport/pluginNativeFixture";
+import type { PluginToolView } from "./pluginCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { i18n } from "./i18n";
 import { SessionNavigation, type SessionExitPermit } from "./sessionNavigation";
 import type { ProjectView } from "./projectCommands";
 import type { AttemptDetail, PluginToolPrepareRequest, PluginToolPreflight, ExecutionOutputView } from "./executionCommands";
+import { validateResponseToolPreflight } from "./generated/execution.validators";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import errorFixture from "../test/fixtures/commandErrors.contract.json";
 
@@ -22,12 +25,16 @@ const project: ProjectView = { sessionToken: "synthetic-query-session", locator:
 let serial: number, inventory: typeof toolQueryInventory, prepared: PluginToolPreflight | null, detail: AttemptDetail | null;
 let outputs: Map<string, ExecutionOutputView>, startUnknown: boolean, malformedOutput: boolean, queued: boolean;
 let holdPreparation: Promise<void> | null;
-let applicationMode: boolean, instanceState: "reserved" | "active" | "stopping" | "stopped", unknownStop: boolean;
+let applicationMode: boolean, nativeMode: boolean, instanceState: "reserved" | "active" | "stopping" | "stopped", unknownStop: boolean;
 const applicationBasis = { instanceId: fixtureIdentity(1900), activationGeneration: 1 };
+function selectedTool(): PluginToolView {
+  return { ...structuredClone(toolQueryView), componentScope: applicationMode ? "application" : "project",
+    ...(nativeMode ? { environment: nativeEnvironment, environmentDigest: nativeDigest, runtimeOrigin: nativeOrigin } : {}) };
+}
 
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
-  applicationMode = false; instanceState = "reserved"; unknownStop = false;
+  applicationMode = false; nativeMode = false; instanceState = "reserved"; unknownStop = false;
   serial = 901; inventory = structuredClone(toolQueryInventory); prepared = null; detail = null;
   outputs = new Map(); startUnknown = false; malformedOutput = false; queued = false; holdPreparation = null;
   invoke.mockReset();
@@ -37,8 +44,8 @@ beforeEach(async () => {
       case "read_content_scope": return { revision: "0", currentSnapshot: null };
       case "read_terms": case "list_resource_captures": return [];
       case "read_plugin_inventory": return structuredClone(inventory);
-      case "read_plugin_package": return structuredClone(toolQueryPackage);
-      case "read_plugin_tool": return { ...structuredClone(toolQueryView), componentScope: applicationMode ? "application" : "project" };
+      case "read_plugin_package": return nativeMode ? nativePackage(toolQueryPackage) : structuredClone(toolQueryPackage);
+      case "read_plugin_tool": return selectedTool();
       case "read_application_plugin_instance": return { basis: structuredClone(applicationBasis), state: instanceState };
       case "stop_application_plugin_instance": {
         instanceState = "stopped";
@@ -49,9 +56,10 @@ beforeEach(async () => {
       case "prepare_plugin_tool": {
         const input = request as unknown as PluginToolPrepareRequest;
         if (holdPreparation) await holdPreparation;
-        prepared = { attemptId: input.attemptId, inputDigest: "c".repeat(64), tool: { ...structuredClone(toolQueryView), componentScope: applicationMode ? "application" : "project" },
+        prepared = { attemptId: input.attemptId, inputDigest: "c".repeat(64), tool: selectedTool(),
           applicationScope: applicationMode ? structuredClone(applicationBasis) : null,
-          applicationCapabilities: applicationMode ? [{ contributionId: toolQueryView.binding.capability.provider.contributionId, capability: structuredClone(toolQueryView.binding.capability.declaration) }, { contributionId: "secondary.call", capability: structuredClone(toolQueryView.binding.capability.declaration) }] : [],
+          applicationCapabilities: applicationMode ? [{ contributionId: toolQueryView.binding.capability.provider.contributionId, capability: structuredClone(toolQueryView.binding.capability.declaration) },
+            ...(!nativeMode ? [{ contributionId: "secondary.call", capability: structuredClone(toolQueryView.binding.capability.declaration) }] : [])] : [],
           items: input.payloads.map((payload, index) => ({ itemId: fixtureIdentity(1000 + index), payload })).reverse() };
         return structuredClone(prepared);
       }
@@ -89,7 +97,7 @@ beforeEach(async () => {
 });
 afterEach(cleanup);
 
-async function open() {
+async function open(presentation = true) {
   const user = userEvent.setup(), ref = createRef<ResourceHandle>();
   let commands!: WorkbenchCommands, owner!: ReturnType<typeof useResourceDraftSession>;
   function Probe() {
@@ -101,8 +109,10 @@ async function open() {
   const view = render(ui(), project);
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await user.click(screen.getByRole("tab", { name: "Reference queries" }));
-  await screen.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
-  await user.click(screen.getByRole("checkbox", { name: /^Term 👩🏽‍💻/ }));
+  if (presentation) {
+    await screen.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
+    await user.click(screen.getByRole("checkbox", { name: /^Term 👩🏽‍💻/ }));
+  }
   return { user, ref, view, ui, commands: () => commands, owner: () => owner.tool, resources: () => owner };
 }
 function exitNavigation(handle: Awaited<ReturnType<typeof open>>) {
@@ -174,10 +184,13 @@ it("keeps B typed while A is captured and requires a new review instead of grant
   expect(requests[1][1].request.payloads[0].rows[0].text).toBe("AB");
 });
 
-it("retains the exact grant and request after an unknown start acknowledgement and blocks leaving until reconciliation", async () => {
+it.each(["project", "native-application"])("retains the exact grant after an unknown %s start and blocks leaving until reconciliation", async mode => {
+  if (mode === "native-application") { nativeMode = true; applicationMode = true; inventory = nativeInventory(inventory); }
   const { user, ref } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "single");
-  await review(user); startUnknown = true; await start(user);
+  await review(user);
+  if (applicationMode) await user.click(await screen.findByRole("checkbox", { name: /^I allow this exact shared instance/ }));
+  startUnknown = true; await start(user);
   const retry = await screen.findByRole("button", { name: "Check the original action" });
   let allowed: boolean | undefined;
   await act(async () => { allowed = await ref.current?.allowLeave(); });
@@ -190,6 +203,7 @@ it("retains the exact grant and request after an unknown start acknowledgement a
   await waitFor(() => expect(screen.queryByRole("button", { name: "Check the original action" })).toBeNull());
   const starts = invoke.mock.calls.filter(([command]) => command === "start_plugin_tool");
   expect(starts).toHaveLength(2); expect(starts[1][1]).toEqual(starts[0][1]);
+  expect(starts[0][1].request.applicationExecution).toBe(applicationMode);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
 });
 
@@ -486,13 +500,20 @@ it.each(["missing-selected", "duplicate-member", "external-member", "ordinary-ro
   expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
 });
 
-it("requires independent application lifetime consent and preserves drafts/results after an unknown exact stop", async () => {
+it.each(["javascript", "native-worker"])("requires independent %s application lifetime consent and preserves drafts/results after an unknown exact stop", async runtime => {
   applicationMode = true;
+  if (runtime === "native-worker") { nativeMode = true; inventory = nativeInventory(inventory); }
   const { user, owner } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "kept query");
+  expect(invoke.mock.calls.some(([command]) => ["prepare_plugin_tool", "start_plugin_tool", "read_application_plugin_instance"].includes(command))).toBe(false);
   await review(user);
   const lifetime = await screen.findByRole("checkbox", { name: /^I allow this exact shared instance/ });
-  expect(screen.getByText("secondary.call")).toBeVisible();
+  if (nativeMode) {
+    expect(screen.queryByText("secondary.call")).toBeNull();
+    expect(screen.getByText(i18n.t("toolQuery.applicationNativeHelp"))).toBeVisible();
+    expect(prepared?.tool.environment).toEqual(nativeEnvironment);
+    expect(prepared?.applicationCapabilities).toHaveLength(1);
+  } else expect(screen.getByText("secondary.call")).toBeVisible();
   expect(screen.getByText(toolQueryView.binding.capability.provider.contributionId)).toBeVisible();
   expect(screen.getByText(i18n.t("toolQuery.applicationCapabilities"))).toBeVisible();
   const run = screen.getByRole("button", { name: "Run reference queries" });
@@ -520,4 +541,37 @@ it("requires independent application lifetime consent and preserves drafts/resul
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("kept query plus draft");
   expect(screen.getByRole("region", { name: "Query results" })).toBeVisible();
   expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+});
+
+it("keeps an approved Native package unavailable without its exact Host approval and retains query input", async () => {
+  nativeMode = true; applicationMode = true; inventory = nativeInventory(inventory, false);
+  const { user, owner } = await open(false);
+  const input = screen.getByRole("textbox", { name: "Query text 1" });
+  await user.type(input, "not authorized 👩🏽‍💻 e\u0301");
+  await screen.findByText(i18n.t("toolQuery.unavailable"));
+  expect(screen.getByRole("button", { name: "Review queries" })).toBeDisabled();
+  expect(owner().current().capture).toBeNull();
+  expect(input).toHaveValue("not authorized 👩🏽‍💻 e\u0301");
+  expect(invoke.mock.calls.some(([command]) => ["read_plugin_tool", "prepare_plugin_tool", "start_plugin_tool", "read_application_plugin_instance"].includes(command))).toBe(false);
+});
+
+it("refuses a multi-callable Native application acknowledgement while keeping its original preparation and draft", async () => {
+  nativeMode = true; applicationMode = true; inventory = nativeInventory(inventory);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const response = await original(command, args);
+    if (command !== "prepare_plugin_tool") return response;
+    const forged: unknown = response;
+    if (!validateResponseToolPreflight(forged)) throw new Error("Invalid synthetic Native tool preflight");
+    forged.applicationCapabilities.push({ contributionId: "not-supported.second-call", capability: structuredClone(toolQueryView.binding.capability.declaration) });
+    return forged;
+  });
+  const { user, owner } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "keep Native input");
+  await user.click(screen.getByRole("button", { name: "Review queries" }));
+  await waitFor(() => expect(owner().current().uncertain).toBe(true));
+  expect(owner().current().capture).toBeNull();
+  expect(owner().current().pending?.kind).toBe("prepare");
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("keep Native input");
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
 });

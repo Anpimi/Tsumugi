@@ -24,12 +24,21 @@ fn validate_application_selection(
 ) -> Result<(), ExecutionError> {
     let roster = crate::session::application_roster(image, &capability.provider.component_id)
         .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-component-scope"))?;
-    if !matches!(runtime, RunnerRuntime::JavaScript(_))
-        || !roster.iter().any(|member| {
-            member.contribution_id == capability.provider.contribution_id
-                && member.capability == capability.declaration
-        })
-    {
+    let component = image
+        .manifest()
+        .manifest()
+        .components
+        .iter()
+        .find(|component| component.id == capability.provider.component_id)
+        .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-component-scope"))?;
+    if !matches!(
+        (component.runtime, runtime),
+        (sdk::RuntimeKind::JavaScript, RunnerRuntime::JavaScript(_))
+            | (sdk::RuntimeKind::NativeWorker, RunnerRuntime::Native(_))
+    ) || !roster.iter().any(|member| {
+        member.contribution_id == capability.provider.contribution_id
+            && member.capability == capability.declaration
+    }) {
         return Err(ExecutionError::new(
             ErrorCode::InvalidInput,
             "plugin-component-scope",

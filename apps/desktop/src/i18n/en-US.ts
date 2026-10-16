@@ -436,6 +436,7 @@ toolQuery: {
   scopes: { project: "Component lifetime: this project", attempt: "Component lifetime: this task attempt", application: "Component lifetime: shared by this application" },
   applicationTitle: "Shared application instance",
   applicationHelp: "This instance can keep running across projects and retain runtime state and previously supplied input in memory until it stops. Each new query still needs its own project authorization. Stopping the shared instance interrupts its current queries and keeps saved results.",
+  applicationNativeHelp: "This shared Native worker has one callable capability. Approving its package and Native Host materials does not authorize its lifetime or any project query.",
   applicationCapabilities: "These capabilities share one component process and its lifetime permission. Each query still authorizes only its selected capability and exact input. Stopping the instance stops all listed capabilities.",
   applicationConsent: "I allow this exact shared instance to keep running until I exit the application, stop the instance, or revoke the package. This does not authorize additional project queries.",
   applicationStates: { reserved: "The instance has not been authorized to run.", active: "The shared instance has an active application lifetime lease.", stopping: "Stopping the instance and waiting for owned resources to close.", stopped: "The instance is stopped. Review queries again to authorize a new instance." },

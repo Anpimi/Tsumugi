@@ -117,7 +117,8 @@ and validators with `pnpm generate:contracts`; use the centralized
 ## Shared Application query instances
 
 For an approved JavaScript Tool component whose callable capabilities are all
-read-only, with no required dependencies or ProjectService permission,
+read-only, or a native worker with exactly one read-only callable, with no
+required dependencies or ProjectService permission,
 **Review queries**
 reserves an exact instance identity without starting component code. The preview
 includes required nullable `applicationScope`: an instance UUID/activation
@@ -127,6 +128,13 @@ The required `applicationCapabilities` list shows the whole frozen component
 roster for Application and is explicitly empty for Project/Attempt. The lifetime
 consent displays this set before execution; selecting another Tool in the same
 component does not allocate a separate shared process.
+
+The native singleton uses the original captured Native Host identity and
+Process3 SDK worker facade. Its package and Native Host approval do not grant
+instance lifetime or permission for a project query. It retains the same
+instance principal across projects while each invocation carries its own exact
+project, provider, input and grant. Native workers with multiple callables or
+project services are refused.
 
 The first run requires both the existing exact query consent and a separate
 checkbox allowing this instance to live until application exit, explicit stop,
@@ -162,7 +170,7 @@ records and control actions are bounded for one application session; exhausted
 capacity is reported explicitly. Drained processes, runtime images and obsolete
 runner registrations are released by their original owners.
 
-Application Native workers, required/offered project services,
+Native multi-callable Application workers, required/offered project services,
 domain Source/Translation/Review/Build, work-plan Agent tools
 and generation components remain explicitly unsupported. Data Resources and
 Skills remain readable without activating an executable component. Internal IPC

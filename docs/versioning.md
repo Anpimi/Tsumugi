@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Native workers with exactly one read-only callable can use the existing manual
+Application Tool lifetime. They reuse the original Native Host descriptor,
+Process3 singleton facade, instance lease, per-call grant and stop/drain owner.
+This extends the supported runtime profile without changing project schema 44,
+WorkPlan3, SDK/Process3, installed settings, dependencies or lockfiles. Native
+multi-callable and service compositions remain refused. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed batch with
+synchronized bilingual Unreleased entries and no repeated version bump. The
+following paragraphs retain the boundaries introduced by earlier units.
+
 Saved manual corrections can explicitly form one term proposal scoped to the
 current entry and target language. Resource captures now require tagged file or
 correction provenance. Correction previews carry an explicit nullable evidence

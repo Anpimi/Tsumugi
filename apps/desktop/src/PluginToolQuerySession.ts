@@ -67,6 +67,7 @@ export function usePluginToolQuerySession(project: ProjectView) {
             || value.tool.componentScope !== intent.view.componentScope
             || (value.tool.componentScope === "application"
               ? value.applicationCapabilities.length === 0 || value.applicationCapabilities.length > 128
+                || value.tool.environment.profile === "native-application-host-v1" && value.applicationCapabilities.length !== 1
                 || new Set(value.applicationCapabilities.map(member => member.contributionId)).size !== value.applicationCapabilities.length
                 || !value.applicationCapabilities.some(member => member.contributionId === value.tool.binding.capability.provider.contributionId
                   && jsonIdentity(member.capability) === jsonIdentity(value.tool.binding.capability.declaration))
