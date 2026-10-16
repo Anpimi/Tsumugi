@@ -5,20 +5,36 @@ use crate::commands::plugins::{PluginBuildRequest, PluginBuildView, builds::Buil
 use tsumugi_core::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
 use tsumugi_plugin_sdk as sdk;
+pub(in crate::commands) mod workflow;
 
-#[derive(Default)]
 pub(in crate::commands::execution) struct PluginBuildSession {
     job: Option<ExecutionId>,
     review: Option<Arc<BuildReview>>,
     check: Option<Arc<CheckReview>>,
     last_start: Option<PluginStartRequest>,
     last_check_start: Option<PluginStartRequest>,
+    workflow: Option<workflow::WorkflowSession>,
+}
+impl Default for PluginBuildSession {
+    fn default() -> Self {
+        Self {
+            job: None,
+            review: None,
+            check: None,
+            last_start: None,
+            last_check_start: None,
+            workflow: Some(workflow::WorkflowSession::default()),
+        }
+    }
 }
 impl PluginBuildSession {
     pub(super) fn stop_package(
         &mut self,
         package: &crate::commands::plugins::PluginPackageRequest,
     ) {
+        if let Some(workflow) = &mut self.workflow {
+            workflow.stop_package(package);
+        }
         if self
             .review
             .as_ref()
@@ -35,9 +51,12 @@ impl PluginBuildSession {
         }
     }
     pub(in crate::commands::execution) fn is_active(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.workflow.as_ref().is_some_and(|w| w.busy())
     }
     pub(super) fn stop(&mut self) {
+        if let Some(workflow) = &mut self.workflow {
+            workflow.close(false);
+        }
         // Late preparation cannot create a new review or grant in this session.
         self.job = None;
         self.review = None;
@@ -691,6 +710,18 @@ pub async fn cancel_plugin_build_preparation(
                 )?;
                 let (host, _) = active.execution_parts()?;
                 host.allow_mutation()?;
+                if host
+                    .release
+                    .plugin
+                    .workflow
+                    .as_ref()
+                    .is_some_and(|w| w.busy())
+                {
+                    return Err(map_recover(ExecutionError::new(
+                        ErrorCode::Busy,
+                        "artifact-workflow-active",
+                    )));
+                }
                 Ok(host.release.plugin.job.take().is_some())
             },
         )

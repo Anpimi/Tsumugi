@@ -410,12 +410,15 @@ fn unsettled_attempt_keeps_active_and_retired_producers_after_a_known_result() {
         1
     );
     assert!(runtime.is_active(attempt));
+    assert!(runtime.has_owned_attempt_work(attempt));
+    assert!(!runtime.has_owned_attempt_work(ExecutionId::new()));
     assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
     runtime
         .tick_at(&mut store, Instant::now() + Duration::from_secs(61))
         .unwrap();
     assert!(!runtime.is_active(attempt));
     assert_eq!(runtime.retired.len(), 1);
+    assert!(runtime.has_owned_attempt_work(attempt));
     assert_eq!(
         store
             .execution_attempt(attempt, true)
@@ -430,6 +433,66 @@ fn unsettled_attempt_keeps_active_and_retired_producers_after_a_known_result() {
         runtime.retired.is_empty()
     });
     assert!(!runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    assert!(!runtime.has_owned_attempt_work(attempt));
+}
+
+#[test]
+fn artifact_workflow_owned_callbacks_distinguish_drained_unknown_from_live_producers() {
+    struct NoResult(mpsc::Sender<mpsc::Sender<()>>);
+    impl Runner for NoResult {
+        fn capability_id(&self) -> &str {
+            "no-workflow-result"
+        }
+        fn capability_version(&self) -> &str {
+            "1"
+        }
+        fn run(
+            &self,
+            _: DispatchRequest,
+            _: Cancellation,
+            _: ResultSender,
+        ) -> Result<(), ExecutionError> {
+            let (release, held) = mpsc::channel();
+            self.0.send(release).unwrap();
+            held.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(())
+        }
+    }
+    let (_temp, mut store, mut runtime, _) = setup();
+    let (entered, observed) = mpsc::channel();
+    runtime
+        .register_read_only(Arc::new(NoResult(entered)))
+        .unwrap();
+    let fixed = FixedInput::capture(
+        InputEnvelope::new(
+            store.metadata().unwrap().project_id(),
+            "fixture",
+            "no-workflow-result",
+            "1",
+            vec![input(&store).envelope().items[0].clone()],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let attempt = fixed.envelope().attempt_id;
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let release = observed.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(runtime.has_owned_attempt_work(attempt));
+    runtime
+        .tick_at(&mut store, Instant::now() + Duration::from_secs(61))
+        .unwrap();
+    assert!(runtime.has_owned_attempt_work(attempt));
+    assert!(!runtime.has_owned_attempt_work(ExecutionId::new()));
+    release.send(()).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.has_owned_attempt_work(attempt)
+    });
+    assert_eq!(
+        store.execution_attempt(attempt, false).unwrap().items[0].execution,
+        ExecutionState::Unknown
+    );
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
 }
 
 #[test]

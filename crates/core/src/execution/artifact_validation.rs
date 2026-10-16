@@ -8,6 +8,14 @@ pub const ARTIFACT_CHECK_OPERATION: &str = "artifact-semantic-check";
 const POLICY: &str = "core.release-artifact-adoption";
 const STRUCTURE: &str = "core.release-artifact-structure";
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ArtifactCheckBuildResultRef {
+    pub item_id: ExecutionId,
+    pub result_id: ExecutionId,
+}
+
 fn reference(id: &str) -> sdk::ContractRef {
     sdk::ContractRef {
         id: id.into(),
@@ -41,6 +49,11 @@ pub struct PreparedArtifactValidation {
     pub(crate) capture: ArtifactValidationCapture,
     pub(crate) check_result: FixedResult,
     pub(crate) proof: validation::ValidationProof,
+}
+impl PreparedArtifactValidation {
+    pub fn valid(&self) -> bool {
+        self.proof.valid
+    }
 }
 impl ArtifactValidationCapture {
     pub(crate) fn capture(build: ResultValidationCapture) -> Result<Self, ExecutionError> {

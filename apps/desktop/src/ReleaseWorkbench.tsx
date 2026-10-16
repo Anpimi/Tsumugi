@@ -43,8 +43,12 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation, on
   function allowLeave(current: () => boolean = () => true): Promise<boolean> {
     leaveProof.current = current;
     viewVersion.current++;
-    if (owner.reserved()) { setOpen(true); owner.reportFailure("outcome-unknown",owner.current().pending?.kind === "build" ? "build" : "delivery"); return Promise.resolve(false); }
-    if (!owner.current().buildDirty && !owner.current().deliveryDirty && !(owner.current().prepared && !owner.current().attempt) && !(owner.current().checkReview && !owner.current().checkAttempt)) return Promise.resolve(true);
+    if (owner.reserved()) { setOpen(true); owner.reportFailure("outcome-unknown",owner.current().workflow || owner.current().pending?.kind === "build" ? "build" : "delivery"); return Promise.resolve(false); }
+    const workflow = owner.current().workflow;
+    if (workflow && !(workflow.safety?.admissionClosed && workflow.safety.callbacksDrained)) {
+      setOpen(true); owner.reportFailure("outcome-unknown", "build"); return Promise.resolve(false);
+    }
+    if (!owner.current().buildDirty && !owner.current().deliveryDirty && !workflow && !(owner.current().prepared && !owner.current().attempt) && !(owner.current().checkReview && !owner.current().checkAttempt)) return Promise.resolve(true);
     leaveTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setOpen(true); setLeaving(true);
     return new Promise(resolve => { leaveResolve.current?.(false); leaveResolve.current = resolve; });
@@ -52,7 +56,7 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation, on
   async function settleLeave(value: boolean) {
     if (value && leaveProof.current && !leaveProof.current()) value = false;
     const originalEditSeq = owner.current().editSeq;
-    if (value && (owner.current().buildDirty || owner.current().prepared || owner.current().checkReview || owner.current().attempt || owner.current().checkAttempt)) {
+    if (value && (owner.current().buildDirty || owner.current().prepared || owner.current().checkReview || owner.current().attempt || owner.current().checkAttempt || owner.current().workflow)) {
       // The checked discard changes its own dirty revision. The owner guards its
       // original input; navigation separately inspects the settled result.
       if (!await owner.discardBuild(true) || owner.current().editSeq !== originalEditSeq) value = false;

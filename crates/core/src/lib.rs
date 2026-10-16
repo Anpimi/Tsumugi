@@ -58,13 +58,14 @@ pub use persistence::{
 };
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub use persistence::{
-    SavedBuildArtifact, SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,
-    SelectedSourceContext, SelectedSourceFact, SourceContextAdjacency, SourceContextBlock,
-    SourceContextCapture, SourceContextDirection, SourceContextNeighbor, SourceContextObservations,
-    SourceContextOccurrence, SourceContextOmissionReason, SourceContextOmissionSample,
-    SourceContextOmissions, SourceContextProviderFact, SourceContextProviderNeighbor,
-    SourceContextProviderOrigin, SourceContextProviderProjection, SourceContextRequest,
-    SourceContextSelection, SourceContextView, UnknownSourceBlockSample, select_source_context,
+    SavedArtifactCheckProof, SavedBuildArtifact, SavedBuildLocale, SavedBuildResult,
+    SavedPluginBuildView, SelectedSourceContext, SelectedSourceFact, SourceContextAdjacency,
+    SourceContextBlock, SourceContextCapture, SourceContextDirection, SourceContextNeighbor,
+    SourceContextObservations, SourceContextOccurrence, SourceContextOmissionReason,
+    SourceContextOmissionSample, SourceContextOmissions, SourceContextProviderFact,
+    SourceContextProviderNeighbor, SourceContextProviderOrigin, SourceContextProviderProjection,
+    SourceContextRequest, SourceContextSelection, SourceContextView, UnknownSourceBlockSample,
+    select_source_context,
 };
 
 #[cfg(test)]

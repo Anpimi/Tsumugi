@@ -1034,6 +1034,67 @@ fn load_check_frames(
     Ok((check_input, check_result))
 }
 
+pub(super) fn artifact_check_proof_in(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<Option<super::release::SavedArtifactCheckProof>, ExecutionError> {
+    let original = result_input(connection, input, result.envelope().result_id)?;
+    let plan = crate::ReleasePlan::from_input(original.as_ref())?;
+    plan.validate_source_reference(connection)?;
+    let link: Option<(String, bool)> = connection.query_row(
+        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
+        [result.envelope().result_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(sql_error)?;
+    let Some((checker_id, saved_valid)) = link else {
+        return Ok(None);
+    };
+    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
+    let prepared = ArtifactValidationCapture::restore(
+        ResultValidationCapture {
+            input: original.as_ref().clone(),
+            result: result.clone(),
+        },
+        check_input.clone(),
+    )?
+    .prepare(check_result.clone())?;
+    if prepared.valid() != saved_valid {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    let checker = check_input
+        .envelope()
+        .plugin
+        .clone()
+        .ok_or_else(|| error(ErrorCode::CorruptLedger, "artifact-check-provider"))?;
+    // A negative proof can intentionally retain a failed or malformed report.
+    // None describes unavailable report data, never an empty passing check set.
+    let checks = match check_result
+        .envelope()
+        .plugin
+        .as_ref()
+        .map(|p| &p.result.outcome)
+    {
+        Some(tsumugi_plugin_sdk::InvocationOutcome::Succeeded { output }) => {
+            match tsumugi_plugin_sdk::parse_check_results(output.utf8.as_bytes()) {
+                Ok(checks) => Some(checks),
+                Err(_) if !saved_valid => None,
+                Err(_) => return Err(error(ErrorCode::CorruptLedger, "artifact-check-report")),
+            }
+        }
+        _ if !saved_valid => None,
+        _ => return Err(error(ErrorCode::CorruptLedger, "artifact-check-report")),
+    };
+    Ok(Some(super::release::SavedArtifactCheckProof {
+        checker_attempt_id: check_input.envelope().attempt_id,
+        checker_input_digest: check_input.digest().into(),
+        checker_result_id: check_result.envelope().result_id,
+        checker_result_digest: check_result.digest().into(),
+        checker,
+        valid: saved_valid,
+        checks,
+    }))
+}
+
 pub(super) fn validate_source_link(
     connection: &Connection,
     input: &FixedInput,
@@ -2708,6 +2769,120 @@ impl ProjectStore {
         self.check_plugin_input(&input)?;
         let result = self.execution_result(attempt, result)?;
         Ok(ResultValidationCapture { input, result })
+    }
+    /// Capture every actual locale result in one read snapshot. A requested
+    /// batch is complete or rejected; no caller-supplied payload is retained.
+    pub fn capture_artifact_check_workflow(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        input_digest: &str,
+        results: &[ArtifactCheckBuildResultRef],
+    ) -> Result<Vec<ResultValidationCapture>, ExecutionError> {
+        let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |connection| {
+            let input = load_input_cached(connection, attempt)?;
+            let plan = crate::ReleasePlan::from_input(&input)?;
+            plan.validate_source_reference(connection)?;
+            if input.envelope().project_id != project || input.digest() != input_digest {
+                return Err(error(ErrorCode::ResultMismatch, "artifact-workflow-build"));
+            }
+            super::plugin_execution::check_input_in(connection, &input, &self.plugin_authority)?;
+            if results.is_empty()
+                || results.len() > 16
+                || results.len() != input.envelope().items.len()
+                || results
+                    .iter()
+                    .map(|r| r.item_id)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != results.len()
+                || results
+                    .iter()
+                    .map(|r| r.result_id)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != results.len()
+            {
+                return Err(error(ErrorCode::InvalidInput, "artifact-workflow-coverage"));
+            }
+            input.envelope().items.iter().map(|item| {
+                let reference = results.iter().find(|r| r.item_id == item.item_id)
+                    .ok_or_else(|| error(ErrorCode::ResultMismatch, "artifact-workflow-item"))?;
+                let current: Option<String> = connection.query_row(
+                    "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                    params![attempt.to_string(), item.item_id.to_string()], |r| r.get(0),
+                ).map_err(sql_error)?;
+                if current.as_deref() != Some(reference.result_id.to_string().as_str()) {
+                    return Err(error(ErrorCode::DependencyConflict, "artifact-workflow-current"));
+                }
+                let result = load_result(connection, &input, reference.result_id)?;
+                if result.envelope().item_id != item.item_id
+                    || result.envelope().outcome != ExecutionState::Succeeded
+                {
+                    return Err(error(ErrorCode::ResultMismatch, "artifact-workflow-result"));
+                }
+                let original = result_input(connection, &input, reference.result_id)?;
+                super::plugin_execution::check_input_in(connection, original.as_ref(), &self.plugin_authority)?;
+                Ok(ResultValidationCapture { input: original.as_ref().clone(), result })
+            }).collect()
+        })
+    }
+
+    /// Historical association only. The original input and artifact basis,
+    /// rather than a caller's descriptor, identify this checker and producer.
+    pub fn verify_artifact_check_association(
+        &self,
+        project: ExecutionId,
+        build_attempt: ExecutionId,
+        build_digest: &str,
+        reference: &ArtifactCheckBuildResultRef,
+        checker: &FixedInput,
+    ) -> Result<(ExecutionId, String), ExecutionError> {
+        let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |connection| {
+            let input = load_input_cached(connection, build_attempt)?;
+            let plan = crate::ReleasePlan::from_input(&input)?;
+            plan.validate_source_reference(connection)?;
+            let result = load_result(connection, &input, reference.result_id)?;
+            if input.envelope().project_id != project
+                || input.digest() != build_digest
+                || result.envelope().item_id != reference.item_id
+                || checker.envelope().project_id != project
+            {
+                return Err(error(
+                    ErrorCode::ResultMismatch,
+                    "artifact-workflow-association",
+                ));
+            }
+            let original = result_input(connection, &input, reference.result_id)?;
+            ArtifactValidationCapture::restore(
+                ResultValidationCapture {
+                    input: original.as_ref().clone(),
+                    result,
+                },
+                checker.clone(),
+            )?;
+            Ok((original.envelope().attempt_id, original.digest().into()))
+        })
+    }
+
+    /// Pure historical proof lookup, including revoked and reopened inputs.
+    pub fn read_artifact_check_proof(
+        &self,
+        project: ExecutionId,
+        build_attempt: ExecutionId,
+        build_result: ExecutionId,
+    ) -> Result<Option<super::release::SavedArtifactCheckProof>, ExecutionError> {
+        let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |connection| {
+            let input = load_input_cached(connection, build_attempt)?;
+            if input.envelope().project_id != project {
+                return Err(error(ErrorCode::Unauthorized, "artifact-workflow-project"));
+            }
+            let result = load_result(connection, &input, build_result)?;
+            artifact_check_proof_in(connection, &input, &result)
+        })
     }
     pub fn commit_result_validation(
         &mut self,

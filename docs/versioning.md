@@ -1,5 +1,20 @@
 # Application versioning and changelog maintenance
 
+Saved builds can materialize up to sixteen exact independent artifact-check
+inputs and run an explicitly consented subset serially. The original Release
+session owns the bounded continuation; Core retains each original semantic
+proof. Historical build projections now include a required nullable proof and
+its original checker identity and report. An unavailable report is explicit
+and does not become an empty passing check set. Recording a Release and
+exporting files remain separate manual actions.
+
+These Application/Desktop commands and historical read projections add no
+persisted project fields or restored execution authority. Schema 46,
+WorkPlan3, SDK/Process3, package formats, dependencies and lockfiles remain
+unchanged. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` stay in the same
+undistributed batch; synchronized bilingual Unreleased entries describe the
+behavior without another version bump. Earlier assessments follow.
+
 Single-level child Agent scopes add exact unit/tool subset provenance and
 caller-bound generation result reads. AI execution settings now require an
 explicit nullable Agent binding; dedicated opaque preparation and admission

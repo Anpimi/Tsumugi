@@ -46,8 +46,8 @@ pub use release::BuildLocaleChoice;
 pub use release::{
     DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, PluginBuildLocaleChoice,
     ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException, ReleaseExceptionKind,
-    ReleasePlan, ReleaseView, ReleasedArtifact, SavedBuildArtifact, SavedBuildLocale,
-    SavedBuildResult, SavedPluginBuildView,
+    ReleasePlan, ReleaseView, ReleasedArtifact, SavedArtifactCheckProof, SavedBuildArtifact,
+    SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,
 };
 pub use resources::{
     CaptureContext, CaptureCorrectionTerm, ContextCapture, ContextItem, ContextOmission,

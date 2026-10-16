@@ -2,6 +2,11 @@
 import type { Requests } from "./release.requests";
 import type { Responses } from "./release.responses";
 export declare function validateRequestArtifactCheck(value: unknown): value is Requests["artifactCheck"];
+export declare function validateRequestArtifactWorkflowPrepare(value: unknown): value is Requests["artifactWorkflowPrepare"];
+export declare function validateRequestArtifactWorkflowRead(value: unknown): value is Requests["artifactWorkflowRead"];
+export declare function validateRequestArtifactWorkflowSession(value: unknown): value is Requests["artifactWorkflowSession"];
+export declare function validateRequestArtifactWorkflowStart(value: unknown): value is Requests["artifactWorkflowStart"];
+export declare function validateRequestArtifactWorkflowStop(value: unknown): value is Requests["artifactWorkflowStop"];
 export declare function validateRequestExport(value: unknown): value is Requests["export"];
 export declare function validateRequestFinishArtifactCheck(value: unknown): value is Requests["finishArtifactCheck"];
 export declare function validateRequestPluginBuild(value: unknown): value is Requests["pluginBuild"];
@@ -12,6 +17,10 @@ export declare function validateRequestRelease(value: unknown): value is Request
 export declare function validateRequestSavedPluginBuild(value: unknown): value is Requests["savedPluginBuild"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateResponseArtifactCheck(value: unknown): value is Responses["artifactCheck"];
+export declare function validateResponseArtifactWorkflow(value: unknown): value is Responses["artifactWorkflow"];
+export declare function validateResponseArtifactWorkflowObservation(value: unknown): value is Responses["artifactWorkflowObservation"];
+export declare function validateResponseArtifactWorkflowSession(value: unknown): value is Responses["artifactWorkflowSession"];
+export declare function validateResponseArtifactWorkflowStopped(value: unknown): value is Responses["artifactWorkflowStopped"];
 export declare function validateResponseCancelPluginBuild(value: unknown): value is Responses["cancelPluginBuild"];
 export declare function validateResponseDeliveries(value: unknown): value is Responses["deliveries"];
 export declare function validateResponseDelivery(value: unknown): value is Responses["delivery"];

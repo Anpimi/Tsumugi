@@ -10,7 +10,7 @@ import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { TranslationKey } from "./i18n/types";
 import type { CancellationTarget } from "./ExecutionTaskSession";
 import type { RecoveryAction } from "./executionCommands";
-import type { PluginBuildLocaleChoice, ReleasePluginIntent, DeliveryView } from "./releaseCommands";
+import type { PluginBuildLocaleChoice, ReleasePluginIntent, DeliveryView, ArtifactCheckWorkflowIdentity } from "./releaseCommands";
 import type { WorkPlanStartRequest, WorkPlanAuthorizeRequest, WorkPlanControlRequest, WorkPlanCommand, AutomationEffect, ReviewCheckerKey } from "./generated/ai.requests";
 import type { PluginSourceSelectRequest, PluginCaptureRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest, PluginStartRequest } from "./generated/source.requests";
 import type { PluginSourceRequest, PluginBuildRequest, PluginGenerationComponentRequest } from "./pluginCommands";
@@ -206,6 +206,17 @@ export interface ReleaseCheckFinishCommandPayload { kind: "release-check-finish"
 export interface ReleaseBuildRecordCommandPayload { kind: "release-build-record"; taskId: string; attemptId: string; operation: "locale-build"; unitId: string; itemIds: string[]; resultIds: string[] }
 export interface ReleaseBuildDiscardCommandPayload { kind: "release-build-discard"; editSeq: number; preparedAttemptId: string | null; buildAttemptId: string | null; checkAttemptId: string | null }
 export interface ReleaseBuildPendingCommandPayload { kind: "release-build-pending"; intent: ReleasePluginIntent; editSeq: number }
+export interface ReleaseWorkflowPrepareCommandPayload {
+  kind: "release-workflow-prepare"; editSeq: number; buildAttemptId: string; buildInputDigest: string;
+  buildResults: { itemId: string; resultId: string }[]; build: PluginBuildRequest;
+}
+export interface ReleaseWorkflowCommandPayload {
+  kind: "release-workflow"; identity: ArtifactCheckWorkflowIdentity; materializationDigest: string | null; approvedAttemptIds: string[];
+}
+export interface ReleaseWorkflowConsentCommandPayload {
+  kind: "release-workflow-consent"; identity: ArtifactCheckWorkflowIdentity; materializationDigest: string;
+  attemptId: string | null; approved: boolean;
+}
 interface ReleaseCommandTarget { releaseId: string; releaseActionId: string; attemptId: string; manifestSha256: string }
 export interface ReleaseRecordCommandPayload extends ReleaseCommandTarget { kind: "release-record" }
 export interface ReleaseDestinationCommandPayload extends ReleaseCommandTarget { kind: "release-destination"; selectionId: string | null }
@@ -282,6 +293,14 @@ interface WorkbenchCommandPayloads {
   "release.finish-artifact-check": ReleaseCheckFinishCommandPayload;
   "release.record-build": ReleaseBuildRecordCommandPayload;
   "release.discard-build": ReleaseBuildDiscardCommandPayload;
+  "release.prepare-check-workflow": ReleaseWorkflowPrepareCommandPayload;
+  "release.confirm-workflow-checker": ReleaseWorkflowConsentCommandPayload;
+  "release.run-check-workflow": ReleaseWorkflowCommandPayload;
+  "release.stop-check-workflow": ReleaseWorkflowCommandPayload;
+  "release.check-check-workflow": ReleaseWorkflowCommandPayload;
+  "release.close-check-workflow": ReleaseWorkflowCommandPayload;
+  "release.cancel-workflow-task": ExecutionCancellationCommandPayload;
+  "release.retry-workflow-cancellation": ExecutionCancellationRetryCommandPayload;
 
   "project.metadata.reconcile": ProjectMetadataReconcileCommandPayload;
   "translation.choose-import-folder": TranslationImportSetupCommandPayload;
@@ -485,6 +504,9 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"release-check-finish", "release.finish-artifact-check">
   | ResourceCommand<"release-build-record", "release.record-build">
   | ResourceCommand<"release-build-discard", "release.discard-build">
+  | ResourceCommand<"release-workflow-prepare", "release.prepare-check-workflow">
+  | ResourceCommand<"release-workflow-consent", "release.confirm-workflow-checker">
+  | ResourceCommand<"release-workflow", "release.run-check-workflow" | "release.stop-check-workflow" | "release.check-check-workflow" | "release.close-check-workflow">
   | ResourceCommand<"project-metadata-reconcile", "project.metadata.reconcile">
   | ResourceCommand<"translation-protection", "translation.protect-work" | "translation.release-work">
   | ResourceCommand<"translation-protection-pending", "translation.retry-protection">
@@ -536,8 +558,8 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"ai-candidate", "ai.adopt-result">
   | ResourceCommand<"ai-start-pending", "ai.reconcile-start" | "ai.retry-start">
   | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
-  | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task" | "release.cancel-task" | "resource.cancel-tool">
-  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "release.retry-cancellation" | "resource.retry-tool-cancellation">
+  | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task" | "release.cancel-task" | "release.cancel-workflow-task" | "resource.cancel-tool">
+  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "release.retry-cancellation" | "release.retry-workflow-cancellation" | "resource.retry-tool-cancellation">
   | ResourceCommand<"ai-saved-candidate", "ai.inspect-candidate" | "ai.open-comparison">
   | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation" | "ai.open-review">
   | ResourceCommand<"resource-tool-preparation", "resource.prepare-tool">
@@ -616,6 +638,9 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "release-check-finish": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "release-build-record": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "release-build-discard": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-workflow-prepare": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-workflow-consent": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-workflow": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "release-preparation": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "release-build-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "release-record": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
@@ -836,6 +861,12 @@ function validReleasePayload(payload: CommandPayload | undefined): payload is Ex
     case "release-build-record": return taskTarget(payload) && payload.operation === "locale-build" && identities(payload.itemIds,true) && identities(payload.resultIds,true);
     case "release-build-discard": return editSequence(payload.editSeq) && [payload.preparedAttemptId,payload.buildAttemptId,payload.checkAttemptId].every(nullableIdentity);
     case "release-build-pending": return editSequence(payload.editSeq) && validReleaseIntent(payload.intent);
+    case "release-workflow-prepare": return editSequence(payload.editSeq) && validIdentity(payload.buildAttemptId) && validIdentity(payload.buildInputDigest)
+      && pluginValidation.validateRequestBuild(payload.build) && Array.isArray(payload.buildResults) && payload.buildResults.length > 0 && payload.buildResults.length <= 16
+      && payload.buildResults.every(item => item && validIdentity(item.itemId) && validIdentity(item.resultId))
+      && new Set(payload.buildResults.map(item => item.itemId)).size === payload.buildResults.length;
+    case "release-workflow": return workflowIdentity(payload.identity) && nullableIdentity(payload.materializationDigest) && identities(payload.approvedAttemptIds);
+    case "release-workflow-consent": return workflowIdentity(payload.identity) && validIdentity(payload.materializationDigest) && nullableIdentity(payload.attemptId) && typeof payload.approved === "boolean";
     case "release-record": return releaseTarget(payload);
     case "release-destination": return releaseTarget(payload) && nullableIdentity(payload.selectionId);
     case "release-preview": return releaseTarget(payload) && validIdentity(payload.selectionId) && validIdentity(payload.previewId) && typeof payload.overwrite === "boolean";
@@ -847,6 +878,9 @@ function validReleasePayload(payload: CommandPayload | undefined): payload is Ex
     case "release-blocker": return editSequence(payload.editSeq) && [payload.eligibilityBasis,payload.sourceSnapshotId,payload.unitId,payload.locale].every(validIdentity);
     default: return false;
   }
+}
+function workflowIdentity(value: ArtifactCheckWorkflowIdentity) {
+  return !!value && validIdentity(value.ownerId) && validIdentity(value.workflowId) && taskRevision(value.generation);
 }
 function taskTarget(value: TaskCommandTarget) { return [value.taskId,value.attemptId,value.operation,value.unitId].every(validIdentity); }
 function taskActionTarget(value: TaskActionTarget) {
@@ -1071,6 +1105,9 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "release-check-finish" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-build-record" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-build-discard" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-workflow-prepare" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-workflow-consent" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-workflow" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-protection" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-protection-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-correction" && payload?.kind === command.payloadKind) command.handler(payload);

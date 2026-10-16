@@ -458,6 +458,26 @@ impl ProjectStore {
         consent: PluginConsent,
         application_revocation: Option<crate::execution::ApplicationExecutionLease>,
     ) -> Result<(), ExecutionError> {
+        self.authorize_plugin_input_before(
+            generation,
+            grant_id,
+            input,
+            expires_at_ms,
+            consent,
+            application_revocation,
+            None,
+        )
+    }
+    pub(crate) fn authorize_plugin_input_before(
+        &mut self,
+        generation: ExecutionId,
+        grant_id: ExecutionId,
+        input: &FixedInput,
+        expires_at_ms: u64,
+        consent: PluginConsent,
+        application_revocation: Option<crate::execution::ApplicationExecutionLease>,
+        ceiling: Option<std::time::Instant>,
+    ) -> Result<(), ExecutionError> {
         if !consent.allows(input) {
             return Err(denied());
         }
@@ -479,6 +499,10 @@ impl ProjectStore {
         // Capture the monotonic limit before the transaction. A wall-clock
         // rollback during commit cannot extend the consent's original duration.
         let deadline = plugin_grant_deadline(expires_at_ms)?;
+        let deadline = ceiling.map_or(deadline, |ceiling| ceiling.min(deadline));
+        if std::time::Instant::now() >= deadline {
+            return Err(denied());
+        }
         let tx = self.execution_write()?;
         check_project(&tx, input)?;
         not_cancelled(&tx, input.envelope().task_id)?;

@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Review a captured batch of build artifact checks, explicitly authorize selected
+  checker inputs, and run them in sequence. Each successful check records its
+  original verification proof; failures and uncertain operations pause remaining
+  work. Recording a release and exporting files remain separate actions.
+- Inspect saved artifact-check proofs alongside their original build results
+  without restoring earlier execution permission.
+
 - Delegate a captured subset of entries and tools to a single-level child Agent. Child
   work retains the original model, sharing decisions, permissions, deadline and
   cumulative budget, and reads only its own generation or tool results. Uncertain

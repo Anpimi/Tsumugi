@@ -267,6 +267,37 @@ impl ExecutionRuntime {
         expires_at_ms: u64,
         consent: PluginConsent,
     ) -> Result<(), ExecutionError> {
+        self.authorize_plugin_before(store, grant_id, input, expires_at_ms, consent, None)
+    }
+    /// A delayed application sequence can only narrow the original consent's
+    /// lifetime. This ceiling is never recovered from persisted input.
+    pub fn authorize_plugin_with_deadline(
+        &self,
+        store: &mut ProjectStore,
+        grant_id: ExecutionId,
+        input: &FixedInput,
+        expires_at_ms: u64,
+        consent: PluginConsent,
+        original_deadline: Instant,
+    ) -> Result<(), ExecutionError> {
+        self.authorize_plugin_before(
+            store,
+            grant_id,
+            input,
+            expires_at_ms,
+            consent,
+            Some(original_deadline),
+        )
+    }
+    fn authorize_plugin_before(
+        &self,
+        store: &mut ProjectStore,
+        grant_id: ExecutionId,
+        input: &FixedInput,
+        expires_at_ms: u64,
+        consent: PluginConsent,
+        deadline: Option<Instant>,
+    ) -> Result<(), ExecutionError> {
         if !self.accepting
             || !self.plugin_epoch.is_active()
             || self.input_package_stopped(input)
@@ -277,13 +308,14 @@ impl ExecutionRuntime {
                 "plugin-runtime",
             ));
         }
-        store.authorize_plugin_input(
+        store.authorize_plugin_input_before(
             self.generation,
             grant_id,
             input,
             expires_at_ms,
             consent,
             None,
+            deadline,
         )
     }
     /// The trusted application owner supplies its original one-way instance
@@ -548,6 +580,11 @@ impl ExecutionRuntime {
         self.workers
             .iter()
             .any(|worker| worker.request.input.envelope().attempt_id == attempt)
+    }
+    /// Live producer ownership only. Historical unknown outcomes do not retain
+    /// a callback, and observing drainage grants no replay or execution right.
+    pub fn has_owned_attempt_work(&self, attempt: ExecutionId) -> bool {
+        self.is_active(attempt) || self.retired.iter().any(|worker| worker.attempt == attempt)
     }
     /// Compact status uses the same live-worker observation as `attempt`.
     /// Reading it never constructs a runtime or restores a dispatch grant.

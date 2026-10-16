@@ -4,6 +4,7 @@ use super::*;
 use crate::execution::*;
 
 mod release;
+mod workflow;
 
 #[test]
 fn saved_build_projection_is_read_only_and_preserves_unchecked_results_after_revoke_and_reopen() {

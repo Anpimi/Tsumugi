@@ -126,8 +126,10 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     const row = (area: WorkspaceArea, blocked: boolean, dirty: boolean, revision: unknown): ExitDisposition =>
       ({ area, status: blocked ? "blocked" : dirty ? "dirty" : "ready", revision: JSON.stringify(revision) });
     return [
-      row("release", release.reserved(), rel.buildDirty || rel.deliveryDirty,
-        [rel.editSeq, rel.languages, rel.names, rel.buildChoice, rel.prepared?.review.inputDigest, rel.buildConsent, rel.checkReview?.inputDigest, rel.checkConsent, rel.checkAttempt, rel.savedAttempt, rel.chosen?.releaseId, rel.selection?.selectionId, rel.preview?.previewId, rel.overwrite]),
+      row("release", release.reserved(), rel.buildDirty || rel.deliveryDirty || !!rel.workflow,
+        [rel.editSeq, rel.languages, rel.names, rel.buildChoice, rel.prepared?.review.inputDigest, rel.buildConsent, rel.checkReview?.inputDigest, rel.checkConsent, rel.checkAttempt, rel.savedAttempt, rel.chosen?.releaseId, rel.selection?.selectionId, rel.preview?.previewId, rel.overwrite,
+          rel.workflow?.request, rel.workflow?.review?.materializationDigest, rel.workflow?.approved, rel.workflow?.start, rel.workflow?.stop,
+          rel.workflow?.pending, rel.workflow?.stopPending, rel.workflow?.uncertain, rel.workflow?.stopUncertain, rel.workflow?.safety, rel.workflowControlBusy]),
       row("tasks", tasks.unresolved(), false, null),
       row("source", source.hasPending(),
         !!src.selection || Object.keys(src.lineage).length > 0 || !!src.actor.trim() || source.inFlight(), src.editSeq),

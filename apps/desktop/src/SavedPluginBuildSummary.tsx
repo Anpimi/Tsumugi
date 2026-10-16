@@ -19,6 +19,16 @@ export function SavedPluginBuildSummary({ build, itemId }: { build: SavedPluginB
       <p>{t(`execution.states.${locale.status.execution}`)} · {t(`releasePlugin.validation.${locale.status.validation}`)}</p>
       {locale.status.cancellationRequested ? <p>{t("releasePlugin.cancelled")}</p> : null}
       {locale.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary><code>{locale.status.diagnostic}</code></details> : null}
+      {locale.artifactCheck ? <section aria-label={t("releaseWorkflow.savedProof")}>
+        <h5>{t("releaseWorkflow.savedProof")}</h5>
+        <p>{t(locale.artifactCheck.valid ? "releaseWorkflow.proofPassed" : locale.artifactCheck.checks === null ? "releaseWorkflow.proofUnavailable" : "releaseWorkflow.proofFailed")}</p>
+        <p>{locale.artifactCheck.checker.capability.provider.plugin.id} {locale.artifactCheck.checker.capability.provider.plugin.version} · {locale.artifactCheck.checker.capability.provider.contributionId}</p>
+        <details><summary>{t("sourcePlugin.fixedDetails")}</summary><dl>
+          <dt>{t("sourcePlugin.packageDigest")}</dt><dd><code>{locale.artifactCheck.checker.capability.provider.packageDigest}</code></dd>
+          <dt>{t("releaseWorkflow.input")}</dt><dd><code>{locale.artifactCheck.checkerInputDigest}</code></dd>
+        </dl></details>
+        {locale.artifactCheck.checks === null ? null : <details><summary>{t("execution.diagnostic")}</summary><pre>{JSON.stringify(locale.artifactCheck.checks, null, 2)}</pre></details>}
+      </section> : null}
       <p>{t("releasePlugin.savedPaths")}</p><ul>{locale.choice.outputPaths.map(path => <li key={path}>{path}</li>)}</ul>
       {!locale.result ? <p>{t("releasePlugin.savedNoResult")}</p>
         : locale.result.outcome !== "succeeded" ? <p>{t("releasePlugin.savedFailed")}</p>
