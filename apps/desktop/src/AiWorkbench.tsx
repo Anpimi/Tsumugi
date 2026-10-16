@@ -292,11 +292,11 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
         selectionPolicy: (choice.stage === "generation" || choice.stage === "checks") && mode !== "assisted" ? "candidates-only" : previous.selectionPolicy,
         stages:previous.stages.map(item=>item.stage===choice.stage?{...item,mode}:choice.stage==="generation"&&mode!=="assisted"&&item.stage==="checks"&&item.mode==="assisted"?{...item,mode:"manual"}:item)
       }));
-    }}><option value="manual">{t("ai.plan.modes.manual")}</option>{choice.stage==="generation"?<option value="assisted">{t("ai.plan.modes.assisted")}</option>:choice.stage==="checks"&&assisted&&options.selectionPolicy!=="candidates-only"?<option value="assisted">{t("ai.plan.mechanicalChecks")}</option>:null}<option value="skipped">{t("ai.plan.modes.skipped")}</option></select></label>)}
+    }}><option value="manual">{t("ai.plan.modes.manual")}</option>{choice.stage==="generation"?<option value="assisted">{t("ai.plan.modes.assisted")}</option>:choice.stage==="checks"&&assisted?<option value="assisted">{t("ai.plan.mechanicalChecks")}</option>:null}<option value="skipped">{t("ai.plan.modes.skipped")}</option></select></label>)}
     {assisted?<><label className="field">{t("ai.plan.selectionPolicy")}<select aria-label={t("ai.plan.selectionPolicy")} value={options.selectionPolicy} onChange={event=>{
       const selectionPolicy = event.target.value;
       if(selectionPolicy!=="candidates-only"&&selectionPolicy!=="missing-only"&&selectionPolicy!=="replace-captured-selection")return;
-      setOptions(previous=>({...previous,selectionPolicy,stages:previous.stages.map(choice=>choice.stage==="checks"?{...choice,mode:selectionPolicy==="candidates-only"?"manual":"assisted"}:choice)}));
+      setOptions(previous=>({...previous,selectionPolicy,stages:previous.stages.map(choice=>choice.stage==="checks"&&selectionPolicy!=="candidates-only"?{...choice,mode:"assisted"}:choice)}));
 
     }}>{(["candidates-only","missing-only","replace-captured-selection"] as const).map(policy=><option key={policy} value={policy}>{t(`ai.plan.policies.${policy}`)}</option>)}</select></label>
     {options.selectionPolicy!=="candidates-only"?<p>{t("ai.plan.checkedSelection")}</p>:null}</>:null}

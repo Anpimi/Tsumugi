@@ -19,6 +19,11 @@ The current balanced policy permits a source text fallback for one entry with no
 
 **Work queue** derives current work from selected revisions, decisions, checks, findings, waivers, and changed resource guidance. It can show several reasons for one entry; opening an entry returns to its current review. **Build readiness** evaluates an explicit set of target languages, initially all project targets. It reports each language's blockers and allowed exceptions over the complete current source scope. A ready result permits build preparation under this policy. It does not build a translated Mod, check output bytes, publish, or remain valid after relevant project changes. **Build and export** re-evaluates the current basis, validates actual output bytes, and saves a local language-file release.
 
+Candidate-only AI plans can record their authorized checks without selecting a
+translation. These saved candidate findings and execution receipts are separate
+from current QA and human approval. Selecting that candidate later still requires
+the ordinary current checks for its new selection basis.
+
 Review history and check evidence live in the project's SQLite database. See the [README](../README.md#development) for the current schema and development compatibility. Readiness and queue reads do not alter project content. Updating the complete SMAPI flat source keeps applicable approvals and checks for entries with the same unit and source revision; changed or unresolved entries require current work before a new build.
 
 In **Advisory findings**, use the same reviewer and reason to **Reject as false

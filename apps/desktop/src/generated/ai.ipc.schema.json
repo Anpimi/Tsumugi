@@ -2803,7 +2803,7 @@
       },
       "AutomaticSelectionReceipt": {
         "additionalProperties": false,
-        "description": "A policy action is distinct from a human review decision. Replaying this\nreceipt does not select again or restore an older authority or check basis.",
+        "description": "A policy action is distinct from a human review decision. Replaying this\nreceipt does not select again or restore an older authority or check basis.\nCandidatesOnly records candidate QA with no selection, current CheckRun or\nselection block; its rule outcomes remain evidence rather than approval.",
         "properties": {
           "blocked": {
             "anyOf": [
@@ -4296,6 +4296,7 @@
           "saving-candidate",
           "saved",
           "checking",
+          "checked",
           "selected",
           "blocked",
           "failed",

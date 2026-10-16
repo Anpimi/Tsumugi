@@ -1,5 +1,19 @@
 # Application versioning and changelog maintenance
 
+Candidates-only plans can separately authorize their exact captured checks.
+The original policy action receipt records the candidate revision, complete
+check rules and execution evidence with no selection, current CheckRun or
+approval. Check-only candidate bases explicitly have no selection identity;
+selecting policies retain their existing paired selection and QA evidence.
+
+This changes persisted policy semantics to `checked-selection-3` and advances
+the current-only project format to schema 45. Earlier development directories
+are preserved and refused without migration, conversion or reset. WorkPlan3,
+SDK/Process3, settings, dependencies and lockfiles remain unchanged. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed batch;
+synchronized bilingual Unreleased entries describe the change without another
+version bump. Earlier paragraphs describe their respective development units.
+
 Native workers with exactly one read-only callable can use the existing manual
 Application Tool lifetime. They reuse the original Native Host descriptor,
 Process3 singleton facade, instance lease, per-call grant and stop/drain owner.

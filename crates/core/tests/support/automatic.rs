@@ -50,19 +50,7 @@ pub fn candidate_request_with_advisory(
                 action_id: ExecutionId::new(),
                 plan_digest: plan.digest.clone(),
                 confirmed: true,
-                effects: vec![
-                    AutomationEffect::SaveCandidate,
-                    AutomationEffect::RunChecks,
-                    match policy {
-                        SelectionPolicy::MissingOnly => AutomationEffect::SelectMissing,
-                        SelectionPolicy::ReplaceCapturedSelection => {
-                            AutomationEffect::ReplaceCapturedSelection
-                        }
-                        SelectionPolicy::CandidatesOnly => {
-                            panic!("This fixture requires a selection policy")
-                        }
-                    },
-                ],
+                effects: plan.authorization_effects().unwrap(),
                 expires_at,
             },
         )

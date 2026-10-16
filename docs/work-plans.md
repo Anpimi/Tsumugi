@@ -27,8 +27,11 @@ manual generation so it cannot accidentally acquire a provider scope.
 
 Stages cover understanding, resources, generation, checks and delivery. Each
 stage can be manual, assisted or skipped; the requested list may omit stages. The
-default requests candidate generation and keeps the other stages manual. Optional
-selection, resource adoption and delivery effects require explicit plan settings.
+library default requests candidate generation and keeps other stages manual.
+New Desktop workbench drafts explicitly recommend candidate generation with
+authorized assisted checks while keeping candidate selection manual. Captured
+plans retain their choices. Optional selection, resource adoption and delivery
+effects require explicit plan settings.
 An automatic policy does not represent human language-review approval. Preparing
 a plan makes no provider call, enqueues no work and changes no project facts.
 
@@ -164,10 +167,10 @@ confirmation, the exact plan digest, the exact supported effect set and an expir
 within the next 24 hours. It rechecks the plan inside the existing write
 transaction. Semantic answers do not form part of this permission request. The
 returned execution input carries an `AutomationLease`; the lease refers to stored
-authority and cannot grant effects itself. The effect set includes candidate saving, plus checks and the chosen selection
-policy when selection is requested. Selection requires the assisted check stage.
-Resource adoption, delivery and standalone automated checks remain refused until
-their mutation contracts are assembled.
+authority and cannot grant effects itself. The effect set includes candidate
+saving and, when explicitly requested, checks for those candidates. A selection
+policy adds its separate selection effect and requires the assisted check stage.
+Resource adoption and delivery retain separate mutation contracts.
 
 Pause, stop and takeover advance a persisted generation and cancel old queued
 work. The runtime signals running workers; enqueue, dispatch, HTTP reservation
@@ -290,8 +293,10 @@ matching protection revision, source revision and selection identity. Historical
 release receipts report their original result without clearing newer protection.
 Saving a candidate does not select it or give human language-review approval.
 The existing effect service also honors candidate-only plans with explicit
-`SaveCandidate` authorization. It uses the ordinary candidate adoption boundary
-and finishes with `saved`, without requesting checks or selection. Failed saves
+`SaveCandidate` authorization. With manual checks it uses the ordinary candidate
+adoption boundary and finishes with `saved`. With separately authorized
+`RunChecks`, it runs the captured checker set and records complete candidate
+evidence as `checked`, without selecting or creating current QA. Failed saves
 retain the original action for explicit recovery; stopped authority prevents
 new saves. A prepared plan alone never starts this effect.
 
@@ -306,8 +311,16 @@ short transaction. A candidate from another plan, revoked generation, cancelled
 attempt or changed basis cannot acquire selection authority. Selecting one entry
 does not invalidate untouched entries of the same plan.
 
-The initial `checked-selection-1` policy supports missing-only selection or
-explicit replacement of the captured selection. Protection always prevents it;
+The current `checked-selection-3` policy also records candidate-only checks in
+the original policy action receipt. Such a receipt has its true candidate
+revision and no selection identity, selected translation, current CheckRun or
+blocked-selection reason. Its rules and execution evidence retain failures and
+unknown outcomes; `checked` means evidence was recorded, not that all checks
+passed. Historical receipt reads do not restore authority. Later manual selection
+and current QA retain their own boundaries.
+
+Selecting policies support missing-only selection or explicit replacement of the
+captured selection. Protection always prevents selection;
 missing-only also preserves existing selections. Incomplete checks, findings,
 failed or unavailable rules prevent selection, even when a warning could be
 waived manually elsewhere. The action receipt keeps the candidate check evidence

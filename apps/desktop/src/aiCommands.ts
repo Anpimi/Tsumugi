@@ -101,14 +101,17 @@ export const aiCommands={
         if (!effect) return false;
         if (!result.planId || !result.planGeneration) return true;
         if (effect.retryable && (effect.phase !== "failed" || !effect.error)) return true;
-        if (!receipt) return effect.phase === "selected" || effect.phase === "blocked";
+        if (!receipt) return effect.phase === "checked" || effect.phase === "selected" || effect.phase === "blocked";
         const selection = receipt.selection;
+        const checkOnly = receipt.policy === "candidates-only";
         return receipt.request.projectId !== request.projectId
           || receipt.request.lease.planId !== result.planId
           || receipt.request.lease.generation !== result.planGeneration
           || receipt.request.unitId !== row.item.unitId || receipt.request.locale !== row.item.targetLocale
           || receipt.request.revisionId !== row.savedRevisionId || receipt.request.actionId !== effect.actionId
-          || (receipt.blocked === null ? effect.phase !== "selected" || !selection || !receipt.checkRunId : effect.phase !== "blocked" || selection !== null || receipt.checkRunId !== null)
+          || (checkOnly
+            ? effect.phase !== "checked" || selection !== null || receipt.checkRunId !== null || receipt.blocked !== null || receipt.candidateBasis.selectionId !== null
+            : receipt.blocked === null ? effect.phase !== "selected" || !selection || !receipt.checkRunId : effect.phase !== "blocked" || selection !== null || receipt.checkRunId !== null)
           || (selection !== null && (selection.unitId !== row.item.unitId
             || selection.locale !== row.item.targetLocale || selection.revisionId !== row.savedRevisionId || selection.actionId !== receipt.request.actionId || selection.previousEventId !== receipt.capturedSelectionId))
           || receipt.candidateBasis.revisionId !== row.savedRevisionId || receipt.candidateBasis.sourceRevisionId !== row.item.sourceRevisionId

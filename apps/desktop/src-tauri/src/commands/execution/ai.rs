@@ -347,11 +347,7 @@ pub async fn read_ai_translation(
                         };
                         let automation = if let Some(receipt) = receipt {
                             Some(EffectView {
-                                phase: if receipt.blocked.is_some() {
-                                    EffectPhase::Blocked
-                                } else {
-                                    EffectPhase::Selected
-                                },
+                                phase: automation::phase_for(&receipt),
                                 action_id: Some(receipt.request.action_id),
                                 receipt: Some(receipt),
                                 error: None,
@@ -365,15 +361,27 @@ pub async fn read_ai_translation(
                             Some(view)
                         } else if let Some(lease) = input.envelope().automation {
                             let plan = store.work_plan(lease.plan_id)?;
-                            (plan.options.selection_policy
-                                != tsumugi_core::application::SelectionPolicy::CandidatesOnly)
-                                .then_some(EffectView {
-                                    phase: EffectPhase::Cancelled,
+                            let checks = plan
+                                .options
+                                .requests(tsumugi_core::application::AutomationEffect::RunChecks);
+                            let selection = plan.options.selection_policy
+                                != tsumugi_core::application::SelectionPolicy::CandidatesOnly;
+                            (checks || selection || saved_revision_id.is_some()).then_some(
+                                EffectView {
+                                    // Reopening can display the saved candidate,
+                                    // but cannot reconstruct an unfinished checker
+                                    // session or claim that its QA was recorded.
+                                    phase: if checks || selection {
+                                        EffectPhase::Cancelled
+                                    } else {
+                                        EffectPhase::Saved
+                                    },
                                     action_id: None,
                                     receipt: None,
                                     error: None,
                                     retryable: false,
-                                })
+                                },
+                            )
                         } else {
                             None
                         };

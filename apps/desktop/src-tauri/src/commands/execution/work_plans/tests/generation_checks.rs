@@ -26,6 +26,9 @@ mod deadline;
 #[path = "generation_settings.rs"]
 mod settings;
 
+#[path = "candidate_checks.rs"]
+mod candidate_checks;
+
 fn ipc(window: &MockWebview, command: &str, fields: Option<Value>) -> Result<Value, Value> {
     call(
         window,
@@ -257,7 +260,7 @@ fn wait_checked(fixture: &Fixture, attempt: &Value) -> Value {
                 .unwrap();
             if matches!(
                 view["rows"][0]["automation"]["phase"].as_str(),
-                Some("selected" | "blocked" | "failed" | "cancelled")
+                Some("checked" | "selected" | "blocked" | "failed" | "cancelled")
             ) {
                 return view;
             }

@@ -14,6 +14,24 @@ function recorded(): EffectView {
   if (!validateResponseView(view) || !view.rows[0].automation) throw new Error("Invalid recorded fixture");
   return view.rows[0].automation;
 }
+it.each(["passed", "findings", "failed", "unknown"] as const)("shows check-only %s evidence without implying current QA, selection or approval", async status => {
+  const effect = recorded(), receipt = effect.receipt;
+  if (!receipt) throw new Error("Candidate evidence required");
+  effect.phase = "checked"; receipt.policy = "candidates-only"; receipt.policyVersion = "checked-selection-3";
+  receipt.selection = null; receipt.checkRunId = null; receipt.blocked = null; receipt.candidateBasis.selectionId = null;
+  receipt.rules[0].status = status;
+  const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  expect(screen.getByText("Candidate check evidence recorded; no translation was selected")).toBeInTheDocument();
+  expect(screen.getByText(/do not select a translation, establish current QA/)).toBeInTheDocument();
+  await userEvent.click(screen.getByText("Mechanical check evidence"));
+  const keys = { passed: "passed", findings: "findings", failed: "checkFailed", unknown: "checkUnknown" } as const;
+  expect(screen.getAllByText(text => text.includes(i18n.t(`review.${keys[status]}`))).length).toBeGreaterThan(0);
+  expect(screen.queryByText("This candidate was selected by policy")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  await i18n.changeLanguage("zh-CN"); rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  expect(screen.getByText("候选检查依据已记录，尚未选择译文")).toBeInTheDocument();
+  expect(screen.getByText(/不会选择译文、形成当前 QA/)).toBeInTheDocument();
+});
 it("presents a historical policy selection without claiming current translation or approval", async () => {
   const effect = recorded(); render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
   expect(screen.getByText("This candidate was selected by policy")).toBeInTheDocument();

@@ -1,10 +1,10 @@
-//! Authorized selection orchestration owns values and action identities, not a store.
+//! Authorized candidate work owns values and action identities, not a store.
 use super::*;
 use tsumugi_core::{
     ComputedAutomaticSelection, PreparedAutomaticSelection, ReviewCheckOrigin, ReviewCheckerKey,
     application::{
-        AutomaticSelectionReceipt, AutomaticSelectionRequest, PreparedWorkPlanServiceGeneration,
-        SelectionPolicy,
+        AutomaticSelectionReceipt, AutomaticSelectionRequest, AutomationEffect,
+        PreparedWorkPlanServiceGeneration, SelectionPolicy,
     },
 };
 
@@ -18,6 +18,7 @@ pub enum EffectPhase {
     SavingCandidate,
     Saved,
     Checking,
+    Checked,
     Selected,
     Blocked,
     Failed,
@@ -109,8 +110,12 @@ impl PreparedTracking<'_> {
     }
 }
 
-fn phase_for(receipt: &AutomaticSelectionReceipt) -> EffectPhase {
-    if receipt.blocked.is_some() {
+pub(super) fn phase_for(receipt: &AutomaticSelectionReceipt) -> EffectPhase {
+    if receipt.policy == SelectionPolicy::CandidatesOnly {
+        // The receipt records the exact candidate evidence, including failed
+        // and unknown checks. It grants no current QA or selection status.
+        EffectPhase::Checked
+    } else if receipt.blocked.is_some() {
         EffectPhase::Blocked
     } else {
         EffectPhase::Selected
@@ -476,6 +481,7 @@ impl Automation {
                     || !matches!(
                         item.view.phase,
                         EffectPhase::Saved
+                            | EffectPhase::Checked
                             | EffectPhase::Selected
                             | EffectPhase::Blocked
                             | EffectPhase::Cancelled
@@ -949,14 +955,14 @@ impl Automation {
                         })?;
                     item.revision = store.saved_ai_candidate(*attempt_id, *item_id)?;
                     if let Some(revision) = item.revision {
-                        if store
+                        let options = store
                             .work_plan(input.envelope().automation.unwrap().plan_id)?
-                            .options
-                            .selection_policy
-                            == SelectionPolicy::CandidatesOnly
+                            .options;
+                        if options.selection_policy == SelectionPolicy::CandidatesOnly
+                            && !options.requests(AutomationEffect::RunChecks)
                         {
-                            // Saving is an independently authorized effect. A
-                            // candidate-only plan never requests checks or selection.
+                            // A captured manual-check plan retains save-only
+                            // behavior; the new UI recommendation cannot upgrade it.
                             item.view.phase = EffectPhase::Saved;
                             return Ok(None);
                         }

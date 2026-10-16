@@ -656,8 +656,9 @@ impl PreparedReviewAdoption {
     }
 }
 
-/// A blocked automatic selection keeps its actual candidate QA without claiming
-/// a selected revision or a current CheckRun. Historical reads verify the ledger.
+/// Check-only and blocked policy actions keep actual candidate QA without
+/// claiming a current CheckRun. This transient projection validates the original
+/// frames; it never inserts a run or relaxes current-target selection pairing.
 pub(in crate::persistence) fn validate_candidate_evidence(
     connection: &Connection,
     project: ExecutionId,

@@ -468,16 +468,6 @@ impl PlanOptions {
                 "work-plan-effect",
             ));
         }
-        if self.requests(AutomationEffect::RunChecks)
-            && self.selection_policy == SelectionPolicy::CandidatesOnly
-        {
-            // Standalone automatic checking is not yet assembled. The current
-            // check permission is exercised by the checked-selection service.
-            return Err(ExecutionError::new(
-                ErrorCode::Unauthorized,
-                "work-plan-effect",
-            ));
-        }
         Ok([
             AutomationEffect::SaveCandidate,
             AutomationEffect::RunChecks,
@@ -515,6 +505,8 @@ pub enum AutomaticSelectionBlock {
 
 /// A policy action is distinct from a human review decision. Replaying this
 /// receipt does not select again or restore an older authority or check basis.
+/// CandidatesOnly records candidate QA with no selection, current CheckRun or
+/// selection block; its rule outcomes remain evidence rather than approval.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
