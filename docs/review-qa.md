@@ -11,6 +11,14 @@ Open a project with an imported source snapshot and a target language, then choo
 
 The sidebar keeps Review and QA in the main workspace. Opening an entry in Translations and returning keeps the review page and selected entry, and refreshes their current evidence. This also works for an entry that does not yet have a selected translation. The work queue and build blockers provide actions to locate the affected content; diagnosis identifiers remain available in details.
 
+An AI result can open this entry and language for its current selected
+translation after a fresh source and Review-target check. The original Review
+draft keeps its actor, reason and captured basis. Changed current evidence still
+uses the normal comparison and explicit adoption flow; navigating cannot resolve
+an uncertain action or silently discard checker preparation and consent. An
+unselected AI candidate and its candidate checks remain separate from current
+Review and QA.
+
 Enter a reviewer name before recording an approval or requesting changes. A change request needs a reason and keeps the translation intact. Each decision records the exact selected revision, source revision, and relevant term and context revisions. A later selection or relevant guidance change leaves the old decision in history and requires a new decision. Run **Current checks** separately; a passed check never grants human approval. The current bundled SMAPI checks cover selected translation, named `{{token}}` names and counts, malformed markers and control characters, and applicable terms. Missing or outdated checks block build readiness. You can request cancellation while a check runs. Failed or cancelled attempts remain in history, do not supply required coverage, and need a new run after the cause is resolved. If the cancellation arrives after the check commits, its completed result remains authoritative.
 
 You can select entries across list pages and approve up to 100 at a time. The confirmation shows the fixed set. Each entry is checked again when written, so a changed entry is reported separately and other successful entries remain recorded. **Stop after the current entry** prevents further writes; it does not undo a recorded decision. If a response may have been lost, retry the same action to retrieve its receipt before making another decision. Reason drafts are kept when a save returns after you continue typing.

@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+AI result rows can navigate to the exact current selected translation in the
+existing human Review workspace. Fresh target reads and the original session,
+Query, navigation and draft guards protect current evidence and newer edits.
+This changes frontend interaction and internal navigation types only. It adds
+no Core/Host/IPC, schema45, WorkPlan3, SDK/Process3, dependency or lockfile change.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same
+undistributed batch without another version bump; both Unreleased changelogs
+are synchronized. Earlier paragraphs describe their development units.
+
 Candidates-only plans can separately authorize their exact captured checks.
 The original policy action receipt records the candidate revision, complete
 check rules and execution evidence with no selection, current CheckRun or

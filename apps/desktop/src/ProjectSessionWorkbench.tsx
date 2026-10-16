@@ -23,12 +23,13 @@ import { TaskDock } from "./TaskDock";
 import { useWorkspaceView, useWorkspaceViewChanges, type WorkspaceArea } from "./WorkbenchFrame";
 import { executionContext } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
-import { reviewCommands, type ReviewEditorSnapshot } from "./reviewCommands";
+import { reviewCommands, type ReviewEditorSnapshot, type ReviewTarget } from "./reviewCommands";
+import type { AiView } from "./aiCommands";
 import { translationCommands, type TranslationHistory, type TranslationRevision } from "./translationCommands";
 import { sourceKeys, sourceReads } from "./sourceQueries";
 import type { ContentScope } from "./sourceCommands";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { SessionNavigation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination } from "./sessionNavigation";
+import { SessionNavigation, type AiReviewOrigin, type ReviewHandoffPresentation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination } from "./sessionNavigation";
 import type { ContentSelection } from "./contentSelection";
 import { resourceCommands, type CorrectionTermEvidence } from "./resourceCommands";
 import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
@@ -190,6 +191,82 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       return true;
     }
     if (destination.kind === "review-work") { committed.current.view.memory.write("review", "tab", "work"); return true; }
+    if (destination.kind === "review-target") {
+      const before = review.current(), originalAi = ai.current(), originalProject = committed.current.project;
+      const unavailable = () => review.inFlight() || review.current().busyMutation || !!review.current().pending
+        || review.current().batchRunning || !!review.current().checkReview || review.current().checkConsent.length > 0;
+      const fail = (reason: string) => { if (current()) setFailure(reason); return false; };
+      if (unavailable()) return fail("review-handoff-blocked");
+      if (!originalProject.metadata.targetLocales.includes(destination.locale)) return fail("review-handoff-unavailable");
+      const aiKey = reads.key(["aiCommands", destination.origin.attemptId]);
+      const aiQuery = reads.client.getQueryState<AiView | null>(aiKey), originalView = aiQuery?.data;
+      const aiVersion = aiQuery?.dataUpdateCount;
+      const aiCurrent = () => {
+        const owner = ai.current(), query = reads.client.getQueryState<AiView | null>(aiKey), value = query?.data;
+        const row = value?.rows.find(row => row.itemId === destination.origin.itemId);
+        return !ai.reserved() && owner.editSeq === destination.origin.editSeq && owner.editSeq === originalAi.editSeq
+          && owner.attempt === destination.origin.attemptId && query?.status === "success" && query.fetchStatus === "idle"
+          && !query.isInvalidated && query.error === null && value === originalView && query.dataUpdateCount === aiVersion
+          && value?.detail.attemptId === destination.origin.attemptId && value.detail.taskId === destination.origin.taskId
+          && row?.item.unitId === destination.target.unitId && row.item.targetLocale === destination.locale
+          && row.item.sourceRevisionId === destination.target.sourceRevisionId;
+      };
+      if (!aiCurrent()) return fail("review-handoff-changed");
+      const targetKey = reads.key(["review-target", destination.target.unitId, destination.locale]);
+      const source = sourceReads.scope(scope);
+      let invalidated = false;
+      const unsubscribe = reads.subscribeChanges(scopes => {
+        if (scopes.some(value => ["project", "source", "translation", "resources", "review"].includes(value))) invalidated = true;
+      });
+      try {
+        await reads.client.cancelQueries({ queryKey: targetKey, exact: true });
+        if (!current() || !aiCurrent()) return fail("review-handoff-changed");
+        await reads.client.invalidateQueries({ queryKey: targetKey, exact: true, refetchType: "none" });
+        await Promise.all([
+          reads.client.fetchQuery({ queryKey: targetKey, staleTime: 0, meta: { scopes: ["source", "translation", "resources", "review"] },
+            queryFn: () => reviewCommands.target({ ...scope, unitId: destination.target.unitId, locale: destination.locale }) }),
+          reads.client.fetchQuery({ queryKey: reads.key(source.key), staleTime: 0, meta: { scopes: ["project", "source"] },
+            queryFn: source.read }),
+        ]);
+        // Successful fetches can structurally share earlier cache data rather
+        // than keep the returned response object. Pin the canonical identities.
+        const target = reads.client.getQueryData<ReviewTarget>(targetKey);
+        const sourceValue = reads.client.getQueryData<ContentScope>(reads.key(source.key));
+        if (!target || !sourceValue) return fail("review-handoff-changed");
+        const targetVersion = reads.client.getQueryState(targetKey)?.dataUpdateCount;
+        const sourceVersion = reads.client.getQueryState(reads.key(source.key))?.dataUpdateCount;
+        const evidenceCurrent = () => {
+          const query = reads.client.getQueryState(targetKey), sourceQuery = reads.client.getQueryState(reads.key(source.key));
+          return current() && live() && !invalidated && aiCurrent() && review.current() === before && !unavailable()
+            && committed.current.project.sessionToken === originalProject.sessionToken
+            && committed.current.project.metadata.metadataRevision === originalProject.metadata.metadataRevision
+            && committed.current.project.metadata.sourceLocale === originalProject.metadata.sourceLocale
+            && committed.current.project.metadata.targetLocales.includes(destination.locale)
+            && query?.status === "success" && query.fetchStatus === "idle" && !query.isInvalidated && query.error === null
+            && query.data === target && query.dataUpdateCount === targetVersion
+            && sourceQuery?.status === "success" && sourceQuery.fetchStatus === "idle" && !sourceQuery.isInvalidated && sourceQuery.error === null
+            && sourceQuery.data === sourceValue && sourceQuery.dataUpdateCount === sourceVersion;
+        };
+        if (!evidenceCurrent()) return fail("review-handoff-changed");
+        if (target.unitId !== destination.target.unitId || target.locale !== destination.locale
+          || target.sourceRevisionId !== destination.target.sourceRevisionId || target.sourceSnapshotId !== sourceValue.currentSnapshot) return fail("review-handoff-source");
+        if (!target.selectionId || !target.revisionId || target.translationText === null) return fail("review-handoff-no-selection");
+        if (target.basisEvidence.sourceSnapshotId !== target.sourceSnapshotId || target.basisEvidence.sourceRevisionId !== target.sourceRevisionId
+          || target.basisEvidence.selectionId !== target.selectionId || target.basisEvidence.revisionId !== target.revisionId) return fail("review-handoff-changed");
+        return () => {
+          if (!evidenceCurrent() || !review.receiveTarget(target, before)) return fail("review-handoff-changed");
+          const selected = review.current().selected!;
+          const presentation: ReviewHandoffPresentation = { unitId: selected.unitId, locale: selected.locale, basis: selected.basis,
+            currentBasis: target.basis, fallbackId: target.currentFallback?.fallbackId ?? null };
+          const memory = committed.current.view.memory;
+          memory.write("review", "tab", "review"); memory.write("review", "aiHandoff", presentation);
+          memory.write("review", "returnToAi", true);
+          return true;
+        };
+      } catch {
+        return fail("review-handoff-read");
+      } finally { unsubscribe(); }
+    }
     if (destination.kind === "resource-correction-return") {
       const capture = destination.capture, original = committed.current.view.memory.read<CorrectionEditorTarget | null>("resources", "correctionEditorReturn"), draft = translation.current();
       if (!original || JSON.stringify(original) !== JSON.stringify(capture) || !draft || draft.unitId !== capture.target.unitId || draft.locale !== capture.locale
@@ -432,10 +509,18 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     navigation.navigate({ kind: "translation", target, locale, ...(suggestedText === undefined ? {} : { suggestedText }) });
   const openAiTranslation = (target: import("./TranslationWorkbench").EditorTarget, locale: string, suggestedText?: string) =>
     navigation.navigate({ kind: "translation", target, locale, returnTo: "ai", ...(suggestedText === undefined ? {} : { suggestedText }) });
+  const openAiReview = (target: import("./TranslationWorkbench").EditorTarget, locale: string, origin: AiReviewOrigin) =>
+    navigation.navigate({ kind: "review-target", target, locale, origin });
   const openComparison = (returnTo: "translation" | "ai") => (target: import("./TranslationWorkbench").EditorTarget, locale: string, revision: Pick<TranslationRevision, "revisionId" | "ordinal">) =>
     navigation.navigate({ kind: "arena-comparison", target, locale, revisionId: revision.revisionId, revisionOrdinal: revision.ordinal, returnTo });
   const attempt = (area: "source" | "translation" | "ai" | "arena", attemptId: string) => { void navigation.navigate({ kind: "attempt", area, attemptId }); };
   const locked = disabled || navigating;
+  const reviewMessage = failureReason(failure) === "review-handoff-no-selection" ? "ai.reviewHandoff.noSelection"
+    : failureReason(failure) === "review-handoff-source" ? "ai.reviewHandoff.source"
+    : failureReason(failure) === "review-handoff-unavailable" ? "ai.reviewHandoff.unavailable"
+    : failureReason(failure) === "review-handoff-blocked" ? "ai.reviewHandoff.blocked"
+    : failureReason(failure) === "review-handoff-changed" ? "ai.reviewHandoff.changed"
+    : failureReason(failure) === "review-handoff-read" ? "ai.reviewHandoff.readFailed" : null;
   const comparisonReturnTo = view.memory.read<"translation" | "ai">("arena", "comparisonReturnTo");
   if (retired) return <section className="workbench-panel" aria-label={t("workbench.retiredDraftTitle")}>
     <h2>{t("workbench.retiredDraftTitle")}</h2><p>{t("workbench.retiredDraftHelp")}</p>
@@ -445,7 +530,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       tasks: { cancellation: tasks.state, adoption: tasks.currentActivity() },
     }, null, 2)} /></label>
   </section>;
-  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : failureReason(failure)==="correction-editor-blocked" ? "correctionFeedback.blocked" : failureReason(failure)==="correction-editor-changed" ? "correctionFeedback.changed" : failureReason(failure)==="context-editor-blocked" ? "resource.contextEditorBlocked" : failureReason(failure)==="context-editor-changed" ? "resource.contextEditorChanged" : "workbench.navigationBlocked")}</p><CommandFailureDetails failure={failure} /></div> : null}
+  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(reviewMessage ?? (failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : failureReason(failure)==="correction-editor-blocked" ? "correctionFeedback.blocked" : failureReason(failure)==="correction-editor-changed" ? "correctionFeedback.changed" : failureReason(failure)==="context-editor-blocked" ? "resource.contextEditorBlocked" : failureReason(failure)==="context-editor-changed" ? "resource.contextEditorChanged" : "workbench.navigationBlocked"))}</p><CommandFailureDetails failure={failure} />{reviewMessage ? <button className="secondary-button" disabled={locked} onClick={() => { void navigation.navigate({ kind: "area", area: failureReason(failure) === "review-handoff-blocked" ? "review" : "translation" }); }}>{t(failureReason(failure) === "review-handoff-blocked" ? "ai.reviewHandoff.retained" : "ai.reviewHandoff.openCurrent")}</button> : null}</div> : null}
     {view.area === "overview" && !reads.retired ? <OverviewSourceObserver project={project} onSourceState={onSourceState} /> : null}
     {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} onOpenExtensions={onOpenExtensions}
@@ -461,9 +546,11 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       onReturnFromCorrection={capture => navigation.navigate({ kind: "resource-correction-return", capture })}
       contextEditorReturn={view.memory.read<ContextEditorTarget|null>("resources","contextEditorReturn")}
       onReturnToEditor={capture=>navigation.navigate({kind:"resource-context-return",capture})} /> : null}
-    {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
+    {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions}
+      handoff={view.memory.read<ReviewHandoffPresentation>("review", "aiHandoff")}
+      onReturnToAi={view.memory.read<boolean>("review", "returnToAi") ? () => navigation.navigate({ kind: "area", area: "ai" }) : undefined} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
-    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenComparison={openComparison("ai")} onOpenTranslation={openAiTranslation} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
+    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenComparison={openComparison("ai")} onOpenTranslation={openAiTranslation} onOpenReview={openAiReview} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
     {view.area === "arena" ? <ArenaWorkbench ref={handle => register("arena", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenConnections={onOpenConnections}
       onReturn={comparisonReturnTo ? () => { void navigation.navigate({ kind: "area", area: comparisonReturnTo }); } : undefined} /> : null}
     {view.area === "tasks" ? <ExecutionTasks ref={handle => register("tasks", handle)} project={project} disabled={locked}

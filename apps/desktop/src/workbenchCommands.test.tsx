@@ -110,6 +110,22 @@ describe("Translation business command payloads",()=>{
 });
 
 describe("WorkbenchCommands", () => {
+  it("validates the current Review navigation row and scope before dispatching its typed AI command", () => {
+    const commands = new WorkbenchCommands(), handler = vi.fn(), availability = vi.fn(() => ({ enabled: true }));
+    const context = { projectId: "project", sessionToken: "session", area: "ai" as const };
+    const id = "00000000-0000-0000-0000-000000000001";
+    const payload = { kind: "ai-translation-target" as const, attemptId: id, taskId: id, itemId: id, translationUnitId: id,
+      sourceRevisionId: id, sourceSnapshotId: id, locale: "zh-CN" };
+    const remove = commands.register({ id: "ai.open-review", nameKey: "ai.reviewHandoff.open", category: "ai", scope: context,
+      binding: null, risk: "opens-review", confirmation: "none", payloadKind: "ai-translation-target", availability, handler });
+    expect(commands.dispatch("ai.open-review", context, { ...payload, sourceRevisionId: "" })).toBe(false);
+    expect(commands.dispatch("ai.open-review", { ...context, sessionToken: "old" }, payload)).toBe(false);
+    expect(handler).not.toHaveBeenCalled();
+    expect(commands.describe("ai.open-review", context, payload)?.availability.enabled).toBe(true);
+    expect(commands.dispatch("ai.open-review", context, payload)).toBe(true);
+    expect(handler).toHaveBeenCalledExactlyOnceWith(payload);
+    remove(); expect(commands.dispatch("ai.open-review", context, payload)).toBe(false);
+  });
   it("dispatches only the live committed project, session, and area", () => {
     const commands = new WorkbenchCommands();
     const save = vi.fn();

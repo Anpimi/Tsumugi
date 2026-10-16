@@ -20,6 +20,40 @@ function setup() {
 }
 
 describe("project session navigation", () => {
+  it.each(["source-guard", "newer-draft"] as const)("does not commit a prepared Review handoff after %s or revive its old closure", async reason => {
+    const test = setup(); test.setArea("ai");
+    let editSeq = 0, commit!: () => boolean;
+    const receive = vi.fn();
+    vi.mocked(test.ports.accept).mockImplementationOnce(async (_destination, current) => {
+      const captured = editSeq;
+      commit = () => { if (!current() || editSeq !== captured) return false; receive(); return true; };
+      return commit;
+    });
+    test.presentation.allowNavigate.mockResolvedValueOnce(true).mockImplementationOnce(async () => {
+      if (reason === "newer-draft") editSeq++;
+      return reason !== "source-guard";
+    });
+    const destination: WorkspaceDestination = { kind: "review-target", target: { unitId: "unit", sourceRevisionId: "source", key: "Entry", sourceText: "Source" },
+      locale: "zh-CN", origin: { attemptId: "attempt", taskId: "task", itemId: "item", editSeq: 0 } };
+    expect(await test.navigation.navigate(destination)).toBe(false);
+    expect(receive).not.toHaveBeenCalled(); expect(test.area()).toBe("ai");
+    editSeq = 0;
+    expect(commit()).toBe(false); expect(receive).not.toHaveBeenCalled();
+  });
+  it("freezes the original Review target and AI identity until its synchronous commit", async () => {
+    const test = setup(); test.setArea("ai"); const guard = deferred<boolean>();
+    test.presentation.allowNavigate.mockImplementationOnce(() => guard.promise);
+    const destination: Extract<WorkspaceDestination, { kind: "review-target" }> = { kind: "review-target",
+      target: { unitId: "unit", sourceRevisionId: "source", key: "Original", sourceText: "Source" }, locale: "zh-CN",
+      origin: { attemptId: "attempt", taskId: "task", itemId: "item", editSeq: 1 } };
+    const committing = vi.fn(() => { expect(test.area()).toBe("ai"); return true; });
+    vi.mocked(test.ports.accept).mockResolvedValueOnce(committing);
+    const moving = test.navigation.navigate(destination);
+    destination.target.key = "Later"; destination.origin.editSeq = 2; guard.resolve(true);
+    expect(await moving).toBe(true); expect(committing).toHaveBeenCalledOnce(); expect(test.area()).toBe("review");
+    expect(test.ports.accept).toHaveBeenCalledWith(expect.objectContaining({ target: expect.objectContaining({ key: "Original" }),
+      origin: expect.objectContaining({ editSeq: 1 }) }), expect.any(Function));
+  });
   it("freezes the original editor context capture and returns through the same navigation guard",async()=>{
     const test=setup();test.setArea("translation");const answer=deferred<boolean>();
     test.presentation.allowNavigate.mockImplementationOnce(()=>answer.promise);
