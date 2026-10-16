@@ -5,9 +5,14 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv";
 import standaloneModule from "ajv/dist/standalone/index.js";
+import ucs2lengthModule from "ajv/dist/runtime/ucs2length.js";
 import { compile } from "json-schema-to-typescript";
 
 const standalone = standaloneModule.default ?? standaloneModule;
+const ucs2length = ucs2lengthModule.default ?? ucs2lengthModule;
+const unicodeHelperReference = 'require("ajv/dist/runtime/ucs2length").default';
+if (typeof ucs2length !== "function" || ucs2length.code !== unicodeHelperReference) throw new Error("Unexpected Ajv Unicode helper");
+const ajvLicense = (await readFile(join(dirname(fileURLToPath(import.meta.resolve("ajv/package.json"))), "LICENSE"), "utf8")).trim();
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(desktop, "../..");
 const check = process.argv.includes("--check");
@@ -50,11 +55,15 @@ try {
         declarations.push(`export declare function ${name}(value: unknown): value is ${title}[${JSON.stringify(key)}];`);
       }
     }
-    const code = standalone(ajv, exports);
-    // This schema slice requires no Ajv runtime helpers or dynamic compilation.
-    // A later schema that adds one must explicitly bundle it for the browser.
+    // Bundle Ajv's own Unicode counter for string-length constraints. Keep its
+    // implementation tied to the installed version instead of duplicating it.
+    const standaloneCode = standalone(ajv, exports);
+    const hasUnicodeHelper = standaloneCode.includes(unicodeHelperReference);
+    const code = standaloneCode.replaceAll(unicodeHelperReference, `(${ucs2length.toString()})`);
+    // Any other runtime helper must also be explicitly bundled for the browser.
     if (/\brequire\s*\(/.test(code)) throw new Error("Standalone validator requires an unbundled runtime helper");
-    output.set(`${prefix}validators.js`, `// ${banner}\n${code.trimEnd()}\n`);
+    const notice = hasUnicodeHelper ? `/*! @license Ajv Unicode string-length helper.\n${ajvLicense}\n*/\n` : "";
+    output.set(`${prefix}validators.js`, `// ${banner}\n${notice}${code.trimEnd()}\n`);
     output.set(`${prefix}validators.d.ts`, `// ${banner}\nimport type { Requests } from "./${prefix}requests";\nimport type { Responses } from "./${prefix}responses";\n${declarations.join("\n")}\n`);
     output.set(`${prefix}enums.ts`, `// ${banner}\n${enums.join("\n")}\n`);
     output.set(`${prefix}ipc.schema.json`, JSON.stringify(schemas, null, 2) + "\n");

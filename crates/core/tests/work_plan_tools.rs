@@ -1,4 +1,6 @@
 //! Broker authority and ledger evidence; the separate Host test executes the worker.
+#[path = "work_plan_tools/guidance.rs"]
+mod guidance;
 mod support;
 use serde_json::json;
 use std::{

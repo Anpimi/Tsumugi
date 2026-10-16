@@ -109,7 +109,13 @@ pub async fn open_work_plan_agent_scope(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                let (host, store) = active.execution_parts()?;
+                let host = active.execution.as_mut().ok_or_else(|| {
+                    map_read(ExecutionError::new(
+                        ErrorCode::Unauthorized,
+                        "work-plan-agent-session",
+                    ))
+                })?;
+                let store = &active.store;
                 host.allow_mutation()?;
                 let opened = store
                     .work_plan_agent_scope(request.lease)

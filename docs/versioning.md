@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Tool-linked guidance adds bounded read-only Application/Desktop interfaces for
+the Skill and supporting Resources already declared by a captured tool. It
+reuses immutable package content and the original active Agent scope, without
+adding SDK, process, package or persisted project fields. Schema45, WorkPlan3,
+SDK/Process3, dependencies and lockfiles remain unchanged. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed batch; both
+Unreleased changelogs are synchronized without another version bump.
+
 New AI workbench drafts and explicit full draft resets now recommend adopted
 terms and saved human context. The existing preparation owner retains explicit
 opt-outs and requires a fresh exact preview and sharing consent before execution.

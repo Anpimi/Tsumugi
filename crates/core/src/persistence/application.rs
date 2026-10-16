@@ -1,5 +1,6 @@
 //! Work plans use the existing project and execution authorities.
 mod control;
+mod guidance;
 mod maintenance;
 mod selection;
 mod services;

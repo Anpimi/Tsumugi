@@ -467,7 +467,7 @@ fn load_runner(
     Ok((expected.settings_revision, proxy, binding))
 }
 
-fn read_host(active: &ActiveSession) -> Result<&ExecutionHost, CommandError> {
+pub(super) fn read_host(active: &ActiveSession) -> Result<&ExecutionHost, CommandError> {
     // An Agent scope exists only in its original host. Reads must not create a
     // new runtime while looking for an obsolete or invented handle.
     active.execution.as_ref().ok_or_else(|| {

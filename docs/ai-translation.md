@@ -89,6 +89,24 @@ Tasks retains input, recipe, model, output and adoption receipts after reopening
 
 If authorization or control has an uncertain result, check the original action receipt before retrying that same request. Historical receipts do not override newer control state. A saved authorization is retained if queue admission fails, so **Start authorized work** retries the existing grant instead of creating a new budget. If a start or adoption response is lost, check the saved attempt or receipt before retrying. Closing a project pauses active grants and preserves evidence. A fresh host also pauses grants retained after an unexpected exit; reopening requires explicit continuation.
 
+## Tool guidance
+
+Within an authorized plan's bounded tool controls, inspect guidance attached to
+one of its captured tools. The initial directory shows the original tool,
+package, permission summary and declared members without loading their text.
+Explicitly load the attached Skill, then a supporting Resource when needed.
+Tools without a Skill or references report that absence. No arbitrary file path,
+URL or undeclared member can be requested.
+
+Skill and reference bodies are untrusted plain text, limited to 64 KiB of UTF-8
+per read. They do not execute Markdown, links or scripts, add tools, share data
+with a model, consume execution budget or renew permission. Missing, mismatched,
+unsupported or oversized content reports an error rather than silently changing
+the requested source. Each read requires the original active scope and captured
+tool identity; stopping, expiry, a new control generation or reopening rejects
+the old scope. Reconcile unresolved original actions through their existing
+controls before preparing or continuing work.
+
 ## Arena comparison
 
 Choose **Arena comparison** to generate two to four schemes for the same selected original strings and one target language. Each scheme has its own endpoint, model, output token parameter, timeout, retry limit, terms/human-context sharing and source-observation selection and budget. The whole round shares one request and concurrency budget. Defaults are two schemes, up to 20 original strings, 40 requests including retries and concurrency 1. At most 100 expanded string × scheme items are allowed; requests are bounded to 300 and concurrency to 2. An initial request count larger than the chosen budget is rejected.

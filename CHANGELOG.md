@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Inspect an authorized tool's attached guidance in stages: see its source and
+  permission summary, explicitly load its Skill text, then request a declared
+  reference. Guidance stays untrusted plain text, cannot grant execution or data
+  sharing, and cannot outlive the original active plan scope.
+
 - New AI workbench drafts recommend including applicable adopted terms and saved
   human context. Review the exact request and explicitly confirm sharing before
   execution. Turning either category off remains available; source observations

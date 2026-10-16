@@ -87,6 +87,8 @@ macro_rules! handlers {
         work_plans::agent::prepare_work_plan_agent_generation,work_plans::agent::start_work_plan_agent_generation,
         work_plans::broker::prepare_work_plan_agent_tool,work_plans::broker::start_work_plan_agent_tool,
         work_plans::broker::read_work_plan_agent_tool_attempt,work_plans::broker::read_work_plan_agent_tool_output,
+        work_plans::guidance::read_work_plan_agent_guidance,work_plans::guidance::read_work_plan_agent_skill,
+        work_plans::guidance::read_work_plan_agent_resource,
         work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,
         work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
     ] };

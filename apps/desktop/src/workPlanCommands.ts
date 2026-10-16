@@ -8,7 +8,8 @@ import type {
   WorkPlanAgentToolAttemptRequest, WorkPlanAgentToolOutputRequest,
   MaintenanceAssessmentRequest,
 } from "./generated/ai.requests";
-import type { AttemptDetail, ExecutionOutputView, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis } from "./generated/ai.responses";
+import type { AttemptDetail, ExecutionOutputView, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
+  WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -203,7 +204,54 @@ export async function openWorkPlanAgent(
       || Object.keys(value).length !== keys.length || Object.keys(value).some(key => !keys.includes(key)))
       throw new Error("Invalid Agent tool read request");
   }
+  function guidanceTool(handle: string) {
+    const tool = tools.get(handle);
+    if (!tool) throw new Error("Tool is outside this Agent guidance scope");
+    return tool;
+  }
+  function confirmGuidanceText(value: WorkPlanAgentGuidanceTextView, tool: WorkPlanToolSpec) {
+    if (value.scopeId !== context.scopeId || value.parentTask !== parentTask || jsonIdentity(value.tool) !== jsonIdentity(tool)) invalidAcknowledgement();
+    const bytes = new TextEncoder().encode(value.content.text);
+    // UTF-16 lone surrogates must not silently become replacement characters.
+    if (bytes.byteLength > 65536 || new TextDecoder("utf-8", { fatal: true }).decode(bytes) !== value.content.text) invalidAcknowledgement();
+    return value;
+  }
   return Object.freeze({
+    readGuidance: async () => {
+      const value = await checkedInvoke("read_work_plan_agent_guidance", { ...context }, (value: unknown): value is WorkPlanAgentGuidanceView => {
+        if (!validators.validateResponseWorkPlanAgentGuidance(value)) invalidAcknowledgement();
+        return true;
+      });
+      if (value.scopeId !== context.scopeId || value.parentTask !== parentTask || value.tools.length !== tools.size || value.tools.length > 32
+        || new Set(value.tools.map(tool => tool.handle)).size !== tools.size
+        || value.tools.some(tool => jsonIdentity(tool) !== jsonIdentity(tools.get(tool.handle)))) invalidAcknowledgement();
+      return value;
+    },
+    readSkill: async (toolHandle: string) => {
+      const tool = guidanceTool(toolHandle), skillId = tool.binding.declaration.skill;
+      if (!skillId) throw new Error("This Agent tool has no Skill");
+      const reading = { ...context, toolHandle: tool.handle, skillId };
+      if (!validators.validateRequestWorkPlanAgentSkill(reading)) throw new Error("Invalid Agent guidance request");
+      const value = confirmGuidanceText(await checkedInvoke("read_work_plan_agent_skill", reading, (value: unknown): value is WorkPlanAgentGuidanceTextView => {
+        if (!validators.validateResponseWorkPlanAgentSkill(value)) invalidAcknowledgement();
+        return true;
+      }), tool);
+      if (value.content.kind !== "skill" || value.content.contributionId !== skillId) invalidAcknowledgement();
+      return value;
+    },
+    readResource: async (toolHandle: string, resourceId: string) => {
+      const tool = guidanceTool(toolHandle), resource = tool.binding.resources.find(resource => resource.contributionId === resourceId);
+      if (!resource) throw new Error("Resource is outside this Agent tool declaration");
+      const reading = { ...context, toolHandle: tool.handle, resourceId: resource.contributionId };
+      if (!validators.validateRequestWorkPlanAgentResource(reading)) throw new Error("Invalid Agent guidance request");
+      const value = confirmGuidanceText(await checkedInvoke("read_work_plan_agent_resource", reading, (value: unknown): value is WorkPlanAgentGuidanceTextView => {
+        if (!validators.validateResponseWorkPlanAgentResource(value)) invalidAcknowledgement();
+        return true;
+      }), tool);
+      if (value.content.kind !== "resource" || value.content.contributionId !== resource.contributionId
+        || jsonIdentity(value.content.schema) !== jsonIdentity(resource.schema)) invalidAcknowledgement();
+      return value;
+    },
     prepare: async (generation: unknown) => {
       const preparing = { ...context, generation: structuredClone(generation) };
       if (!validators.validateRequestWorkPlanAgentPrepare(preparing))

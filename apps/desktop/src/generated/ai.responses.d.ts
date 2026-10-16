@@ -379,6 +379,18 @@ export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
 export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
+export type WorkPlanGuidanceContent =
+  | {
+      contributionId: string;
+      kind: "skill";
+      text: string;
+    }
+  | {
+      contributionId: string;
+      kind: "resource";
+      schema: ContractRef;
+      text: string;
+    };
 export type InvocationOutcome =
   | {
       kind: "succeeded";
@@ -419,6 +431,9 @@ export interface Responses {
   workPlanAction: WorkPlanReceiptView | null;
   workPlanAgent: WorkPlanAgentView;
   workPlanAgentGeneration: WorkPlanAgentGenerationView;
+  workPlanAgentGuidance: WorkPlanAgentGuidanceView;
+  workPlanAgentResource: WorkPlanAgentGuidanceTextView;
+  workPlanAgentSkill: WorkPlanAgentGuidanceTextView;
   workPlanAgentTool: WorkPlanAgentToolView;
   workPlanAgentToolAttempt: AttemptDetail;
   workPlanAgentToolOutput: ExecutionOutputView;
@@ -1305,6 +1320,21 @@ export interface WorkPlanAgentGenerationView {
   scope: PlanSelectionBasis[];
   scopeId: ExecutionId;
   taskId: ExecutionId;
+}
+export interface WorkPlanAgentGuidanceView {
+  parentTask: ExecutionId;
+  scopeId: ExecutionId;
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  tools: [WorkPlanToolSpec, ...WorkPlanToolSpec[]];
+}
+export interface WorkPlanAgentGuidanceTextView {
+  content: WorkPlanGuidanceContent;
+  parentTask: ExecutionId;
+  scopeId: ExecutionId;
+  tool: WorkPlanToolSpec;
 }
 export interface WorkPlanAgentToolView {
   attemptId: ExecutionId;
