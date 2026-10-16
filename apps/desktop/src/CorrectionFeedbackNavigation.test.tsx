@@ -140,7 +140,7 @@ async function reply(command: string, request: Record<string, unknown>): Promise
       await holdCapture;
       if (!loseCapture || commitLostCapture) {
         captureActions.set(request.capture.actionId, receipt); captures = [capture];
-        preview = { capture, rows: [{ entry: { id: "term", source: request.capture.source, target: request.capture.target, aliases: [], protected: request.capture.protected, nativeKey: null, reason: request.capture.reason }, kind: "added", current: null, scopeUnitId: b.unitId }], removed: [], correction: { evidence: structuredClone(evidence), decision: null } };
+        preview = { capture, rows: [{ entry: { id: "term", source: request.capture.source, target: request.capture.target, aliases: [], protected: request.capture.protected, nativeKey: null, reason: request.capture.reason }, kind: "added", current: null, scopeUnitId: b.unitId }], removed: [], correction: { evidence: structuredClone(evidence), decision: null }, mcp: null };
       }
       if (loseCapture) { loseCapture = false; return { unconfirmed: true }; }
       return structuredClone(receipt);

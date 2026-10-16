@@ -14,10 +14,12 @@ const MAX_FIELD_BYTES: usize = 16 * 1024;
 
 mod context_facts;
 mod correction;
+pub(crate) mod mcp;
 pub use correction::{
     CaptureCorrectionTerm, CorrectionTermBasis, CorrectionTermEvidence, CorrectionTermPreview,
     CorrectionTermReceipt, GlossaryCaptureOrigin, RevisionSelectionRef,
 };
+pub use mcp::McpTermQueryAdoptionHandler;
 mod exchange_xml;
 pub use context_facts::{
     ContextFactDecision, ContextFactDisposition, ContextFactHistory, ContextFactPosition,
@@ -256,6 +258,12 @@ pub struct ResourcePreview {
         schemars(schema_with = "correction::preview_schema")
     )]
     pub correction: Option<CorrectionTermPreview>,
+    #[serde(deserialize_with = "crate::application::mcp_retrieval::required_capture_preview")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "crate::application::mcp_retrieval::capture_preview_schema")
+    )]
+    pub mcp: Option<crate::application::McpTermCapturePreview>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -557,7 +565,7 @@ const TABLES: &[(&str, &str)] = &[
     ("resource_captures", "CREATE TABLE resource_captures (
         capture_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
-        capture_kind TEXT NOT NULL CHECK(capture_kind IN ('file','correction')),
+        capture_kind TEXT NOT NULL CHECK(capture_kind IN ('file','correction','mcp')),
         correction_key TEXT UNIQUE,
         resource_id TEXT,
         resource_revision TEXT,
@@ -565,12 +573,13 @@ const TABLES: &[(&str, &str)] = &[
         target_locale TEXT NOT NULL,
         license TEXT,
         digest TEXT NOT NULL CHECK(length(digest)=64),
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 131072),
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144),
         action_id TEXT NOT NULL UNIQUE,
         request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
         UNIQUE(project_id,resource_id,resource_revision),
         CHECK((capture_kind='file' AND correction_key IS NULL AND resource_id IS NOT NULL AND resource_revision IS NOT NULL AND license IS NOT NULL)
-           OR (capture_kind='correction' AND correction_key IS NOT NULL AND length(correction_key)=64 AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)))"),
+           OR (capture_kind='correction' AND correction_key IS NOT NULL AND length(correction_key)=64 AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)
+           OR (capture_kind='mcp' AND correction_key IS NULL AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)))"),
     ("term_revisions", "CREATE TABLE term_revisions (
         revision_id TEXT PRIMARY KEY NOT NULL,
         term_id TEXT NOT NULL,
@@ -733,6 +742,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
     }
     correction::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    mcp::validate_captures(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(())
 }
 
@@ -1008,6 +1018,31 @@ fn capture_by_id(
                 },
                 1,
                 correction::CapturedGlossary::Correction(request),
+            )
+        }
+        "mcp" => {
+            let captured: mcp::CapturedMcpTerms =
+                codec::decode(&bytes, crate::application::MAX_MCP_CAPTURE_BYTES)?;
+            if resource_id.is_some()
+                || revision.is_some()
+                || license.is_some()
+                || captured.action.action_id != action
+                || captured.action.project_id != project_id
+                || captured.provenance.basis.project_id != project_id
+                || captured.provenance.basis.source_locale != source_locale
+                || captured.provenance.basis.locale != target_locale
+                || request_digest != file_digest
+                || codec::encode(&captured, crate::application::MAX_MCP_CAPTURE_BYTES)? != bytes
+            {
+                return Err(failure(ErrorCode::CorruptLedger, "mcp-query-capture"));
+            }
+            mcp::validate_capture(connection, &captured)?;
+            (
+                GlossaryCaptureOrigin::Mcp {
+                    provenance: captured.provenance.clone(),
+                },
+                captured.output.entries.len() as u32,
+                correction::CapturedGlossary::Mcp(captured),
             )
         }
         _ => return Err(failure(ErrorCode::CorruptLedger, "resource-capture")),
@@ -2027,6 +2062,9 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?;
         let (capture, data) = capture_by_id(connection, project_id, capture_id)?;
         let file = match data {
+            correction::CapturedGlossary::Mcp(value) => {
+                return mcp::preview(connection, capture, value);
+            }
             correction::CapturedGlossary::Correction(request) => {
                 return correction::preview(connection, capture, request);
             }
@@ -2099,6 +2137,7 @@ impl ProjectStore {
             rows,
             removed,
             correction: None,
+            mcp: None,
         })
     }
 
@@ -2250,6 +2289,9 @@ impl ProjectStore {
         }
         let (_, data) = capture_by_id(&tx, request.project_id, request.capture_id)?;
         let revision = match data {
+            correction::CapturedGlossary::Mcp(capture) => {
+                mcp::decide(&tx, request, &capture, &request_digest)?
+            }
             correction::CapturedGlossary::Correction(capture) => {
                 correction::decide(&tx, request, &capture, &request_digest)?
             }

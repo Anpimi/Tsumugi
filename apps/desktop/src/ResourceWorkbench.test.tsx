@@ -809,7 +809,7 @@ it("opens an adopted correction from term history after a manual edit without re
         protected: adopted.protected, nativeKey: null, reason: adopted.reason }, current, kind: "edited", scopeUnitId: adopted.scopeUnitId }],
         removed: [], correction: { evidence, decision: { actionId: fixtureIdentity(485), decision: "adopt", revision: adopted,
           request: { projectId: project.metadata.projectId, actionId: fixtureIdentity(485), captureId: capture.captureId,
-            entryId: "term", decision: "adopt", expectedRevisionId: null } } } };
+            entryId: "term", decision: "adopt", expectedRevisionId: null } } }, mcp: null };
       return result;
     }
     return original(command, { request });

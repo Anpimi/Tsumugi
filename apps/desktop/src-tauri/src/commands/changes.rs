@@ -60,6 +60,7 @@ pub(super) async fn read_project_changes(
             CommandStage::ExecutionRead,
             move |sessions| {
                 let hook_active = sessions.source_hooks.is_active();
+                let retrieval_active = sessions.mcp_retrieval.active();
                 let active = execution::authorized(
                     sessions,
                     &request.session_token,
@@ -71,7 +72,7 @@ pub(super) async fn read_project_changes(
                 }
                 let changes = active.store.changes_since(request.after_sequence);
                 let mut runtime = active.execution_status_view()?;
-                runtime.active |= hook_active;
+                runtime.active |= hook_active || retrieval_active;
                 Ok(ProjectChanges {
                     project_id: request.project_id,
                     session_token: request.session_token,

@@ -144,7 +144,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
         [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.protection.current().pending,
           translation.candidates.current().editSeq,translation.candidates.current().pending, sharing.revision()]),
       row("resources", resources.factBlocked() || resources.inFlight() || !!res.pending || resources.tool.blocked(), resources.factDirty() || resources.termDirty() || resources.contextDirty() || resources.correctionDirty() || resources.tool.hasDraft(),
-        [res.termSeq, res.contextSeq, res.correctionDraft, res.factDraft, res.factPending, resources.tool.draftSequence.current, resources.tool.current().capture?.review.inputDigest, resources.tool.current().pending]),
+        [res.termSeq, res.contextSeq, res.correctionDraft, res.factDraft, res.factPending, resources.tool.draftSequence.current, resources.tool.current().capture?.review.inputDigest, resources.tool.current().pending, resources.tool.mcp.revision()]),
       row("review", review.inFlight() || rev.batchRunning || !!rev.pending,
         Object.values(rev.drafts).some(value => value.length > 0) || Object.keys(rev.chosen).length > 0 || !!rev.checkReview || rev.checkConsent.length > 0 || rev.advisoryChecks.length > 0,
         [rev.locale, rev.actor, rev.editSeq, rev.checkReview?.request, rev.checkConsent, rev.advisoryChecks, Object.values(rev.chosen).map(value => [value.unitId, value.locale, value.basis]),
@@ -553,7 +553,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   if (retired) return <section className="workbench-panel" aria-label={t("workbench.retiredDraftTitle")}>
     <h2>{t("workbench.retiredDraftTitle")}</h2><p>{t("workbench.retiredDraftHelp")}</p>
     <label className="field"><span>{t("workbench.retiredDraftData")}</span><textarea readOnly rows={18} value={JSON.stringify({
-      translation: translation.current(), candidateDecision: translation.candidates.current(), translationImport: imports.current(), source: source.current(), sourceNotice: source.hook.current(), resources: resources.current(),
+      translation: translation.current(), candidateDecision: translation.candidates.current(), translationImport: imports.current(), source: source.current(), sourceNotice: source.hook.current(), resources: resources.current(), resourceQueries: resources.tool.current(), mcpRetrieval: resources.tool.mcp.current(),
       review: review.current(), release: release.current(), ai: ai.current(), arena: arena.current(),
       tasks: { cancellation: tasks.state, adoption: tasks.currentActivity() },
     }, null, 2)} /></label>

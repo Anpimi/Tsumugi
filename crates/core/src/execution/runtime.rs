@@ -124,6 +124,7 @@ struct Worker {
 /// Session-owned scheduler. `tick` only performs bounded polling and short store
 /// transactions. Workers cannot retain the store after the session closes.
 pub struct ExecutionRuntime {
+    mcp_permits: BTreeMap<ExecutionId, crate::application::McpTermQueryPermit>,
     generation: ExecutionId,
     initial_sequence: Revision,
     runners: BTreeMap<RunnerKey, RunnerEntry>,
@@ -141,6 +142,7 @@ impl ExecutionRuntime {
         let generation = ExecutionId::new();
         let plugin_epoch = store.begin_plugin_epoch(generation)?;
         Ok(Self {
+            mcp_permits: BTreeMap::new(),
             generation,
             plugin_epoch,
             validators: BTreeMap::new(),
@@ -450,6 +452,64 @@ impl ExecutionRuntime {
         input: &FixedInput,
     ) -> Result<(), ExecutionError> {
         self.submit_with_parent(store, input, None)
+    }
+    /// A fixed MCP description is not authority. Only this original-session
+    /// preparation and permit may enter the existing queue for a new request.
+    pub fn submit_mcp_term_query(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedMcpTermQuery,
+        permit: &crate::application::McpTermQueryPermit,
+    ) -> Result<(), ExecutionError> {
+        if let Some(prior) =
+            store.execution_input_if_present(prepared.input().envelope().attempt_id)?
+        {
+            if prior.bytes() != prepared.input().bytes() {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "mcp-query-start",
+                ));
+            }
+            let consent = crate::application::McpTermQueryConsent {
+                action_id: prepared.preview().request.action_id,
+                input_digest: prior.digest().into(),
+                expires_at_ms: prepared.preview().request.expires_at_ms,
+                share_query: true,
+            };
+            store
+                .reconcile_mcp_term_query(
+                    prior.envelope().project_id,
+                    prior.envelope().attempt_id,
+                    &consent,
+                )?
+                .ok_or_else(|| ExecutionError::new(ErrorCode::ResultMismatch, "mcp-query-start"))?;
+            return Ok(());
+        }
+        store.check_mcp_term_query(prepared)?;
+        permit.check_input(prepared.input())?;
+        permit.bind_runtime(self.generation)?;
+        if self.submission_policy(store, prepared.input(), None)? != RecoveryPolicy::ExternalUnknown
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "mcp-query-recovery-policy",
+            ));
+        }
+        self.mcp_permits
+            .retain(|_, p| p.check_input(&p.input).is_ok());
+        if !self
+            .mcp_permits
+            .contains_key(&prepared.input().envelope().attempt_id)
+            && self.mcp_permits.len() >= 128
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "mcp-query-permits",
+            ));
+        }
+        self.mcp_permits
+            .insert(prepared.input().envelope().attempt_id, permit.clone());
+        store.enqueue_mcp_term_query(prepared, permit)
     }
     /// Child requests inherit parent scope, cancellation and every ancestor budget.
     pub fn submit_child(
@@ -996,6 +1056,13 @@ impl ExecutionRuntime {
         request: ExecutionId,
     ) -> Result<Revision, ExecutionError> {
         let revision = store.cancel_execution(task, request)?;
+        for permit in self
+            .mcp_permits
+            .values()
+            .filter(|p| p.input.envelope().task_id == task)
+        {
+            permit.revoke();
+        }
         for worker in &mut self.workers {
             if store
                 .execution_attempt(worker.request.input.envelope().attempt_id, true)
@@ -1064,6 +1131,9 @@ impl ExecutionRuntime {
         }))
     }
     pub fn begin_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
+        for permit in self.mcp_permits.values() {
+            permit.revoke();
+        }
         store.check_plugin_epoch_owner(&self.plugin_epoch)?;
         self.plugin_epoch.revoke();
         self.accepting = false;
@@ -1143,6 +1213,9 @@ impl ExecutionRuntime {
 }
 impl Drop for ExecutionRuntime {
     fn drop(&mut self) {
+        for permit in self.mcp_permits.values() {
+            permit.revoke();
+        }
         self.plugin_epoch.revoke();
         for entry in self.runners.values() {
             entry.queries.stop();

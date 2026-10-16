@@ -239,7 +239,8 @@
           "removed": false
         }
       ],
-      "correction": null
+      "correction": null,
+      "mcp": null
     },
     "decision": {
       "actionId": "30000000-0000-4000-8000-000000000010",

@@ -34,6 +34,9 @@ pub(super) const TABLES: &[(&str, &str)] = &[
         retry_safe INTEGER NOT NULL CHECK(retry_safe IN (0,1)), diagnostic TEXT CHECK(length(diagnostic) <= 4096),
         PRIMARY KEY(attempt_id,item_id), UNIQUE(attempt_id,item_id,dispatch_token))"),
     ("execution_results", EXECUTION_RESULTS_TABLE),
+    ("mcp_query_actions", "CREATE TABLE mcp_query_actions (
+        action_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL UNIQUE REFERENCES execution_attempts(attempt_id),
+        input_digest TEXT NOT NULL CHECK(length(input_digest)=64))"),
     ("plugin_validation_links", "CREATE TABLE plugin_validation_links (
         producer_result_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_results(result_id),
         checker_result_id TEXT NOT NULL REFERENCES execution_results(result_id),
@@ -154,8 +157,14 @@ fn validate_schema(
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
         let _ = read_attempt_in(connection, &input, false)?;
+        if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
+            || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY
+        {
+            super::mcp::validate_ledger_input(connection, &input)?;
+        }
         validate_input(connection, &input)?;
     }
+    super::mcp::validate_action_links(connection)?;
     let mut links = connection
         .prepare("SELECT producer_result_id,valid FROM plugin_validation_links")
         .map_err(sql_error)?;
@@ -351,6 +360,7 @@ fn enqueue_input(
         }
     }
     provider::record_input(tx, input, policy, parent)?;
+    super::mcp::record_input(tx, input)?;
     super::content::record_input(tx, input)?;
     super::translation::record_input(tx, input)?;
     Ok(true)
@@ -1975,7 +1985,7 @@ impl ProjectStore {
         policy: RecoveryPolicy,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
-        self.enqueue_execution_with_authority(input, policy, parent, None, None, None)
+        self.enqueue_execution_with_authority(input, policy, parent, None, None, None, None)
     }
 
     pub(crate) fn enqueue_work_plan_agent_generation(
@@ -1991,6 +2001,7 @@ impl ProjectStore {
             None,
             None,
             Some(prepared),
+            None,
         )
     }
 
@@ -2010,6 +2021,7 @@ impl ProjectStore {
             Some((prepared, consent, grant_id, generation)),
             None,
             None,
+            None,
         )
     }
 
@@ -2025,6 +2037,28 @@ impl ProjectStore {
             None,
             Some(prepared),
             None,
+            None,
+        )
+    }
+
+    pub(crate) fn enqueue_mcp_term_query(
+        &mut self,
+        prepared: &crate::application::PreparedMcpTermQuery,
+        permit: &crate::application::McpTermQueryPermit,
+    ) -> Result<(), ExecutionError> {
+        self.check_mcp_term_query(prepared)?;
+        permit.check_input(prepared.input())?;
+        if permit.epoch != prepared.epoch {
+            return Err(error(ErrorCode::Unauthorized, "mcp-query-session"));
+        }
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            RecoveryPolicy::ExternalUnknown,
+            None,
+            None,
+            None,
+            None,
+            Some((prepared, permit)),
         )
     }
 
@@ -2041,7 +2075,17 @@ impl ProjectStore {
         )>,
         service: Option<&crate::application::PreparedWorkPlanServiceGeneration>,
         agent: Option<&crate::application::PreparedWorkPlanAgentGeneration>,
+        mcp: Option<(
+            &crate::application::PreparedMcpTermQuery,
+            &crate::application::McpTermQueryPermit,
+        )>,
     ) -> Result<(), ExecutionError> {
+        if (input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
+            || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY)
+            && mcp.is_none()
+        {
+            return Err(error(ErrorCode::Unauthorized, "mcp-query-admission"));
+        }
         // Serialized provenance is data. Only the opaque Core preparation may
         // admit a new Agent input through the existing transaction below.
         if agent.is_none() && super::application::agent_binding(input)?.is_some() {
@@ -2058,6 +2102,19 @@ impl ProjectStore {
         let prepared_input = input_storage::PreparedInput::capture(input)?;
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
+        if let Some((prepared, permit)) = mcp {
+            if agent.is_some()
+                || service.is_some()
+                || tool.is_some()
+                || parent.is_some()
+                || input.bytes() != prepared.input().bytes()
+                || policy != RecoveryPolicy::ExternalUnknown
+            {
+                return Err(error(ErrorCode::Unauthorized, "mcp-query-admission"));
+            }
+            permit.check_input(input)?;
+            super::mcp::check_prepared_in(&tx, prepared)?;
+        }
         let verified_build =
             super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
         if let Some(prepared) = agent {
@@ -2746,6 +2803,13 @@ impl ProjectStore {
         }
         if input.envelope().operation == crate::content::TRANSLATION_OPERATION {
             if let Err(failure) = crate::content::validate_translation_output(&input, &output) {
+                tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
+        }
+        if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION {
+            if let Err(failure) = super::mcp::validate_query_output(&input, &output) {
                 tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
                 commit(tx)?;
                 return Err(failure);

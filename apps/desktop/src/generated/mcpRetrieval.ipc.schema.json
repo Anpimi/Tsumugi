@@ -1,0 +1,1852 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "ExecutionId": {
+        "type": "string"
+      },
+      "McpRetrievalCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId",
+          "attemptId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalDiscoverRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "discovery": {
+            "$ref": "#/definitions/McpRetrievalDiscovery"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "discovery"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalDiscovery": {
+        "additionalProperties": false,
+        "properties": {
+          "allowDiscovery": {
+            "type": "boolean"
+          },
+          "credentialEnv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/definitions/McpRetrievalIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "endpoint",
+          "credentialEnv",
+          "expiresAtMs",
+          "allowDiscovery"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "generation": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "generation",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/definitions/McpRetrievalIdentity"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "$ref": "#/definitions/McpTermQueryRequest"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "identity",
+          "query"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/definitions/McpRetrievalIdentity"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "identity"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "$ref": "#/definitions/McpTermQueryConsent"
+          },
+          "identity": {
+            "$ref": "#/definitions/McpRetrievalIdentity"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "identity",
+          "consent"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalStop": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "discovery": {
+            "$ref": "#/definitions/McpRetrievalDiscovery"
+          },
+          "identity": {
+            "$ref": "#/definitions/McpRetrievalIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "actionId",
+          "discovery"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalStopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "stop": {
+            "$ref": "#/definitions/McpRetrievalStop"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "stop"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryConsent": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "shareQuery": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "actionId",
+          "inputDigest",
+          "expiresAtMs",
+          "shareQuery"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tool": {
+            "$ref": "#/definitions/McpTermTool"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "taskId",
+          "attemptId",
+          "unitId",
+          "locale",
+          "query",
+          "expiresAtMs",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "McpTermTool": {
+        "additionalProperties": false,
+        "properties": {
+          "credentialEnv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discoveryExpiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "discoveryGeneration": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "discoveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "inputSchema": true,
+          "outputSchema": true,
+          "profileVersion": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "discoveryId",
+          "discoveryGeneration",
+          "discoveryExpiresAtMs",
+          "endpoint",
+          "credentialEnv",
+          "serverName",
+          "serverVersion",
+          "protocolVersion",
+          "toolName",
+          "description",
+          "profileVersion",
+          "inputSchema",
+          "outputSchema"
+        ],
+        "type": "object"
+      },
+      "SessionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "capture": {
+        "$ref": "#/definitions/McpRetrievalCaptureRequest"
+      },
+      "discover": {
+        "$ref": "#/definitions/McpRetrievalDiscoverRequest"
+      },
+      "prepare": {
+        "$ref": "#/definitions/McpRetrievalPrepareRequest"
+      },
+      "read": {
+        "$ref": "#/definitions/McpRetrievalReadRequest"
+      },
+      "session": {
+        "$ref": "#/definitions/SessionRequest"
+      },
+      "start": {
+        "$ref": "#/definitions/McpRetrievalStartRequest"
+      },
+      "stop": {
+        "$ref": "#/definitions/McpRetrievalStopRequest"
+      }
+    },
+    "required": [
+      "session",
+      "discover",
+      "read",
+      "prepare",
+      "start",
+      "stop",
+      "capture"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:mcpRetrieval:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "AdoptionAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "cancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "parameters": true,
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "operation",
+          "resultIds",
+          "cancellationRevision",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "AdoptionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/definitions/ChangeReference"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "requestDigest": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "requestDigest",
+          "changes"
+        ],
+        "type": "object"
+      },
+      "ChangeReference": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CommandError": {
+        "properties": {
+          "code": {
+            "$ref": "#/definitions/CommandErrorCode"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConflictEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentRevision": {
+            "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+            "type": "string"
+          },
+          "diagnosticId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "field": {
+            "type": "string"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CommandOutcome"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recoveryActions": {
+            "items": {
+              "$ref": "#/definitions/RecoveryAction"
+            },
+            "type": "array"
+          },
+          "recoveryGuidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/RecoveryGuidance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recoveryRequired": {
+            "type": "boolean"
+          },
+          "stage": {
+            "$ref": "#/definitions/CommandStage"
+          }
+        },
+        "required": [
+          "code",
+          "stage",
+          "outcome",
+          "recoveryRequired"
+        ],
+        "type": "object"
+      },
+      "CommandErrorCode": {
+        "enum": [
+          "invalid-input",
+          "destination-conflict",
+          "missing-project",
+          "permission-denied",
+          "unsupported-schema",
+          "corrupt-project",
+          "stale-revision",
+          "session-invalid",
+          "project-in-use",
+          "busy",
+          "storage-failed",
+          "outcome-unknown",
+          "limit-exceeded",
+          "result-mismatch",
+          "output-invalid",
+          "dependency-conflict",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "CommandOutcome": {
+        "enum": [
+          "rejected",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "CommandStage": {
+        "enum": [
+          "create",
+          "open",
+          "read",
+          "rename",
+          "add-target-locale",
+          "set-target-locales",
+          "close",
+          "plugin-install",
+          "plugin-settings",
+          "model-connections",
+          "execution-read",
+          "execution-cancel",
+          "execution-recover",
+          "execution-adopt",
+          "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ConflictEvidence": {
+        "description": "Values compared at the rejecting boundary, without user text or credentials.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "expected": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "translation-selection",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "review-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-decision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-check",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-waiver",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-fallback",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "build-eligibility",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "comparison-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "term-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "context-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/Revision"
+              },
+              "expected": {
+                "$ref": "#/definitions/Revision"
+              },
+              "kind": {
+                "const": "content-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CorrectionTermBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "before": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "before",
+          "after"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "GlossaryCapture": {
+        "additionalProperties": false,
+        "properties": {
+          "captureId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "count": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/definitions/GlossaryCaptureOrigin"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "captureId",
+          "origin",
+          "sourceLocale",
+          "targetLocale",
+          "digest",
+          "count"
+        ],
+        "type": "object"
+      },
+      "GlossaryCaptureOrigin": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "file",
+                "type": "string"
+              },
+              "license": {
+                "type": "string"
+              },
+              "resourceId": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "resourceId",
+              "revision",
+              "license"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "$ref": "#/definitions/CorrectionTermBasis"
+              },
+              "kind": {
+                "const": "correction",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "basis"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "mcp",
+                "type": "string"
+              },
+              "provenance": {
+                "$ref": "#/definitions/McpTermProvenance"
+              }
+            },
+            "required": [
+              "kind",
+              "provenance"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "McpRetrievalDiscovery": {
+        "additionalProperties": false,
+        "properties": {
+          "allowDiscovery": {
+            "type": "boolean"
+          },
+          "credentialEnv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/definitions/McpRetrievalIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "endpoint",
+          "credentialEnv",
+          "expiresAtMs",
+          "allowDiscovery"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "generation": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "generation",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalPhase": {
+        "enum": [
+          "discovering",
+          "ready",
+          "prepared",
+          "enqueued",
+          "closed",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "McpRetrievalSession": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpRetrievalIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lifetimeMs": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxEntries": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxQueryBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxResultBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxTools": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nextGeneration": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "nextGeneration",
+          "current",
+          "lifetimeMs",
+          "maxTools",
+          "maxQueryBytes",
+          "maxResultBytes",
+          "maxEntries"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalStop": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "discovery": {
+            "$ref": "#/definitions/McpRetrievalDiscovery"
+          },
+          "identity": {
+            "$ref": "#/definitions/McpRetrievalIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "actionId",
+          "discovery"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalStopped": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/McpRetrievalStop"
+          },
+          "view": {
+            "$ref": "#/definitions/McpRetrievalView"
+          }
+        },
+        "required": [
+          "request",
+          "view"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalTask": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "McpRetrievalView": {
+        "additionalProperties": false,
+        "properties": {
+          "admissionClosed": {
+            "type": "boolean"
+          },
+          "callbacksDrained": {
+            "type": "boolean"
+          },
+          "consent": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpTermQueryConsent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "discovery": {
+            "$ref": "#/definitions/McpRetrievalDiscovery"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CommandError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "identity": {
+            "$ref": "#/definitions/McpRetrievalIdentity"
+          },
+          "phase": {
+            "$ref": "#/definitions/McpRetrievalPhase"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpTermQueryPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "query": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpTermQueryRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpRetrievalStop"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpRetrievalTask"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/definitions/McpTermTool"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "identity",
+          "discovery",
+          "phase",
+          "tools",
+          "query",
+          "preview",
+          "consent",
+          "task",
+          "stop",
+          "admissionClosed",
+          "callbacksDrained",
+          "error"
+        ],
+        "type": "object"
+      },
+      "McpTermCaptureReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "capture": {
+            "$ref": "#/definitions/GlossaryCapture"
+          },
+          "receipt": {
+            "$ref": "#/definitions/AdoptionReceipt"
+          }
+        },
+        "required": [
+          "action",
+          "receipt",
+          "capture"
+        ],
+        "type": "object"
+      },
+      "McpTermEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "target",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "McpTermProvenance": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/McpTermQueryBasis"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "type": "string"
+          },
+          "queryActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tool": {
+            "$ref": "#/definitions/McpTermTool"
+          },
+          "toolDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "query",
+          "tool",
+          "toolDigest",
+          "queryActionId",
+          "taskId",
+          "attemptId",
+          "inputDigest",
+          "itemId",
+          "resultId",
+          "resultDigest"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "sourceLocale",
+          "targetLocale"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceLocale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryConsent": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "shareQuery": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "actionId",
+          "inputDigest",
+          "expiresAtMs",
+          "shareQuery"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/McpTermEntry"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "$ref": "#/definitions/McpTermQueryArguments"
+          },
+          "basis": {
+            "$ref": "#/definitions/McpTermQueryBasis"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/definitions/McpTermQueryRequest"
+          },
+          "toolDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "request",
+          "basis",
+          "arguments",
+          "toolDigest",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tool": {
+            "$ref": "#/definitions/McpTermTool"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "taskId",
+          "attemptId",
+          "unitId",
+          "locale",
+          "query",
+          "expiresAtMs",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "McpTermTool": {
+        "additionalProperties": false,
+        "properties": {
+          "credentialEnv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discoveryExpiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "discoveryGeneration": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "discoveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "inputSchema": true,
+          "outputSchema": true,
+          "profileVersion": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "discoveryId",
+          "discoveryGeneration",
+          "discoveryExpiresAtMs",
+          "endpoint",
+          "credentialEnv",
+          "serverName",
+          "serverVersion",
+          "protocolVersion",
+          "toolName",
+          "description",
+          "profileVersion",
+          "inputSchema",
+          "outputSchema"
+        ],
+        "type": "object"
+      },
+      "RecoveryAction": {
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure",
+          "validate-output",
+          "adopt-result",
+          "query-outcome",
+          "view-receipt"
+        ],
+        "type": "string"
+      },
+      "RecoveryGuidance": {
+        "description": "A read or user decision to make before another mutation; never replay authority.",
+        "enum": [
+          "reconcile-original",
+          "review-current",
+          "choose-destination"
+        ],
+        "type": "string"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "RevisionSelectionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "selectionId"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "capture": {
+        "$ref": "#/definitions/McpTermCaptureReceipt"
+      },
+      "error": {
+        "$ref": "#/definitions/CommandError"
+      },
+      "output": {
+        "$ref": "#/definitions/McpTermQueryOutput"
+      },
+      "session": {
+        "$ref": "#/definitions/McpRetrievalSession"
+      },
+      "stopped": {
+        "$ref": "#/definitions/McpRetrievalStopped"
+      },
+      "view": {
+        "$ref": "#/definitions/McpRetrievalView"
+      }
+    },
+    "required": [
+      "session",
+      "view",
+      "stopped",
+      "capture",
+      "output",
+      "error"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:mcpRetrieval:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

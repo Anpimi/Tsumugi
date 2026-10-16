@@ -51,6 +51,9 @@ pub use release::{
     ReleasePlan, ReleaseView, ReleasedArtifact, SavedArtifactCheckProof, SavedBuildArtifact,
     SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,
 };
+pub use resources::McpTermQueryAdoptionHandler;
+pub(crate) use resources::mcp;
+pub use resources::mcp::validate_mcp_term_query_result;
 pub use resources::{
     CaptureContext, CaptureCorrectionTerm, ContextCapture, ContextItem, ContextOmission,
     ContextRevision, CorrectionTermBasis, CorrectionTermEvidence, CorrectionTermPreview,
@@ -99,7 +102,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 47;
+pub(crate) const SCHEMA_VERSION: i64 = 48;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -356,6 +359,7 @@ struct PendingChange {
 /// An owned, writable project session backed by SQLite and an OS file lock.
 #[derive(Debug)]
 pub struct ProjectStore {
+    mcp_query_liveness: std::sync::Arc<std::sync::atomic::AtomicBool>,
     directory: PathBuf,
     connection: Option<Connection>,
     lock: Option<File>,
@@ -402,6 +406,7 @@ impl ProjectStore {
         initialize_schema(&connection, &metadata)?;
 
         Ok(Self {
+            mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             directory,
             connection: Some(connection),
             lock: Some(lock),
@@ -456,6 +461,7 @@ impl ProjectStore {
         validate_existing_connection(&mut connection, &directory)?;
 
         Ok(Self {
+            mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             directory,
             connection: Some(connection),
             lock: Some(lock),
@@ -552,6 +558,8 @@ impl ProjectStore {
 
     /// Release the database connection and ownership marker lock.
     pub fn close(mut self) -> Result<(), PersistenceError> {
+        self.mcp_query_liveness
+            .store(false, std::sync::atomic::Ordering::Release);
         self.plugin_authority.revoke_all();
         if self.is_reconciling() {
             return Err(PersistenceError::OutcomeUnknown {
@@ -678,6 +686,8 @@ impl ProjectStore {
 
 impl Drop for ProjectStore {
     fn drop(&mut self) {
+        self.mcp_query_liveness
+            .store(false, std::sync::atomic::Ordering::Release);
         self.plugin_authority.revoke_all();
         self.connection.take();
         self.lock.take();

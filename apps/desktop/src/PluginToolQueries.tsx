@@ -142,6 +142,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
       const sequence = draftSequence.current;
       await discard(current);
       if (!current() || !leaveIntent.current?.() || draftSequence.current !== sequence || session.current().pending) { answer = false; return; }
+      if (session.current().mode === "mcp" && !session.clearMcpDraft()) { answer = false; return; }
       setRows([{ id: nextRow.current++, text: "" }]); edit(); settledSequence = draftSequence.current; answer = true;
     });
     // Resolve after the owner has released its in-flight lock. The coordinator
