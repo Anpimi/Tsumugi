@@ -12,7 +12,7 @@ async function opened() {
 }
 const unknownAck = { outcome: "unknown", reason: "invalid-work-plan-acknowledgement" };
 
-it("shares strict Rust contracts and exposes only bounded preparation, start and result reads", async () => {
+it("shares strict Rust contracts and exposes only bounded preparation, start, result and guidance reads", async () => {
   for (const [validate, value] of [
     [validators.validateRequestWorkPlanAgentOpen, fixture.requests.open],
     [validators.validateRequestWorkPlanAgentPrepare, fixture.requests.prepare],
@@ -21,7 +21,7 @@ it("shares strict Rust contracts and exposes only bounded preparation, start and
     [validators.validateResponseWorkPlanAgentGeneration, fixture.responses.generation],
   ] as const) expect(validate(value), validate.name).toBe(true);
   const agent = await opened();
-  expect(Object.keys(agent).sort()).toEqual(["prepare", "prepareTool", "readToolAttempt", "readToolOutput", "start", "startTool"]);
+  expect(Object.keys(agent).sort()).toEqual(["prepare", "prepareTool", "readGuidance", "readResource", "readSkill", "readToolAttempt", "readToolOutput", "start", "startTool"]);
   expect(invoke).toHaveBeenLastCalledWith("open_work_plan_agent_scope", { request: fixture.requests.open });
   invoke.mockResolvedValueOnce(structuredClone(fixture.responses.generation));
   const prepared = await agent.prepare(fixture.requests.prepare.generation);

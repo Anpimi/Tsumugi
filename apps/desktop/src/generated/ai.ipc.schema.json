@@ -1488,6 +1488,26 @@
         ],
         "type": "object"
       },
+      "WorkPlanAgentGuidanceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId"
+        ],
+        "type": "object"
+      },
       "WorkPlanAgentOpenRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1529,6 +1549,66 @@
           "projectId",
           "scopeId",
           "generation"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentResourceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resourceId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "toolHandle": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "toolHandle",
+          "resourceId"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentSkillRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "skillId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "toolHandle": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "toolHandle",
+          "skillId"
         ],
         "type": "object"
       },
@@ -2206,11 +2286,20 @@
       "workPlanAction": {
         "$ref": "#/definitions/WorkPlanActionRequest"
       },
+      "workPlanAgentGuidance": {
+        "$ref": "#/definitions/WorkPlanAgentGuidanceRequest"
+      },
       "workPlanAgentOpen": {
         "$ref": "#/definitions/WorkPlanAgentOpenRequest"
       },
       "workPlanAgentPrepare": {
         "$ref": "#/definitions/WorkPlanAgentPrepareRequest"
+      },
+      "workPlanAgentResource": {
+        "$ref": "#/definitions/WorkPlanAgentResourceRequest"
+      },
+      "workPlanAgentSkill": {
+        "$ref": "#/definitions/WorkPlanAgentSkillRequest"
       },
       "workPlanAgentStart": {
         "$ref": "#/definitions/WorkPlanAgentStartRequest"
@@ -2277,6 +2366,9 @@
       "workPlanAgentToolStart",
       "workPlanAgentToolAttempt",
       "workPlanAgentToolOutput",
+      "workPlanAgentGuidance",
+      "workPlanAgentSkill",
+      "workPlanAgentResource",
       "workPlanControl",
       "workPlanStatus",
       "workPlanAction",
@@ -7448,6 +7540,55 @@
         ],
         "type": "object"
       },
+      "WorkPlanAgentGuidanceTextView": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/definitions/WorkPlanGuidanceContent"
+          },
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tool": {
+            "$ref": "#/definitions/WorkPlanToolSpec"
+          }
+        },
+        "required": [
+          "scopeId",
+          "parentTask",
+          "tool",
+          "content"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentGuidanceView": {
+        "additionalProperties": false,
+        "properties": {
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/definitions/WorkPlanToolSpec"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "scopeId",
+          "parentTask",
+          "tools"
+        ],
+        "type": "object"
+      },
       "WorkPlanAgentToolView": {
         "additionalProperties": false,
         "properties": {
@@ -7611,6 +7752,58 @@
           "budget"
         ],
         "type": "object"
+      },
+      "WorkPlanGuidanceContent": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contributionId": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "skill",
+                "type": "string"
+              },
+              "text": {
+                "maxLength": 65536,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contributionId",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contributionId": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "resource",
+                "type": "string"
+              },
+              "schema": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "text": {
+                "maxLength": 65536,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contributionId",
+              "schema",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "WorkPlanReceiptView": {
         "additionalProperties": false,
@@ -7947,6 +8140,15 @@
       "workPlanAgentGeneration": {
         "$ref": "#/definitions/WorkPlanAgentGenerationView"
       },
+      "workPlanAgentGuidance": {
+        "$ref": "#/definitions/WorkPlanAgentGuidanceView"
+      },
+      "workPlanAgentResource": {
+        "$ref": "#/definitions/WorkPlanAgentGuidanceTextView"
+      },
+      "workPlanAgentSkill": {
+        "$ref": "#/definitions/WorkPlanAgentGuidanceTextView"
+      },
       "workPlanAgentTool": {
         "$ref": "#/definitions/WorkPlanAgentToolView"
       },
@@ -7982,6 +8184,9 @@
       "workPlanAgentTool",
       "workPlanAgentToolAttempt",
       "workPlanAgentToolOutput",
+      "workPlanAgentGuidance",
+      "workPlanAgentSkill",
+      "workPlanAgentResource",
       "workPlanReceipt",
       "workPlanStatus",
       "workPlanAction",

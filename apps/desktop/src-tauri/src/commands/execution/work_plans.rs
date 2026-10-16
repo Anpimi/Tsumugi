@@ -2,6 +2,7 @@
 pub(crate) mod agent;
 pub(crate) mod broker;
 pub(crate) mod generation;
+pub(crate) mod guidance;
 use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
@@ -1385,6 +1386,8 @@ pub async fn set_work_protection(
 mod tests {
     mod broker_tests;
     mod generation_tests;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    mod guidance_tests;
     mod model_connection_admission;
     mod settings;
     mod tool_result_reads;

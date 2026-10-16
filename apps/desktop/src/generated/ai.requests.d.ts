@@ -90,8 +90,11 @@ export interface Requests {
   read: AiReadRequest;
   start: AiStartRequest;
   workPlanAction: WorkPlanActionRequest;
+  workPlanAgentGuidance: WorkPlanAgentGuidanceRequest;
   workPlanAgentOpen: WorkPlanAgentOpenRequest;
   workPlanAgentPrepare: WorkPlanAgentPrepareRequest;
+  workPlanAgentResource: WorkPlanAgentResourceRequest;
+  workPlanAgentSkill: WorkPlanAgentSkillRequest;
   workPlanAgentStart: WorkPlanAgentStartRequest;
   workPlanAgentToolAttempt: WorkPlanAgentToolAttemptRequest;
   workPlanAgentToolOutput: WorkPlanAgentToolOutputRequest;
@@ -182,6 +185,11 @@ export interface WorkPlanActionRequest {
   projectId: ExecutionId;
   sessionToken: string;
 }
+export interface WorkPlanAgentGuidanceRequest {
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+}
 export interface WorkPlanAgentOpenRequest {
   lease: AutomationLease;
   projectId: ExecutionId;
@@ -213,6 +221,20 @@ export interface AgentGenerationRequest {
    * @maxItems 100
    */
   unitIds: [ExecutionId, ...ExecutionId[]];
+}
+export interface WorkPlanAgentResourceRequest {
+  projectId: ExecutionId;
+  resourceId: string;
+  scopeId: ExecutionId;
+  sessionToken: string;
+  toolHandle: ExecutionId;
+}
+export interface WorkPlanAgentSkillRequest {
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+  skillId: string;
+  toolHandle: ExecutionId;
 }
 export interface WorkPlanAgentStartRequest {
   generation: AgentGenerationRequest;

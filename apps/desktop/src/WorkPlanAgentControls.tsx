@@ -11,6 +11,7 @@ import type { WorkPlanContinuation } from "./AiPreparationSession";
 import { jsonIdentity } from "./pluginToolChoices";
 import { useWorkbenchCommands, type CommandAvailability, type AiAgentCommandPayload, type AiAgentPendingCommandPayload } from "./workbenchCommands";
 import { WorkPlanGenerationControls, type WorkPlanGenerationSession } from "./WorkPlanGenerationControls";
+import { ToolGuidance } from "./ToolGuidance";
 
 type AgentConsumer = Awaited<ReturnType<typeof openWorkPlanAgent>>;
 type ToolCapture = Awaited<ReturnType<AgentConsumer["prepareTool"]>>;
@@ -152,6 +153,7 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
   }
   return <section aria-label={t("ai.tools.agentTitle")}>
     <h3>{t("ai.tools.agentTitle")}</h3><p>{t("ai.tools.agentHelp")}</p>
+    <ToolGuidance context={context} status={status} open={open} disabled={disabled} />
     <fieldset disabled={locked}><legend>{t("ai.tools.subset")}</legend>
       {status.plan.scope.map(unit => <label className="source-check" key={unit.unitId}><input type="checkbox" checked={selected.includes(unit.unitId)}
         onChange={event => setSelected(ids => event.target.checked ? [...ids, unit.unitId] : ids.filter(id => id !== unit.unitId))} />{unit.nativeKey}</label>)}

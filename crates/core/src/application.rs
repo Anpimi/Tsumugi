@@ -249,6 +249,27 @@ pub struct WorkPlanAgentScope {
     pub(crate) caller_id: ExecutionId,
 }
 
+/// A read snapshot of the original scope's tool guidance, never an execution
+/// permit. It is deliberately not serializable or constructible by a caller.
+#[derive(Clone, Debug)]
+pub struct CapturedWorkPlanToolGuidance {
+    pub(crate) scope: WorkPlanAgentScope,
+    pub(crate) tools: Vec<WorkPlanToolSpec>,
+}
+impl CapturedWorkPlanToolGuidance {
+    pub fn tools(&self) -> &[WorkPlanToolSpec] {
+        &self.tools
+    }
+    pub fn tool(&self, handle: ExecutionId) -> Result<&WorkPlanToolSpec, ExecutionError> {
+        self.tools
+            .iter()
+            .find(|tool| tool.handle == handle)
+            .ok_or_else(|| {
+                ExecutionError::new(ErrorCode::Unauthorized, "work-plan-guidance-member")
+            })
+    }
+}
+
 impl WorkPlanAgentScope {
     pub fn caller_id(&self) -> ExecutionId {
         self.caller_id

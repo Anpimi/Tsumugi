@@ -56,6 +56,53 @@ impl ToolEnvironment {
 }
 
 impl ApplicationPlugins {
+    /// Rebind static guidance to the original approved package. Runtime capture,
+    /// activation and execution consent are intentionally absent from this read.
+    pub(in crate::commands) fn read_tool_guidance<T>(
+        &self,
+        expected: &tsumugi_core::application::WorkPlanToolSpec,
+        read: impl FnOnce(&tsumugi_plugin_host::PackageImage) -> Result<T, CommandError>,
+    ) -> Result<T, CommandError> {
+        self.read_installed_snapshot(|store, settings, _, allowed| {
+            if UnsignedDecimal::from(settings.revision()) != expected.settings_revision {
+                return Err(map_store_error(InstallError::RevisionConflict));
+            }
+            let provider = &expected.binding.capability.provider;
+            let decision = settings
+                .packages()
+                .iter()
+                .find(|entry| {
+                    entry.enabled
+                        && entry.approval.plugin == provider.plugin
+                        && entry.approval.package_digest == provider.package_digest
+                })
+                .ok_or_else(|| map_store_error(InstallError::ApprovalMismatch))?;
+            let package = store
+                .load(&decision.approval, allowed)
+                .map_err(map_store_error)?;
+            let origin = serde_json::to_value(PluginOriginView::from(package.receipt().origin()))
+                .map_err(|_| invalid())?;
+            let image = package.image();
+            let binding = image
+                .capability_tool(&expected.resource_id)
+                .map_err(|_| invalid())?;
+            let component = image
+                .manifest()
+                .manifest()
+                .components
+                .iter()
+                .find(|component| component.id == provider.component_id)
+                .ok_or_else(invalid)?;
+            if binding != expected.binding
+                || origin != expected.package_origin
+                || component.scope != expected.execution.component_scope
+            {
+                return Err(invalid());
+            }
+            read(image)
+        })
+    }
+
     pub(in crate::commands) fn capture_tool(
         &self,
         request: &PluginToolRequest,
