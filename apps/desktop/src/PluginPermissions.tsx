@@ -10,4 +10,3 @@ export function PluginPermissions({ permissions }: { permissions: PermissionRequ
     {permission.kind === "project-service" ? <>: <code>{permission.contract.id}</code> ({permission.contract.schemaVersion}/{permission.contract.behaviorVersion})</> : null}
   </li>)}</ul>;
 }
-
