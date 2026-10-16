@@ -9,6 +9,8 @@ pub use persistence::model_connections;
 pub mod content;
 pub mod execution;
 pub use execution::{AttemptDetail, ItemView};
+pub use persistence::McpTermQueryAdoptionHandler;
+pub use persistence::validate_mcp_term_query_result;
 mod persistence;
 mod project;
 mod review;

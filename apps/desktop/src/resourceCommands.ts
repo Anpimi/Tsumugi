@@ -70,7 +70,9 @@ export const resourceCommands = {
       && (value.capture.origin.kind === "correction" ? value.correction !== null
         && jsonIdentity(value.correction.evidence.basis) === jsonIdentity(value.capture.origin.basis)
         && value.capture.origin.basis.projectId === request.projectId && value.capture.origin.basis.locale === value.capture.targetLocale
-        : value.correction === null)),
+        : value.correction === null) && (value.capture.origin.kind === "mcp" ? value.mcp !== null
+          && value.capture.origin.provenance.basis.projectId === request.projectId && value.capture.origin.provenance.basis.locale === value.capture.targetLocale
+          : value.mcp === null)),
   decide: (request: DecisionRequest) => checkedInvoke("decide_resource_entry", request, validateResponseDecision),
   saveTerm: (request: TermRequest) => checkedInvoke("save_term", request, validateResponseTerm),
   terms: (request: TermListRequest) => checkedInvoke("read_terms", request, validateResponseTerms),

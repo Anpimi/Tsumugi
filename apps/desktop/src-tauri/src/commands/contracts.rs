@@ -50,6 +50,29 @@ struct McpResponses {
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
+struct McpRetrievalRequests {
+    session: execution::SessionRequest,
+    discover: mcp_retrieval::McpRetrievalDiscoverRequest,
+    read: mcp_retrieval::McpRetrievalReadRequest,
+    prepare: mcp_retrieval::McpRetrievalPrepareRequest,
+    start: mcp_retrieval::McpRetrievalStartRequest,
+    stop: mcp_retrieval::McpRetrievalStopRequest,
+    capture: mcp_retrieval::McpRetrievalCaptureRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct McpRetrievalResponses {
+    session: mcp_retrieval::McpRetrievalSession,
+    view: mcp_retrieval::McpRetrievalView,
+    stopped: mcp_retrieval::McpRetrievalStopped,
+    capture: tsumugi_core::application::McpTermCaptureReceipt,
+    output: tsumugi_core::application::McpTermQueryOutput,
+    error: CommandError,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct ConnectionRequests {
     snapshot: connections::ConnectionSnapshotRequest,
     change: tsumugi_core::model_connections::ModelConnectionChange,
@@ -568,6 +591,7 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         serde_json::to_string_pretty(&serde_json::json!({
             "project": schemas::<Requests, Responses>(),
             "mcp": schemas::<McpRequests, McpResponses>(),
+            "mcpRetrieval": schemas::<McpRetrievalRequests, McpRetrievalResponses>(),
             "connections": schemas::<ConnectionRequests, ConnectionResponses>(),
             "plugins": schemas::<PluginRequests, PluginResponses>(),
             "execution": schemas::<ExecutionRequests, ExecutionResponses>(),

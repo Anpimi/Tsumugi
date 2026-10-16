@@ -93,6 +93,7 @@ pub(super) struct SessionExecutor {
     admission: Arc<SessionAdmission>,
     changes: Arc<Mutex<Option<super::changes::ChangeSink>>>,
     mcp_shutdown: Arc<super::mcp::Shutdown>,
+    mcp_retrieval_shutdown: Arc<super::mcp_retrieval::Shutdown>,
     source_hook_shutdown: Arc<super::source_hooks::Shutdown>,
 }
 
@@ -103,6 +104,7 @@ impl Drop for SessionExecutor {
         // existing leases and accepted jobs retain their original completion.
         self.admission.accepting.store(false, Ordering::Release);
         self.mcp_shutdown.close();
+        self.mcp_retrieval_shutdown.close();
         self.source_hook_shutdown.close();
     }
 }
@@ -187,11 +189,14 @@ impl SessionExecutor {
         let sink = changes.clone();
         let mcp_shutdown = Arc::new(super::mcp::Shutdown::default());
         let owner_shutdown = mcp_shutdown.clone();
+        let mcp_retrieval_shutdown = Arc::new(super::mcp_retrieval::Shutdown::default());
+        let retrieval_shutdown = mcp_retrieval_shutdown.clone();
         let source_hook_shutdown = Arc::new(super::source_hooks::Shutdown::default());
         let hook_shutdown = source_hook_shutdown.clone();
         std::thread::Builder::new().name("project-commands".into()).spawn(move || {
             let mut sessions = SessionManager {
                 mcp: super::mcp::Shares::with_shutdown(owner_shutdown),
+                mcp_retrieval: super::mcp_retrieval::Retrievals::with_shutdown(retrieval_shutdown),
                 source_hooks: super::source_hooks::SourceHooks::with_shutdown(hook_shutdown),
                 services: Some(services),
                 ..SessionManager::default()
@@ -248,6 +253,7 @@ impl SessionExecutor {
             admission,
             changes,
             mcp_shutdown,
+            mcp_retrieval_shutdown,
             source_hook_shutdown,
         }
     }
@@ -256,6 +262,7 @@ impl SessionExecutor {
 impl SessionExecutor {
     pub(super) fn close_external_disclosures(&self) {
         self.mcp_shutdown.close();
+        self.mcp_retrieval_shutdown.close();
         self.source_hook_shutdown.close();
     }
     pub(super) fn set_change_sink(&self, sink: Option<super::changes::ChangeSink>) {

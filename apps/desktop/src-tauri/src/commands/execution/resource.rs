@@ -1218,6 +1218,9 @@ mod contracts {
         let mut missing = fixture["responses"]["preview"].clone();
         missing.as_object_mut().unwrap().remove("correction");
         assert!(serde_json::from_value::<ResourcePreview>(missing).is_err());
+        let mut missing = fixture["responses"]["preview"].clone();
+        missing.as_object_mut().unwrap().remove("mcp");
+        assert!(serde_json::from_value::<ResourcePreview>(missing).is_err());
         let mut unknown = fixture["responses"]["term"].clone();
         unknown["originKind"] = serde_json::json!("import");
         assert!(serde_json::from_value::<TermRevision>(unknown).is_err());

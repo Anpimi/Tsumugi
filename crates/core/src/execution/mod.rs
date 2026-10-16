@@ -473,7 +473,9 @@ impl InputEnvelope {
         self.limits.validate(
             if matches!(
                 self.operation.as_str(),
-                crate::ai::OPERATION | crate::ai::arena::OPERATION
+                crate::ai::OPERATION
+                    | crate::ai::arena::OPERATION
+                    | crate::application::MCP_TERM_QUERY_OPERATION
             ) {
                 600_000
             } else {

@@ -20,6 +20,7 @@ import { useWorkbenchCommands, type ResourceTermCommandPayload, type ResourceCon
 import type { QueryKey } from "@tanstack/react-query";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { PluginToolQueries, type ToolQueryHandle, type ToolQueryState } from "./PluginToolQueries";
+import { McpRetrievalQueries } from "./McpRetrievalQueries";
 
 type Tab = "terms" | "updates" | "context" | "impact" | "queries";
 export interface ResourceHandle { allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean>; addQueryText: (text: string) => boolean }
@@ -65,7 +66,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   const lastCompletion = useRef(completionVersion);
   const targetScope = project.metadata.targetLocales.join("\u0000");
   const targetAvailable = locale !== "" && project.metadata.targetLocales.includes(locale);
-  const readableCorrection = !!previewCapture && previewCapture.origin.kind === "correction" && owner.canReadCapture(previewCapture);
+  const readableCorrection = !!previewCapture && (previewCapture.origin.kind === "correction" || previewCapture.origin.kind === "mcp") && owner.canReadCapture(previewCapture);
   const active = open && (targetAvailable || readableCorrection);
   const busy = readBusy || busyMutation;
   useLayoutEffect(() => {
@@ -75,7 +76,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   useEffect(() => { alive.current = true; return () => { alive.current = false; generation.current++; leaveResolver.current?.(false); }; }, []);
   function currentLocale(value: string) { const capture = owner.current().previewCapture; return alive.current && committed.current.open && committed.current.locale === value && committed.current.project.sessionToken === session.sessionToken
     && committed.current.project.metadata.projectId === session.projectId && (owner.localeAvailable(value)
-      || capture?.origin.kind === "correction" && owner.canReadCapture(capture)); }
+      || !!capture && (capture.origin.kind === "correction" || capture.origin.kind === "mcp") && owner.canReadCapture(capture)); }
 
   const sourceScopeKey = ["resource-source-scope"];
   const scopeRead = useSessionQuery<ContentScope>({ key: sourceScopeKey, scopes: ["source"], enabled: active, read: () => sourceCommands.scope(session) });
@@ -172,6 +173,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
       && owner.current().locale === original.locale && owner.current().termSeq === original.termSeq
       && owner.current().contextSeq === original.contextSeq && owner.current().correctionDraft === original.correctionDraft && owner.current().factDraft === original.factDraft && !owner.factBlocked() && !owner.inFlight() && !owner.current().pending;
     if (owner.factBlocked() || owner.inFlight() || owner.current().pending) { setOpen(true); return Promise.resolve(false); }
+    if (owner.tool.blocked() || owner.tool.hasDraft() && !queryRef.current) { setOpen(true); setTab("queries"); return false; }
     if (queryRef.current && !await queryRef.current.allowLeave(current, resourceCurrent)) return false;
     // The Tool confirmation may settle its own capture and advance its draft sequence.
     // Keep the original exit intent and untouched resource drafts, then inspect the settled Tool.
@@ -316,6 +318,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   }
   function matchesDecision(value: ResourcePreview | null | undefined, input: ResourceDecisionCommandPayload) {
     if (!value || value.capture.captureId !== input.captureId || value.capture.digest !== input.digest || value.capture.targetLocale !== input.locale) return false;
+    if (value.mcp && !value.mcp.current && (input.decision === "adopt" || input.decision === "override")) return false;
     if (value.correction && (input.decision === "override" || input.decision === "adopt" && (!value.correction.evidence.current
       || value.rows.some(row => row.entry.id === input.entryId && row.current !== null)))) return false;
     if (input.rowKind === "removed") return value.removed.some(row => row.externalEntryId === input.entryId && row.revisionId === input.expectedRevisionId && (row.scopeUnitId ?? null) === input.scopeUnitId) && (input.decision === "adopt" || input.decision === "keep");
@@ -336,9 +339,9 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   function decisionAvailability(input?: ResourceDecisionCommandPayload) {
     const allowed = common("updates"); if (!allowed.enabled) return allowed;
     const value = owner.current(), current = reads.client.getQueryData<ResourcePreview>(reads.key(previewKey));
-    const localeAllowed = input && (owner.localeAvailable(input.locale) || value.previewCapture?.origin.kind === "correction"
+    const localeAllowed = input && (owner.localeAvailable(input.locale) || value.previewCapture && (value.previewCapture.origin.kind === "correction" || value.previewCapture.origin.kind === "mcp")
       && owner.canReadCapture(value.previewCapture) && (input.decision === "keep" || input.decision === "ignore"));
-    return input && localeAllowed && !value.previewNeedsRefresh && previewSourceCurrent() && (value.preview?.correction ? ready(sourceScopeKey) : sourceReady()) && ready(previewKey)
+    return input && localeAllowed && !value.previewNeedsRefresh && previewSourceCurrent() && (value.preview?.correction || value.preview?.mcp ? ready(sourceScopeKey) : sourceReady()) && ready(previewKey)
       && !(value.preview?.correction && !value.preview.correction.evidence.current && (input.decision === "adopt" || input.decision === "override"))
       && matchesDecision(value.preview, input) && matchesDecision(current, input) && sameDecisionRow(value.preview, current, input) ? allowed : unavailable;
   }
@@ -380,7 +383,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
       registry.register({ ...metadata, id: "resource.refresh-preview", nameKey: "resource.retryPreview", risk: "reads-resources", payloadKind: "resource-capture", availability: input => captureAvailability(input, true),
         handler: () => { void owner.retryPreview(currentView()); } }),
       registry.register({ ...metadata, id: "resource.decide-entry", nameKey: "resource.actions", risk: "writes-resources", payloadKind: "resource-decision", availability: decisionAvailability,
-        handler: input => { const current = proof(preview?.correction ? [sourceScopeKey, previewKey] : [sourceScopeKey, sourceKey, previewKey]); void refreshDecision(() => owner.decide(input.entryId, input.expectedRevisionId, input.decision, () => current() && previewSourceCurrent() && matchesDecision(reads.client.getQueryData<ResourcePreview>(reads.key(previewKey)), input))); } }),
+        handler: input => { const current = proof(preview?.correction || preview?.mcp ? [sourceScopeKey, previewKey] : [sourceScopeKey, sourceKey, previewKey]); void refreshDecision(() => owner.decide(input.entryId, input.expectedRevisionId, input.decision, () => current() && previewSourceCurrent() && matchesDecision(reads.client.getQueryData<ResourcePreview>(reads.key(previewKey)), input))); } }),
       registry.register({ ...metadata, id: "resource.retry-pending", nameKey: "resource.retry", risk: "retries-resource-action", payloadKind: "resource-pending",
         availability: input => { const allowed = common(undefined, false); return !allowed.enabled ? allowed : input && same(input, pendingPayload()) && (!pendingChecked || owner.state.pendingCheckedMissing) ? allowed : unavailable; }, handler: () => { void retryPending(); } }),
       registry.register({ ...metadata, id: "resource.open-translation", nameKey: "resource.openTranslation", risk: "opens-translation", payloadKind: "resource-translation", availability: translationAvailability,
@@ -403,6 +406,20 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     return fetching ? <p role="status">{t("resource.loading")}</p> : error ? <div role="alert"><p>{t("resource.readFailed", { reason: t(`resource.errors.${failureReason(commandFailure(error))}`, { defaultValue: failureReason(commandFailure(error)) ?? "" }) })}</p><CommandFailureDetails failure={commandFailure(error)} /><button className="secondary-button" onClick={retry}>{t("resource.retryRead")}</button></div> : null;
   }
   const sourceRows = sourcePage?.rows ?? [];
+  function captureLabel(capture: GlossaryCapture) { return capture.origin.kind === "file" ? `${capture.origin.resourceId} · ${capture.origin.revision}`
+    : capture.origin.kind === "mcp" ? t("mcpRetrieval.captureOrigin", { tool: capture.origin.provenance.tool.toolName })
+      : t("correctionFeedback.candidateScope", { unit: capture.origin.basis.unitId, locale: capture.targetLocale }); }
+  async function openMcpCapture(capture: GlossaryCapture) {
+    const before = owner.current(); if (!owner.canReceiveMcp(capture)) return false;
+    const originalProject = committed.current.project;
+    const current = () => alive.current && committed.current.open && !committed.current.disabled && committed.current.project.sessionToken === originalProject.sessionToken
+      && committed.current.project.metadata.projectId === originalProject.metadata.projectId;
+    const accepted = await owner.openMcpPreview(capture, before, current);
+    if (accepted && current()) { setTab("updates"); firstMcpCaptureFocus.current = true; }
+    return accepted;
+  }
+  const firstMcpCaptureFocus = useRef(false), captureHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (open && tab === "updates" && firstMcpCaptureFocus.current) { firstMcpCaptureFocus.current = false; captureHeading.current?.focus(); } }, [open, tab]);
   return <>
     <WorkbenchPanel open={open} title={t("resource.title")} description={t("resource.description")} className="source-dialog" onBack={requestClose} backDisabled={disabled}>
         <div className="execution-content" aria-busy={busy}>
@@ -425,7 +442,12 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
           <div className="execution-actions" role="tablist" aria-label={t("resource.title")}>
             {(["terms", "updates", "context", "impact", "queries"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => setTab(value)}>{t(`resource.tabs.${value}`)}</button>)}
           </div>
-          <PluginToolQueries ref={queryRef} project={project} session={owner.tool} disabled={disabled} open={open && tab === "queries"} onState={setQueryState} onAttention={() => { setOpen(true); setTab("queries"); }} />
+          {tab === "queries" ? <label className="source-field">{t("mcpRetrieval.mode")}<select value={owner.tool.state.mode} disabled={disabled || owner.tool.blocked() || !!owner.tool.state.capture}
+            onChange={event => { if (event.target.value === "plugin" || event.target.value === "mcp") owner.tool.setMode(event.target.value); }}>
+            <option value="plugin">{t("mcpRetrieval.local")}</option><option value="mcp">{t("mcpRetrieval.external")}</option></select></label> : null}
+          <PluginToolQueries ref={queryRef} project={project} session={owner.tool} disabled={disabled} open={open && tab === "queries" && owner.tool.state.mode === "plugin"} onState={setQueryState} onAttention={() => { setOpen(true); setTab("queries"); }} />
+          <McpRetrievalQueries project={project} session={owner.tool} disabled={disabled} open={open && tab === "queries" && owner.tool.state.mode === "mcp"}
+            sourcePage={sourcePage} sourceCurrent={sourceReady} onSourcePage={sourcePageAt} onOpenCapture={openMcpCapture}/>
           {tab === "terms" && locale ? <section>
             <div className="execution-section-heading"><h3>{t("resource.currentTerms")}</h3><button className="secondary-button" disabled={busy || !!pending || !targetAvailable || termDirty} onClick={() => selectTerm(null)}>{t("resource.newTerm")}</button></div>
             {readStatus(termsRead.error, termsRead.isFetching, () => { void (termsRead.isFetchNextPageError ? termsRead.fetchNextPage() : termsRead.refetch()); })}{terms.length ? <ul>{terms.filter(term => !term.removed).map(term => <li key={term.termId}><button className="text-button" disabled={busy || !!pending || !targetAvailable} onClick={() => selectTerm(term)}>{term.source} → {term.target}</button> <small>{term.scopeUnitId ? t("resource.unitScope") : t("resource.projectScope")} · {term.originKind === "manual" ? t("resource.manual") : t("resource.external")}</small></li>)}</ul> : active && termsRead.isSuccess && !termsRead.isFetching && !termsRead.error ? <p>{t("resource.noTerms")}</p> : null}
@@ -466,11 +488,17 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
           {pendingChecked ? <div role="status"><p>{t(owner.state.pendingCheckedMissing ? "correctionFeedback.missing" : "correctionFeedback.unknown")}</p>
             <button type="button" disabled={busyMutation || disabled} onClick={() => { const input = pendingPayload(); if (input) registry.dispatch("resource.check-pending", commandScope, input); }}>{t("correctionFeedback.check")}</button>
             {owner.state.pendingCheckedMissing ? <button type="button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button> : null}</div> : null}
-          {tab === "updates" && locale ? <section><h3>{t("resource.resourceUpdates")}</h3><p>{t("resource.fileHelp")}</p><button className="primary-button" disabled={!chooseFileAvailability().enabled} onClick={() => registry.dispatch("resource.choose-file", commandScope, { kind: "resource-locale", locale })}>{t("resource.chooseFile")}</button>
-            {readStatus(capturesRead.error, capturesRead.isFetching, () => { void capturesRead.refetch(); })}{captures.length ? <div><h4>{t("resource.savedCaptures")}</h4><ul>{captures.filter(item => item.targetLocale === locale || item.origin.kind === "correction").map(item => <li key={item.captureId}><button className="text-button" disabled={!captureAvailability(capturePayload(item)).enabled} onClick={() => registry.dispatch("resource.open-preview", commandScope, capturePayload(item))}>{item.origin.kind === "file" ? `${item.origin.resourceId} · ${item.origin.revision}` : t("correctionFeedback.candidateScope", { unit: item.origin.basis.unitId, locale: item.targetLocale })}</button></li>)}</ul></div> : null}
+          {tab === "updates" && locale ? <section><h3 ref={captureHeading} tabIndex={-1}>{t("resource.resourceUpdates")}</h3><p>{t("resource.fileHelp")}</p><button className="primary-button" disabled={!chooseFileAvailability().enabled} onClick={() => registry.dispatch("resource.choose-file", commandScope, { kind: "resource-locale", locale })}>{t("resource.chooseFile")}</button>
+            {readStatus(capturesRead.error, capturesRead.isFetching, () => { void capturesRead.refetch(); })}{captures.length ? <div><h4>{t("resource.savedCaptures")}</h4><ul>{captures.filter(item => item.targetLocale === locale || item.origin.kind === "correction" || item.origin.kind === "mcp").map(item => <li key={item.captureId}><button className="text-button" disabled={!captureAvailability(capturePayload(item)).enabled} onClick={() => registry.dispatch("resource.open-preview", commandScope, capturePayload(item))}>{captureLabel(item)}</button></li>)}</ul></div> : null}
             {previewCapture && (!preview || previewNeedsRefresh || !previewSourceCurrent() || !same(preview, previewRead.data) || !!previewRead.error) ? <p>{t(preview && !previewNeedsRefresh && !previewRead.error ? "resource.previewChanged" : "resource.previewUnavailable")} <button className="secondary-button" disabled={!captureAvailability(capturePayload(previewCapture), true).enabled} onClick={() => registry.dispatch("resource.refresh-preview", commandScope, capturePayload(previewCapture))}>{t("resource.retryPreview")}</button></p> : null}
             {previewActive ? readStatus(previewRead.error, previewRead.isFetching, () => { void previewRead.refetch(); }) : null}
-            {preview ? <>{preview.capture.origin.kind === "file" ? <p>{preview.capture.origin.resourceId} · {preview.capture.origin.revision} · {preview.capture.origin.license} · {preview.capture.targetLocale} · {preview.capture.count}</p> : <p>{t("correctionFeedback.candidate")} · {preview.capture.targetLocale}</p>}
+            {preview ? <>{preview.capture.origin.kind === "file" ? <p>{preview.capture.origin.resourceId} · {preview.capture.origin.revision} · {preview.capture.origin.license} · {preview.capture.targetLocale} · {preview.capture.count}</p>
+              : <p>{preview.capture.origin.kind === "mcp" ? captureLabel(preview.capture) : t("correctionFeedback.candidate")} · {preview.capture.targetLocale}</p>}
+              {preview.capture.origin.kind === "mcp" ? <section aria-label={t("mcpRetrieval.provenance")}><p>{t("mcpRetrieval.captureOriginHelp")}</p>
+                <p role="status">{t(preview.mcp?.current ? "mcpRetrieval.captureCurrent" : "mcpRetrieval.captureStale")}</p>
+                <details><summary>{t("mcpRetrieval.provenance")}</summary><pre>{preview.capture.origin.provenance.tool.endpoint}</pre><pre>{preview.capture.origin.provenance.tool.toolName}</pre>
+                  <label>{t("mcpRetrieval.fixedQuery")}<textarea readOnly rows={3} value={preview.capture.origin.provenance.query}/></label>
+                  <pre>{JSON.stringify(preview.capture.origin.provenance, null, 2)}</pre></details></section> : null}
               {preview.correction ? <section aria-label={t("correctionFeedback.evidence")}><p role="status">{t(preview.correction.evidence.current ? "correctionFeedback.current" : "correctionFeedback.stale")}</p>
                 <p>{t("correctionFeedback.scope", { unit: preview.correction.evidence.basis.unitId, locale: preview.correction.evidence.basis.locale })}</p>
                 <details><summary>{t("correctionFeedback.evidence")}</summary><label>{t("correctionFeedback.sourceText")}<textarea readOnly rows={4} value={preview.correction.evidence.sourceText} /></label>

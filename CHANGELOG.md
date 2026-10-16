@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Explicitly discover a compatible HTTP MCP terminology tool, preview the exact
+  query and destination, and authorize one bounded request. Saved proposals
+  retain external service and execution provenance and require normal resource
+  review and adoption. Stop, expiry and reopening never restore permission or
+  automatically repeat an uncertain remote call.
+- Advance the current-only development project format to preserve MCP resource
+  provenance. Earlier development projects are preserved and refused without
+  automatic migration or reset.
+
 - Optionally request one bounded maintenance notice after applying checked source
   content. Its exact source action records the original impact, expiry and stop
   state; notice failure does not undo saved source. Viewing history never restarts

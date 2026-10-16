@@ -14,6 +14,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 mod disclosure;
+pub mod mcp_retrieval;
+pub use mcp_retrieval::*;
 mod maintenance;
 pub use disclosure::{
     CapturedMcpShare, MAX_MCP_SHARE_BYTES, MAX_MCP_SHARE_PREVIEW_BYTES, MCP_SHARE_PREVIEW_VERSION,

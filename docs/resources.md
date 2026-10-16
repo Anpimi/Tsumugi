@@ -1,5 +1,11 @@
 # Glossary and context
 
+The query workspace can explicitly retrieve term proposals from a compatible
+external MCP server. Discovery and sharing require separate consent; saved
+results enter the existing resource preview and decision flow with their exact
+external provenance. See [MCP terminology retrieval](mcp-retrieval.md) for the
+supported profile, limits and recovery behavior.
+
 ## Correct a source fact for the current entry
 
 Expand the translation editor's references to inspect original source facts and

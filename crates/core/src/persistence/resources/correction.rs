@@ -72,6 +72,9 @@ pub enum GlossaryCaptureOrigin {
     Correction {
         basis: CorrectionTermBasis,
     },
+    Mcp {
+        provenance: crate::application::McpTermProvenance,
+    },
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -109,6 +112,7 @@ pub(super) fn required_preview<'de, D: serde::Deserializer<'de>>(
 pub(super) enum CapturedGlossary {
     File(GlossaryFile),
     Correction(CaptureCorrectionTerm),
+    Mcp(super::mcp::CapturedMcpTerms),
 }
 
 fn historic_source(
@@ -468,6 +472,7 @@ pub(super) fn preview(
         }],
         removed: Vec::new(),
         correction: Some(CorrectionTermPreview { evidence, decision }),
+        mcp: None,
     })
 }
 

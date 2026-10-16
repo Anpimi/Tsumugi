@@ -11,7 +11,12 @@ export type GlossaryCaptureOrigin =
   | {
       basis: CorrectionTermBasis;
       kind: "correction";
+    }
+  | {
+      kind: "mcp";
+      provenance: McpTermProvenance;
     };
+export type UnsignedDecimal = string;
 /**
  * Classification for presentation, without interpreting a format's syntax or
  * normalizing its literal text. Other source-associated information uses Note.
@@ -226,6 +231,42 @@ export interface RevisionSelectionRef {
   revisionId: ExecutionId;
   selectionId: ExecutionId;
 }
+export interface McpTermProvenance {
+  attemptId: ExecutionId;
+  basis: McpTermQueryBasis;
+  inputDigest: string;
+  itemId: ExecutionId;
+  query: string;
+  queryActionId: ExecutionId;
+  resultDigest: string;
+  resultId: ExecutionId;
+  taskId: ExecutionId;
+  tool: McpTermTool;
+  toolDigest: string;
+}
+export interface McpTermQueryBasis {
+  locale: string;
+  projectId: ExecutionId;
+  sourceLocale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface McpTermTool {
+  credentialEnv: string | null;
+  description: string | null;
+  discoveryExpiresAtMs: number;
+  discoveryGeneration: UnsignedDecimal;
+  discoveryId: ExecutionId;
+  endpoint: string;
+  inputSchema: unknown;
+  outputSchema: unknown;
+  profileVersion: string;
+  protocolVersion: string;
+  serverName: string;
+  serverVersion: string;
+  toolName: string;
+}
 export interface ContextRevision {
   locale: string;
   previousRevisionId: ExecutionId | null;
@@ -405,12 +446,16 @@ export interface ImpactReason {
 export interface ResourcePreview {
   capture: GlossaryCapture;
   correction: CorrectionTermPreview | null;
+  mcp: McpTermCapturePreview | null;
   removed: TermRevision[];
   rows: ResourcePreviewRow[];
 }
 export interface CorrectionTermPreview {
   decision: ResourceDecisionResult | null;
   evidence: CorrectionTermEvidence;
+}
+export interface McpTermCapturePreview {
+  current: boolean;
 }
 export interface ResourcePreviewRow {
   current: TermRevision | null;

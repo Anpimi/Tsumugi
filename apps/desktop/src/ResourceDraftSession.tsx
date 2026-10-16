@@ -82,6 +82,8 @@ export interface ResourceDraftState {
   completionVersion: number;
 }
 interface ResourceSession {
+  canReceiveMcp: (capture: GlossaryCapture) => boolean;
+  openMcpPreview: (capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) => Promise<boolean>;
   correctionDirty: () => boolean;
   canReceiveCorrection: (locale: string) => boolean;
   receiveCorrection: (evidence: CorrectionTermEvidence, before: ResourceDraftState, proof: () => boolean) => boolean;
@@ -159,11 +161,12 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   function canReadCapture(capture: GlossaryCapture) {
     return capture.origin.kind === "correction"
       ? live() && capture.origin.basis.projectId === session.projectId && capture.origin.basis.locale === capture.targetLocale
-      : localeAvailable(capture.targetLocale);
+      : capture.origin.kind === "mcp" ? live() && capture.origin.provenance.basis.projectId === session.projectId && capture.origin.provenance.basis.locale === capture.targetLocale
+        : localeAvailable(capture.targetLocale);
   }
   function decisionLocaleAvailable(value: ResourceDraftState, decision?: ResourceDecision["decision"]) {
     const capture = value.previewCapture;
-    return !!capture && (localeAvailable(capture.targetLocale) || capture.origin.kind === "correction"
+    return !!capture && (localeAvailable(capture.targetLocale) || (capture.origin.kind === "correction" || capture.origin.kind === "mcp")
       && (decision === "keep" || decision === "ignore") && canReadCapture(capture));
   }
   function termDirty() { const value = current(); return value.newerTerm || value.aliasInput !== (value.selectedTerm?.aliases.join(", ") ?? "") || !sameTerm(value.termDraft, resourceTermDraftFor(value.selectedTerm)); }
@@ -445,6 +448,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     finally { release(); }
   }
   function matchingEntry(preview: ResourcePreview, entry: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }) {
+    if (preview.mcp && !preview.mcp.current && (entry.decision === "adopt" || entry.decision === "override")) return false;
     const row = preview.rows.find(value => value.entry.id === entry.entryId);
     if (row) return !(preview.correction && (entry.decision === "override" || entry.decision === "adopt" && (!preview.correction.evidence.current || row.current !== null))) && nullable(row.current?.revisionId) === entry.expectedRevisionId && !(entry.decision === "adopt" && (row.kind === "unchanged" || row.kind === "override"));
     return preview.removed.some(value => value.externalEntryId === entry.entryId && value.revisionId === entry.expectedRevisionId);
@@ -461,6 +465,20 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     try { await readPreview(capture, isCurrent); } catch (error) { if (isCurrent()) fail(error); } finally { release(); }
   }
   async function retryPreview(isCurrent?: () => boolean) { const capture = current().previewCapture; if (capture) await openPreview(capture, isCurrent); }
+  function canReceiveMcp(capture: GlossaryCapture) {
+    return capture.origin.kind === "mcp" && canReadCapture(capture) && !reserved() && !termDirty() && !contextDirty() && !factDirty() && !correctionDirty()
+      && !tool.blocked() && !tool.hasDraft();
+  }
+  async function openMcpPreview(capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) {
+    if (current() !== before || !canReceiveMcp(capture) || !proof()) return false;
+    if (before.locale !== capture.targetLocale && localeAvailable(capture.targetLocale) && !setLocale(capture.targetLocale)) return false;
+    const original = current(), sequence = tool.draftSequence.current;
+    const unchanged = () => proof() && live() && current().termSeq === original.termSeq && current().contextSeq === original.contextSeq
+      && current().correctionDraft === original.correctionDraft && current().factDraft === original.factDraft && current().locale === original.locale
+      && tool.draftSequence.current === sequence && !current().pending && !current().factPending;
+    await openPreview(capture, unchanged);
+    return unchanged() && current().previewCapture?.captureId === capture.captureId && current().preview?.mcp != null && !current().previewNeedsRefresh;
+  }
   async function chooseFile(isCurrent: () => boolean = live) {
     const locale = current().locale;
     if (!localeAvailable(locale) || termDirty() || contextDirty() || !reserve()) return;
@@ -475,7 +493,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     } catch (error) { if (!captured || isCurrent()) fail(error, hasUnknownOutcome(error) && !captured ? "pickerUnknown" : "error"); }
     finally { release(); }
   }
-  return <ResourceContext.Provider value={{ correctionDirty,canReceiveCorrection,receiveCorrection,editCorrection,discardCorrection,captureCorrection,checkPending, factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
+  return <ResourceContext.Provider value={{ canReceiveMcp, openMcpPreview, correctionDirty,canReceiveCorrection,receiveCorrection,editCorrection,discardCorrection,captureCorrection,checkPending, factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
     setLocale, beginTerm, editTerm, discardTerm, beginContext, canReceiveContext, receiveContext, adoptContext, editContext, editContextReason, discardContext, discard,
     canReadCapture, saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
     decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;

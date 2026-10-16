@@ -1,5 +1,24 @@
 # Application versioning and changelog maintenance
 
+Manual inbound MCP terminology retrieval adds explicit discovery, fixed-query
+preview and consent, one external request and result recovery. Its trusted
+adapter uses the existing project execution runtime and ledger; saved results
+enter the existing resource capture and adoption owner with explicit MCP
+provenance. Reopening restores history without live execution authority.
+
+The added resource origin, its persisted execution associations and a required
+nullable MCP-currentness field in resource previews advance the current-only
+development project format to schema 48. Earlier development
+directories, including schema 47, are preserved and refused without migration,
+conversion or reset. WorkPlan3, SDK/Process3 and package formats remain unchanged.
+The desktop enables the official rmcp 3.5.1 client and Streamable HTTP features,
+directly uses already locked reqwest 0.13.5 and futures 0.3.34, and uses the SDK's
+sse-stream parser for bounded transport. Their required dependency graph is
+recorded in the existing Cargo lockfile. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain the same undistributed batch; synchronized bilingual
+Unreleased entries describe this change without another version bump. The
+following assessments describe earlier source units.
+
 Source adoption can explicitly capture a default-off, single-language maintenance
 notice. The original Source action owns its immutable activation, reliable
 cause, one claim, complete outcome and irreversible stop facts. The original

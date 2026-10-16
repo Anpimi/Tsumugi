@@ -12,6 +12,7 @@ pub(crate) mod contracts;
 mod dispatch;
 mod execution;
 pub(crate) mod mcp;
+mod mcp_retrieval;
 mod plugins;
 mod source_hooks;
 
@@ -432,6 +433,7 @@ struct ProjectServiceContext {
 #[derive(Default)]
 struct SessionManager {
     mcp: mcp::Shares,
+    mcp_retrieval: mcp_retrieval::Retrievals,
     source_hooks: source_hooks::SourceHooks,
     services: Option<ProjectServiceContext>,
     active: Option<ActiveSession>,
@@ -785,6 +787,7 @@ impl SessionManager {
 
         self.ensure_package_operation_idle(CommandStage::Rename)?;
         self.mcp.close_and_check()?;
+        self.mcp_retrieval.close_and_check()?;
         if let Some(active) = &mut self.active {
             self.source_hooks.close(&mut active.store)?;
         }
@@ -998,6 +1001,7 @@ impl SessionManager {
             return Err(CommandError::unknown(CommandStage::Close));
         }
         self.mcp.close_and_check()?;
+        self.mcp_retrieval.close_and_check()?;
         if let Some(active) = &mut self.active {
             self.source_hooks.close(&mut active.store)?;
         }
@@ -1016,6 +1020,7 @@ impl SessionManager {
     fn ensure_switch_allowed(&mut self, stage: CommandStage) -> Result<(), CommandError> {
         self.ensure_package_operation_idle(stage)?;
         self.mcp.close_and_check()?;
+        self.mcp_retrieval.close_and_check()?;
         if let Some(active) = &mut self.active {
             self.source_hooks.close(&mut active.store)?;
         }

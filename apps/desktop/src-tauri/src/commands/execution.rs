@@ -7,6 +7,7 @@ use std::{
 };
 use tsumugi_core::{RecoveryPlan, TaskView, execution::*};
 use tsumugi_plugin_sdk as sdk;
+pub(super) mod mcp_retrieval;
 mod package_lifecycle;
 use package_lifecycle::{PackageControl, PackageWork, PackageWorkState, RetiredQuery};
 
@@ -22,6 +23,13 @@ macro_rules! handlers {
         super::source_hooks::read_source_maintenance_hook_session,
         super::source_hooks::read_source_maintenance_hook,
         super::source_hooks::stop_source_maintenance_hook,
+        super::mcp_retrieval::read_mcp_retrieval_session,
+        super::mcp_retrieval::discover_mcp_terms,
+        super::mcp_retrieval::read_mcp_retrieval,
+        super::mcp_retrieval::prepare_mcp_term_query,
+        super::mcp_retrieval::start_mcp_term_query,
+        super::mcp_retrieval::stop_mcp_retrieval,
+        super::mcp_retrieval::capture_mcp_glossary,
         super::connections::read_model_connections,
         super::connections::change_model_connections,
         super::connections::read_model_connection_action,
@@ -215,6 +223,7 @@ pub(super) struct ExecutionHost {
     arena: arena::ArenaSession,
     work_plans: work_plans::WorkPlanSession,
     tools: tools::ToolSession,
+    mcp_runner: Arc<mcp_retrieval::McpRunner>,
     plugin_registrations: Vec<PluginExecutionBinding>,
     service_factory: Option<Arc<dyn tsumugi_plugin_host::core::ProjectServiceFactory>>,
 }
@@ -226,6 +235,9 @@ struct QueryJob {
     pending_outcome: Option<QueryOutcome>,
 }
 impl ExecutionHost {
+    pub(super) fn allow_mcp_capture(&self) -> Result<(), CommandError> {
+        self.allow_mutation()
+    }
     pub(super) fn is_quiescing(&self) -> bool {
         self.quiescing
     }
@@ -247,9 +259,17 @@ impl ExecutionHost {
             arena: arena::ArenaSession::default(),
             work_plans: work_plans::WorkPlanSession::default(),
             tools: tools::ToolSession::default(),
+            mcp_runner: Arc::default(),
             plugin_registrations: Vec::new(),
             service_factory: None,
         };
+        host.runtime
+            .register(host.mcp_runner.clone())
+            .map_err(map_read)?;
+        host.handlers.insert(
+            tsumugi_core::application::MCP_TERM_QUERY_OPERATION.into(),
+            Arc::new(tsumugi_core::McpTermQueryAdoptionHandler),
+        );
         #[cfg(any(test, feature = "execution-test-host"))]
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::SourceRunner))
@@ -380,6 +400,9 @@ impl ExecutionHost {
     fn tick(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.poll_queries(store)?;
         release::plugin::workflow::tick(self, store)?;
+        self.mcp_runner
+            .reap(store, &self.runtime)
+            .map_err(map_read)?;
         let workflow_authority = release::plugin::workflow::prepare_runtime_tick(self, store)?;
         let review_authority = self.review.prepare_runtime_tick(store, &mut self.runtime)?;
         self.review.tick(store, &mut self.runtime)?;
@@ -976,6 +999,7 @@ pub async fn execution_status(
             CommandStage::ExecutionRead,
             move |sessions| {
                 let hook_active = sessions.source_hooks.is_active();
+                let retrieval_active = sessions.mcp_retrieval.active();
                 let active = authorized(
                     sessions,
                     &request.session_token,
@@ -984,7 +1008,7 @@ pub async fn execution_status(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 Ok(RuntimeStatus {
-                    active: host.active(store)? || hook_active,
+                    active: host.active(store)? || hook_active || retrieval_active,
                     quiescing: host.quiescing,
                     query_count: host.queries.len() as u32,
                     error: host.last_error.clone(),
@@ -1679,11 +1703,13 @@ pub async fn quiesce_execution(
                     CommandStage::ExecutionQuiesce,
                 )?;
                 sessions.mcp.close();
+                sessions.mcp_retrieval.close();
                 let hook_result = {
                     let active = sessions.active.as_mut().expect("authorized session");
                     sessions.source_hooks.close(&mut active.store)
                 };
                 let hook_active = sessions.source_hooks.is_active();
+                let retrieval_active = sessions.mcp_retrieval.active();
                 let active = authorized(
                     sessions,
                     &request.session_token,
@@ -1705,8 +1731,8 @@ pub async fn quiesce_execution(
                     }
                 }
                 Ok(RuntimeStatus {
-                    active: host.active(store)? || hook_active,
-                    quiescing: host.quiescing || hook_active,
+                    active: host.active(store)? || hook_active || retrieval_active,
+                    quiescing: host.quiescing || hook_active || retrieval_active,
                     query_count: 0,
                     error: host.last_error.clone(),
                 })

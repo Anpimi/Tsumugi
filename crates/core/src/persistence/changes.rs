@@ -27,6 +27,7 @@ impl ChangeScope {
             "source-snapshot" => Self::Source,
             "translation-revision" | "translation-selection" => Self::Translation,
             "release" => Self::Release,
+            "resource-capture" => Self::Resources,
             // An extension can affect facts the desktop does not yet understand.
             _ => Self::Project,
         }

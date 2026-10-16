@@ -8,7 +8,10 @@ import type { PluginToolView } from "./pluginCommands";
 import { jsonIdentity, matchesTool as matches } from "./pluginToolChoices";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionAlive, useSessionReads } from "./SessionReadProvider";
+import { useMcpRetrieval } from "./McpRetrievalSession";
 type DraftRow = { id: number; text: string };
+/** A local selection handle, never authority to read or share saved content. */
+export interface RetrievalUnit { unitId: string; sourceSnapshotId: string; sourceRevisionId: string; label: string }
 export type ToolQueryIntent =
   | { kind: "prepare"; request: PluginToolPrepareRequest; view: PluginToolView; sequence: number }
   | { kind: "start"; request: PluginToolStartRequest; review: PluginToolPreflight; sequence: number }
@@ -17,6 +20,8 @@ export type ToolQueryIntent =
 type Capture = { review: PluginToolPreflight; sequence: number };
 
 interface State {
+  mode: "plugin" | "mcp";
+  endpoint: string; credentialEnv: string; mcpToolName: string; retrievalUnit: RetrievalUnit | null;
   choiceKey: string; runtimeKey: string; refresh: number; rows: DraftRow[]; target: string; selections: string[];
   capture: Capture | null; run: Capture | null; consent: string | null; applicationConsent: string | null; submittedSequence: number;
   knownTask: { taskId: string; attemptId: string; operation: "plugin-tool-query" } | null;
@@ -27,7 +32,7 @@ function invalidAcknowledgement(message: string): never { throw Object.assign(ne
 /** Original tool captures, consent and unresolved requests belong to the stable resource session. */
 export function usePluginToolQuerySession(project: ProjectView) {
   const context = executionContext(project), reads = useSessionReads(), mounted = useSessionAlive(), tasks = useExecutionTaskSession();
-  const [state, setState] = useState<State>({ choiceKey: "", runtimeKey: "", refresh: 0, rows: [{ id: 0, text: "" }], target: "", selections: [],
+  const [state, setState] = useState<State>({ mode: "plugin", endpoint: "", credentialEnv: "", mcpToolName: "", retrievalUnit: null, choiceKey: "", runtimeKey: "", refresh: 0, rows: [{ id: 0, text: "" }], target: "", selections: [],
     capture: null, run: null, consent: null, applicationConsent: null, submittedSequence: -1, knownTask: null, pending: null, uncertain: false, busy: false, failure: null, inputFailure: null });
   const currentState = useRef(state), nextRow = useRef(1), draftSequence = useRef(0), running = useRef(false), requestSequence = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestSequence.current++; }; }, []);
@@ -40,7 +45,11 @@ export function usePluginToolQuerySession(project: ProjectView) {
   const setApplicationConsent = (value: string | null) => change("applicationConsent", value);
   const setBusy = (value: boolean) => change("busy", value), setFailure = (value: CommandFailure | null) => change("failure", value);
   const setInputFailure = (value: ToolQueryError | null) => change("inputFailure", value);
-  function edit() { draftSequence.current++; setConsent(null); setApplicationConsent(null); setInputFailure(null); }
+  function edit() { draftSequence.current++; setConsent(null); setApplicationConsent(null); setInputFailure(null); mcp.invalidate(); }
+  const mcp = useMcpRetrieval(project, { live: () => mounted.current,
+    draft: () => { const value = currentState.current; return { endpoint: value.endpoint, credentialEnv: value.credentialEnv, toolName: value.mcpToolName,
+      unit: value.retrievalUnit, query: value.rows.length === 1 ? value.rows[0].text : "", locale: value.target, seq: draftSequence.current }; },
+    submitted: seq => setSubmittedSequence(seq) });
   function retain(value: ToolQueryIntent | null) { change("pending", value); if (!value) change("uncertain", false); }
   async function perform(work: (current: () => boolean) => Promise<void>) {
     if (!mounted.current || running.current) return;
@@ -109,8 +118,9 @@ export function usePluginToolQuerySession(project: ProjectView) {
       || before.knownTask?.attemptId === capture.review.attemptId && query.data.taskId !== before.knownTask.taskId
       || query.data.items.some(item => item.status.execution === "queued" || item.status.execution === "dispatched");
   }
-  function hasDraft() { const before = currentState.current; return !!before.capture || before.rows.some(row => row.text.length > 0) && draftSequence.current !== before.submittedSequence; }
-  function blocked() { return running.current || !!currentState.current.pending || working(); }
+  function hasDraft() { const before = currentState.current; return !!before.capture || (before.rows.some(row => row.text.length > 0)
+    || before.mode === "mcp" && (!!before.endpoint || !!before.credentialEnv || !!before.retrievalUnit)) && draftSequence.current !== before.submittedSequence; }
+  function blocked() { return running.current || !!currentState.current.pending || working() || mcp.blocked(); }
   function setRows(value: DraftRow[] | ((before: DraftRow[]) => DraftRow[])) { change("rows", typeof value === "function" ? value(currentState.current.rows) : value); }
   function setSelections(value: string[] | ((before: string[]) => string[])) { change("selections", typeof value === "function" ? value(currentState.current.selections) : value); }
   function addText(text: string) {
@@ -119,7 +129,18 @@ export function usePluginToolQuerySession(project: ProjectView) {
     const id = nextRow.current++;
     setRows(before.rows.length === 1 && before.rows[0].text === "" ? [{ ...before.rows[0], text }] : [...before.rows, { id, text }]); edit(); return true;
   }
-  return { tasks, state, current: () => currentState.current, draftSequence, nextRow, mounted, running, perform, submit, edit, blocked, working, observeTask, hasDraft, addText,
+  function setMode(mode: State["mode"]) {
+    if (!mounted.current || blocked() || currentState.current.capture) return false;
+    change("mode", mode); change("target", ""); edit(); return true;
+  }
+  function editMcp(patch: Partial<Pick<State, "endpoint" | "credentialEnv" | "mcpToolName" | "retrievalUnit">>) {
+    if (!mounted.current) return;
+    currentState.current = { ...currentState.current, ...patch }; setState(currentState.current); edit();
+  }
+  function clearMcpDraft() { if (mcp.blocked() || !mcp.close()) return false;
+    change("endpoint", ""); change("credentialEnv", ""); change("mcpToolName", ""); change("retrievalUnit", null); return true;
+  }
+  return { tasks, state, mcp, current: () => currentState.current, draftSequence, nextRow, mounted, running, perform, submit, edit, blocked, working, observeTask, hasDraft, addText, setMode, editMcp, clearMcpDraft,
     setRows, setSelections, setCapture, setConsent, setApplicationConsent, setFailure, setInputFailure,
     setChoiceKey: (value: string) => change("choiceKey", value), setRuntimeKey: (value: string) => change("runtimeKey", value),
     setTarget: (value: string) => change("target", value), setRefresh: (value: number | ((before: number) => number)) => change("refresh", typeof value === "function" ? value(currentState.current.refresh) : value) };
