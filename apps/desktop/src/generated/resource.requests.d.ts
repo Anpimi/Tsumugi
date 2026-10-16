@@ -114,8 +114,11 @@ export interface Requests {
   contextFactAction: ContextFactActionRequest;
   contextFactHistory: ContextFactHistoryRequest;
   contextFacts: ContextFactsRequest;
+  correctionBasis: CorrectionBasisRequest;
+  correctionCapture: CorrectionCaptureRequest;
   decision: DecisionRequest;
   impacts: ImpactRequest;
+  resourceAction: ResourceActionRequest;
   session: SessionRequest;
   suggestions: SuggestionRequest;
   tbxPreview: TbxPreviewRequest;
@@ -254,6 +257,39 @@ export interface ContextFactPosition {
   blockIndex: number;
   factIndex: number;
 }
+export interface CorrectionBasisRequest {
+  afterSelectionId: ExecutionId;
+  locale: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  unitId: ExecutionId;
+}
+export interface CorrectionCaptureRequest {
+  capture: CaptureCorrectionTerm;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface CaptureCorrectionTerm {
+  actionId: ExecutionId;
+  basis: CorrectionTermBasis;
+  protected: boolean;
+  reason: string;
+  source: string;
+  target: string;
+}
+export interface CorrectionTermBasis {
+  after: RevisionSelectionRef;
+  before: RevisionSelectionRef;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface RevisionSelectionRef {
+  revisionId: ExecutionId;
+  selectionId: ExecutionId;
+}
 export interface DecisionRequest {
   decision: ResourceDecision;
   projectId: ExecutionId;
@@ -271,6 +307,11 @@ export interface ImpactRequest {
   limit: number;
   locale: string;
   offset: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ResourceActionRequest {
+  actionId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
 }

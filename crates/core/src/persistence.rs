@@ -50,10 +50,12 @@ pub use release::{
     SavedBuildResult, SavedPluginBuildView,
 };
 pub use resources::{
-    CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision, GlossaryCapture,
-    GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind,
-    ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence,
-    ResourceImpactKind, ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, SaveContext,
+    CaptureContext, CaptureCorrectionTerm, ContextCapture, ContextItem, ContextOmission,
+    ContextRevision, CorrectionTermBasis, CorrectionTermEvidence, CorrectionTermPreview,
+    CorrectionTermReceipt, GlossaryCapture, GlossaryCaptureOrigin, GlossaryEntry, GlossaryFile,
+    ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind, ResourceDecision,
+    ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence, ResourceImpactKind,
+    ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, RevisionSelectionRef, SaveContext,
     SaveTerm, SelectedSourceContext, SelectedSourceFact, SourceContextAdjacency,
     SourceContextBlock, SourceContextCapture, SourceContextDirection, SourceContextNeighbor,
     SourceContextObservations, SourceContextOccurrence, SourceContextOmissionReason,
@@ -95,7 +97,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 43;
+pub(crate) const SCHEMA_VERSION: i64 = 44;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,

@@ -116,41 +116,88 @@
       "sessionToken": "isolated-resource-session",
       "projectId": "30000000-0000-4000-8000-000000000001",
       "locale": "zh-CN"
+    },
+    "correctionBasis": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "unitId": "30000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "afterSelectionId": "30000000-0000-4000-8000-000000000035"
+    },
+    "correctionCapture": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "capture": {
+        "actionId": "30000000-0000-4000-8000-000000000036",
+        "basis": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+          "before": {
+            "revisionId": "30000000-0000-4000-8000-000000000032",
+            "selectionId": "30000000-0000-4000-8000-000000000033"
+          },
+          "after": {
+            "revisionId": "30000000-0000-4000-8000-000000000034",
+            "selectionId": "30000000-0000-4000-8000-000000000035"
+          }
+        },
+        "source": "Barrel",
+        "target": "木桶",
+        "protected": false,
+        "reason": "Reviewed saved manual correction"
+      }
+    },
+    "resourceAction": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "actionId": "30000000-0000-4000-8000-000000000036"
     }
   },
   "responses": {
     "captures": [
       {
         "captureId": "30000000-0000-4000-8000-000000000006",
-        "resourceId": "contract-glossary",
-        "revision": "glossary-v1",
-        "license": "MIT",
         "sourceLocale": "en-US",
         "targetLocale": "zh-CN",
         "digest": "abcdef0123456789",
-        "count": 1
+        "count": 1,
+        "origin": {
+          "kind": "file",
+          "resourceId": "contract-glossary",
+          "revision": "glossary-v1",
+          "license": "MIT"
+        }
       }
     ],
     "capture": {
       "captureId": "30000000-0000-4000-8000-000000000006",
-      "resourceId": "contract-glossary",
-      "revision": "glossary-v1",
-      "license": "MIT",
       "sourceLocale": "en-US",
       "targetLocale": "zh-CN",
       "digest": "abcdef0123456789",
-      "count": 1
+      "count": 1,
+      "origin": {
+        "kind": "file",
+        "resourceId": "contract-glossary",
+        "revision": "glossary-v1",
+        "license": "MIT"
+      }
     },
     "preview": {
       "capture": {
         "captureId": "30000000-0000-4000-8000-000000000006",
-        "resourceId": "contract-glossary",
-        "revision": "glossary-v1",
-        "license": "MIT",
         "sourceLocale": "en-US",
         "targetLocale": "zh-CN",
         "digest": "abcdef0123456789",
-        "count": 1
+        "count": 1,
+        "origin": {
+          "kind": "file",
+          "resourceId": "contract-glossary",
+          "revision": "glossary-v1",
+          "license": "MIT"
+        }
       },
       "rows": [
         {
@@ -191,7 +238,8 @@
           "previousRevisionId": null,
           "removed": false
         }
-      ]
+      ],
+      "correction": null
     },
     "decision": {
       "actionId": "30000000-0000-4000-8000-000000000010",
@@ -214,6 +262,14 @@
         "externalEntryId": "barrel",
         "previousRevisionId": null,
         "removed": false
+      },
+      "request": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "actionId": "30000000-0000-4000-8000-000000000010",
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "entryId": "barrel",
+        "expectedRevisionId": null,
+        "decision": "adopt"
       }
     },
     "term": {
@@ -631,6 +687,158 @@
             "unlisted": 0
           }
         ]
+      }
+    },
+    "correctionBasis": {
+      "basis": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "unitId": "30000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+        "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+        "before": {
+          "revisionId": "30000000-0000-4000-8000-000000000032",
+          "selectionId": "30000000-0000-4000-8000-000000000033"
+        },
+        "after": {
+          "revisionId": "30000000-0000-4000-8000-000000000034",
+          "selectionId": "30000000-0000-4000-8000-000000000035"
+        }
+      },
+      "sourceText": "Barrel near the door",
+      "beforeText": "桶在门旁",
+      "afterText": "木桶在门旁",
+      "beforeSourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+      "beforeSourceRevisionId": "30000000-0000-4000-8000-000000000031",
+      "current": true
+    },
+    "correctionCapture": {
+      "request": {
+        "actionId": "30000000-0000-4000-8000-000000000036",
+        "basis": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+          "before": {
+            "revisionId": "30000000-0000-4000-8000-000000000032",
+            "selectionId": "30000000-0000-4000-8000-000000000033"
+          },
+          "after": {
+            "revisionId": "30000000-0000-4000-8000-000000000034",
+            "selectionId": "30000000-0000-4000-8000-000000000035"
+          }
+        },
+        "source": "Barrel",
+        "target": "木桶",
+        "protected": false,
+        "reason": "Reviewed saved manual correction"
+      },
+      "capture": {
+        "captureId": "30000000-0000-4000-8000-000000000037",
+        "origin": {
+          "kind": "correction",
+          "basis": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "unitId": "30000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+            "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+            "before": {
+              "revisionId": "30000000-0000-4000-8000-000000000032",
+              "selectionId": "30000000-0000-4000-8000-000000000033"
+            },
+            "after": {
+              "revisionId": "30000000-0000-4000-8000-000000000034",
+              "selectionId": "30000000-0000-4000-8000-000000000035"
+            }
+          }
+        },
+        "sourceLocale": "en-US",
+        "targetLocale": "zh-CN",
+        "digest": "1234567890abcdef",
+        "count": 1
+      }
+    },
+    "correctionAction": {
+      "request": {
+        "actionId": "30000000-0000-4000-8000-000000000036",
+        "basis": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+          "before": {
+            "revisionId": "30000000-0000-4000-8000-000000000032",
+            "selectionId": "30000000-0000-4000-8000-000000000033"
+          },
+          "after": {
+            "revisionId": "30000000-0000-4000-8000-000000000034",
+            "selectionId": "30000000-0000-4000-8000-000000000035"
+          }
+        },
+        "source": "Barrel",
+        "target": "木桶",
+        "protected": false,
+        "reason": "Reviewed saved manual correction"
+      },
+      "capture": {
+        "captureId": "30000000-0000-4000-8000-000000000037",
+        "origin": {
+          "kind": "correction",
+          "basis": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "unitId": "30000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+            "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+            "before": {
+              "revisionId": "30000000-0000-4000-8000-000000000032",
+              "selectionId": "30000000-0000-4000-8000-000000000033"
+            },
+            "after": {
+              "revisionId": "30000000-0000-4000-8000-000000000034",
+              "selectionId": "30000000-0000-4000-8000-000000000035"
+            }
+          }
+        },
+        "sourceLocale": "en-US",
+        "targetLocale": "zh-CN",
+        "digest": "1234567890abcdef",
+        "count": 1
+      }
+    },
+    "decisionAction": {
+      "actionId": "30000000-0000-4000-8000-000000000010",
+      "decision": "adopt",
+      "revision": {
+        "revisionId": "30000000-0000-4000-8000-000000000007",
+        "termId": "external:contract-glossary:barrel",
+        "locale": "zh-CN",
+        "source": "Barrel",
+        "aliases": [
+          "Cask",
+          "Drum"
+        ],
+        "target": "木桶 👩🏽‍💻 é",
+        "protected": true,
+        "scopeUnitId": null,
+        "reason": "Fixed glossary entry",
+        "originKind": "external",
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "externalEntryId": "barrel",
+        "previousRevisionId": null,
+        "removed": false
+      },
+      "request": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "actionId": "30000000-0000-4000-8000-000000000010",
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "entryId": "barrel",
+        "expectedRevisionId": null,
+        "decision": "adopt"
       }
     }
   }

@@ -1,5 +1,20 @@
 # Application versioning and changelog maintenance
 
+Saved manual corrections can explicitly form one term proposal scoped to the
+current entry and target language. Resource captures now require tagged file or
+correction provenance. Correction previews carry an explicit nullable evidence
+view, and resource decision receipts include the complete original request.
+Correction adoption uses the existing manual term revision and action owners;
+unadopted proposals have no effect on term resolution or captured AI inputs.
+
+These required resource shapes and SQLite associations advance the current-only
+project format to schema 44. Earlier development directories are preserved and
+refused without migration or fallback. SDK/Process3, WorkPlan3, settings and
+receipts outside the affected resource contract stay unchanged. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed batch;
+both Unreleased changelogs are synchronized without another SemVer bump. The
+following assessments retain the formats introduced by earlier source units.
+
 Application component activation now uses a frozen, bounded capability roster
 and a component instance principal. JavaScript setup registers every exact
 member before Ready; every invocation retains its full provider binding and

@@ -14,6 +14,10 @@ it("validates both directions of every shared resource contract", async () => {
     [validators.validateResponseTmxPreview, fixture.responses.tmxPreview], [validators.validateResponseTmxPreview, null],
     [validators.validateRequestTbxPreview, fixture.requests.tbxPreview],
     [validators.validateResponseTbxPreview, fixture.responses.tbxPreview], [validators.validateResponseTbxPreview, null],
+    [validators.validateRequestCorrectionBasis, fixture.requests.correctionBasis], [validators.validateRequestCorrectionCapture, fixture.requests.correctionCapture],
+    [validators.validateRequestResourceAction, fixture.requests.resourceAction], [validators.validateResponseCorrectionBasis, fixture.responses.correctionBasis],
+    [validators.validateResponseCorrectionCapture, fixture.responses.correctionCapture], [validators.validateResponseCorrectionAction, fixture.responses.correctionAction],
+    [validators.validateResponseCorrectionAction, null], [validators.validateResponseDecisionAction, fixture.responses.decisionAction], [validators.validateResponseDecisionAction, null],
     [validators.validateRequestSession, fixture.requests.session], [validators.validateRequestCaptures, fixture.requests.captures],
     [validators.validateRequestCapture, fixture.requests.capture], [validators.validateRequestTerm, fixture.requests.term],
     [validators.validateRequestDecision, fixture.requests.decision], [validators.validateRequestTerms, fixture.requests.terms],
@@ -131,4 +135,34 @@ it("keeps malformed mutation acknowledgements unknown and preserves backend reje
   const rejected = { code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", reason: "term-revision" };
   invoke.mockRejectedValueOnce(rejected);
   await expect(resourceCommands.saveTerm(fixture.requests.term)).rejects.toBe(rejected);
+});
+
+
+it("keeps correction source tags and exact resource action receipts strict", async () => {
+  const basis = fixture.responses.correctionBasis;
+  invoke.mockResolvedValueOnce(basis);
+  await expect(resourceCommands.correctionBasis(fixture.requests.correctionBasis)).resolves.toEqual(basis);
+  expect(invoke).toHaveBeenLastCalledWith("read_correction_term_basis", { request: fixture.requests.correctionBasis });
+  const receipt = fixture.responses.correctionCapture;
+  if (!validators.validateRequestCorrectionCapture(fixture.requests.correctionCapture)) throw new Error("Invalid correction fixture");
+  invoke.mockResolvedValueOnce(receipt);
+  await expect(resourceCommands.captureCorrection(fixture.requests.correctionCapture)).resolves.toEqual(receipt);
+  invoke.mockResolvedValueOnce({ ...receipt, request: { ...receipt.request, target: "different" } });
+  await expect(resourceCommands.captureCorrection(fixture.requests.correctionCapture)).rejects.toThrow("Invalid correction capture acknowledgement");
+  invoke.mockResolvedValueOnce(null);
+  await expect(resourceCommands.correctionAction(fixture.requests.resourceAction)).resolves.toBeNull();
+  const decisionRequest = { ...fixture.requests.resourceAction, actionId: fixture.responses.decision.actionId };
+  invoke.mockResolvedValueOnce(fixture.responses.decision);
+  await expect(resourceCommands.decisionAction(decisionRequest)).resolves.toEqual(fixture.responses.decision);
+  const { origin: _origin, ...missingOrigin } = receipt.capture;
+  expect(validators.validateResponseCapture(missingOrigin)).toBe(false);
+  const { correction: _correction, ...missingCorrection } = fixture.responses.preview;
+  expect(validators.validateResponsePreview(missingCorrection)).toBe(false);
+  const { request: _request, ...missingRequest } = fixture.responses.decision;
+  expect(validators.validateResponseDecision(missingRequest)).toBe(false);
+  expect(validators.validateResponseCapture({ ...receipt.capture, origin: { ...receipt.capture.origin, license: "invented" } })).toBe(false);
+  invoke.mockResolvedValueOnce({ ...fixture.responses.preview, capture: receipt.capture });
+  await expect(resourceCommands.preview({ ...fixture.requests.capture, captureId: receipt.capture.captureId })).rejects.toThrow();
+  invoke.mockResolvedValueOnce({ ...fixture.responses.preview, correction: { evidence: basis, decision: null } });
+  await expect(resourceCommands.preview(fixture.requests.capture)).rejects.toThrow();
 });

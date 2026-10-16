@@ -37,6 +37,38 @@
         ],
         "type": "object"
       },
+      "CaptureCorrectionTerm": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "source",
+          "target",
+          "protected",
+          "reason"
+        ],
+        "type": "object"
+      },
       "CaptureListRequest": {
         "additionalProperties": false,
         "properties": {
@@ -408,6 +440,90 @@
         ],
         "type": "object"
       },
+      "CorrectionBasisRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "afterSelectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "afterSelectionId"
+        ],
+        "type": "object"
+      },
+      "CorrectionCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "$ref": "#/definitions/CaptureCorrectionTerm"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "capture"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "before": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "before",
+          "after"
+        ],
+        "type": "object"
+      },
       "DecisionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -484,6 +600,26 @@
         ],
         "type": "object"
       },
+      "ResourceActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
+        ],
+        "type": "object"
+      },
       "ResourceDecision": {
         "additionalProperties": false,
         "properties": {
@@ -530,6 +666,22 @@
           "override"
         ],
         "type": "string"
+      },
+      "RevisionSelectionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "selectionId"
+        ],
+        "type": "object"
       },
       "SaveContext": {
         "additionalProperties": false,
@@ -1114,11 +1266,20 @@
       "contextFacts": {
         "$ref": "#/definitions/ContextFactsRequest"
       },
+      "correctionBasis": {
+        "$ref": "#/definitions/CorrectionBasisRequest"
+      },
+      "correctionCapture": {
+        "$ref": "#/definitions/CorrectionCaptureRequest"
+      },
       "decision": {
         "$ref": "#/definitions/DecisionRequest"
       },
       "impacts": {
         "$ref": "#/definitions/ImpactRequest"
+      },
+      "resourceAction": {
+        "$ref": "#/definitions/ResourceActionRequest"
       },
       "session": {
         "$ref": "#/definitions/SessionRequest"
@@ -1153,6 +1314,9 @@
       "capture",
       "term",
       "decision",
+      "correctionBasis",
+      "correctionCapture",
+      "resourceAction",
       "terms",
       "termHistory",
       "unitLocale",
@@ -1173,6 +1337,38 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "CaptureCorrectionTerm": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "source",
+          "target",
+          "protected",
+          "reason"
+        ],
+        "type": "object"
+      },
       "ContentTarget": {
         "oneOf": [
           {
@@ -1500,6 +1696,117 @@
         ],
         "type": "object"
       },
+      "CorrectionTermBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "before": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "before",
+          "after"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "afterText": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "beforeSourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "beforeSourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "beforeText": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "sourceText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "sourceText",
+          "beforeText",
+          "afterText",
+          "beforeSourceSnapshotId",
+          "beforeSourceRevisionId",
+          "current"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ResourceDecisionResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence": {
+            "$ref": "#/definitions/CorrectionTermEvidence"
+          }
+        },
+        "required": [
+          "evidence",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "$ref": "#/definitions/GlossaryCapture"
+          },
+          "request": {
+            "$ref": "#/definitions/CaptureCorrectionTerm"
+          }
+        },
+        "required": [
+          "request",
+          "capture"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
@@ -1538,14 +1845,8 @@
           "digest": {
             "type": "string"
           },
-          "license": {
-            "type": "string"
-          },
-          "resourceId": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "string"
+          "origin": {
+            "$ref": "#/definitions/GlossaryCaptureOrigin"
           },
           "sourceLocale": {
             "type": "string"
@@ -1556,15 +1857,59 @@
         },
         "required": [
           "captureId",
-          "resourceId",
-          "revision",
-          "license",
+          "origin",
           "sourceLocale",
           "targetLocale",
           "digest",
           "count"
         ],
         "type": "object"
+      },
+      "GlossaryCaptureOrigin": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "file",
+                "type": "string"
+              },
+              "license": {
+                "type": "string"
+              },
+              "resourceId": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "resourceId",
+              "revision",
+              "license"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "$ref": "#/definitions/CorrectionTermBasis"
+              },
+              "kind": {
+                "const": "correction",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "basis"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "GlossaryEntry": {
         "additionalProperties": false,
@@ -1751,6 +2096,45 @@
         ],
         "type": "string"
       },
+      "ResourceDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "captureId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "decision": {
+            "$ref": "#/definitions/ResourceDecisionKind"
+          },
+          "entryId": {
+            "type": "string"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "captureId",
+          "entryId",
+          "expectedRevisionId",
+          "decision"
+        ],
+        "type": "object"
+      },
       "ResourceDecisionKind": {
         "enum": [
           "adopt",
@@ -1769,6 +2153,9 @@
           "decision": {
             "$ref": "#/definitions/ResourceDecisionKind"
           },
+          "request": {
+            "$ref": "#/definitions/ResourceDecision"
+          },
           "revision": {
             "anyOf": [
               {
@@ -1781,6 +2168,7 @@
           }
         },
         "required": [
+          "request",
           "actionId",
           "decision",
           "revision"
@@ -1815,6 +2203,16 @@
           "capture": {
             "$ref": "#/definitions/GlossaryCapture"
           },
+          "correction": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CorrectionTermPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "removed": {
             "items": {
               "$ref": "#/definitions/TermRevision"
@@ -1831,7 +2229,8 @@
         "required": [
           "capture",
           "rows",
-          "removed"
+          "removed",
+          "correction"
         ],
         "type": "object"
       },
@@ -1870,6 +2269,22 @@
           "kind",
           "current",
           "scopeUnitId"
+        ],
+        "type": "object"
+      },
+      "RevisionSelectionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "selectionId"
         ],
         "type": "object"
       },
@@ -3026,8 +3441,34 @@
         },
         "type": "array"
       },
+      "correctionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/CorrectionTermReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "correctionBasis": {
+        "$ref": "#/definitions/CorrectionTermEvidence"
+      },
+      "correctionCapture": {
+        "$ref": "#/definitions/CorrectionTermReceipt"
+      },
       "decision": {
         "$ref": "#/definitions/ResourceDecisionResult"
+      },
+      "decisionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ResourceDecisionResult"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "impacts": {
         "$ref": "#/definitions/ImpactPage"
@@ -3084,6 +3525,10 @@
       "capture",
       "preview",
       "decision",
+      "correctionBasis",
+      "correctionCapture",
+      "correctionAction",
+      "decisionAction",
       "term",
       "terms",
       "resolution",
