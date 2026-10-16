@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Restoring AI budget defaults now changes only the six execution limits, retaining
+connection references, explicit sharing choices and source-context limits. The
+existing preparation owner still invalidates captured preview and consent. This
+frontend correction changes no Core/Host/IPC contract, schema 45, WorkPlan3,
+SDK/Process3, dependency or lockfile. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain the same undistributed batch without another version bump;
+both Unreleased changelogs are synchronized.
+
 Candidates-only plans can separately authorize their exact captured checks.
 The original policy action receipt records the candidate revision, complete
 check rules and execution evidence with no selection, current CheckRun or

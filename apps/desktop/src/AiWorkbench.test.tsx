@@ -22,6 +22,7 @@ import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { aiAttempt, aiViewFixture, aiWorkPlanFixture } from "./testSupport/aiFixture";
 import { formatReviewSlotFixture } from "./testSupport/textReviewFixture";
+import { connectionFixture } from "./testSupport/connectionFixture";
 import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSupport/pluginToolFixture";
 import type { WorkPlanToolSelection } from "./generated/ai.requests";
 function formatCheckerFixture(): WorkPlanView["checkers"][number] {
@@ -185,6 +186,41 @@ it("ignores a preview from a project that was replaced while the request was pen
 
 it("requires exact sharing confirmation and invalidates it on configuration edits",async()=>{const user=await preview();expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).not.toBeChecked();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it("keeps empty limits editable and rejects them before preview serialization",async()=>{const user=await preview();await user.click(screen.getByText("Budget and limits"));await user.clear(screen.getByRole("spinbutton",{name:"Maximum requests including retries"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));expect(await screen.findByRole("alert")).toHaveFocus();expect(screen.getByRole("spinbutton",{name:"Maximum requests including retries"})).toHaveAttribute("aria-invalid","true");expect(invoke.mock.calls.filter(([c])=>c==="prepare_work_plan")).toHaveLength(1);expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
+it.each([true,false])("restores only execution budgets while retaining sharing choice %s and requiring fresh consent",async sharing=>{
+ const linked:AiConfig={...prepared.preview.config,tokenField:"max_completion_tokens",connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}};
+ const connections=connectionFixture([linked]),original=invoke.getMockImplementation()!;
+ invoke.mockImplementation((command:string,args:unknown)=>command==="read_model_connections"?Promise.resolve(structuredClone(connections)):original(command,args));
+ const user=await preview();
+ await user.selectOptions(screen.getByRole("combobox",{name:i18n.t("connections.choose")}),linked.connectionProfile!.profileId);
+ for(const name of ["Share applicable adopted terms","Share saved context"]){
+  const checkbox=screen.getByRole("checkbox",{name});await user.click(checkbox);if(!sharing)await user.click(checkbox);
+ }
+ for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])await user.click(screen.getByRole("checkbox",{name}));
+ const sourceLimits=[["Source context budget (encoded bytes)",2048],["Maximum source context entries",17]] as const;
+ for(const [name,value] of sourceLimits){const input=screen.getByRole("spinbutton",{name});await user.clear(input);await user.type(input,String(value));}
+ await user.click(screen.getByText("Budget and limits"));
+ const budgets=[["maxItems",3],["concurrency",2],["maxRequests",7],["maxOutputTokens",512],["maxRetries",1],["timeoutSeconds",30]] as const;
+ for(const [key,value] of budgets){const input=screen.getByRole("spinbutton",{name:i18n.t(`ai.${key}`)});await user.clear(input);await user.type(input,String(value));}
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ await screen.findByRole("heading",{name:"Data sharing preview"});
+ const before=structuredClone(prepared.preview.config);
+ expect(before).toMatchObject({...linked,shareTerms:sharing,shareContext:sharing,sourceContext:{extracted:true,inferred:true,neighbors:true,maxBytes:2048,maxItems:17},...Object.fromEntries(budgets)});
+ await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();
+ const previews=invoke.mock.calls.filter(([command])=>command==="prepare_work_plan").length;
+ await user.click(screen.getByRole("button",{name:"Restore budget defaults"}));
+ expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+ expect(invoke.mock.calls.filter(([command])=>command==="prepare_work_plan")).toHaveLength(previews);
+ for(const [key] of budgets)expect(screen.getByRole("spinbutton",{name:i18n.t(`ai.${key}`)})).toHaveValue(defaultAiConfig[key]);
+ for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).toHaveProperty("checked",sharing);
+ for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])expect(screen.getByRole("checkbox",{name})).toBeChecked();
+ for(const [name,value] of sourceLimits)expect(screen.getByRole("spinbutton",{name})).toHaveValue(value);
+ expect(screen.getByRole("combobox",{name:i18n.t("connections.choose")})).toHaveValue(linked.connectionProfile!.profileId);
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await screen.findByRole("heading",{name:"Data sharing preview"});
+ expect(prepared.preview.config).toEqual({...before,...Object.fromEntries(budgets.map(([key])=>[key,defaultAiConfig[key]]))});
+ expect(screen.getByRole("checkbox",{name:/I confirm sending/})).not.toBeChecked();
+ expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();
+ expect(invoke.mock.calls.some(([command])=>["authorize_work_plan","start_work_plan"].includes(command))).toBe(false);
+});
 it("ignores a replaced-session preview through the stable preparation consumer",async()=>{
  const user=userEvent.setup();const rendered=render(<TestAiWorkbench key="session" project={project}/>);await user.click(screen.getByRole("button",{name:"AI work"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));let resolve:(value:WorkPlanView)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="prepare_work_plan"?new Promise<WorkPlanView>(done=>{resolve=done;}):original(command,args));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<TestAiWorkbench key="replacement" project={{...project,sessionToken:"replacement"}}/>);resolve(aiWorkPlanFixture(prepared));await user.click(screen.getByRole("button",{name:"AI work"}));await screen.findByRole("checkbox",{name:"first: Hello"});expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);
 });
