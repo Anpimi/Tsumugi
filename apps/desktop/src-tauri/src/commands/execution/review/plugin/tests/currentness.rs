@@ -29,11 +29,15 @@ fn finish_review_command<T>(
     }
 }
 
-// Only fresh metadata loads may contend with the existing owner tick. Retry
-// the same complete intent; deliberate held-lock and recorded reads stay direct.
+// A complete preview captures immutable package/runtime bytes in several IO
+// stages; that valid work is not a promise to finish within a wall-clock retry
+// window. Bound complete attempts instead, retrying only transient manager
+// contention with the same intent. Held-lock and recorded reads stay direct.
 pub(super) fn prepare_with_store_retry(window: &Window, intent: &Value) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    const MAX_ATTEMPTS: usize = 3;
+    let mut elapsed = Vec::with_capacity(MAX_ATTEMPTS);
+    for attempt in 1..=MAX_ATTEMPTS {
+        let started = Instant::now();
         match call(window, "prepare_review_checks", Some(intent.clone())) {
             Ok(preparation) => return preparation,
             Err(error)
@@ -41,12 +45,17 @@ pub(super) fn prepare_with_store_retry(window: &Window, intent: &Value) -> Value
                     && error["outcome"] == "rejected"
                     && error["reason"] == "plugin-store-busy" =>
             {
-                assert!(Instant::now() < deadline, "{error:?}");
+                elapsed.push(started.elapsed());
+                assert!(
+                    attempt < MAX_ATTEMPTS,
+                    "metadata preview remained busy after {attempt} complete attempts ({elapsed:?}): {error:?}"
+                );
                 std::thread::sleep(Duration::from_millis(20));
             }
             Err(error) => panic!("{error:?}"),
         }
     }
+    unreachable!("every final attempt returns or fails with the original error")
 }
 
 pub(super) fn rejects_revoked_manual_computation(
