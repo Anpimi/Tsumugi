@@ -166,10 +166,17 @@ pub fn result_channel() -> (ResultSender, Receiver<FixedResult>) {
 /// The wrapper deliberately provides no commit, connection or nested transaction.
 pub struct AdoptionTransaction<'a> {
     transaction: &'a rusqlite::Transaction<'a>,
+    store_epoch: &'a str,
 }
 impl<'a> AdoptionTransaction<'a> {
-    pub(crate) fn new(transaction: &'a rusqlite::Transaction<'a>) -> Self {
-        Self { transaction }
+    pub(crate) fn new(transaction: &'a rusqlite::Transaction<'a>, store_epoch: &'a str) -> Self {
+        Self {
+            transaction,
+            store_epoch,
+        }
+    }
+    pub(crate) fn store_epoch(&self) -> &str {
+        self.store_epoch
     }
     pub fn query_row<
         T,

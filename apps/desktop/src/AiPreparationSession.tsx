@@ -41,7 +41,7 @@ interface State {
   checkedTask: { attemptId: string; taskId: string } | null;
   attempt: string | null; started: { prepared: AiPrepared; taskId: string | null } | null;
   pendingStart: StartCapture | null; pendingAdopt: AdoptCapture | null; saved: Record<string, Receipt>;
-  failure: CommandFailure | null; notice: "started" | "saved" | "newer" | null;
+  failure: CommandFailure | null; notice: "started" | "saved" | "newer" | "maintenance" | null;
 }
 const limits = [["maxItems",1,100],["concurrency",1,2],["maxRequests",1,300],["maxOutputTokens",1,16384],["maxRetries",0,2],["timeoutSeconds",1,120]] as const;
 const validLimits = (config: AiConfig) => limits.every(([key,min,max]) => Number.isInteger(config[key]) && config[key] >= min && config[key] <= max) && validSourceContextSelection(config.sourceContext);
@@ -192,15 +192,17 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       && view.detail.progress.queued === 0 && view.detail.progress.running === 0
       && !view.rows.some(row => row.automation && ["waiting","saving-candidate","checking"].includes(row.automation.phase));
   }
-  function captureMaintenance(assessment: MaintenanceAssessment, expectedEditSeq: number, currentRead: () => boolean) {
+  function captureMaintenance(assessment: MaintenanceAssessment, expectedEditSeq: number, currentRead: () => boolean,
+    replacement?: { expectedDirty: boolean; confirmed: boolean }) {
     if (!canReceiveContentSelection() || current().editSeq!==expectedEditSeq || !currentRead()
+      || replacement && (current().dirty !== replacement.expectedDirty || current().dirty && !replacement.confirmed)
       || assessment.projectId!==session.projectId || !available(assessment.locale)) return false;
     const choices: MaintenanceChoice[]=assessment.rows.map(row=>({unitId:row.unitId,action:row.suggested,
       excluded:row.protection.protected||row.mappingUnresolved}));
     basis.current++;
     update(before=>({...before,maintenance:fixed({assessment,choices}),locale:assessment.locale,
       selected:choices.filter(choice=>!choice.excluded&&choice.action==="repair").map(choice=>choice.unitId),
-      selectedSnapshotId:assessment.sourceSnapshotId,capture:null,consent:false,staleReason:null,dirty:true,editSeq:before.editSeq+1,failure:null,notice:null}));
+      selectedSnapshotId:assessment.sourceSnapshotId,capture:null,consent:false,staleReason:null,dirty:true,editSeq:before.editSeq+1,failure:null,notice:"maintenance"}));
     return true;
   }
   function editMaintenance(choice: MaintenanceChoice, expectedEditSeq: number) {

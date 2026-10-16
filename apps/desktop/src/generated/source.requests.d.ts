@@ -15,6 +15,9 @@ export interface Requests {
   historyContent: HistoryContentRequest;
   impact: ImpactRequest;
   lineage: LineageRequest;
+  maintenanceHook: SourceMaintenanceHookReadRequest;
+  maintenanceHookSession: SessionRequest;
+  maintenanceHookStop: SourceMaintenanceHookStopRequest;
   pluginCapture: PluginCaptureRequest;
   pluginSelect: PluginSourceSelectRequest;
   pluginStart: PluginStartRequest;
@@ -37,6 +40,7 @@ export interface SourceConfirmation {
   identityPolicy: string;
   lineage?: LineageChoice[];
   lineageBaseSnapshot?: ExecutionId | null;
+  maintenanceHook: SourceMaintenanceHookActivation | null;
   resultDigest: string;
   sourceLanguage: string;
 }
@@ -45,6 +49,14 @@ export interface LineageChoice {
   newOrdinal: number;
   oldOccurrenceId: ExecutionId;
   reason: string;
+}
+export interface SourceMaintenanceHookActivation {
+  after: number;
+  expiresAtMs: number;
+  limit: number;
+  locale: string;
+  policyVersion: string;
+  sessionEpoch: string;
 }
 export interface SourceCheckFinishRequest {
   attemptId: ExecutionId;
@@ -122,6 +134,26 @@ export interface LineageRequest {
   sessionToken: string;
   snapshotId: ExecutionId;
 }
+export interface SourceMaintenanceHookReadRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  sourceActionId: ExecutionId;
+}
+export interface SessionRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface SourceMaintenanceHookStopRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  stop: StopSourceMaintenanceHook;
+}
+export interface StopSourceMaintenanceHook {
+  actionId: ExecutionId;
+  activation: SourceMaintenanceHookActivation;
+  projectId: ExecutionId;
+  sourceActionId: ExecutionId;
+}
 export interface PluginCaptureRequest {
   attemptId: ExecutionId;
   projectId: ExecutionId;
@@ -149,10 +181,6 @@ export interface PreviewRequest {
   limit: number;
   projectId: ExecutionId;
   resultId: ExecutionId;
-  sessionToken: string;
-}
-export interface SessionRequest {
-  projectId: ExecutionId;
   sessionToken: string;
 }
 export interface SourceContextReadRequest {

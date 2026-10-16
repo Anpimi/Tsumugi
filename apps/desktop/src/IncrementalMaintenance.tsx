@@ -8,6 +8,8 @@ import { workPlanCommands } from "./workPlanCommands";
 import { CommandFailureDetails, commandFailure } from "./CommandFailure";
 import { reviewReasonKey } from "./reviewLabels";
 import type { ProjectView } from "./projectCommands";
+import { MaintenanceNoticePanel } from "./MaintenanceNoticePanel";
+import type { MaintenanceNoticeTarget } from "./sessionNavigation";
 
 /** Queries own current assessments; the original preparation owns explicit edits. */
 export function IncrementalMaintenance({ project, active, disabled, onOpenManual }: {
@@ -16,13 +18,14 @@ export function IncrementalMaintenance({ project, active, disabled, onOpenManual
   const { t }=useTranslation(), reads=useSessionReads(), owner=useAiPreparation(), context=executionContext(project);
   const [expanded,setExpanded]=useWorkbenchState("ai","maintenanceOpen",false);
   const [after,setAfter]=useWorkbenchState("ai","maintenanceAfter",0);
+  const [notice]=useWorkbenchState<MaintenanceNoticeTarget|null>("ai","maintenanceNotice",null);
   // The containing AI workspace shares this Query. Collapsing this section
   // retires only its assessment, not the workspace's current source facts.
   const scopeOptions=sourceReads.scope(context), source=useSessionQuery({...scopeOptions,enabled:active});
   const snapshot=source.data?.currentSnapshot, locale=owner.locale;
   const key=["maintenance-assessment",snapshot,locale,after,100];
   const query=useSessionQuery({key,scopes:["project","source","translation","resources","review"],
-    enabled:active&&expanded&&!!snapshot&&project.metadata.targetLocales.includes(locale),
+    enabled:active&&expanded&&!notice&&!!snapshot&&project.metadata.targetLocales.includes(locale),
     read:()=>workPlanCommands.maintenance({...context,snapshotId:snapshot!,locale,after,limit:100})});
   function currentAssessment() {
     const facts=reads.client.getQueryState(reads.key(key)), scope=reads.client.getQueryState(reads.key(scopeOptions.key));
@@ -36,6 +39,8 @@ export function IncrementalMaintenance({ project, active, disabled, onOpenManual
   return <section aria-label={t("ai.maintenance.title")}>
     <button type="button" className="secondary-button" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{t("ai.maintenance.title")}</button>
     {expanded ? <>
+      <MaintenanceNoticePanel project={project} active={active} disabled={disabled} />
+      {!notice ? <>
       <p>{t("ai.maintenance.help")}</p><p>{t("ai.maintenance.coverage")}</p>
       {source.isFetching||query.isFetching ? <p role="status">{t("ai.readLoading")}</p>:null}
       {source.error||query.error ? <div role="alert"><p>{t("ai.maintenance.failed")}</p><CommandFailureDetails failure={commandFailure(source.error??query.error)}/></div>:null}
@@ -65,6 +70,7 @@ export function IncrementalMaintenance({ project, active, disabled, onOpenManual
         <button type="button" disabled={locked||!!draft||!current||current.nextOrdinal===null} onClick={()=>{if(current?.nextOrdinal!=null)setAfter(current.nextOrdinal);}}>{t("execution.nextPage")}</button>
         {onOpenManual ? <><button type="button" disabled={locked} onClick={()=>{void onOpenManual("review");}}>{t("ai.maintenance.review")}</button>
           <button type="button" disabled={locked} onClick={()=>{void onOpenManual("source");}}>{t("ai.maintenance.source")}</button></>:null}</div>
+      </>:null}
     </>:null}
   </section>;
 }

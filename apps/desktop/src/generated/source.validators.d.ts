@@ -10,6 +10,9 @@ export declare function validateRequestHistory(value: unknown): value is Request
 export declare function validateRequestHistoryContent(value: unknown): value is Requests["historyContent"];
 export declare function validateRequestImpact(value: unknown): value is Requests["impact"];
 export declare function validateRequestLineage(value: unknown): value is Requests["lineage"];
+export declare function validateRequestMaintenanceHook(value: unknown): value is Requests["maintenanceHook"];
+export declare function validateRequestMaintenanceHookSession(value: unknown): value is Requests["maintenanceHookSession"];
+export declare function validateRequestMaintenanceHookStop(value: unknown): value is Requests["maintenanceHookStop"];
 export declare function validateRequestPluginCapture(value: unknown): value is Requests["pluginCapture"];
 export declare function validateRequestPluginSelect(value: unknown): value is Requests["pluginSelect"];
 export declare function validateRequestPluginStart(value: unknown): value is Requests["pluginStart"];
@@ -25,6 +28,9 @@ export declare function validateResponseEstimates(value: unknown): value is Resp
 export declare function validateResponseHistory(value: unknown): value is Responses["history"];
 export declare function validateResponseImpact(value: unknown): value is Responses["impact"];
 export declare function validateResponseLineage(value: unknown): value is Responses["lineage"];
+export declare function validateResponseMaintenanceHook(value: unknown): value is Responses["maintenanceHook"];
+export declare function validateResponseMaintenanceHookSession(value: unknown): value is Responses["maintenanceHookSession"];
+export declare function validateResponseMaintenanceHookStopped(value: unknown): value is Responses["maintenanceHookStopped"];
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
 export declare function validateResponsePluginPreflight(value: unknown): value is Responses["pluginPreflight"];
 export declare function validateResponsePluginSelection(value: unknown): value is Responses["pluginSelection"];

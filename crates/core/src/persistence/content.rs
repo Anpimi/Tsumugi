@@ -7,7 +7,8 @@ use crate::{
     execution::{codec, *},
 };
 use rusqlite::{Connection, params};
-mod maintenance;
+pub(in crate::persistence) mod maintenance;
+pub(in crate::persistence) mod maintenance_hook;
 
 const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (
@@ -75,7 +76,13 @@ const LINEAGE_EVIDENCE_TABLE: &str = "CREATE TABLE source_lineage_evidence (
         CHECK((decision='candidate' AND actor IS NULL AND reason IS NULL)
           OR (decision!='candidate' AND actor IS NOT NULL AND reason IS NOT NULL)))";
 pub(super) fn maintenance_table_names() -> Vec<String> {
-    vec!["source_lineage".into(), "source_lineage_evidence".into()]
+    let mut names = vec!["source_lineage".into(), "source_lineage_evidence".into()];
+    names.extend(
+        maintenance_hook::TABLES
+            .iter()
+            .map(|(name, _)| name.to_string()),
+    );
+    names
 }
 pub(super) fn table_names() -> Vec<String> {
     TABLES.iter().map(|(name, _)| name.to_string()).collect()
@@ -87,6 +94,9 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute("INSERT INTO content_scope VALUES (1,1,NULL)", [])?;
     connection.execute_batch(LINEAGE_TABLE)?;
     connection.execute_batch(LINEAGE_EVIDENCE_TABLE)?;
+    for (_, sql) in maintenance_hook::TABLES {
+        connection.execute_batch(sql)?;
+    }
     Ok(())
 }
 
@@ -243,6 +253,7 @@ pub(super) fn record_input(
     Ok(())
 }
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
+    maintenance_hook::validate(connection)?;
     for (name, sql) in TABLES {
         let actual: String = connection
             .query_row(
@@ -839,6 +850,7 @@ fn page(
         attempt_id: input.envelope().attempt_id,
         result_id: result.envelope().result_id,
         confirmation: SourceConfirmation {
+            maintenance_hook: None,
             result_digest: result.digest().into(),
             identity_policy: output.identity_policy.clone(),
             expected_content_revision: scope.revision,
@@ -1113,6 +1125,7 @@ impl ProjectStore {
             result_id: result.envelope().result_id,
             previous_snapshot_id: previous,
             confirmation: SourceConfirmation {
+                maintenance_hook: None,
                 result_digest: result.digest().into(),
                 identity_policy: output.identity_policy.clone(),
                 expected_content_revision: scope.revision,
@@ -1631,6 +1644,9 @@ impl AdoptionHandler for SourceAdoptionHandler {
         let result = &results[0];
         let output = validate_output(input, result)?;
         let confirmation: SourceConfirmation = from_value(&action.parameters)?;
+        if let Some(a) = &confirmation.maintenance_hook {
+            maintenance_hook::check_shape(a)?;
+        }
         if confirmation.result_digest != result.digest()
             || confirmation.identity_policy != output.identity_policy
             || confirmation.source_language != output.source_language
@@ -1670,6 +1686,7 @@ impl AdoptionHandler for SourceAdoptionHandler {
             if project != action.project_id.to_string() || language != output.source_language {
                 return Err(failure(ErrorCode::DependencyConflict, "language-conflict"));
             }
+            maintenance_hook::check_available(tx, &confirmation)?;
             let (stored_project,stored,digest):(String,Vec<u8>,String)=tx.query_row("SELECT project_id,CASE WHEN length(payload)<=1048576 THEN payload END,digest FROM source_sets WHERE set_id=?1",[bundle.set_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
             if stored_project != project
                 || codec::digest(&stored) != digest
@@ -1699,7 +1716,7 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 }
             }
             if let Some(previous) = current {
-                return apply_update(
+                let changes = apply_update(
                     tx,
                     input,
                     result,
@@ -1710,7 +1727,9 @@ impl AdoptionHandler for SourceAdoptionHandler {
                     &project,
                     &bundle,
                     action.action_id,
-                );
+                )?;
+                maintenance_hook::record(tx, action, &confirmation, &changes[0])?;
+                return Ok(changes);
             }
             if confirmation.expected_current_snapshot.is_some() {
                 return Err(
@@ -1782,11 +1801,13 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 "UPDATE content_scope SET current_snapshot=?1,revision=?2 WHERE row_id=1",
                 params![snapshot.to_string(), next.get() as i64],
             )?;
-            Ok(vec![ChangeReference {
+            let changes = vec![ChangeReference {
                 kind: "source-snapshot".into(),
                 id: snapshot.to_string(),
                 revision: next,
-            }])
+            }];
+            maintenance_hook::record(tx, action, &confirmation, &changes[0])?;
+            Ok(changes)
         }))
     }
 }

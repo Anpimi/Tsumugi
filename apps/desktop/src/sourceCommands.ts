@@ -57,11 +57,17 @@ export function sourceRequest(view: PluginSourceView): PluginSourceRequest {
 function normalizedConfirmation(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const fields = value as Record<string, unknown>;
+  if (!("maintenanceHook" in fields)) return null;
+  const activation = fields.maintenanceHook;
+  if (activation !== null && (!activation || typeof activation !== "object" || Array.isArray(activation))) return null;
+  const hook = activation as Record<string, unknown> | null;
   const lineage = fields.lineage === undefined ? [] : fields.lineage;
   if (!Array.isArray(lineage)) return null;
   return { resultDigest: fields.resultDigest, identityPolicy: fields.identityPolicy, expectedContentRevision: fields.expectedContentRevision,
     sourceLanguage: fields.sourceLanguage, expectedCurrentSnapshot: fields.expectedCurrentSnapshot ?? null,
     lineageBaseSnapshot: fields.lineageBaseSnapshot ?? null, actor: fields.actor ?? null,
+    maintenanceHook: hook === null ? null : { policyVersion: hook.policyVersion, sessionEpoch: hook.sessionEpoch, locale: hook.locale,
+      after: hook.after, limit: hook.limit, expiresAtMs: hook.expiresAtMs },
     lineage: lineage.map(choice => {
       if (!choice || typeof choice !== "object" || Array.isArray(choice)) return null;
       const row = choice as Record<string, unknown>;

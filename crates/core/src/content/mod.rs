@@ -6,11 +6,13 @@ mod legacy_build;
 mod legacy_source;
 #[cfg(any(test, feature = "execution-test-host"))]
 mod legacy_translation;
+mod maintenance_hook;
 mod plugin_translation;
 #[cfg(any(test, feature = "execution-test-host"))]
 mod smapi;
 mod translation;
 mod translation_projection;
+pub use maintenance_hook::*;
 #[cfg(any(test, feature = "execution-test-host"))]
 pub mod webvtt;
 pub use crate::persistence::content::SourceAdoptionHandler;
@@ -808,6 +810,12 @@ pub struct ContentScope {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceConfirmation {
+    #[serde(deserialize_with = "required_maintenance_hook")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "maintenance_hook_schema")
+    )]
+    pub maintenance_hook: Option<SourceMaintenanceHookActivation>,
     pub result_digest: String,
     pub identity_policy: String,
     pub expected_content_revision: Revision,

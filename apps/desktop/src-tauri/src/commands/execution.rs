@@ -19,6 +19,9 @@ macro_rules! handlers {
         super::add_target_locale,super::set_target_locales,super::close_project,
         super::mcp::read_mcp_share_session,super::mcp::prepare_mcp_share,
         super::mcp::authorize_mcp_share,super::mcp::read_mcp_share,super::mcp::revoke_mcp_share,
+        super::source_hooks::read_source_maintenance_hook_session,
+        super::source_hooks::read_source_maintenance_hook,
+        super::source_hooks::stop_source_maintenance_hook,
         super::connections::read_model_connections,
         super::connections::change_model_connections,
         super::connections::read_model_connection_action,
@@ -972,6 +975,7 @@ pub async fn execution_status(
             "execution_status",
             CommandStage::ExecutionRead,
             move |sessions| {
+                let hook_active = sessions.source_hooks.is_active();
                 let active = authorized(
                     sessions,
                     &request.session_token,
@@ -980,7 +984,7 @@ pub async fn execution_status(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 Ok(RuntimeStatus {
-                    active: host.active(store)?,
+                    active: host.active(store)? || hook_active,
                     quiescing: host.quiescing,
                     query_count: host.queries.len() as u32,
                     error: host.last_error.clone(),
@@ -1675,6 +1679,11 @@ pub async fn quiesce_execution(
                     CommandStage::ExecutionQuiesce,
                 )?;
                 sessions.mcp.close();
+                let hook_result = {
+                    let active = sessions.active.as_mut().expect("authorized session");
+                    sessions.source_hooks.close(&mut active.store)
+                };
+                let hook_active = sessions.source_hooks.is_active();
                 let active = authorized(
                     sessions,
                     &request.session_token,
@@ -1690,9 +1699,14 @@ pub async fn quiesce_execution(
                     Err(error) if error.code == ErrorCode::Busy => {}
                     Err(error) => return Err(map_execution(error, CommandStage::ExecutionQuiesce)),
                 }
+                if let Err(error) = hook_result {
+                    if error.code != CommandErrorCode::Busy {
+                        return Err(error);
+                    }
+                }
                 Ok(RuntimeStatus {
-                    active: host.active(store)?,
-                    quiescing: host.quiescing,
+                    active: host.active(store)? || hook_active,
+                    quiescing: host.quiescing || hook_active,
                     query_count: 0,
                     error: host.last_error.clone(),
                 })

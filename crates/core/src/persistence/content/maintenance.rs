@@ -323,6 +323,46 @@ impl ProjectStore {
         after: u32,
         limit: u32,
     ) -> Result<SourceImpactPage, ExecutionError> {
+        let (rows, summary, next_ordinal, _) =
+            self.source_impact_projection(snapshot, locale, after, limit, true)?;
+        let page = SourceImpactPage {
+            snapshot_id: snapshot,
+            rows,
+            summary: summary.ok_or_else(corrupt)?,
+            next_ordinal,
+        };
+        codec::encode(&page, MAX_CONTENT_PAGE_BYTES)?;
+        Ok(page)
+    }
+    pub(in crate::persistence) fn source_impact_window(
+        &self,
+        snapshot: ExecutionId,
+        locale: &str,
+        after: u32,
+        limit: u32,
+    ) -> Result<(Vec<SourceImpactRow>, Option<u32>, Vec<crate::ReviewTarget>), ExecutionError> {
+        let (rows, _, next, targets) =
+            self.source_impact_projection(snapshot, locale, after, limit, false)?;
+        codec::encode(&rows, MAX_CONTENT_PAGE_BYTES)?;
+        codec::encode(&targets, MAX_INPUT_BYTES)?;
+        Ok((rows, next, targets))
+    }
+    fn source_impact_projection(
+        &self,
+        snapshot: ExecutionId,
+        locale: &str,
+        after: u32,
+        limit: u32,
+        global: bool,
+    ) -> Result<
+        (
+            Vec<SourceImpactRow>,
+            Option<SourceImpactSummary>,
+            Option<u32>,
+            Vec<crate::ReviewTarget>,
+        ),
+        ExecutionError,
+    > {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
@@ -342,7 +382,25 @@ impl ProjectStore {
         let content = self.source_content(snapshot, after, limit)?;
         let mut work: BTreeMap<ExecutionId, Vec<String>> = BTreeMap::new();
         let mut targets = BTreeMap::new();
-        for (target, reasons) in self.review_work_set(project, locale)? {
+        let units = content
+            .rows
+            .iter()
+            .filter_map(|row| row.unit_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let wanted = if global {
+            self.review_work_set(project, locale)?
+        } else {
+            super::super::review::targets_in(connection, project, &units, locale)?
+                .into_iter()
+                .map(|target| {
+                    let reasons = super::super::review::assess(&target, false).0;
+                    (target, reasons)
+                })
+                .collect()
+        };
+        for (target, reasons) in wanted {
             if !reasons.is_empty() {
                 work.insert(target.unit_id, reasons);
             }
@@ -371,7 +429,7 @@ impl ProjectStore {
             let target = targets
                 .get(&row.unit_id.unwrap())
                 .ok_or_else(|| failure(ErrorCode::CorruptLedger, "source-impact-unit"))?;
-            let mut reasons = work.get(&row.unit_id.unwrap()).cloned().unwrap_or_default();
+            let reasons = work.get(&row.unit_id.unwrap()).cloned().unwrap_or_default();
             let lineage = lineage_evidence_in(connection, &row, &mut lineage_snapshots)?;
             let predecessor: Option<String> = connection
                 .query_row(
@@ -434,46 +492,54 @@ impl ProjectStore {
                     }
                 }
             }
-            if !reasons.is_empty() {
-                if previous
-                    .as_ref()
-                    .is_some_and(|old| old.source_revision_id != row.source_revision_id)
-                {
-                    reasons.push("source-changed".into());
-                }
-                if target.selection_id.is_none() && !lineage.is_empty() {
-                    reasons.push("correspondence-unresolved".into());
-                }
-            }
-            reasons.sort();
-            reasons.dedup();
-            let status = if reasons.is_empty() {
-                SourceImpactStatus::Preserved
-            } else if target.selection_id.is_none() {
-                SourceImpactStatus::Unresolved
-            } else {
-                SourceImpactStatus::Reassess
-            };
-            rows.push(SourceImpactRow {
+            let mut projected = SourceImpactRow {
                 current: row,
                 previous,
                 previous_bases,
                 locale: locale.into(),
-                status,
-                reasons,
+                status: SourceImpactStatus::Preserved,
+                reasons: Vec::new(),
                 selection_id: target.selection_id,
                 translation_revision_id: target.revision_id,
                 review_basis: target.basis.clone(),
                 lineage,
-            });
+            };
+            apply_impact_reasons(&mut projected, reasons);
+            rows.push(projected);
         }
-        let page = SourceImpactPage {
-            snapshot_id: snapshot,
-            summary,
-            next_ordinal: content.next_ordinal,
+        Ok((
             rows,
-        };
-        codec::encode(&page, MAX_CONTENT_PAGE_BYTES)?;
-        Ok(page)
+            global.then_some(summary),
+            content.next_ordinal,
+            targets.into_values().collect(),
+        ))
     }
+}
+
+pub(in crate::persistence) fn apply_impact_reasons(
+    row: &mut SourceImpactRow,
+    mut reasons: Vec<String>,
+) {
+    if !reasons.is_empty() {
+        if row
+            .previous
+            .as_ref()
+            .is_some_and(|old| old.source_revision_id != row.current.source_revision_id)
+        {
+            reasons.push("source-changed".into());
+        }
+        if row.selection_id.is_none() && !row.lineage.is_empty() {
+            reasons.push("correspondence-unresolved".into());
+        }
+    }
+    reasons.sort();
+    reasons.dedup();
+    row.status = if reasons.is_empty() {
+        SourceImpactStatus::Preserved
+    } else if row.selection_id.is_none() {
+        SourceImpactStatus::Unresolved
+    } else {
+        SourceImpactStatus::Reassess
+    };
+    row.reasons = reasons;
 }

@@ -19,11 +19,12 @@ import { useWorkbenchCommands, type CommandAvailability, type SourceSelectionCom
 import { executionCommands as execution, executionContext, type AttemptDetail } from "./executionCommands";
 import { ExecutionDiagnosticDetails } from "./ExecutionDiagnosticDetails";
 import { useSourceFailureOutput } from "./useSourceFailureOutput";
+import { SourceMaintenanceHookChoice, SourceMaintenanceHookStatus } from "./SourceMaintenanceHookControls";
 import { sourceCommands as commands, sameSourceEnvironment, type ContentPage, type LineageChoice } from "./sourceCommands";
 
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: (current?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean> }
-export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, onOpenExtensions, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean | Promise<boolean>; onOpenExtensions?: () => void; ref?: Ref<SourceHandle> }) {
+export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, onOpenExtensions, onOpenMaintenance, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean | Promise<boolean>; onOpenExtensions?: () => void; onOpenMaintenance?: (sourceActionId: string, sourceEditSeq: number) => Promise<boolean>; ref?: Ref<SourceHandle> }) {
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const sourceLabel = useSourceOccurrenceLabel();
   const context = executionContext(project), commandScope = { ...context, area: "source" as const };
@@ -149,7 +150,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   function basisAvailability(input?: SourceBasisCommandPayload, apply = false, rendering = false) {
     const allowed = common(false, rendering), value = owner.current(), basis = value.comparison ?? value.preview;
     const currentScope = reads.client.getQueryData<typeof scope>(reads.key(scopeOptions.key));
-    return allowed.enabled && owner.qualified() && matchingBasis(input) && basis && !value.stale && !value.receipt && ready(scopeOptions.key)
+    return allowed.enabled && owner.qualified() && owner.hook.canPrepare() && matchingBasis(input) && basis && !value.stale && !value.receipt && ready(scopeOptions.key)
       && currentScope?.revision === basis.scope.revision && currentScope?.currentSnapshot === basis.scope.currentSnapshot
       && (!value.comparison || ready(comparisonOptions.key)) && (!apply || (value.confirmed && (!value.comparison || (value.estimate
         && (!Object.keys(value.lineage).length || (value.actor.trim() && Object.values(value.lineage).every(choice => choice.reason.trim())))))))
@@ -277,7 +278,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     allowNavigate() { return Promise.resolve(!busy && !owner.inFlight() && !owner.hasPending()); },
     allowLeave(current: () => boolean = () => true) {
       leaveProof.current = current; const value = owner.current(); if (owner.hasPending() && !owner.canDiscard()) { setOpen(true); return Promise.resolve(false); }
-      if (!value.selection && !Object.keys(value.lineage).length && !value.actor.trim() && !busy && !owner.inFlight()) return Promise.resolve(true);
+      if (!value.selection && !Object.keys(value.lineage).length && !value.actor.trim() && !owner.hook.hasDraft() && !busy && !owner.inFlight()) return Promise.resolve(true);
       setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
   }));
   // Initial preparation is a deliberate fixed capture, never a query refresh.
@@ -354,6 +355,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
           {fixedPreview && owner.state.previewAfter > 0 && !previewPage ? <button className="secondary-button" disabled={!pageAvailability({ kind: "source-page", snapshotId: null, attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId, after: 0 }, true).enabled} onClick={() => registry.dispatch("source.read-page", commandScope, { kind: "source-page", snapshotId: null, attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId, after: 0 })}>{t("execution.firstPage")}</button> : null}
           {fixedComparison ? <SourceReadFeedback error={comparisonRead.error} fetching={open && comparisonRead.isFetching} messageKey="source.readFailed" retry={() => void comparisonRead.refetch()} /> : null}
           {owner.state.receipt ? <p role="status">{t(owner.state.stale ? "source.adoptionSavedNewer" : "source.adoptionSaved")} <button className="text-button" disabled={busy} onClick={() => registry.dispatch("source.read-applied", commandScope)}>{t("source.readSaved")}</button></p> : null}
+          {(fixedPreview || fixedComparison || owner.hook.hasDraft()) ? <SourceMaintenanceHookChoice project={project} disabled={disabled} /> : null}
+          <SourceMaintenanceHookStatus active={open} onOpenMaintenance={onOpenMaintenance} />
           {owner.state.stale && (comparison || owner.state.preview) ? <p role="alert">{t("source.comparisonChanged")}</p> : null}
           {warnings.length ? <details><summary>{t("source.diagnostics", { count: warnings.length })}</summary><ul>{warnings.map((diagnostic, index) => <li key={index}><code>{diagnostic}</code></li>)}</ul></details> : null}
           <SourceImportControls project={project} open={open} canCapture={!attempt && !fixedPreview && !fixedComparison && (updating || !scope?.currentSnapshot)}
@@ -448,7 +451,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
           </section> : null}
           <button className="text-button" disabled={!common(false, true).enabled || !!Object.keys(lineage).length} onClick={() => registry.dispatch("source.show-current", commandScope)}>{t("source.viewCurrent")}</button>
           {contentPage?.snapshotId && contentPage.snapshotId === contentPage.scope.currentSnapshot ? <SourceImpactPanel key={contentPage.snapshotId} project={project} snapshotId={contentPage.snapshotId} active={open} disabled={locked} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork} /> : null}
-          <p>{t("source.correctionHelp")}</p><SourceHistoryPanel project={project} disabled={locked} active={open} onHistoryCursor={setHistoryOffset} />
+          <p>{t("source.correctionHelp")}</p><SourceHistoryPanel project={project} disabled={locked} active={open} onHistoryCursor={setHistoryOffset}
+            onOpenNotice={actionId => { void owner.hook.select(actionId); }} />
           <p>{t("source.draftHelp")}</p>
         </div>
       </WorkbenchPanel>

@@ -5,6 +5,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import type { PluginSourceRequest } from "./pluginCommands";
+import { useSourceMaintenanceHook } from "./SourceMaintenanceHook";
 import { sourceCommands, confirmSourceAction, confirmSourceReceipt, sameSourceConfirmation, type ContentPage, type ContentScope, type LineageChoice,
   sameSourceEnvironment, sourceRequest, type PluginCaptureRequest, type PluginStartRequest, type SourceCheckPrepareRequest, type SourceCheckFinishRequest, type SourceCheckReview,
   type Preflight, type SourceAdoptRequest, type SourceChangePage, type SourceImpactSummary, type SourceSelection, type StartRequest } from "./sourceCommands";
@@ -56,6 +57,7 @@ export interface SourceDraftState {
 type ReadyIdentity = { attemptId: string; resultId: string; unitId: string; qualified: boolean };
 type DraftFields = Pick<SourceDraftState, "lineage" | "actor" | "filter" | "appliedFilter" | "manualOrdinal" | "historicalQuery">;
 interface SourceSession {
+  hook: ReturnType<typeof useSourceMaintenanceHook>;
   state: SourceDraftState;
   current: () => SourceDraftState;
   inFlight: () => boolean;
@@ -127,6 +129,10 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     if (!live()) return;
     const next = change(current()); stateRef.current = next; setState(next);
   }
+  const hook = useSourceMaintenanceHook(project, { live, changed: () => {
+    basisVersion.current++;
+    update(before => ({ ...before, editSeq: before.editSeq + 1, confirmed: false, estimate: null }));
+  }, canSelect: () => !flight.current && !current().pendingStart && !current().pendingApply && !current().pendingPlugin });
   function revoke() {
     basisVersion.current++;
     update(before => ({ ...before, stale: !!(before.preview || before.comparison), estimate: null, confirmed: false, producerConsent: null, checkerConsent: null }));
@@ -151,7 +157,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       }).catch(() => { /* A read failure cannot change an original action or its confirmation. */ });
     }
   }), [reads]);
-  function hasPending() { return !!current().pendingStart || !!current().pendingApply || !!current().pendingPlugin; }
+  function hasPending() { return !!current().pendingStart || !!current().pendingApply || !!current().pendingPlugin || hook.blocked(); }
   function reserved() { return flight.current !== 0 || hasPending(); }
   function reserve(pending = false) {
     if (!live() || flight.current || (!pending && reserved())) return 0;
@@ -370,11 +376,14 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
         completionVersion: before.completionVersion + 1 };
     });
     pendingReceipt.current = null;
+    if (current().editSeq === submittedSeq.current) hook.discardDraft();
+    if (request.confirmation.maintenanceHook) void hook.read();
   }
   async function dispatchApply(request: SourceAdoptRequest, unitId: string, recovering = false) {
     if (!live()) return;
     if (pendingReceipt.current?.request !== request) pendingReceipt.current = null;
     update(before => ({ ...before, pendingApply: request, receiptChecked: false }));
+    hook.capture(request);
     try {
       const action = await sourceCommands.prepare(request);
       if (!live()) return;
@@ -390,8 +399,9 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   }
   function adoptionRequest(before: SourceDraftState): Omit<SourceAdoptRequest, "actionId"> | null {
     const basis = before.comparison ?? before.preview;
-    if (!basis || !identity.current?.qualified || basis.resultId !== identity.current.resultId || basis.attemptId !== identity.current.attemptId) return null;
+    if (!basis || !identity.current?.qualified || basis.resultId !== identity.current.resultId || basis.attemptId !== identity.current.attemptId || !hook.canPrepare()) return null;
     return { ...session, attemptId: basis.attemptId, resultId: basis.resultId, confirmation: structuredClone({ ...basis.confirmation,
+      maintenanceHook: hook.current().enabled ? hook.current().activation : null,
       ...(before.comparison ? { lineage: Object.values(before.lineage), actor: before.actor.trim() || null } : {}) }) };
   }
   async function apply(proof: () => boolean = live, dispose?: () => void) {
@@ -451,7 +461,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     }, false, () => live() && isCurrent() && version === basisVersion.current && current().editSeq === before.editSeq);
   }
   function canDiscard() {
-    return live() && !current().pendingStart && !current().pendingApply
+    return live() && !hook.blocked() && !current().pendingStart && !current().pendingApply
       && (!current().pendingPlugin || current().pendingPlugin?.pendingKind === "capture" && !!captureFlight.current && captureFlight.current === flight.current)
       && (!flight.current || captureFlight.current === flight.current);
   }
@@ -465,6 +475,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       await sourceCommands.cancelCapture(session);
       if (!live()) return false;
       identity.current = null;
+      hook.discardDraft();
       update(before => ({ ...before, selection: null, preflight: null, attempt: null, pendingPlugin: null, producerConsent: null, checkReview: null, checkerConsent: null, checkAttempt: null, declared: false, lineage: {}, actor: "", filter: "", appliedFilter: "", manualOrdinal: null, historicalQuery: "", comparison: null, preview: null,
         previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: before.editSeq + 1 }));
       return true;
@@ -533,7 +544,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     if (!live() || reserved() || !proof() || ![current().attempt, current().checkAttempt].includes(originalAttempt)) return;
     await tasks.cancel({ taskId, attemptId: originalAttempt, origin: "source" }, () => live() && proof());
   }
-  return <SourceContext.Provider value={{ state, current, inFlight: () => !!flight.current, hasPending, qualified: () => identity.current?.qualified === true, setSource, consentProducer, consentChecker, setDomain, declare, edit, confirm,
+  return <SourceContext.Provider value={{ state, hook, current, inFlight: () => !!flight.current, hasPending, qualified: () => identity.current?.qualified === true, setSource, consentProducer, consentChecker, setDomain, declare, edit, confirm,
     select, preflight, start, retryStart: async () => { const request = current().pendingStart; if (request) await run(() => dispatchStart(request, true), true); },
     prepareCheck, startCheck, finishCheck, retryPlugin,
     apply, checkReceipt, retryApply, keepOutput, estimate, discard, canDiscard, showAttempt, beginUpdate, ready, page, pageIntent, historyIntent, showCurrent, cancelTask }}>{children}</SourceContext.Provider>;

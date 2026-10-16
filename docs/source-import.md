@@ -16,13 +16,39 @@ The plugin runs as the current OS user and can access files and network outside 
 
 A successful extraction creates a saved proposal; it cannot be applied yet. **Review independent check execution** prepares the complete fixed source and proposal for the exact checker and required semantic rules without running it. Separately consent to **Run independent source checks**, then **Record fixed check validation**. Core rechecks both executions and their current permissions before recording the proof. Pending, incomplete or invalid mandatory checks block application and retain the proposal. Only valid checks enable confirmation and application of the entire captured set, including pages not displayed.
 
-When a project already has source content, choose **Update source content** to capture another complete declared set of files. The comparison identifies same-key text changes, unchanged content, reordered positions, additions, removals, possible renames, and ambiguous one-to-many or many-to-one relationships. Equal text under another key is only a candidate; it never inherits identity automatically. Reviewers can confirm or reject a candidate with their name and reason. Unresolved or rejected entries become new content identities. The original snapshot, translations, decisions, and releases remain stored. Project names and target-language changes do not invalidate source confirmation; a competing source snapshot does.
+When a project already has source content, choose **Update source content** to capture another complete declared set of files. The comparison identifies same-key text changes, unchanged content, reordered positions, additions, removals, possible renames, and ambiguous one-to-many or many-to-one relationships. Equal text under another key is only a candidate; it never inherits identity automatically. Reviewers can confirm or reject a candidate with their name and reason. Unresolved or rejected entries become new content identities. The original snapshot, translations, decisions, and releases remain stored. Project names and target-language changes do not invalidate the source comparison itself; an enabled maintenance notice still requires its chosen target language. A competing source snapshot invalidates source confirmation.
 
 Identity continuation uses the saved native evidence and the fixed versioned revision policy. A same-key text change needs an explicit continuation decision to retain its unit, and its earlier translation approval and QA do not carry over. A same-key, same-text entry can retain its unit and source revision even when reordered. Review and QA must establish current eligibility before another release.
 
 Search and paging change only the displayed comparison. The confirmation always covers the complete captured source, including removed entries and unresolved relationships. **Review estimated impact** shows a per-language estimate before confirmation. After adoption, **Current translation impact** derives the current qualification and all pending reasons from saved source, translation, review and resource facts. Its work-queue action opens the existing review workflow, and an entry can open its translation editor directly. Returning to Source content refreshes the same impact page. An estimate cannot grant approval or overwrite a newer translation edit.
 
 **Source snapshot history** lists verified snapshots, original fingerprints and identity evidence. Search an earlier snapshot to inspect its native text, decisions, reviewer and reason. To correct an identity decision, import the current source package again, choose the earlier snapshot as the historical decision basis, and record an explicit continuation or rejection. You can search that fixed historical source for another item rather than relying on equal-text suggestions. Correction appends a new checked snapshot and receipt; it preserves unrelated current identities and earlier decisions, translations and releases. Reimporting identical files without an explicit identity decision is rejected as unchanged.
+
+## Optional maintenance notice
+
+Before applying checked source content, you can enable one maintenance notice
+and choose its target language. It is off by default. The choice belongs to that
+exact source action and expires after five minutes; replaying the action does not
+extend its deadline. The notice checks the first 100 source occurrences, which
+can include repeated entries. Entries beyond that window have not been assessed.
+
+Applying source content and evaluating its notice have separate outcomes. A
+failed, stopped or expired notice does not undo saved source content. The notice
+records its original source snapshot and complete assessment. A competing source
+update makes unfinished work superseded. Reopening the project shows saved
+history without restarting a pending notice or restoring permission.
+
+Use the original source action to inspect an uncertain notice or stop new work.
+If preparation has not yet been recorded, its state remains unconfirmed; ending
+a local wait does not prove it stopped. Stopping closes new admission while
+already accepted work drains, and does not cancel the source adoption itself.
+
+Viewing a notice shows read-only saved impact. It does not change the AI draft
+or its language. Creating or explicitly replacing a maintenance draft requires a
+fresh check and respects current Source and AI edits and unresolved operations.
+The existing AI workbench still requires its own plan, preview, sharing choices
+and execution consent. The notice does not run a model, plugin or worker, select
+translations, grant approval or publish a release.
 
 ## Materials and limits
 

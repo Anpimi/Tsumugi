@@ -65,6 +65,149 @@ export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type SourceChangeKind =
   "unchanged" | "moved" | "changed" | "added" | "rename-candidate" | "ambiguous" | "removed";
 export type SourceImpactStatus = "preserved" | "reassess" | "unresolved";
+export type CommandErrorCode =
+  | "invalid-input"
+  | "destination-conflict"
+  | "missing-project"
+  | "permission-denied"
+  | "unsupported-schema"
+  | "corrupt-project"
+  | "stale-revision"
+  | "session-invalid"
+  | "project-in-use"
+  | "busy"
+  | "storage-failed"
+  | "outcome-unknown"
+  | "limit-exceeded"
+  | "result-mismatch"
+  | "output-invalid"
+  | "dependency-conflict"
+  | "cancelled";
+/**
+ * Values compared at the rejecting boundary, without user text or credentials.
+ */
+export type ConflictEvidence =
+  | {
+      current: ExecutionId;
+      expected: ExecutionId;
+      kind: "source-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "translation-selection";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "review-basis";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-decision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-check";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-waiver";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "source-fallback";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "build-eligibility";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "comparison-basis";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "term-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "context-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "source-snapshot";
+    }
+  | {
+      current: Revision;
+      expected: Revision;
+      kind: "content-revision";
+    };
+export type CommandOutcome = "rejected" | "unknown";
+export type RecoveryAction =
+  "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+/**
+ * A read or user decision to make before another mutation; never replay authority.
+ */
+export type RecoveryGuidance = "reconcile-original" | "review-current" | "choose-destination";
+export type CommandStage =
+  | "create"
+  | "open"
+  | "read"
+  | "rename"
+  | "add-target-locale"
+  | "set-target-locales"
+  | "close"
+  | "plugin-install"
+  | "plugin-settings"
+  | "model-connections"
+  | "execution-read"
+  | "execution-cancel"
+  | "execution-recover"
+  | "execution-adopt"
+  | "execution-quiesce";
+export type SourceMaintenanceHookReadState = "action-not-known" | "not-enabled" | "prepared" | "adopted";
+export type MaintenanceAction = "keep" | "recheck" | "repair" | "unresolved";
+export type ErrorCode =
+  | "invalid-input"
+  | "limit-exceeded"
+  | "result-mismatch"
+  | "output-invalid"
+  | "dependency-conflict"
+  | "cancelled"
+  | "outcome-unknown"
+  | "unauthorized"
+  | "busy"
+  | "storage-failed"
+  | "corrupt-ledger";
+export type SourceMaintenanceHookPhase =
+  | "prepared"
+  | "pending"
+  | "running"
+  | "observed"
+  | "failed"
+  | "stopped"
+  | "expired"
+  | "superseded"
+  | "interrupted"
+  | "unknown";
+export type SourceMaintenanceHookStopResult =
+  | {
+      kind: "not-known";
+    }
+  | {
+      kind: "stopped";
+      receipt: SourceMaintenanceHookStopReceipt;
+    };
 export type SourceContextPageEntry =
   | {
       kind: "block";
@@ -176,6 +319,9 @@ export interface Responses {
   history: SourceHistory;
   impact: SourceImpactPage;
   lineage: LineageEvidence[];
+  maintenanceHook: SourceMaintenanceHookObservation;
+  maintenanceHookSession: SourceMaintenanceHookSession;
+  maintenanceHookStopped: SourceMaintenanceHookStopped;
   page: ContentPage;
   pluginPreflight: PluginSourcePreflight;
   pluginSelection: PluginSourceSelection | null;
@@ -386,6 +532,7 @@ export interface SourceConfirmation {
   identityPolicy: string;
   lineage: LineageChoice[];
   lineageBaseSnapshot: ExecutionId | null;
+  maintenanceHook: SourceMaintenanceHookActivation | null;
   resultDigest: string;
   sourceLanguage: string;
 }
@@ -394,6 +541,14 @@ export interface LineageChoice {
   newOrdinal: number;
   oldOccurrenceId: ExecutionId;
   reason: string;
+}
+export interface SourceMaintenanceHookActivation {
+  after: number;
+  expiresAtMs: number;
+  limit: number;
+  locale: string;
+  policyVersion: string;
+  sessionEpoch: string;
 }
 export interface SourceChange {
   candidates: ContentRow[];
@@ -543,6 +698,112 @@ export interface ReviewBasis {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   termRevisionIds: ExecutionId[];
+}
+export interface SourceMaintenanceHookObservation {
+  callbacksDrained: boolean;
+  error: CommandError | null;
+  sourceActionId: ExecutionId;
+  state: SourceMaintenanceHookReadState;
+  view: SourceMaintenanceHookView | null;
+}
+export interface CommandError {
+  code: CommandErrorCode;
+  conflict?: ConflictEvidence | null;
+  currentRevision?: string;
+  diagnosticId?: ExecutionId | null;
+  field?: string;
+  itemIds?: ExecutionId[];
+  outcome: CommandOutcome;
+  reason?: string;
+  recoveryActions?: RecoveryAction[];
+  recoveryGuidance?: RecoveryGuidance | null;
+  recoveryRequired: boolean;
+  stage: CommandStage;
+}
+export interface SourceMaintenanceHookView {
+  activation: SourceMaintenanceHookActivation;
+  admissionClosed: boolean;
+  cause: SourceMaintenanceHookCause | null;
+  outcome: SourceMaintenanceHookOutcome | null;
+  phase: SourceMaintenanceHookPhase;
+  sourceActionId: ExecutionId;
+  stop: SourceMaintenanceHookStopReceipt | null;
+}
+export interface SourceMaintenanceHookCause {
+  attemptId: ExecutionId;
+  contentRevision: Revision;
+  projectId: ExecutionId;
+  resultDigest: string;
+  resultId: ExecutionId;
+  sourceActionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+}
+export interface SourceMaintenanceHookOutcome {
+  activation: SourceMaintenanceHookActivation;
+  assessment: MaintenanceAssessment | null;
+  cause: SourceMaintenanceHookCause;
+  error: ExecutionError | null;
+  phase: SourceMaintenanceHookPhase;
+  runId: ExecutionId;
+}
+export interface MaintenanceAssessment {
+  after: number;
+  coverage: string;
+  digest: string;
+  limit: number;
+  locale: string;
+  nextOrdinal: number | null;
+  projectId: ExecutionId;
+  rows: MaintenanceRow[];
+  sourceSnapshotId: ExecutionId;
+}
+export interface MaintenanceRow {
+  mappingUnresolved: boolean;
+  nativeKey: string;
+  protection: WorkProtection;
+  reasons: string[];
+  reviewBasis: string;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceText: string;
+  suggested: MaintenanceAction;
+  translationRevisionId: ExecutionId | null;
+  translationText: string | null;
+  unitId: ExecutionId;
+}
+export interface WorkProtection {
+  locale: string;
+  protected: boolean;
+  revision: Revision;
+  unitId: ExecutionId;
+}
+export interface ExecutionError {
+  code: ErrorCode;
+  conflict?: ConflictEvidence | null;
+  itemIds: ExecutionId[];
+  stage: string;
+}
+export interface SourceMaintenanceHookStopReceipt {
+  admissionClosed: boolean;
+  request: StopSourceMaintenanceHook;
+}
+export interface StopSourceMaintenanceHook {
+  actionId: ExecutionId;
+  activation: SourceMaintenanceHookActivation;
+  projectId: ExecutionId;
+  sourceActionId: ExecutionId;
+}
+export interface SourceMaintenanceHookSession {
+  defaultLifetimeMs: number;
+  maxLifetimeMs: number;
+  policyVersion: string;
+  sessionEpoch: string;
+  windowLimit: number;
+}
+export interface SourceMaintenanceHookStopped {
+  callbacksDrained: boolean;
+  request: StopSourceMaintenanceHook;
+  result: SourceMaintenanceHookStopResult;
 }
 export interface ContentPage {
   attemptId: ExecutionId;

@@ -54,6 +54,7 @@ pub const MAX_DEPTH: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum ErrorCode {
     InvalidInput,
     LimitExceeded,
@@ -70,6 +71,7 @@ pub enum ErrorCode {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ExecutionError {
     pub code: ErrorCode,
     pub stage: String,

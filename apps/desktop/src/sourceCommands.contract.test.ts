@@ -50,7 +50,7 @@ it("compares the complete normalized Source confirmation independent of object k
   const decoded = await sourceCommands.prepare(request);
   expect(() => confirmSourceAction(request, action.unitId, decoded)).not.toThrow();
   const defaults: SourceAdoptRequest = { ...fixture.prepare, confirmation: { resultDigest: fixture.prepare.confirmation.resultDigest,
-    identityPolicy: fixture.prepare.confirmation.identityPolicy, expectedContentRevision: fixture.prepare.confirmation.expectedContentRevision, sourceLanguage: fixture.prepare.confirmation.sourceLanguage } };
+    identityPolicy: fixture.prepare.confirmation.identityPolicy, expectedContentRevision: fixture.prepare.confirmation.expectedContentRevision, sourceLanguage: fixture.prepare.confirmation.sourceLanguage, maintenanceHook: null } };
   expect(() => confirmSourceAction(defaults, action.unitId, sourceActionFixture(defaults))).not.toThrow();
 });
 
