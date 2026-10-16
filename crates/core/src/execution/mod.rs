@@ -771,6 +771,30 @@ pub struct ContinuationReceipt {
     pub operation: String,
 }
 
+/// Read-only execution projection shared by human and bounded consumers.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ItemView {
+    pub status: ItemStatus,
+    pub scope: Scope,
+    pub result_id: Option<ExecutionId>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct AttemptDetail {
+    pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub operation: String,
+    pub progress: Progress,
+    pub items: Vec<ItemView>,
+    pub recovery: crate::RecoveryPlan,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+    pub next_offset: Option<u32>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

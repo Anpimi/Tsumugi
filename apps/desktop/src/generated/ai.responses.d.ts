@@ -379,6 +379,24 @@ export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
 export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
+export type InvocationOutcome =
+  | {
+      kind: "succeeded";
+      output: EncodedPayload;
+    }
+  | {
+      error: EncodedPayload;
+      kind: "failed";
+    }
+  | {
+      error: EncodedPayload;
+      kind: "unknown";
+    };
+/**
+ * Finite public failure classifications; details never determine permissions.
+ */
+export type SourceExtractionErrorCode =
+  "invalid-input" | "unsupported-profile" | "invalid-source" | "unsupported-structure" | "limit-exceeded" | "cancelled";
 /**
  * Requested automatic effects, never a human language-review approval.
  */
@@ -402,6 +420,8 @@ export interface Responses {
   workPlanAgent: WorkPlanAgentView;
   workPlanAgentGeneration: WorkPlanAgentGenerationView;
   workPlanAgentTool: WorkPlanAgentToolView;
+  workPlanAgentToolAttempt: AttemptDetail;
+  workPlanAgentToolOutput: ExecutionOutputView;
   workPlanGenerationPreflight: WorkPlanGenerationPreflight;
   workPlanReceipt: WorkPlanReceiptView;
   workPlanStatus: WorkPlanStatusView;
@@ -667,6 +687,9 @@ export interface AttemptDetail {
   recovery: RecoveryPlan;
   taskId: ExecutionId;
 }
+/**
+ * Read-only execution projection shared by human and bounded consumers.
+ */
 export interface ItemView {
   resultId: ExecutionId | null;
   scope: Scope;
@@ -1289,6 +1312,88 @@ export interface WorkPlanAgentToolView {
   scopeId: ExecutionId;
   taskId: ExecutionId;
   toolHandle: ExecutionId;
+}
+/**
+ * Read-only display projection. The stored ResultEnvelope remains unchanged.
+ */
+export interface ExecutionOutputView {
+  attemptId: ExecutionId;
+  capabilityId: string;
+  capabilityVersion: string;
+  diagnostic: Diagnostic | null;
+  dispatchToken: ExecutionId;
+  itemId: ExecutionId;
+  outcome: ExecutionState;
+  output: unknown;
+  plugin?: PluginResultEvidence | null;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+  sourceFailure?: SourceExtractionError | null;
+  supersedes: ExecutionId | null;
+}
+export interface Diagnostic {
+  code: string;
+  retrySafe: boolean;
+}
+/**
+ * The complete received SDK result retains exact payload bytes and identity.
+ * `channel` is supplied independently by the trusted Host, not read from output.
+ */
+export interface PluginResultEvidence {
+  authorizationId: ExecutionId;
+  channel: ProviderBinding;
+  result: InvocationResult;
+}
+/**
+ * A claimed wire binding. Only the trusted host can compare it to the actual
+ * verified package and channel; constructing this value proves no authority.
+ */
+export interface ProviderBinding {
+  activationGeneration: number;
+  componentId: string;
+  contributionId: string;
+  instanceId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+export interface InvocationResult {
+  capability: ContractRef;
+  context: InvocationContext;
+  outcome: InvocationOutcome;
+  profile: ContractRef | null;
+  provider: ProviderBinding;
+  resultId: string;
+}
+export interface InvocationContext {
+  attemptId: string;
+  configurationDigest: string;
+  dispatchId: string;
+  environmentDigest: string;
+  inputDigest: string;
+  itemId: string;
+  operationId: string;
+  projectId: string;
+  scopeDigest: string;
+  scopeId: string;
+}
+/**
+ * Exact UTF-8 schema payload. The SDK verifies its byte digest but does not
+ * substitute a generic parser for that schema's actual semantic validator.
+ */
+export interface EncodedPayload {
+  schema: ContractRef;
+  sha256: string;
+  utf8: string;
+}
+/**
+ * A bounded public diagnostic. Producers must use public descriptions and
+ * captured artifact IDs, never local paths, raw source text or secrets. Data
+ * validation cannot establish that arbitrary diagnostic text is safe to share.
+ */
+export interface SourceExtractionError {
+  artifactId: string | null;
+  code: SourceExtractionErrorCode;
+  detail: string;
 }
 export interface WorkPlanGenerationPreflight {
   attemptId: ExecutionId;

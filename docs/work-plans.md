@@ -50,10 +50,11 @@ validation, not execution or mutation authorization.
 
 The current schema stores plan authority, control generations, action receipts,
 execution associations, checked selection receipts and unit protection beside
-the existing execution ledger. This development build opens current schema 31
-only. Unsupported development projects are preserved and refused; recreate
-projects and reimport source files. Current work plans use internal format 2;
-earlier development plan formats are not migrated.
+the existing execution ledger. The current-only project format follows the
+[development format boundary](../README.md); unsupported development projects
+are preserved and refused. Current work plans use internal format 3, including
+the required nullable maintenance basis; earlier development plan formats are
+not migrated.
 
 The experimental Core project-service adapter can capture an actual component
 invocation, its selected SDK service descriptor, ordinary plugin permit and
@@ -206,8 +207,9 @@ All HTTP requests charge the original ancestors. Pause, stop, takeover, expiry
 or closing the project invalidates the scope; explicit Continue needs a new
 scope and retains the original cumulative budget. An old scope cannot cross
 project-open sessions. The bounded Agent adapter exposes generation and tool
-preparation and starting; the trusted scope opener and human authorizer/control
-methods remain outside it. This is a bounded application consumer, rather than
+preparation and starting, plus reads of its own dispatched tool results. The
+trusted scope opener and human authorizer/control methods remain outside it.
+This is a bounded application consumer, rather than
 a complete autonomous model loop.
 
 An assisted plan can additionally capture read-only reference tools through
@@ -249,6 +251,21 @@ and shared invocation reservation in one original ledger transaction. Each
 accepted item uses one invocation; control, failure, cancellation or uncertain
 acknowledgements do not refund reservations. Exact recovery preserves the
 original attempt and grant rather than issuing new authority.
+
+The bounded consumer's `readToolAttempt` and `readToolOutput` accept only a tool
+preparation created by that consumer. Each read checks the original active scope,
+session epoch, caller, lease/generation, tool and immutable enqueued input in one
+read snapshot. Attempt pages retain the original progress and item states;
+outputs require the exact item/result pair. A tool not yet enqueued is explicitly
+refused, rather than presented as an empty result. A successful query with no
+matches remains an ordinary completed output. Reads do not dispatch work,
+reserve budget, adopt facts or share output with a model.
+
+An ended, expired, revoked or reopened scope cannot use this consumer to read
+history. A still active scope may read its already accepted output after the
+individual execution permit retires or source facts change. The human workbench
+and Task history retain their separate project access; they do not revive an
+old Agent handle.
 
 Tools run through the original `RunnerProxy`, worker channel and live grant
 checks. Source changes cancel only the affected delegated tool, while unrelated

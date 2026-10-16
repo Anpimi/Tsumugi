@@ -383,6 +383,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   starts reject changed settings before child enqueue, and candidate-only plans
   continue saving explicitly authorized candidates.
 
+- Bounded Agent consumers can read the paged attempts and exact outputs of their
+  own dispatched reference tools while their original scope remains active.
+  Reading preserves the captured tool, caller and input identities and creates no
+  execution or budget reservation. Human task history retains its own access.
+
 - Work plans can capture read-only reference tools with exact installed package,
   runtime and query options, and one shared invocation limit. Independent local
   execution consent lasts at most ten minutes; recovering the same action cannot

@@ -5,9 +5,10 @@ import type {
   WorkPlanControlRequest, WorkPlanStatusRequest, WorkPlanActionRequest,
   WorkProtectionReadRequest, WorkProtectionSetRequest,
   WorkPlanAgentOpenRequest, WorkPlanAgentStartRequest, WorkPlanAgentToolStartRequest,
+  WorkPlanAgentToolAttemptRequest, WorkPlanAgentToolOutputRequest,
   MaintenanceAssessmentRequest,
 } from "./generated/ai.requests";
-import type { WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis } from "./generated/ai.responses";
+import type { AttemptDetail, ExecutionOutputView, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -176,10 +177,32 @@ export async function openWorkPlanAgent(
   const matchesScope = (actual: PlanSelectionBasis[], ids: readonly string[]) => matchesCapturedScope(actual, capturedScope, ids);
   const preparedRequests = new WeakMap<WorkPlanAgentGenerationView, WorkPlanAgentStartRequest>();
   const preparedTools = new WeakMap<WorkPlanAgentToolView, WorkPlanAgentToolStartRequest>();
+  // Bounded identity witnesses only. Authority and current execution state stay
+  // in Core; caller-owned DTOs and prior successful reads cannot renew a scope.
+  const toolReadIdentities = new WeakMap<WorkPlanAgentToolView, {
+    identity: string | undefined;
+    positions: Map<number, { itemId: string; unitId: string; locale: string }>;
+    locale?: string;
+  }>();
   // Copy once before awaiting. Caller edits to requests or DTOs cannot change
   // the session, authority, captured basis or exact bytes selected for start.
   const context = { projectId: opening.projectId, sessionToken: opening.sessionToken, scopeId: opened.scopeId };
   const parentTask = opened.parentTask;
+  function readCapture(prepared: WorkPlanAgentToolView) {
+    const request = preparedTools.get(prepared), witness = toolReadIdentities.get(prepared);
+    if (!request || !witness) throw new Error("Tool was not prepared by this Agent scope");
+    if (jsonIdentity(prepared) !== witness.identity) throw new Error("Agent tool preparation changed");
+    return { request, witness };
+  }
+  function sameReadCapture(prepared: WorkPlanAgentToolView, captured: ReturnType<typeof readCapture>) {
+    const current = readCapture(prepared);
+    if (current.request !== captured.request || current.witness !== captured.witness) throw new Error("Agent tool preparation changed");
+  }
+  function readOptions(value: unknown, keys: readonly string[]) {
+    if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).length !== keys.length || Object.keys(value).some(key => !keys.includes(key)))
+      throw new Error("Invalid Agent tool read request");
+  }
   return Object.freeze({
     prepare: async (generation: unknown) => {
       const preparing = { ...context, generation: structuredClone(generation) };
@@ -222,6 +245,7 @@ export async function openWorkPlanAgent(
         || value.taskId !== preparing.tool.taskId || value.attemptId !== preparing.tool.attemptId
         || value.toolHandle !== preparing.tool.toolHandle || !matchesScope(value.scope, ids)) invalidAcknowledgement();
       preparedTools.set(value, { ...preparing, inputDigest: value.inputDigest });
+      toolReadIdentities.set(value, { identity: jsonIdentity(value), positions: new Map() });
       return value;
     },
     startTool: async (prepared: WorkPlanAgentToolView) => {
@@ -232,6 +256,55 @@ export async function openWorkPlanAgent(
         return true;
       });
       if (value !== starting.tool.attemptId) invalidAcknowledgement();
+      return value;
+    },
+    readToolAttempt: async (prepared: WorkPlanAgentToolView, page: Pick<WorkPlanAgentToolAttemptRequest, "offset" | "limit">) => {
+      const captured = readCapture(prepared);
+      readOptions(page, ["offset", "limit"]);
+      const reading = { ...structuredClone(captured.request), ...structuredClone(page) };
+      const ids = captured.request.tool.unitIds;
+      if (!validators.validateRequestWorkPlanAgentToolAttempt(reading) || !Number.isInteger(reading.offset)
+        || reading.offset < 0 || reading.offset > ids.length || !Number.isInteger(reading.limit) || reading.limit < 1 || reading.limit > 100)
+        throw new Error("Invalid Agent tool read request");
+      const value = await checkedInvoke("read_work_plan_agent_tool_attempt", reading, (value: unknown): value is AttemptDetail => {
+        if (!validators.validateResponseWorkPlanAgentToolAttempt(value)) invalidAcknowledgement();
+        return true;
+      });
+      sameReadCapture(prepared, captured);
+      const count = Math.min(reading.limit, ids.length - reading.offset), next = reading.offset + count;
+      if (value.attemptId !== reading.tool.attemptId || value.taskId !== reading.tool.taskId || value.operation !== "plugin-tool-query"
+        || value.recovery.attemptId !== reading.tool.attemptId || value.progress.total !== ids.length || value.items.length !== count
+        || value.nextOffset !== (next < ids.length ? next : null)
+        || new Set(value.items.map(item => item.status.itemId)).size !== count
+        || new Set(value.items.map(item => item.scope.id)).size !== count) invalidAcknowledgement();
+      let locale = captured.witness.locale;
+      const positions = value.items.map((item, index) => {
+        if (item.scope.kind !== "translation-unit" || !ids.includes(item.scope.id) || !item.scope.locale
+          || locale !== undefined && locale !== item.scope.locale
+          || index > 0 && value.items[index - 1].status.itemId >= item.status.itemId) invalidAcknowledgement();
+        locale = item.scope.locale;
+        const position = reading.offset + index, identity = { itemId: item.status.itemId, unitId: item.scope.id, locale };
+        const prior = captured.witness.positions.get(position);
+        if (prior && jsonIdentity(prior) !== jsonIdentity(identity)
+          || [...captured.witness.positions].some(([seen, value]) => seen !== position && (value.itemId === identity.itemId || value.unitId === identity.unitId))) invalidAcknowledgement();
+        return { position, identity };
+      });
+      captured.witness.locale = locale;
+      for (const { position, identity } of positions) captured.witness.positions.set(position, identity);
+      return value;
+    },
+    readToolOutput: async (prepared: WorkPlanAgentToolView, result: Pick<WorkPlanAgentToolOutputRequest, "itemId" | "resultId">) => {
+      const captured = readCapture(prepared);
+      readOptions(result, ["itemId", "resultId"]);
+      const reading = { ...structuredClone(captured.request), ...structuredClone(result) };
+      if (!validators.validateRequestWorkPlanAgentToolOutput(reading)) throw new Error("Invalid Agent tool read request");
+      const value = await checkedInvoke("read_work_plan_agent_tool_output", reading, (value: unknown): value is ExecutionOutputView => {
+        if (!validators.validateResponseWorkPlanAgentToolOutput(value)) invalidAcknowledgement();
+        return true;
+      });
+      sameReadCapture(prepared, captured);
+      if (value.projectId !== reading.projectId || value.attemptId !== reading.tool.attemptId
+        || value.itemId !== reading.itemId || value.resultId !== reading.resultId || !value.plugin) invalidAcknowledgement();
       return value;
     },
   });

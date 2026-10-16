@@ -1561,6 +1561,86 @@
         ],
         "type": "object"
       },
+      "WorkPlanAgentToolAttemptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/AgentToolRequest"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "tool",
+          "inputDigest",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentToolOutputRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/AgentToolRequest"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "tool",
+          "inputDigest",
+          "itemId",
+          "resultId"
+        ],
+        "type": "object"
+      },
       "WorkPlanAgentToolPrepareRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2135,6 +2215,12 @@
       "workPlanAgentStart": {
         "$ref": "#/definitions/WorkPlanAgentStartRequest"
       },
+      "workPlanAgentToolAttempt": {
+        "$ref": "#/definitions/WorkPlanAgentToolAttemptRequest"
+      },
+      "workPlanAgentToolOutput": {
+        "$ref": "#/definitions/WorkPlanAgentToolOutputRequest"
+      },
       "workPlanAgentToolPrepare": {
         "$ref": "#/definitions/WorkPlanAgentToolPrepareRequest"
       },
@@ -2189,6 +2275,8 @@
       "workPlanAgentStart",
       "workPlanAgentToolPrepare",
       "workPlanAgentToolStart",
+      "workPlanAgentToolAttempt",
+      "workPlanAgentToolOutput",
       "workPlanControl",
       "workPlanStatus",
       "workPlanAction",
@@ -4177,6 +4265,22 @@
         ],
         "type": "object"
       },
+      "Diagnostic": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "retrySafe": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "retrySafe"
+        ],
+        "type": "object"
+      },
       "EffectKind": {
         "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
         "enum": [
@@ -4248,6 +4352,27 @@
         ],
         "type": "object"
       },
+      "EncodedPayload": {
+        "additionalProperties": false,
+        "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
+        "properties": {
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "utf8": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "utf8",
+          "sha256"
+        ],
+        "type": "object"
+      },
       "ExecutionEnvironmentDescriptor": {
         "anyOf": [
           {
@@ -4262,6 +4387,91 @@
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "ExecutionOutputView": {
+        "additionalProperties": false,
+        "description": "Read-only display projection. The stored ResultEnvelope remains unchanged.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "capabilityId": {
+            "type": "string"
+          },
+          "capabilityVersion": {
+            "type": "string"
+          },
+          "diagnostic": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Diagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dispatchToken": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "outcome": {
+            "$ref": "#/definitions/ExecutionState"
+          },
+          "output": true,
+          "plugin": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginResultEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceFailure": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceExtractionError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "itemId",
+          "resultId",
+          "supersedes",
+          "dispatchToken",
+          "capabilityId",
+          "capabilityVersion",
+          "outcome",
+          "output",
+          "diagnostic"
+        ],
+        "type": "object"
       },
       "ExecutionState": {
         "enum": [
@@ -4330,6 +4540,148 @@
         ],
         "type": "object"
       },
+      "InvocationContext": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "type": "string"
+          },
+          "configurationDigest": {
+            "type": "string"
+          },
+          "dispatchId": {
+            "type": "string"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "scopeDigest": {
+            "type": "string"
+          },
+          "scopeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "operationId",
+          "attemptId",
+          "itemId",
+          "dispatchId",
+          "scopeId",
+          "inputDigest",
+          "scopeDigest",
+          "environmentDigest",
+          "configurationDigest"
+        ],
+        "type": "object"
+      },
+      "InvocationOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "succeeded",
+                "type": "string"
+              },
+              "output": {
+                "$ref": "#/definitions/EncodedPayload"
+              }
+            },
+            "required": [
+              "kind",
+              "output"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "$ref": "#/definitions/EncodedPayload"
+              },
+              "kind": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "$ref": "#/definitions/EncodedPayload"
+              },
+              "kind": {
+                "const": "unknown",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "InvocationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "context": {
+            "$ref": "#/definitions/InvocationContext"
+          },
+          "outcome": {
+            "$ref": "#/definitions/InvocationOutcome"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderBinding"
+          },
+          "resultId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "context",
+          "provider",
+          "capability",
+          "profile",
+          "resultId",
+          "outcome"
+        ],
+        "type": "object"
+      },
       "ItemStatus": {
         "additionalProperties": false,
         "properties": {
@@ -4371,6 +4723,7 @@
       },
       "ItemView": {
         "additionalProperties": false,
+        "description": "Read-only execution projection shared by human and bounded consumers.",
         "properties": {
           "resultId": {
             "anyOf": [
@@ -4996,6 +5349,27 @@
         ],
         "type": "object"
       },
+      "PluginResultEvidence": {
+        "additionalProperties": false,
+        "description": "The complete received SDK result retains exact payload bytes and identity.\n`channel` is supplied independently by the trusted Host, not read from output.",
+        "properties": {
+          "authorizationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "channel": {
+            "$ref": "#/definitions/ProviderBinding"
+          },
+          "result": {
+            "$ref": "#/definitions/InvocationResult"
+          }
+        },
+        "required": [
+          "authorizationId",
+          "channel",
+          "result"
+        ],
+        "type": "object"
+      },
       "PluginReviewView": {
         "additionalProperties": false,
         "properties": {
@@ -5191,6 +5565,41 @@
             "type": "object"
           }
         ]
+      },
+      "ProviderBinding": {
+        "additionalProperties": false,
+        "description": "A claimed wire binding. Only the trusted host can compare it to the actual\nverified package and channel; constructing this value proves no authority.",
+        "properties": {
+          "activationGeneration": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest",
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
       },
       "ProviderBudget": {
         "additionalProperties": false,
@@ -6349,6 +6758,42 @@
         ],
         "type": "object"
       },
+      "SourceExtractionError": {
+        "additionalProperties": false,
+        "description": "A bounded public diagnostic. Producers must use public descriptions and\ncaptured artifact IDs, never local paths, raw source text or secrets. Data\nvalidation cannot establish that arbitrary diagnostic text is safe to share.",
+        "properties": {
+          "artifactId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "$ref": "#/definitions/SourceExtractionErrorCode"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "artifactId",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "SourceExtractionErrorCode": {
+        "description": "Finite public failure classifications; details never determine permissions.",
+        "enum": [
+          "invalid-input",
+          "unsupported-profile",
+          "invalid-source",
+          "unsupported-structure",
+          "limit-exceeded",
+          "cancelled"
+        ],
+        "type": "string"
+      },
       "SourceFactBasis": {
         "additionalProperties": false,
         "properties": {
@@ -7504,6 +7949,12 @@
       "workPlanAgentTool": {
         "$ref": "#/definitions/WorkPlanAgentToolView"
       },
+      "workPlanAgentToolAttempt": {
+        "$ref": "#/definitions/AttemptDetail"
+      },
+      "workPlanAgentToolOutput": {
+        "$ref": "#/definitions/ExecutionOutputView"
+      },
       "workPlanGenerationPreflight": {
         "$ref": "#/definitions/WorkPlanGenerationPreflight"
       },
@@ -7528,6 +7979,8 @@
       "workPlanAgent",
       "workPlanAgentGeneration",
       "workPlanAgentTool",
+      "workPlanAgentToolAttempt",
+      "workPlanAgentToolOutput",
       "workPlanReceipt",
       "workPlanStatus",
       "workPlanAction",

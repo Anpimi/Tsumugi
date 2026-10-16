@@ -34,6 +34,14 @@ entry points use the same protocol. Application `0.2.0-alpha.1` and SDK
 bump. Both Unreleased changelogs are synchronized. Earlier paragraphs describe
 the units that introduced their respective development formats.
 
+Bounded Agent tool-result reads reuse the original attempt/item projection and
+output contract. The existing active scope and immutable delegated input restrict
+each read; human project history retains its separate access. This adds scoped
+Core/Desktop entry points without changing persisted project data, WorkPlan3,
+SDK/Process3, dependencies or lockfiles. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain the same undistributed batch; both Unreleased changelogs
+are synchronized without an additional version bump.
+
 Current-entry source-fact decisions append immutable scoped resource actions and
 pin them in a required `projectContext` field in AI/Arena items. There is no
 implicit `not-selected` value for a missing capture field. This unit advances the

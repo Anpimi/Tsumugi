@@ -23,6 +23,7 @@ export const SelectionPolicyValues = ["candidates-only","missing-only","replace-
 export const SourceContextDirectionValues = ["before","after"] as const;
 export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
 export const SourceContextOmissionReasonValues = ["not-selected","byte-budget","item-limit"] as const;
+export const SourceExtractionErrorCodeValues = ["invalid-input","unsupported-profile","invalid-source","unsupported-structure","limit-exceeded","cancelled"] as const;
 export const StageModeValues = ["manual","assisted","skipped"] as const;
 export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;

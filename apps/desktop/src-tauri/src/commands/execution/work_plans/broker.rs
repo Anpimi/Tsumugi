@@ -50,6 +50,31 @@ request!(
     }
 );
 
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanAgentToolAttemptRequest {
+        scope_id: ExecutionId,
+        tool: AgentToolRequest,
+        #[cfg_attr(feature = "wire-schema", schemars(regex(pattern = "^[a-f0-9]{64}$")))]
+        input_digest: String,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        offset: u32,
+        #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 100)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanAgentToolOutputRequest {
+        scope_id: ExecutionId,
+        tool: AgentToolRequest,
+        #[cfg_attr(feature = "wire-schema", schemars(regex(pattern = "^[a-f0-9]{64}$")))]
+        input_digest: String,
+        item_id: ExecutionId,
+        result_id: ExecutionId
+    }
+);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -440,6 +465,92 @@ fn load_runner(
         return Err(stale());
     }
     Ok((expected.settings_revision, proxy, binding))
+}
+
+fn read_host(active: &ActiveSession) -> Result<&ExecutionHost, CommandError> {
+    // An Agent scope exists only in its original host. Reads must not create a
+    // new runtime while looking for an obsolete or invented handle.
+    active.execution.as_ref().ok_or_else(|| {
+        map_read(ExecutionError::new(
+            ErrorCode::Unauthorized,
+            "work-plan-agent-session",
+        ))
+    })
+}
+
+#[tauri::command]
+pub async fn read_work_plan_agent_tool_attempt(
+    state: State<'_, AppState>,
+    request: WorkPlanAgentToolAttemptRequest,
+) -> Result<AttemptDetail, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_work_plan_agent_tool_attempt",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let host = read_host(active)?;
+                let scope = agent::scope(host, &active.store, request.scope_id)?;
+                active
+                    .store
+                    .read_work_plan_agent_tool_attempt(
+                        &scope,
+                        &request.tool,
+                        &request.input_digest,
+                        host.runtime.is_active(request.tool.attempt_id),
+                        request.offset,
+                        request.limit,
+                    )
+                    .map_err(map_read)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_work_plan_agent_tool_output(
+    state: State<'_, AppState>,
+    request: WorkPlanAgentToolOutputRequest,
+) -> Result<ExecutionOutputView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_work_plan_agent_tool_output",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let host = read_host(active)?;
+                let scope = agent::scope(host, &active.store, request.scope_id)?;
+                let result = active
+                    .store
+                    .read_work_plan_agent_tool_output(
+                        &scope,
+                        &request.tool,
+                        &request.input_digest,
+                        request.item_id,
+                        request.result_id,
+                    )
+                    .map_err(map_read)?;
+                // The existing output projection is retained. A tool result is not
+                // a source extractor artifact and cannot acquire that display role.
+                Ok(ExecutionOutputView {
+                    result: result.envelope().clone(),
+                    source_failure: None,
+                })
+            },
+        )
+        .await
 }
 
 #[tauri::command]

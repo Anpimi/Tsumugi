@@ -114,6 +114,88 @@ fn derive(
 }
 
 impl ProjectStore {
+    /// Read only this live Agent scope's exact, durably enqueued tool child.
+    pub fn read_work_plan_agent_tool_attempt(
+        &self,
+        scope: &WorkPlanAgentScope,
+        request: &AgentToolRequest,
+        input_digest: &str,
+        active: bool,
+        offset: u32,
+        limit: u32,
+    ) -> Result<AttemptDetail, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "work-plan-tool-read"))?;
+        super::super::review::read_snapshot(connection, |connection| {
+            let input = self.tool_read_input(connection, scope, request, input_digest)?;
+            let page = self.execution_attempt_detail(request.attempt_id, active, offset, limit)?;
+            for item in &page.items {
+                if let Some(result_id) = item.result_id {
+                    let result = super::super::ledger::load_result(connection, &input, result_id)?;
+                    if result.envelope().item_id != item.status.item_id {
+                        return Err(fail(ErrorCode::CorruptLedger, "work-plan-tool-result"));
+                    }
+                }
+            }
+            Ok(page)
+        })
+    }
+
+    pub fn read_work_plan_agent_tool_output(
+        &self,
+        scope: &WorkPlanAgentScope,
+        request: &AgentToolRequest,
+        input_digest: &str,
+        item_id: ExecutionId,
+        result_id: ExecutionId,
+    ) -> Result<FixedResult, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "work-plan-tool-read"))?;
+        super::super::review::read_snapshot(connection, |connection| {
+            let input = self.tool_read_input(connection, scope, request, input_digest)?;
+            input.item(item_id)?;
+            let result = super::super::ledger::load_result(connection, &input, result_id)?;
+            if result.envelope().item_id != item_id {
+                return Err(fail(ErrorCode::ResultMismatch, "work-plan-tool-result"));
+            }
+            Ok(result)
+        })
+    }
+
+    fn tool_read_input(
+        &self,
+        connection: &Connection,
+        scope: &WorkPlanAgentScope,
+        request: &AgentToolRequest,
+        input_digest: &str,
+    ) -> Result<FixedInput, ExecutionError> {
+        self.check_work_plan_agent_scope(scope)?;
+        let stored = control::load(connection, scope.lease.plan_id)?;
+        // The immutable plan derives identity. Current source/adoption state and
+        // execution consent are deliberately not prerequisites for reading it.
+        let expected = derive(&stored.plan, scope, request)?;
+        if expected.input.digest() != input_digest {
+            return Err(fail(ErrorCode::ResultMismatch, "work-plan-tool-input"));
+        }
+        let input = self
+            .execution_input_if_present(request.attempt_id)?
+            .ok_or_else(|| fail(ErrorCode::DependencyConflict, "work-plan-tool-not-enqueued"))?;
+        if input.bytes() != expected.input.bytes() {
+            return Err(fail(ErrorCode::ResultMismatch, "work-plan-tool-input"));
+        }
+        let delegation = WorkPlanToolDelegation {
+            lease: scope.lease,
+            root_task: scope.parent_task,
+            tool_handle: request.tool_handle,
+            caller: "work-plan-agent".into(),
+            caller_id: scope.caller_id,
+        };
+        super::super::plugin_execution::validate_tool_read_in(connection, &input, &delegation)?;
+        Ok(input)
+    }
+
     /// Conservative accepted-item reservations, including every control generation.
     pub fn work_plan_tool_invocations(&self, plan_id: ExecutionId) -> Result<u32, ExecutionError> {
         let c = self

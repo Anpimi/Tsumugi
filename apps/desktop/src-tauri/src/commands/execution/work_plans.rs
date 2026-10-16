@@ -1387,6 +1387,7 @@ mod tests {
     mod generation_tests;
     mod model_connection_admission;
     mod settings;
+    mod tool_result_reads;
     use super::*;
     use serde_json::{Value, json};
     use std::{net::TcpListener, time::SystemTime};
@@ -1504,6 +1505,27 @@ mod tests {
             fixture["responses"]["prepared"],
             broker::WorkPlanAgentToolView
         );
+        round_trip!(
+            fixture["requests"]["attempt"],
+            broker::WorkPlanAgentToolAttemptRequest
+        );
+        round_trip!(
+            fixture["requests"]["output"],
+            broker::WorkPlanAgentToolOutputRequest
+        );
+        round_trip!(fixture["responses"]["attempt"], AttemptDetail);
+        for field in ["callerId", "grantId", "confirmed", "payload", "lease"] {
+            let mut extra = fixture["requests"]["attempt"].clone();
+            extra[field] = json!(true);
+            assert!(
+                serde_json::from_value::<broker::WorkPlanAgentToolAttemptRequest>(extra).is_err()
+            );
+            let mut extra = fixture["requests"]["output"].clone();
+            extra[field] = json!(true);
+            assert!(
+                serde_json::from_value::<broker::WorkPlanAgentToolOutputRequest>(extra).is_err()
+            );
+        }
         round_trip!(
             fixture["toolView"],
             crate::commands::plugins::PluginToolView
