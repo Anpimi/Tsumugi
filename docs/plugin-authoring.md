@@ -407,6 +407,13 @@ silently skipping. Confirm that tests were discovered and actually ran; a
 zero-test, filtered or wholly skipped result proves no pairing. Test fixture
 approval does not authenticate a publisher or authorize a subsequent execution.
 
+For both domains' actual Core adoption boundaries, use the
+[prebuilt-package compatibility runner](../crates/plugin-host/scripts/README.md).
+It inspects independently pinned WebVTT and SMAPI packages and the approved
+runtime, then selects the existing source-adoption and translation-adoption
+tests exactly once each. Its separate report preserves actual counts and
+failure logs; it does not install packages or establish Desktop GUI acceptance.
+
 Neither these recipes nor this document claim that your chosen combination has
 passed. Record the actual source revisions/dirty changes, SDK selector, target,
 package/runtime fingerprints, command, executed tests and result. Domain tests,

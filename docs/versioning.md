@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+The public prebuilt-package compatibility entry orchestrates existing Host/Core
+conformance tests for exact WebVTT and SMAPI packages and approved runtime trees.
+It changes development tooling, tests and contributor documentation only. No
+application or plugin runtime behavior, public wire contract, persisted format,
+dependency, package selection or SDK artifact changes. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same undistributed batch;
+no application changelog entry or version bump is needed for this tooling unit.
+
 Preserving terminal AI automation history corrects a background control-state
 regression. Pending work, uncertain receipts and service-origin cleanup retain
 their original authority checks. This changes no SDK/IPC, project/settings/Store
