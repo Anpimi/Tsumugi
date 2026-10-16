@@ -8,7 +8,7 @@ import { checkerIdentity, contractIdentity, providerIdentity, ruleIdentity } fro
 export type { AiConfig } from "./generated/ai.requests";
 export type { AiItemView as AiItem, AiPreviewView as AiPreview, AiPrepared, AiOutputView as AiOutput, AiView } from "./generated/ai.responses";
 export type AiStart = AiStartRequest;
-export const defaultAiConfig:AiConfig={endpoint:"",model:"",credentialEnv:"OPENAI_API_KEY",tokenField:"max_tokens",maxItems:20,concurrency:1,maxRequests:20,maxOutputTokens:2000,maxRetries:0,timeoutSeconds:60,shareTerms:false,shareContext:false,sourceContext:{extracted:false,inferred:false,neighbors:false,maxBytes:16384,maxItems:128}};
+export const defaultAiConfig:AiConfig={endpoint:"",model:"",credentialEnv:"OPENAI_API_KEY",tokenField:"max_tokens",maxItems:20,concurrency:1,maxRequests:20,maxOutputTokens:2000,maxRetries:0,timeoutSeconds:60,shareTerms:false,shareContext:false,contextStrategy:null,sourceContext:{extracted:false,inferred:false,neighbors:false,maxBytes:16384,maxItems:128}};
 export const aiTarget=(item:AiItem):EditorTarget=>({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,key:item.nativeKey,sourceText:item.sourceText});
 const configurationFields = ["endpoint", "model", "credentialEnv", "tokenField", "maxItems", "concurrency", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds", "shareTerms", "shareContext"] as const;
 const sourceContextFields = ["extracted", "inferred", "neighbors", "maxBytes", "maxItems"] as const;
@@ -21,13 +21,20 @@ export function validSourceContextSelection(value: AiConfig["sourceContext"]): b
 export function sameAiConfig(left: AiConfig, right: AiConfig): boolean {
   return configurationFields.every(key => left[key] === right[key])
     && sourceContextFields.every(key => left.sourceContext[key] === right.sourceContext[key])
+    && sameContextStrategy(left.contextStrategy, right.contextStrategy)
     && sameConnectionReference(left.connectionProfile, right.connectionProfile);
 }
 /** Manual default edits become a one-time connection. Budgets and sharing keep
  * a saved reference when its four defaults are unchanged. */
 export function editedAiConfig(before: AiConfig, next: AiConfig): AiConfig {
-  return next.connectionProfile != null && sameConnectionReference(before.connectionProfile, next.connectionProfile) && !sameConnection(before, next)
+  let value = next.connectionProfile != null && sameConnectionReference(before.connectionProfile, next.connectionProfile) && !sameConnection(before, next)
     ? { ...next, connectionProfile: null } : next;
+  if (value.contextStrategy && !sourceContextFields.every(key => before.sourceContext[key] === value.sourceContext[key])) value = { ...value, contextStrategy: null };
+  return value;
+}
+function sameContextStrategy(left: AiConfig["contextStrategy"], right: AiConfig["contextStrategy"]) {
+  return left === null && right === null || !!left && !!right && left.projectId === right.projectId
+    && left.revisionId === right.revisionId && left.candidateId === right.candidateId;
 }
 
 function capturedChecksMatch(receipt: AutomaticSelectionReceipt): boolean {
@@ -62,7 +69,7 @@ function capturedChecksMatch(receipt: AutomaticSelectionReceipt): boolean {
         && contractIdentity(requirement.key.rule) === contractIdentity(selected))));
 }
 
-function mandatoryChecksClean(receipt: AutomaticSelectionReceipt): boolean {
+export function mandatoryChecksClean(receipt: Pick<AutomaticSelectionReceipt, "rules" | "evidence">): boolean {
   const evidence = receipt.evidence;
   if (!evidence) return false;
   return evidence.requiredChecks.requirements.filter(requirement => requirement.mandatory).every(requirement => {

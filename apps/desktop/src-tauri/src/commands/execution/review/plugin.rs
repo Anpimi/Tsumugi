@@ -6,7 +6,7 @@ use crate::commands::plugins::ApplicationPlugins;
 use std::collections::BTreeSet;
 use tsumugi_core::{
     AdvisoryReviewCheck, CapturedReviewCheckExecution, PreparedReviewCheck, ReviewCheckOrigin,
-    ReviewCheckerKey,
+    ReviewCheckerKey, StrategyActionReceipt, StrategyCheckReceipt, StrategyCheckRequest,
 };
 
 request!(
@@ -50,13 +50,13 @@ struct Slot {
 }
 struct Preflight {
     prepared: PreparedReviewCheck,
-    request: ReviewCheckRequest,
+    request: CheckRequest,
     slots: Vec<Slot>,
     view: ReviewPluginCheckView,
 }
 type Reply = Box<dyn FnOnce(Result<CapturedReviewCheckExecution, CommandError>) + Send>;
 struct Job {
-    request: ReviewCheckRequest,
+    request: CheckRequest,
     executions: Vec<PluginStartRequest>,
     _registration: ReviewCheckRegistration,
     cancellation: Cancellation,
@@ -315,15 +315,95 @@ fn cancelled() -> CommandError {
 fn stale() -> CommandError {
     super::checkers::stale()
 }
+// The original Review owner carries either a selected target or a separately
+// identified experiment output. Strategy checks never impersonate a selection.
+#[derive(Clone, Debug, PartialEq)]
+enum CheckTarget {
+    Selected {
+        unit_id: ExecutionId,
+        locale: String,
+        expected_basis: String,
+    },
+    Strategy(StrategyCheckRequest),
+}
+#[derive(Clone, Debug, PartialEq)]
+struct CheckRequest {
+    session_token: String,
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+    advisory_checks: Vec<crate::commands::plugins::reviews::PluginTextReviewSelection>,
+    target: CheckTarget,
+}
+impl From<ReviewCheckRequest> for CheckRequest {
+    fn from(request: ReviewCheckRequest) -> Self {
+        Self {
+            session_token: request.session_token,
+            project_id: request.project_id,
+            action_id: request.action_id,
+            advisory_checks: request.advisory_checks,
+            target: CheckTarget::Selected {
+                unit_id: request.unit_id,
+                locale: request.locale,
+                expected_basis: request.expected_basis,
+            },
+        }
+    }
+}
+#[derive(Clone)]
+struct CheckStart {
+    session_token: String,
+    project_id: ExecutionId,
+    check: CheckRequest,
+    executions: Vec<PluginStartRequest>,
+}
+enum CheckOutcome {
+    Selected(CheckRun),
+    Strategy(StrategyCheckReceipt),
+}
+enum CheckPreparation {
+    Recorded(CheckOutcome),
+    Plugin(ReviewPluginCheckView),
+}
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    StrategyCheckCommand {
+        check: StrategyCheckRequest
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    StrategyCheckStartRequest { check: StrategyCheckCommand, executions: Vec<PluginStartRequest> }
+);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum StrategyCheckPreparation {
+    Recorded { receipt: StrategyCheckReceipt },
+    Plugin { view: ReviewPluginCheckView },
+}
+fn strategy_request(request: StrategyCheckCommand) -> Result<CheckRequest, CommandError> {
+    if request.project_id != request.check.project_id {
+        return Err(stale());
+    }
+    Ok(CheckRequest {
+        session_token: request.session_token,
+        project_id: request.project_id,
+        action_id: request.check.action_id,
+        advisory_checks: Vec::new(),
+        target: CheckTarget::Strategy(request.check),
+    })
+}
 fn preflight_view(
-    request: &ReviewCheckRequest,
+    request: &CheckRequest,
+    prepared: &PreparedReviewCheck,
     slots: &[Slot],
 ) -> Result<ReviewPluginCheckView, CommandError> {
+    let plan = prepared.plan().ok_or_else(stale)?;
     Ok(ReviewPluginCheckView {
         action_id: request.action_id,
-        unit_id: request.unit_id,
-        locale: request.locale.clone(),
-        basis: request.expected_basis.clone(),
+        unit_id: plan.unit_id(),
+        locale: plan.domain_input().target_language.clone(),
+        basis: plan.review_basis().into(),
         checkers: slots
             .iter()
             .map(|slot| {
@@ -339,34 +419,65 @@ fn preflight_view(
 }
 fn capture(
     store: &ProjectStore,
-    request: &ReviewCheckRequest,
+    request: &CheckRequest,
     choices: &[AdvisoryReviewCheck],
 ) -> Result<PreparedReviewCheck, CommandError> {
-    store
-        .prepare_review_check(
-            request.project_id,
-            request.unit_id,
-            &request.locale,
-            &request.expected_basis,
-            request.action_id,
-            choices,
-        )
-        .map_err(map_adopt)
+    match &request.target {
+        CheckTarget::Selected {
+            unit_id,
+            locale,
+            expected_basis,
+        } => store
+            .prepare_review_check(
+                request.project_id,
+                *unit_id,
+                locale,
+                expected_basis,
+                request.action_id,
+                choices,
+            )
+            .map_err(map_adopt),
+        CheckTarget::Strategy(check) => {
+            if !choices.is_empty() || !request.advisory_checks.is_empty() {
+                return Err(stale());
+            }
+            store
+                .prepare_strategy_evaluation_check(check)
+                .map_err(map_adopt)
+        }
+    }
 }
 fn recorded(
     store: &ProjectStore,
-    request: &ReviewCheckRequest,
-) -> Result<Option<CheckRun>, CommandError> {
+    request: &CheckRequest,
+) -> Result<Option<CheckOutcome>, CommandError> {
+    let CheckTarget::Selected {
+        unit_id,
+        locale,
+        expected_basis,
+    } = &request.target
+    else {
+        let CheckTarget::Strategy(check) = &request.target else {
+            unreachable!()
+        };
+        return match store
+            .read_strategy_action(request.project_id, request.action_id)
+            .map_err(map_read)?
+        {
+            None => Ok(None),
+            Some(StrategyActionReceipt::Check { receipt }) if receipt.request == *check => {
+                Ok(Some(CheckOutcome::Strategy(receipt)))
+            }
+            Some(_) => Err(stale()),
+        };
+    };
     let Some(run) = store
         .review_check_action(request.project_id, request.action_id)
         .map_err(map_read)?
     else {
         return Ok(None);
     };
-    if run.unit_id != request.unit_id
-        || run.locale != request.locale
-        || run.basis != request.expected_basis
-    {
+    if run.unit_id != *unit_id || run.locale != *locale || run.basis != *expected_basis {
         return Err(stale());
     }
     let choices = run
@@ -392,7 +503,7 @@ fn recorded(
         .recorded_run()
         .cloned()
         .ok_or_else(stale)
-        .map(Some)
+        .map(|run| Some(CheckOutcome::Selected(run)))
 }
 
 #[tauri::command]
@@ -400,6 +511,32 @@ pub async fn prepare_review_checks(
     state: State<'_, AppState>,
     request: ReviewCheckRequest,
 ) -> Result<ReviewCheckPreparation, CommandError> {
+    match prepare_checks(state, request.into()).await? {
+        CheckPreparation::Recorded(CheckOutcome::Selected(run)) => {
+            Ok(ReviewCheckPreparation::Recorded { run })
+        }
+        CheckPreparation::Plugin(view) => Ok(ReviewCheckPreparation::Plugin { view }),
+        _ => Err(stale()),
+    }
+}
+#[tauri::command]
+pub async fn prepare_strategy_evaluation_checks(
+    state: State<'_, AppState>,
+    request: StrategyCheckCommand,
+) -> Result<StrategyCheckPreparation, CommandError> {
+    match prepare_checks(state, strategy_request(request)?).await? {
+        CheckPreparation::Recorded(CheckOutcome::Strategy(receipt)) => {
+            Ok(StrategyCheckPreparation::Recorded { receipt })
+        }
+        CheckPreparation::Plugin(view) => Ok(StrategyCheckPreparation::Plugin { view }),
+        _ => Err(stale()),
+    }
+}
+
+async fn prepare_checks(
+    state: State<'_, AppState>,
+    request: CheckRequest,
+) -> Result<CheckPreparation, CommandError> {
     let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let initial = request.clone();
     let prior = lease
@@ -415,7 +552,7 @@ pub async fn prepare_review_checks(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 if let Some(run) = recorded(store, &initial)? {
-                    return Ok(Some(ReviewCheckPreparation::Recorded { run }));
+                    return Ok(Some(CheckPreparation::Recorded(run)));
                 }
                 host.allow_mutation()?;
                 if let Some(job) = host.review.jobs.get(&initial.action_id) {
@@ -432,9 +569,11 @@ pub async fn prepare_review_checks(
                             .validate_execution_input(&slot.input)
                             .map_err(map_adopt)?;
                     }
-                    return Ok(Some(ReviewCheckPreparation::Plugin {
-                        view: preflight_view(&initial, &job.slots)?,
-                    }));
+                    return Ok(Some(CheckPreparation::Plugin(preflight_view(
+                        &initial,
+                        &job.prepared,
+                        &job.slots,
+                    )?)));
                 }
                 if let Some(preflight) = &host.review.preflight {
                     if preflight.request == initial {
@@ -452,9 +591,7 @@ pub async fn prepare_review_checks(
                                 .validate_execution_input(&slot.input)
                                 .map_err(map_adopt)?;
                         }
-                        return Ok(Some(ReviewCheckPreparation::Plugin {
-                            view: preflight.view.clone(),
-                        }));
+                        return Ok(Some(CheckPreparation::Plugin(preflight.view.clone())));
                     }
                 }
                 Ok(None)
@@ -499,7 +636,7 @@ pub async fn prepare_review_checks(
         })
         .await?;
     let initial = request.clone();
-    let (prepared, work) = lease
+    let captured = lease
         .run(
             "prepare_review_checks.capture",
             CommandStage::ExecutionRead,
@@ -511,6 +648,9 @@ pub async fn prepare_review_checks(
                     CommandStage::ExecutionRead,
                 )?;
                 let (host, store) = active.execution_parts()?;
+                if let Some(outcome) = recorded(store, &initial)? {
+                    return Ok(Err(outcome));
+                }
                 host.allow_mutation()?;
                 selected_work.check()?;
                 let prepared = capture(store, &initial, &choices)?;
@@ -521,12 +661,18 @@ pub async fn prepare_review_checks(
                         .filter_map(package_lifecycle::input_package)
                         .collect(),
                 )?;
-                Ok((prepared, work))
+                Ok(Ok((prepared, work)))
             },
         )
         .await?;
+    let (prepared, work) = match captured {
+        Ok(captured) => captured,
+        Err(outcome) => return Ok(CheckPreparation::Recorded(outcome)),
+    };
     if let Some(run) = prepared.recorded_run() {
-        return Ok(ReviewCheckPreparation::Recorded { run: run.clone() });
+        return Ok(CheckPreparation::Recorded(CheckOutcome::Selected(
+            run.clone(),
+        )));
     }
     let plan = prepared.plan().ok_or_else(stale)?.clone();
     let inputs = prepared.execution_inputs().to_vec();
@@ -567,6 +713,9 @@ pub async fn prepare_review_checks(
                     CommandStage::ExecutionRead,
                 )?;
                 let (host, store) = active.execution_parts()?;
+                if let Some(outcome) = recorded(store, &request)? {
+                    return Ok(CheckPreparation::Recorded(outcome));
+                }
                 host.allow_mutation()?;
                 work.check()?;
                 let current = capture(
@@ -575,14 +724,16 @@ pub async fn prepare_review_checks(
                     prepared.plan().ok_or_else(stale)?.advisory_checks(),
                 )?;
                 if let Some(run) = current.recorded_run() {
-                    return Ok(ReviewCheckPreparation::Recorded { run: run.clone() });
+                    return Ok(CheckPreparation::Recorded(CheckOutcome::Selected(
+                        run.clone(),
+                    )));
                 }
                 for slot in &slots {
                     current
                         .validate_execution_input(&slot.input)
                         .map_err(map_adopt)?;
                 }
-                let view = preflight_view(&request, &slots)?;
+                let view = preflight_view(&request, &prepared, &slots)?;
                 // A new preview replaces only an explicitly rejected metadata
                 // attempt. Accepted or uncertain channels retain their exact
                 // original consent and their recovery/cancellation entry.
@@ -595,7 +746,7 @@ pub async fn prepare_review_checks(
                     slots,
                     view: view.clone(),
                 });
-                Ok(ReviewCheckPreparation::Plugin { view })
+                Ok(CheckPreparation::Plugin(view))
             },
         )
         .await
@@ -606,6 +757,38 @@ pub async fn run_review_checks(
     state: State<'_, AppState>,
     request: ReviewCheckStartRequest,
 ) -> Result<CheckRun, CommandError> {
+    let start = CheckStart {
+        session_token: request.session_token,
+        project_id: request.project_id,
+        check: request.check.into(),
+        executions: request.executions,
+    };
+    match run_checks(state, start).await? {
+        CheckOutcome::Selected(run) => Ok(run),
+        _ => Err(stale()),
+    }
+}
+#[tauri::command]
+pub async fn run_strategy_evaluation_checks(
+    state: State<'_, AppState>,
+    request: StrategyCheckStartRequest,
+) -> Result<StrategyCheckReceipt, CommandError> {
+    let start = CheckStart {
+        session_token: request.session_token,
+        project_id: request.project_id,
+        check: strategy_request(request.check)?,
+        executions: request.executions,
+    };
+    match run_checks(state, start).await? {
+        CheckOutcome::Strategy(receipt) => Ok(receipt),
+        _ => Err(stale()),
+    }
+}
+
+async fn run_checks(
+    state: State<'_, AppState>,
+    request: CheckStart,
+) -> Result<CheckOutcome, CommandError> {
     if request.session_token != request.check.session_token
         || request.project_id != request.check.project_id
         || request.executions.iter().any(|execution| {
@@ -969,11 +1152,19 @@ pub async fn run_review_checks(
                             return Ok(run);
                         }
                         host.allow_mutation()?;
-                        commit_plugins.with_environment_revision(settings_revision, || {
-                            store
-                                .commit_review_evidence(computed, &token)
-                                .map_err(map_adopt)
-                        })
+                        commit_plugins.with_environment_revision(
+                            settings_revision,
+                            || match &commit.check.target {
+                                CheckTarget::Selected { .. } => store
+                                    .commit_review_evidence(computed, &token)
+                                    .map(CheckOutcome::Selected)
+                                    .map_err(map_adopt),
+                                CheckTarget::Strategy(check) => store
+                                    .commit_strategy_evaluation_check(check, computed, &token)
+                                    .map(CheckOutcome::Strategy)
+                                    .map_err(map_adopt),
+                            },
+                        )
                     },
                 )
                 .await

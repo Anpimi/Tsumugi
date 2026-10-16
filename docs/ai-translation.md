@@ -53,8 +53,9 @@ Requests reserve durable budget before network dispatch. The saved summary disti
 Select the target language and source units. New AI workbench drafts recommend including applicable adopted terms and saved human context. Turn either category off to omit it; explicit choices survive connection changes, budget resets and workspace returns. A confirmed full draft discard starts a new draft with the recommendations. These initial choices grant no permission to send data and do not change previously captured plans or Arena schemes. **Preview what will be sent** shows the full source text, destination, budget, selected resources and omissions. Changing inputs invalidates the preview and consent. Confirm sharing and choose an authorization duration of 1–1440 minutes before sending. Choose **Save candidates; choose manually**, **Choose only entries without a translation**, or **Allow replacing the translations shown in this scope**. Candidate-only plans can run their separately authorized checks or keep checks manual. The latter two selection policies require assisted checks and add that exact selection effect to the displayed authorization. Only clean checks, unchanged source/resources/selection and unprotected entries permit selection. Approval, resource adoption and export remain separate manual actions.
 
 **Source observations** separately offers extracted source facts, source inferences
-with their rationale, and adjacent original text. All three start off and are
-independent of terms and saved human context. The preview preserves fact origins
+with their rationale, and adjacent original text. A new AI draft can capture an
+adopted project/language context strategy; otherwise all three start off. These
+choices remain independent of terms and saved human context. The preview preserves fact origins
 and original references locally; inferences remain hypotheses. Missing, explicitly
 empty and unsupported facts remain distinguishable. Selecting facts that require
 an unavailable interpreter blocks preparation; neighbors can be selected without
@@ -139,6 +140,57 @@ enqueued after the plan ended, you can end that preparation. An accepted request
 keeps its task history and budget record; a read failure never establishes that
 work was not accepted.
 
+## Context strategy experiments
+
+Open **Context strategies** in the AI workbench or Arena comparison.
+A saved manual correction can propose a source-context strategy for its current
+project and target language. The proposal retains the exact before/after source
+and translation evidence, a reason, exceptions and an immutable candidate
+identity. Saving a correction or proposal does not adopt it, contact a model or
+change another project. This profile controls the existing source-observation
+selection; connections, request limits and consent retain their own controls.
+
+Capture fixed calibration and held-out entries before preparing an experiment.
+Choose 2–20 current entries with at least one in each group. The original
+correction can be used for calibration and cannot be held out. The captured
+suite retains the source, resources and mandatory checker policy; a candidate
+cannot replace the suite or weaken its checks.
+
+The experiment uses an ordinary two-scheme Arena round with the same connection
+and request limits. The direct baseline disables optional terms, saved human
+context and source observations. The candidate changes only the source
+observations; terms and saved human context stay disabled in both schemes.
+Review the actual captured text, destinations and shared budget, then explicitly
+consent before starting. Preparing, viewing or reopening an experiment does not
+authorize or resume execution.
+
+Save outputs as ordinary unselected candidates, preview their independent
+checks, and separately authorize those checks. Experiment checks retain their
+original evidence without selecting a translation or becoming its current QA.
+Record a preference and explanation for every held-out pair. Human-reported
+time and modification figures remain distinct from Provider-reported usage and
+unknown cost; a preference is not a measured accuracy or speed improvement.
+
+Adoption requires all captured mandatory checks for both schemes on every suite
+entry, complete held-out judgments, no preference for the baseline and at least
+one preference for the candidate. Core also rechecks the original current basis
+and the observed default revision. Explicit adoption creates a new default
+revision for this project/language. Withdrawal changes that future default and
+preserves candidates, evaluations, results and history.
+
+New AI drafts and full draft resets can capture the adopted context strategy.
+Budget resets, existing drafts and accepted work keep their original choices.
+Editing the strategy's choices detaches its reference and requires a new
+preview; other connection, budget and sharing choices remain independent. A
+late default read cannot replace newer input. Historical inputs keep their
+original strategy revision even after another default is adopted or withdrawn.
+Unknown saves retain their original action for reconciliation instead of
+blindly repeating the action with a new identity.
+
+The recorded comparison covers its fixed model, inputs and evaluation
+conditions. It does not establish quality on other material, automatic training,
+cross-project learning or a general improvement claim.
+
 ## Arena comparison
 
 Choose **Arena comparison** to generate two to four schemes for the same selected original strings and one target language. Each scheme has its own endpoint, model, output token parameter, timeout, retry limit, terms/human-context sharing and source-observation selection and budget. The whole round shares one request and concurrency budget. Defaults are two schemes, up to 20 original strings, 40 requests including retries and concurrency 1. At most 100 expanded string × scheme items are allowed; requests are bounded to 300 and concurrency to 2. An initial request count larger than the chosen budget is rejected.
@@ -159,7 +211,7 @@ During a save you can continue editing. A successful older save does not discard
 
 The internal Rust and desktop IPC interfaces remain experimental. Producer callers now obtain `DispatchRequest` from the execution runtime or store dispatch boundary rather than constructing its fields directly; the runtime supplies the private durable-budget channel. `ExecutionRuntime::register` and `ProjectStore::enqueue_execution` conservatively record `external-unknown` effects. A trusted host must explicitly use `register_read_only` / `enqueue_read_only_execution`, or `register_with_policy` for another reviewed effect contract. A producer's own claim or operation name cannot authorize replay. Persisted policies cannot be changed by resubmitting the same identity.
 
-Current development projects use schema 44 only. Durable budgets, reservations,
+Current development projects use schema 49 only. Durable budgets, reservations,
 ancestry, effect policies and exact continuation identities retain their original
 owners. Other development schemas are refused without an application upgrade,
 rebuild or reset; SQLite may complete its own hot-journal recovery. Preserve those

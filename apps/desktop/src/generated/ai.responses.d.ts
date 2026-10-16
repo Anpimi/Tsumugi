@@ -494,6 +494,10 @@ export interface AiConfig {
    * provenance and the original defaults; it never resolves mutable settings.
    */
   connectionProfile?: ModelConnectionReference | null;
+  /**
+   * Immutable project provenance, independent of current defaults or consent.
+   */
+  contextStrategy: ContextStrategyReference | null;
   credentialEnv: string;
   endpoint: string;
   maxItems: number;
@@ -515,6 +519,11 @@ export interface ModelConnectionReference {
   profileId: ExecutionId;
   revision: UnsignedDecimal;
   storeId: ExecutionId;
+}
+export interface ContextStrategyReference {
+  candidateId: ExecutionId;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
 }
 export interface SourceContextSelection {
   extracted: boolean;

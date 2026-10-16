@@ -23,6 +23,7 @@ import type { WorkPlanToolSelection } from "./generated/ai.requests";
 import type { ChangeScope } from "./sessionReads";
 import { sourceReads } from "./sourceQueries";
 import { contentSelectionIds, validContentSelection, type ContentSelection } from "./contentSelection";
+import { strategyCommands, strategyKeys } from "./strategyCommands";
 
 export const defaultPlanOptions: PlanOptions = { stages: (["understanding", "resources", "generation", "checks", "delivery"] as const).map(stage => ({ stage, mode: stage === "generation" || stage === "checks" ? "assisted" : "manual" })), selectionPolicy: "candidates-only", adoptResources: false, deliver: false, advisoryChecks: [] };
 export type WorkPlanContinuation = (() => boolean) & { fresh: () => boolean; acceptPlan: (status: WorkPlanStatusView) => boolean };
@@ -42,6 +43,7 @@ interface State {
   attempt: string | null; started: { prepared: AiPrepared; taskId: string | null } | null;
   pendingStart: StartCapture | null; pendingAdopt: AdoptCapture | null; saved: Record<string, Receipt>;
   failure: CommandFailure | null; notice: "started" | "saved" | "newer" | "maintenance" | null;
+  strategyDefault: "loading" | "ready" | "failed"; strategyDefaultFailure: CommandFailure | null;
 }
 const limits = [["maxItems",1,100],["concurrency",1,2],["maxRequests",1,300],["maxOutputTokens",1,16384],["maxRetries",0,2],["timeoutSeconds",1,120]] as const;
 const validLimits = (config: AiConfig) => limits.every(([key,min,max]) => Number.isInteger(config[key]) && config[key] >= min && config[key] <= max) && validSourceContextSelection(config.sourceContext);
@@ -107,7 +109,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state,setState] = useState<PreparationState>(() => preparationState({ maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,
     options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
-    staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,checkedTask:null,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null }));
+    staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,checkedTask:null,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null,strategyDefault:"loading",strategyDefaultFailure:null }));
   const stateRef = useRef(state), mounted = useSessionAlive(), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
   const candidateReadCleanup = useRef<(() => void) | null>(null);
   const actionReadCleanups = useRef(new Set<() => void>());
@@ -123,6 +125,36 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     const next=change(stateRef.current);if(next===stateRef.current)return;
     stateRef.current = preparationState(next); setState(stateRef.current);
   }
+  const defaultGeneration = useRef(0);
+  const defaultCaptureSequence = useRef(0);
+  const defaultWait = useRef<Promise<void> | null>(null);
+  async function loadStrategyDefault() {
+    if (!live() || reserved()) return;
+    const before = current(), generation = ++defaultGeneration.current, editSeq = before.editSeq, locale = before.locale;
+    if (!locale || !available(locale)) { update(value => ({ ...value, strategyDefault: "ready", strategyDefaultFailure: null })); return; }
+    update(value => ({ ...value, strategyDefault: "loading", strategyDefaultFailure: null }));
+    const unchanged = () => live() && generation === defaultGeneration.current && current().editSeq === editSeq && current().locale === locale && !reserved();
+    try {
+      const key = reads.key(strategyKeys.default(locale));
+      await reads.client.fetchQuery({ queryKey: key, staleTime: 0, meta: { scopes: ["arena", "project"] }, queryFn: () => strategyCommands.default({ ...session, locale }) });
+      const snapshot = reads.client.getQueryState<Awaited<ReturnType<typeof strategyCommands.default>>>(key);
+      if (!unchanged()) { if (live() && generation === defaultGeneration.current) update(value => ({ ...value, strategyDefault: "ready" })); return; }
+      if (!snapshot || snapshot.status !== "success" || snapshot.fetchStatus !== "idle" || snapshot.isInvalidated || snapshot.error !== null) throw new Error("Strategy default is not current");
+      const revision = snapshot.data;
+      const candidate = revision?.reference ? await strategyCommands.candidate({ ...session, candidateId: revision.reference.candidateId }) : null;
+      if (!unchanged()) { if (live() && generation === defaultGeneration.current) update(value => ({ ...value, strategyDefault: "ready" })); return; }
+      const latest = reads.client.getQueryState(key);
+      if (latest !== snapshot || latest?.isInvalidated || latest?.fetchStatus !== "idle" || latest?.error !== null) throw new Error("Strategy default changed while reading");
+      if (candidate && (candidate.locale !== locale || candidate.projectId !== session.projectId || !revision?.reference)) throw new Error("Strategy default scope does not match");
+      // This one-time capture changes only context. It never copies a saved
+      // experiment's connection, limits or manual sharing into a user's draft.
+      update(value => ({ ...value, strategyDefault: "ready", strategyDefaultFailure: null,
+        config: editSeq === defaultCaptureSequence.current && candidate && revision?.reference ? fixed({ ...value.config, sourceContext: candidate.sourceContext, contextStrategy: revision.reference }) : value.config }));
+    } catch (error) {
+      if (live() && generation === defaultGeneration.current) update(value => ({ ...value, strategyDefault: "failed", strategyDefaultFailure: commandFailure(error) }));
+    }
+  }
+  useEffect(() => { defaultWait.current = loadStrategyDefault(); return () => { defaultGeneration.current++; }; }, []);
   const planControl = useWorkPlanControlSession(live), agent = useWorkPlanAgentSession(live), component = useWorkPlanGenerationSession(live);
   function parentReserved() {
     const toolRun = agent.current().toolRun;
@@ -158,7 +190,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }
   function edit<K extends "config" | "presetName" | "locale" | "selected" | "options" | "toolDraft" | "advisoryChecks">(key: K, value: State[K]) {
     basis.current++;
-    update(before => ({ ...before,[key]:fixed(value),...(key==="selected"||key==="locale"?{maintenance:null}:{}),capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,[key]:fixed(value),...(key==="selected"||key==="locale"?{maintenance:null}:{}),...(key==="locale"&&value!==before.locale?{config:fixed({...before.config,contextStrategy:null})}:{}),capture:null,consent:false,staleReason:null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
   }
   useLayoutEffect(() => {
@@ -176,7 +208,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     // Transfer only a user range. Existing preparation, consent and execution
     // authority cannot accompany it; the next explicit preview reads Core facts.
     basis.current++;
-    update(before => ({ ...before,maintenance:null,locale:selection.capture.locale,selected:fixed(selected),selectedSnapshotId:selection.capture.sourceSnapshotId,capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,maintenance:null,locale:selection.capture.locale,...(before.locale!==selection.capture.locale?{config:fixed({...before.config,contextStrategy:null})}:{}),selected:fixed(selected),selectedSnapshotId:selection.capture.sourceSnapshotId,capture:null,consent:false,staleReason:null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
     return true;
   }
@@ -200,7 +232,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     const choices: MaintenanceChoice[]=assessment.rows.map(row=>({unitId:row.unitId,action:row.suggested,
       excluded:row.protection.protected||row.mappingUnresolved}));
     basis.current++;
-    update(before=>({...before,maintenance:fixed({assessment,choices}),locale:assessment.locale,
+    update(before=>({...before,maintenance:fixed({assessment,choices}),locale:assessment.locale,...(before.locale!==assessment.locale?{config:fixed({...before.config,contextStrategy:null})}:{}),
       selected:choices.filter(choice=>!choice.excluded&&choice.action==="repair").map(choice=>choice.unitId),
       selectedSnapshotId:assessment.sourceSnapshotId,capture:null,consent:false,staleReason:null,dirty:true,editSeq:before.editSeq+1,failure:null,notice:"maintenance"}));
     return true;
@@ -238,10 +270,11 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     const before = current();
     // Presentation follows this render's props. Mutation entry points below
     // separately require the committed locale ref before any dispatch.
-    return live() && !reserved() && before.locale !== "" && targetLocales.includes(before.locale)
+    return live() && !reserved() && before.strategyDefault === "ready" && before.locale !== "" && targetLocales.includes(before.locale)
       && validateResponseIdentity(session.projectId) && !!session.sessionToken && before.selected.length > 0 && (!model || connectionCurrent());
   }
   async function preview() {
+    if (current().strategyDefault === "loading") await defaultWait.current;
     if(current().maintenance)return;
     if (!canPreview() || !available()) return;
     const before = current(), version = basis.current;
@@ -259,6 +292,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     });
   }
   async function preparePlan(captureTools: () => ReturnType<PlanToolChoiceHandle["capture"]>, sourceContentKey: readonly unknown[]) {
+    if (current().strategyDefault === "loading") await defaultWait.current;
     const before = current(), version = basis.current;
     const assisted = before.options.stages.some(choice => choice.stage === "generation" && choice.mode === "assisted");
     if (!canPreview(assisted) || !available()) return;
@@ -633,9 +667,10 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }
   function reset() {
     if (!live() || reserved()) return false;
+    defaultCaptureSequence.current = current().editSeq + 1;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
-    update(before => ({ ...before,maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,
-      dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],failure:null,notice:null })); return true;
+    update(before => ({ ...before,maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,strategyDefault:"loading",strategyDefaultFailure:null,
+      dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],failure:null,notice:null })); defaultWait.current = loadStrategyDefault(); return true;
   }
   const contentToolAttempt = agent.current().toolRun?.prepared.attemptId ?? null;
   const subscribeContentAvailability = useCallback((notify: () => void) => reads.client.getQueryCache().subscribe(event => {
@@ -648,7 +683,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
     setAdvisoryChecks:(value:PluginTextReviewSelection[]) => edit("advisoryChecks",value),
-    current,reserved,targetAvailable,connectionCurrent,selectConnection,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,receiveContentSelection,canReceiveContentSelection,
+    current,reserved,targetAvailable,connectionCurrent,selectConnection,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,receiveContentSelection,canReceiveContentSelection,loadStrategyDefault,
     setPresetName:(value:SetStateAction<string>) => edit("presetName",typeof value === "function" ? value(current().presetName) : value),
     setConfig:(value:SetStateAction<AiConfig>) => edit("config",editedAiConfig(current().config, typeof value === "function" ? value(current().config) : value)),
     setLocale:(value:SetStateAction<string>) => edit("locale",typeof value === "function" ? value(current().locale) : value),

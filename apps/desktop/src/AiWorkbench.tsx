@@ -21,6 +21,8 @@ import { AiScopePicker } from "./AiScopePicker";
 import { AiCandidateDecisionPanel } from "./AiCandidateDecisionPanel";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { AiEffectStatus } from "./AiEffectStatus";
+import { StrategyWorkbench } from "./StrategyWorkbench";
+import { useOptionalStrategyDraftSession } from "./StrategyDraftSession";
 import { TextReviewSelections } from "./TextReviewSelections";
 import type { WorkPlanStatusView } from "./workPlanCommands";
 import type { TranslationRevision } from "./translationCommands";
@@ -35,6 +37,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   const {t}=useTranslation();const context=executionContext(project),reads=useSessionReads(),registry=useWorkbenchCommands();
   const [connectionOpen,setConnectionOpen]=useWorkbenchState("ai", "connectionOpen", false);
   const preparation=useAiPreparation(), tasks=useExecutionTaskSession(), translationDraft=useTranslationDraftSession();
+  const strategy = useOptionalStrategyDraftSession();
   const [candidateTarget,setCandidateTarget]=useWorkbenchState<AiSavedCandidateCommandPayload|null>("ai","candidateTarget",null);
   const {presetName,setPresetName,config,setConfig,locale,setLocale,selected,selectedSnapshotId,setSelected,preparedPlan:prepared,options,setOptions,toolDraft,setToolDraft,advisoryChecks,setAdvisoryChecks,
     consent,setConsent,staleReason,pendingStart,pendingAdopt,dirty,sourceGeneration,clearSelectedRange,reset,targetAvailable,attempt,busy}=preparation;
@@ -78,8 +81,8 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   function allowLeave(current: () => boolean = () => true):Promise<boolean> {
     leaveProof.current = current;
     if(cancelUnresolved||translationDraft.candidates.blocked()||translationDraft.candidates.hasDraft()){setOpen(true);return Promise.resolve(false);}
-    if(preparation.reserved()){setOpen(true);return Promise.resolve(false);}
-    if(!dirty)return Promise.resolve(true);
+    if(preparation.reserved() || strategy?.reserved()){setOpen(true);return Promise.resolve(false);}
+    if(!dirty && !strategy?.dirty())return Promise.resolve(true);
     setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});
   }
   function allowNavigate(destination?:WorkspaceDestination):Promise<boolean> {
@@ -95,7 +98,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     try{return await onOpenTask(taskId,attemptId);}
     finally{if(childHistoryIntent.current===intent)childHistoryIntent.current=null;}
   }
-  function settleLeave(value:boolean){if(value&&leaveProof.current&&!leaveProof.current())value=false;setLeaving(false);if(value&&!reset())value=false;leaveResolve.current?.(value);leaveResolve.current=null;leaveProof.current=null;}
+  function settleLeave(value:boolean){if(value&&leaveProof.current&&!leaveProof.current())value=false;setLeaving(false);if(value&&strategy&&!strategy.reset())value=false;if(value&&!reset())value=false;leaveResolve.current?.(value);leaveResolve.current=null;leaveProof.current=null;}
   useImperativeHandle(ref,()=>({allowLeave,allowNavigate,showAttempt(id){preparation.showAttempt(id);setOpen(true);}}));
   function loadPage(next=0){if(next===0){void reads.client.invalidateQueries({queryKey:reads.key(scopeOptions.key),exact:true});void reads.client.invalidateQueries({queryKey:reads.key(sourceReads.content(context,scopeRead.data?.currentSnapshot??"",0,scopeRead.data).key),exact:true});}setAfter(next);}
   function refreshReads(){loadPage();if(attempt)void viewRead.refetch();if(planId)void planRead.refetch();}
@@ -297,6 +300,9 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     </section>
     {!project.metadata.targetLocales.length?<p role="status">{t("ai.workspace.noTargets")}</p>:null}
     <IncrementalMaintenance project={project} active={open} disabled={locked} onOpenManual={onOpenManual}/>
+    <StrategyWorkbench project={project} active={open} disabled={disabled || preparation.reserved()} config={config} onOpenConnections={onOpenConnections} />
+    {preparation.strategyDefault === "loading" ? <p role="status">{t("strategy.defaultLoading")}</p> : preparation.strategyDefault === "failed" ? <div role="alert"><p>{t("strategy.defaultFailed")}</p><CommandFailureDetails failure={preparation.strategyDefaultFailure} />
+      <button type="button" className="secondary-button" disabled={preparation.reserved()} onClick={() => void preparation.loadStrategyDefault()}>{t("strategy.retryDefault")}</button></div> : config.contextStrategy ? <p role="status">{t("strategy.appliedDefault")}</p> : null}
     <TaskCancellationFeedback origin="ai" taskId={view?.detail.taskId} disabled={busy} retryCommand={{
       available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,
       dispatch:intent=>{registry.dispatch("ai.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});},

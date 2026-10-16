@@ -264,6 +264,7 @@ fn enqueue_input(
             Err(error(ErrorCode::ResultMismatch, "attempt-identity"))
         };
     }
+    super::resources::strategy::verify_admission(tx, input)?;
     let task: Option<(String, String)> = tx
         .query_row(
             "SELECT project_id,operation FROM execution_tasks WHERE task_id=?1",

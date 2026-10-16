@@ -37,6 +37,7 @@ import { resourceCommands, type CorrectionTermEvidence } from "./resourceCommand
 import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
 import { sourceMaintenanceHookCommands } from "./sourceMaintenanceHookCommands";
 import { sourceHookKey } from "./SourceMaintenanceHook";
+import { StrategyDraftSession, useStrategyDraftSession } from "./StrategyDraftSession";
 
 /** The same project owners are shared by production assembly and isolated consumer tests. */
 export function ProjectSessionOwners({ project, children, bridge = true }: { project: ProjectView; children: ReactNode; bridge?: boolean }) {
@@ -44,9 +45,9 @@ export function ProjectSessionOwners({ project, children, bridge = true }: { pro
     <TranslationDraftSession project={project}><McpSharingSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}>
       <ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>
         <ArenaDraftSession project={project}><ReleaseDraftSession project={project}>
-          <AiPreparationSession initialLocale={project.metadata.targetLocales[0] ?? ""} targetLocales={project.metadata.targetLocales}>
+          <StrategyDraftSession project={project}><AiPreparationSession initialLocale={project.metadata.targetLocales[0] ?? ""} targetLocales={project.metadata.targetLocales}>
             {children}
-          </AiPreparationSession>
+          </AiPreparationSession></StrategyDraftSession>
         </ReleaseDraftSession></ArenaDraftSession>
       </SourceDraftSession></ResourceDraftSession></ReviewDraftSession>
     </TranslationImportSession></ExecutionTaskSession></McpSharingSession></TranslationDraftSession>
@@ -102,6 +103,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   const sharing = useMcpSharing();
   const source = useSourceDraftSession(), resources = useResourceDraftSession(), review = useReviewDraftSession();
   const release = useReleaseDraftSession(), ai = useAiPreparation(), arena = useArenaDraftSession();
+  const strategy = useStrategyDraftSession();
   const mounted = useRef(false), handles = useRef(new Map<WorkspaceArea, SessionConsumer>());
   const waiting = useRef(new Map<WorkspaceArea, ((handle: SessionConsumer | null) => void)[]>());
   const [failure, setFailure] = useState<CommandFailure | null>(null);
@@ -149,7 +151,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
         Object.values(rev.drafts).some(value => value.length > 0) || Object.keys(rev.chosen).length > 0 || !!rev.checkReview || rev.checkConsent.length > 0 || rev.advisoryChecks.length > 0,
         [rev.locale, rev.actor, rev.editSeq, rev.checkReview?.request, rev.checkConsent, rev.advisoryChecks, Object.values(rev.chosen).map(value => [value.unitId, value.locale, value.basis]),
           Object.values(rev.draftTargets).map(value => [value.unitId, value.locale, value.basis])]),
-      row("ai", ai.reserved(), prepared.dirty, [prepared.editSeq, prepared.consent, prepared.capture, ai.planControl.current().pending, ai.agent.current().pending, ai.component.current().operation,
+      row("ai", ai.reserved() || strategy.reserved(), prepared.dirty || strategy.dirty(), [prepared.editSeq, prepared.consent, prepared.capture, strategy.current(), ai.planControl.current().pending, ai.agent.current().pending, ai.component.current().operation,
         ai.agent.current().child.editSeq,ai.agent.current().child.pending?.proposal,ai.agent.current().child.children.map(child=>[child.consumer.scope.scopeId,child.accepted,child.toolHandle,child.runs.map(action=>[action.prepared.attemptId,action.phase,action.retryAllowed])])]),
       row("arena", arena.reserved(), comparison.dirty || !!comparison.draft, [comparison.editSeq, comparison.draft?.editSeq, comparison.consent]),
     ];

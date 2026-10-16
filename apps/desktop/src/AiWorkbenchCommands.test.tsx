@@ -28,6 +28,9 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "ai-command-session", locator: "isolated", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(500), displayName: "AI commands", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "ai" as const };
+// This command/witness suite authorizes candidate saving without running checks.
+const saveOnlyOptions: typeof defaultPlanOptions = { ...defaultPlanOptions,
+  stages: defaultPlanOptions.stages.map(stage => ({ ...stage, mode: stage.stage === "checks" ? "manual" : stage.mode })) };
 const item: AiItem = { unitId: fixtureIdentity(301), sourceRevisionId: fixtureIdentity(302), sourceSnapshotId: fixtureIdentity(300),
   nativeKey: "first", sourceLocale: "en", sourceText: "Hello", targetLocale: "zh-CN", terms: [], context: null, sourceContext: {kind:"not-selected"}, projectContext: {kind:"not-selected" as const},
   omissions: ["terms-not-shared", "context-not-shared"], resourceBaseline: "0" };
@@ -103,10 +106,11 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US"); navigate.mockClear();
   prepared = { attemptId: aiAttempt, preview: { config: { ...defaultAiConfig, endpoint: "http://127.0.0.1:4000/v1/chat/completions", model: "test-model", credentialEnv: "" },
     recipe: "direct-translation-1", digest: ai.responses.prepared.preview.digest, items: [item] } };
-  plan=aiWorkPlanFixture(prepared,defaultPlanOptions);status=null;planReceipts=new Map();
+  plan=aiWorkPlanFixture(prepared,saveOnlyOptions);status=null;planReceipts=new Map();
   view = aiViewFixture(item, prepared.preview.config);view.planId=plan.planId;view.planGeneration="1";
   let nextIdentity = 910;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_context_strategy_default") return null;
     if (command === "read_model_connections") return connectionFixture([]);
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: item.sourceSnapshotId };
     if (command === "read_source_content") return sourcePageFixture({ snapshotId: item.sourceSnapshotId, scope: { revision: "2", currentSnapshot: item.sourceSnapshotId },
@@ -149,13 +153,14 @@ async function open() {
   const user = userEvent.setup(), rendered = render(<Harness />, project);
   await user.click(screen.getByRole("button", { name: "AI work" }));
   await screen.findByRole("checkbox", { name: "first: Hello" });
-  act(() => { owner.setConfig(prepared.preview.config); owner.setSelected([item.unitId]); });
+  act(() => { owner.setOptions(saveOnlyOptions); owner.setConfig(prepared.preview.config); owner.setSelected([item.unitId]); });
   await waitFor(() => expect(registry.describe("ai.preview", scope, previewPayload())?.availability.enabled).toBe(true));
   return { user, rendered };
 }
 async function prepareThroughRegistry() {
   await act(async () => { expect(registry.dispatch("ai.preview", scope, previewPayload())).toBe(true); });
   await waitFor(() => expect(owner.current().preparedPlan).not.toBeNull());
+  expect(owner.current().preparedPlan?.options).toEqual(saveOnlyOptions);
   act(() => owner.setConsent(true));
 }
 async function startThroughRegistry() {
@@ -167,7 +172,7 @@ async function startThroughRegistry() {
 it("registers the complete scoped AI command families and routes preview, confirmed start, and exact editor navigation through them", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry, "dispatch");
   expect(registry.list(scope).filter(command => command.category === "ai").map(command => command.id).sort()).toEqual([
-    "ai.adopt-result", "ai.cancel-task", "ai.open-translation", "ai.preview", "ai.reconcile-adoption", "ai.reconcile-start",
+    "ai.adopt-result", "ai.cancel-task", "ai.open-translation", "ai.open-review", "ai.preview", "ai.reconcile-adoption", "ai.reconcile-start",
     "ai.retry-adoption", "ai.retry-cancellation", "ai.retry-start", "ai.start", "ai.effect.retry",
     "ai.plan.pause", "ai.plan.stop", "ai.plan.take-over", "ai.plan.continue", "ai.plan.start-authorized",
     "ai.plan.reconcile-action", "ai.plan.retry-action", "ai.plan.open-translation", "ai.rewrite-translation",
@@ -176,6 +181,7 @@ it("registers the complete scoped AI command families and routes preview, confir
   expect(registry.list(scope).filter(command => command.category === "ai").every(command => command.binding === null)).toBe(true);
   await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
   await waitFor(() => expect(owner.current().preparedPlan).not.toBeNull());
+  expect(owner.current().preparedPlan?.options).toEqual(saveOnlyOptions);
   expect(registry.describe("ai.start", scope, startPayload())).toMatchObject({ confirmation: "required", availability: { enabled: false } });
   act(() => owner.setConsent(true));
   await user.click(screen.getByRole("button", { name: "Send and generate candidates" }));
@@ -191,7 +197,7 @@ it("registers the complete scoped AI command families and routes preview, confir
   expect(payloads("start_work_plan")).toEqual([{...reads.context,planId:plan.planId,actionId:authorized.actionId,expectedGeneration:"1"}]);
   expect(registry.list(scope).filter(command=>command.category==="ai").map(command=>command.id)).toEqual(expect.arrayContaining([
     "ai.agent.generate","ai.agent.query-tool","ai.agent.reconcile","ai.component.prepare","ai.component.start","ai.component.discard","ai.open-comparison"]));
-  expect(registry.list(scope).filter(command=>command.category==="ai")).toHaveLength(31);
+  expect(registry.list(scope).filter(command=>command.category==="ai")).toHaveLength(32);
 });
 
 it("rejects stale preparation and start captures without hiding the owner's configuration validation feedback", async () => {
@@ -214,7 +220,7 @@ it("keeps the complete ordered selection rather than shrinking preparation to th
   act(() => owner.setSelected([second.unitId, item.unitId]));
   const payload = previewPayload(), original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, request: { request: { config: AiConfig } }) => command === "prepare_work_plan"
-    ? Promise.resolve(aiWorkPlanFixture({ ...prepared, preview: { ...prepared.preview, config: request.request.config, items: [second, item] } },defaultPlanOptions)) : original(command, request));
+    ? Promise.resolve(aiWorkPlanFixture({ ...prepared, preview: { ...prepared.preview, config: request.request.config, items: [second, item] } },saveOnlyOptions)) : original(command, request));
   expect(registry.dispatch("ai.preview", scope, { ...payload, unitIds: [...payload.unitIds].reverse() })).toBe(false);
   await act(async () => { expect(registry.dispatch("ai.preview", scope, payload)).toBe(true); });
   await waitFor(() => expect(owner.preparedPlan?.preview?.items.map(row => row.unitId)).toEqual(payload.unitIds));

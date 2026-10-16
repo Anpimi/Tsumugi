@@ -6,6 +6,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Propose a project-local source-context strategy from a saved manual correction,
+  compare it with a direct baseline on fixed calibration and held-out entries,
+  and review independently checked results before adopting it for new AI drafts.
+  Adoption and withdrawal retain their evidence and never rewrite existing
+  drafts or in-flight work. Model execution and data sharing still require
+  separate explicit consent.
+- Advance the current-only development project format for immutable strategy
+  candidates, evaluation evidence and captured strategy references. Earlier
+  development projects are preserved and refused without migration or reset.
+
 - Preserve completed AI automation history after pausing or withdrawing a plan.
   Background control checks no longer replace saved results or settled failure
   diagnostics with repeated cancellation errors; pending work still stops and

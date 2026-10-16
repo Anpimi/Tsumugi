@@ -27,7 +27,10 @@ function begin() {
     key: "key", sourceText: "Original" }, null, null);
   drafts.edit("Newer B");
 }
-beforeEach(() => { invoke.mockReset(); });
+beforeEach(() => { invoke.mockReset(); invoke.mockImplementation(async (command: string) => {
+  if (command === "read_context_strategy_default") return null;
+  throw new Error(command);
+}); });
 afterEach(cleanup);
 
 it("keeps the original owners for copying while retired handlers cannot edit or dispatch", async () => {
@@ -40,12 +43,16 @@ it("keeps the original owners for copying while retired handlers cannot edit or 
   expect(screen.getByLabelText("Local translation")).toHaveTextContent("Newer B");
   expect(drafts.current()).toBe(originalDraft); expect(review.current()).toBe(originalReview); expect(ai.current()).toBe(originalAi);
   expect(drafts.reserveMutation()).toBeNull();
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_context_strategy_default"]);
 });
 
 it("ends the original continuation before identity acknowledgement without unmounting its draft", async () => {
   let finish!: (identity: string) => void;
-  invoke.mockImplementation(() => new Promise<string>(resolve => { finish = resolve; }));
+  invoke.mockImplementation((command: string) => {
+    if (command === "read_context_strategy_default") return Promise.resolve(null);
+    if (command === "create_execution_identity") return new Promise<string>(resolve => { finish = resolve; });
+    throw new Error(command);
+  });
   render(<ApplicationReadProvider><ProjectSessionOwners project={project} bridge={false}><Probe /></ProjectSessionOwners></ApplicationReadProvider>);
   act(begin);
   let pending!: ReturnType<typeof drafts.save>; act(() => { pending = drafts.save(); });
@@ -54,5 +61,5 @@ it("ends the original continuation before identity acknowledgement without unmou
   await act(async () => { finish(fixtureIdentity(980)); expect((await pending).saved).toBe(false); });
   expect(screen.getByLabelText("Local translation")).toHaveTextContent("Latest input C");
   expect(drafts.current()?.text).toBe("Latest input C");
-  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["create_execution_identity"]);
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_context_strategy_default", "create_execution_identity"]);
 });

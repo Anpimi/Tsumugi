@@ -515,6 +515,49 @@ struct ArenaResponses {
     selection: tsumugi_core::TranslationSelection,
 }
 
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct StrategyRequests {
+    capture: execution::strategy::CaptureRequest,
+    candidate: execution::strategy::CandidateRequest,
+    locale: execution::strategy::LocaleRequest,
+    page: execution::strategy::PageRequest,
+    suite: execution::strategy::SuiteCaptureRequest,
+    prepare: execution::strategy::EvaluationPrepareRequest,
+    read: execution::strategy::EvaluationRequest,
+    read_start: execution::strategy::EvaluationRequest,
+    start: execution::strategy::EvaluationStartRequest,
+    judgment: execution::strategy::JudgmentRequest,
+    promote: execution::strategy::PromoteRequest,
+    withdraw: execution::strategy::WithdrawRequest,
+    action: execution::strategy::ActionRequest,
+    save_candidate: execution::strategy::SaveCandidateRequest,
+    prepare_check: execution::review::plugin::StrategyCheckCommand,
+    run_check: execution::review::plugin::StrategyCheckStartRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct StrategyResponses {
+    candidate: tsumugi_core::ContextStrategyCandidate,
+    candidates: tsumugi_core::ContextStrategyCandidatePage,
+    suite: execution::strategy::StrategySuiteView,
+    prepared: execution::strategy::Prepared,
+    evaluation: execution::strategy::StrategyEvaluationView,
+    evaluations: tsumugi_core::StrategyEvaluationPage,
+    judgment: tsumugi_core::StrategyJudgment,
+    r#default: Option<tsumugi_core::ContextStrategyDefaultRevision>,
+    defaults: tsumugi_core::ContextStrategyDefaultPage,
+    action: Option<execution::strategy::StrategyActionReceiptView>,
+    check_preparation: execution::review::plugin::StrategyCheckPreparation,
+    check: tsumugi_core::StrategyCheckReceipt,
+    identity: tsumugi_core::execution::ExecutionId,
+    start_receipt: Option<tsumugi_core::execution::ExecutionId>,
+    adoption: tsumugi_core::execution::AdoptionReceipt,
+    error: CommandError,
+}
+
 fn bound_integer(schema: &mut Schema) {
     // Schemars marks Rust's integer format but does not emit its upper bound.
     // Apply the primitive bound to scalar and tuple items without copying DTOs.
@@ -609,7 +652,8 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
             "review": schemas::<ReviewRequests, ReviewResponses>(),
             "release": schemas::<ReleaseRequests, ReleaseResponses>(),
             "ai": schemas::<AiRequests, AiResponses>(),
-            "arena": schemas::<ArenaRequests, ArenaResponses>()
+            "arena": schemas::<ArenaRequests, ArenaResponses>(),
+            "strategy": schemas::<StrategyRequests, StrategyResponses>()
         }))? + "\n",
     )?;
     Ok(())

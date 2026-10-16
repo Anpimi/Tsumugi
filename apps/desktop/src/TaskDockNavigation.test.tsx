@@ -96,6 +96,7 @@ beforeEach(async () => {
   first = detail(1710, "Task A entry", true); second = detail(1720, "Task B entry", false); failAdoption = false;
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, payload?: { request: Record<string, unknown> }) => {
+    if (command === "read_context_strategy_default") return null;
     const request = payload?.request ?? {};
     const selected = [first, second].find(value => value.attemptId === request.attemptId || value.taskId === request.taskId);
     if (command === "read_project_changes") return { projectId: project.metadata.projectId, sessionToken: project.sessionToken,

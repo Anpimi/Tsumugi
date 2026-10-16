@@ -100,6 +100,7 @@ beforeEach(async () => {
     expiresAt: "9007199254740994", toolInvocations: null };
   failures = []; failRead = false; holdRead = null; holdWrite = null; serial = 1810;
   invoke.mockReset().mockImplementation(async (command: string, { request }: { request: Record<string, unknown> }) => {
+    if (command === "read_context_strategy_default") return null;
     let result: unknown;
     if (command === "read_project_changes") result = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, epoch: fixtureIdentity(1800), sequence: "0", progressSequence: "0", scopes: [], runtime: { active: false, quiescing: false, queryCount: 0, error: null } };
     else if (command === "read_execution_task_activity") result = { total: "0", active: "0", attention: "0", saved: "0", rows: [] };

@@ -51,6 +51,7 @@ impl ProjectStore {
         }
         for config in &configs {
             config.validate()?;
+            super::resources::strategy::verify_config(self, config, locale)?;
             if units.is_empty()
                 || units.len() > config.max_items as usize
                 || units

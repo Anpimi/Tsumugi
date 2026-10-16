@@ -62,6 +62,13 @@ pub struct AiConfig {
     /// provenance and the original defaults; it never resolves mutable settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_profile: Option<crate::model_connections::ModelConnectionReference>,
+    /// Immutable project provenance, independent of current defaults or consent.
+    #[serde(deserialize_with = "required_context_strategy")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "context_strategy_schema")
+    )]
+    pub context_strategy: Option<crate::ContextStrategyReference>,
     pub endpoint: String,
     pub model: String,
     pub credential_env: String,
@@ -80,6 +87,7 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             connection_profile: None,
+            context_strategy: None,
             endpoint: String::new(),
             model: String::new(),
             credential_env: "OPENAI_API_KEY".into(),
@@ -95,6 +103,15 @@ impl Default for AiConfig {
             source_context: crate::SourceContextSelection::default(),
         }
     }
+}
+fn required_context_strategy<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::ContextStrategyReference>, D::Error> {
+    Option::deserialize(deserializer)
+}
+#[cfg(feature = "wire-schema")]
+fn context_strategy_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    <Option<crate::ContextStrategyReference> as schemars::JsonSchema>::json_schema(generator)
 }
 impl AiConfig {
     pub fn validate(&self) -> Result<(), ExecutionError> {
@@ -163,6 +180,7 @@ pub struct SharedTerm {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AiItem {
     pub unit_id: ExecutionId,
     pub source_revision_id: ExecutionId,
@@ -193,6 +211,7 @@ fn required_agent_binding<'de, D: serde::Deserializer<'de>>(
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AiPreview {
     pub config: AiConfig,
     pub recipe: String,

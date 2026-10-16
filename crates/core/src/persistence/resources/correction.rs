@@ -140,7 +140,7 @@ fn historic_source(
     .ok_or_else(|| failure(ErrorCode::DependencyConflict, "correction-source"))
 }
 
-fn evidence_in(
+pub(super) fn evidence_in(
     c: &Connection,
     project: ExecutionId,
     unit: ExecutionId,

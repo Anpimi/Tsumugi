@@ -73,6 +73,7 @@ beforeEach(async()=>{
   snapshot={target:target(),translations:{unitId:target().unitId,locale:"zh-CN",current:null,currentText:null,total:"0",rows:[],nextOrdinal:null},
     terms:{unitId:target().unitId,locale:"zh-CN",sourceRevisionId:target().sourceRevisionId,entries:[]},context:saved,readVersion:version};
   invoke.mockReset().mockImplementation((command:string,{request}:{request:Record<string,unknown>})=>wireReply(command,async()=>{
+    if (command === "read_context_strategy_default") return null;
     if(command==="read_project_changes")return{projectId:project.metadata.projectId,sessionToken:project.sessionToken,epoch:fixtureIdentity(620),sequence:changedResources||changedSource?"1":"0",progressSequence:"0",scopes:[...(changedResources?["resources"]:[]),...(changedSource?["source"]:[])],runtime:{active:false,quiescing:false,queryCount:0,error:null}};
     if(command==="read_content_scope")return{revision:"1",currentSnapshot:snapshot.target.sourceSnapshotId};
     if(command==="read_execution_task_activity")return{total:"0",active:"0",attention:"0",saved:"0",rows:[]};

@@ -66,6 +66,7 @@ beforeEach(async()=>{
  await i18n.changeLanguage("en-US");currentReads=null;authority=null;actions=new Map();identity=510;startedGeneration="1";
  prepared={attemptId:aiAttempt,preview:{config:{...defaultAiConfig,endpoint:"http://127.0.0.1:4000/v1/chat/completions",model:"test-model",credentialEnv:""},recipe:"direct-translation-1",digest:aiFixture.responses.prepared.preview.digest,items:[item]}};
  invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
+  if(command==="read_context_strategy_default")return null;
   const request=args.request;
   if(command==="read_plugin_text_reviews")return{settingsRevision:"1",entries:[]};
   if(command==="read_content_scope")return{revision:"2",currentSnapshot:fixtureIdentity(300)};

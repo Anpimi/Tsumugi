@@ -101,6 +101,14 @@ macro_rules! handlers {
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
         arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
         arena::reveal_arena_identity,arena::save_arena_merge,
+        strategy::capture_context_strategy,strategy::read_context_strategy,strategy::list_context_strategies,
+        strategy::capture_strategy_suite,strategy::prepare_strategy_evaluation,strategy::start_strategy_evaluation,
+        strategy::read_strategy_evaluation,strategy::list_strategy_evaluations,
+        strategy::read_strategy_evaluation_start,
+        strategy::save_strategy_evaluation_candidate,
+        strategy::record_strategy_judgment,strategy::promote_context_strategy,strategy::withdraw_context_strategy,
+        strategy::read_context_strategy_default,strategy::list_context_strategy_defaults,strategy::read_strategy_action,
+        review::plugin::prepare_strategy_evaluation_checks,review::plugin::run_strategy_evaluation_checks,
         work_plans::read_maintenance_assessment,work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,
         work_plans::generation::prepare_work_plan_generation_component,
         work_plans::generation::start_work_plan_generation_component,
@@ -225,6 +233,7 @@ pub(super) struct ExecutionHost {
     ai: ai::AiSession,
     review: review::ReviewSession,
     arena: arena::ArenaSession,
+    strategy: strategy::StrategySession,
     work_plans: work_plans::WorkPlanSession,
     tools: tools::ToolSession,
     mcp_runner: Arc<mcp_retrieval::McpRunner>,
@@ -261,6 +270,7 @@ impl ExecutionHost {
             ai: ai::AiSession::default(),
             review: review::ReviewSession::default(),
             arena: arena::ArenaSession::default(),
+            strategy: strategy::StrategySession::default(),
             work_plans: work_plans::WorkPlanSession::default(),
             tools: tools::ToolSession::default(),
             mcp_runner: Arc::default(),
@@ -531,6 +541,7 @@ impl ExecutionHost {
         self.source.stop();
         self.tools.stop();
         self.review.stop();
+        self.strategy.stop();
         self.ai.stop();
         self.work_plans.stop();
         self.release.stop();
@@ -776,6 +787,7 @@ pub(super) mod review;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 pub(super) mod source;
+pub(super) mod strategy;
 pub(super) mod tools;
 pub(super) mod work_plans;
 request!(

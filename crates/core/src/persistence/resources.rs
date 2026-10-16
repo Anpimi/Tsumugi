@@ -15,19 +15,25 @@ const MAX_FIELD_BYTES: usize = 16 * 1024;
 mod context_facts;
 mod correction;
 pub(crate) mod mcp;
+pub(crate) mod strategy;
 pub use correction::{
     CaptureCorrectionTerm, CorrectionTermBasis, CorrectionTermEvidence, CorrectionTermPreview,
     CorrectionTermReceipt, GlossaryCaptureOrigin, RevisionSelectionRef,
 };
 pub use mcp::McpTermQueryAdoptionHandler;
 mod exchange_xml;
+pub(super) use context_facts::current_in as current_fact_decisions_in;
 pub use context_facts::{
     ContextFactDecision, ContextFactDisposition, ContextFactHistory, ContextFactPosition,
     ContextFactWrite, ManualContextFact, ProjectFactCapture, SourceFactBasis,
 };
-pub(super) use context_facts::{
-    current_in as current_fact_decisions_in, verify_input_records as verify_input_fact_decisions,
-};
+pub(super) fn verify_input_fact_decisions(
+    c: &Connection,
+    input: &crate::execution::FixedInput,
+) -> Result<(), ExecutionError> {
+    context_facts::verify_input_records(c, input)?;
+    strategy::verify_input_binding(c, input)
+}
 mod source_context;
 mod source_context_page;
 mod source_context_selection;
@@ -656,7 +662,10 @@ const TABLES: &[(&str, &str)] = &[
 ];
 
 pub(super) fn table_names() -> impl Iterator<Item = String> {
-    TABLES.iter().map(|(name, _)| (*name).to_owned())
+    TABLES
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .chain(strategy::table_names())
 }
 
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
@@ -664,11 +673,13 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(sql)?;
     }
     context_facts::initialize(connection)?;
+    strategy::initialize(connection)?;
     Ok(())
 }
 
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     context_facts::validate(connection)?;
+    strategy::validate(connection)?;
     for (name, _) in TABLES {
         let columns: i64 = connection.query_row(
             "SELECT COUNT(*) FROM pragma_table_info(?1)",

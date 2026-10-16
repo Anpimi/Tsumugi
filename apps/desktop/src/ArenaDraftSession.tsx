@@ -209,7 +209,7 @@ function useArenaOwner(project: ProjectView) {
     version.current++;
     update(value => ({ ...value,[key]:fixed(next),dirty:true,editSeq:value.editSeq+1,failure:null,notice:null,
       ...(["config","locale","selected"].includes(key) ? {prepared:null,consent:false,staleReason:null} : {}),
-      ...(key === "locale" ? {unit:"",references:[],comparisonId:null} : {}) }));
+      ...(key === "locale" ? {unit:"",references:[],comparisonId:null,...(next!==before.locale?{config:fixed({...value.config,variants:value.config.variants.map(variant=>({...variant,contextStrategy:null}))})}:{})} : {}) }));
   }
   function canPreview() {
     const before = current();

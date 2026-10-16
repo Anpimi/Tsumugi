@@ -88,6 +88,7 @@ beforeEach(async () => {
   prepared = value; prepared.attemptId = aiAttempt; items = prepared.preview.items;
   let identity = 910;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: PrepareRequest & { config: AiConfig; unitIds: string[] } }) => {
+    if (command === "read_context_strategy_default") return null;
     if (command === "preview_ai_translation") {
       prepared = { attemptId: aiAttempt, preview: { ...prepared.preview, config: payload.request.config,
         items: payload.request.unitIds.map(id => items.find(item => item.unitId === id)!) } };
@@ -115,7 +116,7 @@ it("recommends adopted resources only for new drafts and explicit full resets wi
   expect(owner.config.sourceContext).toEqual({ extracted: false, inferred: false, neighbors: false, maxBytes: 16384, maxItems: 128 });
   expect(defaultAiConfig.shareTerms).toBe(false); expect(defaultAiConfig.shareContext).toBe(false);
   expect(owner.consent).toBe(false); expect(owner.dirty).toBe(false);
-  expect(owner.canStart()).toBe(false); expect(invoke).not.toHaveBeenCalled();
+  expect(owner.canStart()).toBe(false); expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_context_strategy_default"]);
 
   // Loading an explicit configuration keeps its original sharing choices.
   prepared.preview.config = { ...prepared.preview.config, shareTerms: false, shareContext: false };
@@ -138,7 +139,7 @@ it("recommends adopted resources only for new drafts and explicit full resets wi
   expect(owner.selected).toEqual([]); expect(owner.consent).toBe(false); expect(owner.dirty).toBe(false);
   expect(captured.preview.config).toEqual(capturedConfig);
   expect(defaultAiConfig.shareTerms).toBe(false); expect(defaultAiConfig.shareContext).toBe(false);
-  expect(invoke.mock.calls).toHaveLength(count);
+  expect(invoke.mock.calls.slice(count).map(([command]) => command)).toEqual(["read_context_strategy_default"]);
 });
 
 it("recommends checks only in a new draft and preserves an explicit manual choice through consumer remount and newer input", () => {
@@ -147,7 +148,7 @@ it("recommends checks only in a new draft and preserves an explicit manual choic
   expect(owner.options.stages.filter(choice => choice.stage === "generation" || choice.stage === "checks")
     .every(choice => choice.mode === "assisted")).toBe(true);
   expect(owner.consent).toBe(false);
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_context_strategy_default"]);
   act(() => {
     owner.setOptions(before => ({ ...before, stages: before.stages.map(choice => choice.stage === "checks" ? { ...choice, mode: "manual" } : choice) }));
     owner.setConfig(before => ({ ...before, model: "manual-checks-newer-B" }));
@@ -159,7 +160,7 @@ it("recommends checks only in a new draft and preserves an explicit manual choic
   expect(owner.config.model).toBe("manual-checks-newer-B");
   expect(owner.dirty).toBe(true);
   expect(owner.consent).toBe(false);
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_context_strategy_default"]);
 });
 
 it("transfers exact fixed content members without execution, preserving configuration and invalidating the old preview and consent", async () => {
@@ -205,7 +206,7 @@ it("refuses foreign sessions, obsolete AI edits, duplicate or excluded foreign m
     act(() => { expect(owner.receiveContentSelection(value, sequence)).toBe(false); });
     expect(owner.current()).toBe(before);
   }
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_context_strategy_default"]);
 });
 
 it("keeps the original pending generation request when content transfer arrives during its reservation", async () => {

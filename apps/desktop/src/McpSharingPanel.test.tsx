@@ -57,6 +57,7 @@ beforeEach(async () => {
     return { identity: request.identity, actionId: request.actionId, admissionClosed: true, callbacksDrained: true };
   });
   invoke.mockReset().mockImplementation(async (command: string) => {
+    if (command === "read_context_strategy_default") return null;
     if (command === "read_project_changes") return { projectId: mcpProject.metadata.projectId, sessionToken: mcpProject.sessionToken,
       epoch: id(9290), sequence: "0", progressSequence: "0", scopes: [], runtime: execution.status };
     if (command === "read_content_scope") return { revision: "0", currentSnapshot: null };

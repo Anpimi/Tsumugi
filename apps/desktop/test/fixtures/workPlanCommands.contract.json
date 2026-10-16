@@ -26,7 +26,8 @@
           "neighbors": false,
           "maxBytes": 16384,
           "maxItems": 128
-        }
+        },
+        "contextStrategy": null
       },
       "options": {
         "stages": [
@@ -198,7 +199,8 @@
             "neighbors": false,
             "maxBytes": 16384,
             "maxItems": 128
-          }
+          },
+          "contextStrategy": null
         },
         "recipe": "direct-translation-1"
       },
@@ -317,7 +319,8 @@
               "neighbors": false,
               "maxBytes": 16384,
               "maxItems": 128
-            }
+            },
+            "contextStrategy": null
           },
           "recipe": "direct-translation-1"
         },

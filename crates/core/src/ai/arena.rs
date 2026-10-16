@@ -49,6 +49,7 @@ impl ArenaConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ArenaItem {
     pub slot: usize,
     pub source_order: usize,
@@ -57,6 +58,7 @@ pub struct ArenaItem {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ArenaPreview {
     pub config: ArenaConfig,
     pub items: Vec<ArenaItem>,
@@ -69,6 +71,13 @@ pub struct ArenaSettings {
     pub recipe: String,
     pub preview_digest: String,
     pub display_order: Vec<usize>,
+    #[serde(deserialize_with = "required_strategy_evaluation")]
+    pub strategy_evaluation: Option<crate::StrategyEvaluationBinding>,
+}
+fn required_strategy_evaluation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::StrategyEvaluationBinding>, D::Error> {
+    Option::deserialize(deserializer)
 }
 pub fn digest(config: &ArenaConfig, items: &[ArenaItem]) -> Result<String, ExecutionError> {
     Ok(codec::digest(&codec::encode(
@@ -114,6 +123,7 @@ impl ArenaPreview {
             recipe: RECIPE.into(),
             preview_digest: self.digest.clone(),
             display_order: shuffled_order(self.config.variants.len(), self.config.blind),
+            strategy_evaluation: None,
         })
         .map_err(|_| error(ErrorCode::InvalidInput, "arena-input"))?;
         e.limits.timeout_ms = self
@@ -171,6 +181,17 @@ pub fn settings(input: &FixedInput) -> Result<ArenaSettings, ExecutionError> {
     }
     let count = e.items.len() / slots;
     s.config.validate(count)?;
+    if s.strategy_evaluation.as_ref().is_some_and(|binding| {
+        binding.project_id != e.project_id
+            || binding.suite_digest.len() != 64
+            || slots != 2
+            || s.config.parent_attempt_id.is_some()
+    }) {
+        return Err(error(
+            ErrorCode::InvalidInput,
+            "strategy-evaluation-binding",
+        ));
+    }
     if s.display_order.len() != slots
         || s.display_order.iter().copied().collect::<BTreeSet<_>>() != (0..slots).collect()
     {

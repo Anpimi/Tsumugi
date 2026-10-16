@@ -1,4 +1,6 @@
 import { ProjectFactPreview, SourceContextChoice, SourceContextPreview } from "./SourceContextPreparation";
+import { StrategyWorkbench } from "./StrategyWorkbench";
+import { useOptionalStrategyDraftSession } from "./StrategyDraftSession";
 import { useSessionInfiniteQuery, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
 import { commandFailure, failureReason, CommandFailureDetails } from "./CommandFailure";
@@ -27,6 +29,7 @@ const letter = (i: number) => String.fromCharCode(65 + i);
 export interface ArenaHandle extends AttemptWorkbenchHandle { allowNavigate: () => Promise<boolean> }
 export function ArenaWorkbench({project,disabled,ref,onOpenTranslation,onOpenConnections,onReturn}:{project:ProjectView;disabled:boolean;ref?:Ref<ArenaHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>boolean | Promise<boolean>;onOpenConnections?:()=>void;onReturn?:()=>void}) {
  const {t}=useTranslation(),context=executionContext(project),tasks=useExecutionTaskSession(),owner=useArenaDraftSession(),reads=useSessionReads(),registry=useWorkbenchCommands();
+ const strategy=useOptionalStrategyDraftSession();
  const [open,setOpen]=useWorkbenchView("arena"),[after,setAfter]=useWorkbenchState("arena", "after", 0),[leaving,setLeaving]=useState(false);
  const [comparisonEntry] = useWorkbenchState<(EditorTarget & {locale:string;revisionId:string;revisionOrdinal:string}) | null>("arena", "comparisonEntry", null);
  const comparisonHeading = useRef<HTMLHeadingElement>(null);
@@ -65,9 +68,9 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation,onOpenCon
  const displayedFailure=failureReason(displayedFailureValue);
  useEffect(()=>{if(displayedFailure)errorRef.current?.focus();},[displayedFailure]);
  useEffect(()=>()=>leaveResolve.current?.(false),[]);
- function allowLeave(current:()=>boolean=()=>true):Promise<boolean>{leaveProof.current=current;if(cancelUnresolved){setOpen(true);return Promise.resolve(false);}if(owner.reserved()){setOpen(true);owner.reportFailure("outcome-unknown");return Promise.resolve(false);}if(!owner.current().dirty&&!owner.current().draft)return Promise.resolve(true);setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});}
+ function allowLeave(current:()=>boolean=()=>true):Promise<boolean>{leaveProof.current=current;if(cancelUnresolved){setOpen(true);return Promise.resolve(false);}if(owner.reserved()||strategy?.reserved()){setOpen(true);owner.reportFailure("outcome-unknown");return Promise.resolve(false);}if(!owner.current().dirty&&!owner.current().draft&&!strategy?.dirty())return Promise.resolve(true);setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});}
  function allowNavigate():Promise<boolean>{if(owner.reserved()||cancelUnresolved){setOpen(true);return Promise.resolve(false);}return Promise.resolve(true);}
- function settleLeave(value:boolean){if(value&&leaveProof.current&&!leaveProof.current())value=false;setLeaving(false);if(value&&!owner.reset())value=false;leaveResolve.current?.(value);leaveResolve.current=null;leaveProof.current=null;}
+ function settleLeave(value:boolean){if(value&&leaveProof.current&&!leaveProof.current())value=false;setLeaving(false);if(value&&strategy&&!strategy.reset())value=false;if(value&&!owner.reset())value=false;leaveResolve.current?.(value);leaveResolve.current=null;leaveProof.current=null;}
  useImperativeHandle(ref,()=>({allowLeave,allowNavigate,showAttempt(id){setOpen(true);if(!owner.showAttempt(id))owner.reportFailure("arena-draft");}}));
  function changed(next:ArenaConfig){owner.setConfig(next);}
  function variant<K extends keyof AiConfig>(slot:number,key:K,value:AiConfig[K]){changed({...config,variants:config.variants.map((v,i)=>i===slot?{...v,[key]:value}:v)});}
@@ -252,6 +255,7 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation,onOpenCon
  const fields=[['endpoint','url'],['model','text'],['credentialEnv','text']] as const,numeric=[['maxOutputTokens',1,16384],['maxRetries',0,2],['timeoutSeconds',1,120]] as const;
  return <><WorkbenchPanel open={open} title={t("arena.title")} description={t("arena.description")} className="arena-dialog" onBack={()=>void allowLeave().then(ok=>{if(ok)setOpen(false);})} backDisabled={disabled || busy || !!pending || cancelUnresolved}>
  {onReturn ? <button className="secondary-button" disabled={busy || !!pending || !!draft || cancelUnresolved} onClick={onReturn}>{t("arena.returnToEntry")}</button> : null}
+ <StrategyWorkbench project={project} active={open} disabled={disabled || owner.reserved()} config={config.variants[0]} onOpenConnections={onOpenConnections}/>
  <TaskCancellationFeedback origin="arena" taskId={view?.detail.taskId} disabled={busy} visible={open} retryCommand={{available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,dispatch:intent=>{registry.dispatch("arena.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
  {open&&(scopeRead.isFetching||pageRead.isFetching||listRead.isFetching||historyRead.isFetching||comparisonRead.isFetching||viewRead.isFetching)?<p role="status">{t("ai.readLoading")}</p>:null}
  {displayedFailure?<div role="alert" tabIndex={-1} ref={errorRef}><p>{t(`arena.errors.${displayedFailure}`,{defaultValue:t(`ai.errors.${displayedFailure}`,{defaultValue:t("arena.errors.failed")})})}</p><CommandFailureDetails failure={displayedFailureValue} /><button disabled={busy||!!pending} onClick={()=>void refreshReads()}>{t("ai.refresh")}</button></div>:null}

@@ -22,6 +22,17 @@
             ],
             "description": "Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."
           },
+          "contextStrategy": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextStrategyReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable project provenance, independent of current defaults or consent."
+          },
           "credentialEnv": {
             "type": "string"
           },
@@ -75,6 +86,7 @@
           }
         },
         "required": [
+          "contextStrategy",
           "endpoint",
           "model",
           "credentialEnv",
@@ -197,6 +209,26 @@
           "sessionToken",
           "projectId",
           "comparisonId"
+        ],
+        "type": "object"
+      },
+      "ContextStrategyReference": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "revisionId",
+          "candidateId"
         ],
         "type": "object"
       },
@@ -528,6 +560,17 @@
             ],
             "description": "Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."
           },
+          "contextStrategy": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextStrategyReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable project provenance, independent of current defaults or consent."
+          },
           "credentialEnv": {
             "type": "string"
           },
@@ -581,6 +624,7 @@
           }
         },
         "required": [
+          "contextStrategy",
           "endpoint",
           "model",
           "credentialEnv",
@@ -1232,6 +1276,26 @@
           "text",
           "reason",
           "previousRevisionId"
+        ],
+        "type": "object"
+      },
+      "ContextStrategyReference": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "revisionId",
+          "candidateId"
         ],
         "type": "object"
       },

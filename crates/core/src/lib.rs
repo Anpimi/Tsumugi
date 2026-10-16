@@ -11,6 +11,15 @@ pub mod execution;
 pub use execution::{AttemptDetail, ItemView};
 pub use persistence::McpTermQueryAdoptionHandler;
 pub use persistence::validate_mcp_term_query_result;
+pub use persistence::{
+    CaptureContextStrategy, CaptureStrategyEvaluation, CaptureStrategySuite,
+    ContextStrategyCandidate, ContextStrategyCandidatePage, ContextStrategyDefaultPage,
+    ContextStrategyDefaultRevision, ContextStrategyReference, PromoteContextStrategy,
+    StrategyActionReceipt, StrategyCheckReceipt, StrategyCheckRequest, StrategyEvaluation,
+    StrategyEvaluationBinding, StrategyEvaluationPage, StrategyEvaluationSlot,
+    StrategyEvaluationView, StrategyJudgment, StrategyJudgmentRequest, StrategyPreference,
+    StrategySuite, StrategySuiteUnit, WithdrawContextStrategy,
+};
 mod persistence;
 mod project;
 mod review;

@@ -68,6 +68,7 @@ async function selectAll() {
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); invoke.mockReset(); transferred.mockClear(); holdCapture = undefined;
   invoke.mockImplementation(async (command: string, payload?: { request: Record<string, unknown> }) => {
+    if (command === "read_context_strategy_default") return null;
     const request = payload?.request ?? {};
     if (command === "read_project_changes") return { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
       epoch: fixtureIdentity(901), sequence: "0", progressSequence: "0", scopes: [], runtime: { active: false, quiescing: false, queryCount: 0, error: null } };

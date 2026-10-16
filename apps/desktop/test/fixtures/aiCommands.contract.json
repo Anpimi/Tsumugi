@@ -38,7 +38,8 @@
           "neighbors": false,
           "maxBytes": 16384,
           "maxItems": 128
-        }
+        },
+        "contextStrategy": null
       }
     },
     "effectRetry": {
@@ -121,7 +122,8 @@
             "neighbors": false,
             "maxBytes": 16384,
             "maxItems": 128
-          }
+          },
+          "contextStrategy": null
         },
         "recipe": "direct-translation-1"
       }
@@ -271,7 +273,8 @@
           "neighbors": false,
           "maxBytes": 16384,
           "maxItems": 128
-        }
+        },
+        "contextStrategy": null
       },
       "recipe": "direct-translation-1",
       "budget": null,
@@ -309,7 +312,8 @@
           "neighbors": false,
           "maxBytes": 16384,
           "maxItems": 128
-        }
+        },
+        "contextStrategy": null
       },
       "detail": {
         "attemptId": "74e32f43-5b49-4fd8-baa7-f2d51f3161be",

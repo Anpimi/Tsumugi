@@ -67,6 +67,7 @@ beforeEach(async () => {
   view.rows[0].savedRevisionId = revision.revisionId;
   history = { unitId: item.unitId, locale: "zh-CN", current: null, currentText: null, total: "1", rows: [revision], nextOrdinal: null };
   invoke.mockReset(); invoke.mockImplementation(async (command: string, { request }: { request: Record<string, unknown> }) => {
+    if (command === "read_context_strategy_default") return null;
     if (command === "read_project_changes") return { sessionToken: project.sessionToken, projectId: project.metadata.projectId,
       epoch: fixtureIdentity(1000), sequence: "0", progressSequence: "0", scopes: [], runtime: execution.status };
     if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(editor().target)]);

@@ -1,4 +1,6 @@
+import { strategyEn } from "./strategy";
 export const enUS = {
+strategy: strategyEn,
 mcpRetrieval: {
   mode: "Query provider type", local: "Installed plugin", external: "External MCP service", title: "External terminology retrieval",
   help: "Use one external service to retrieve terminology for one saved entry and target language. Results are untrusted reference material. Nothing is adopted or sent to a model automatically.",

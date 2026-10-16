@@ -122,6 +122,13 @@ struct JointReviewFixture<'a> {
 }
 
 fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
+    with_joint_review_fixture_units(1, assertions);
+}
+
+fn with_joint_review_fixture_units(
+    unit_count: usize,
+    assertions: impl FnOnce(JointReviewFixture<'_>),
+) {
     review_phase("setup: independent packages and runtime");
     let temporary = OwnedDirectory(tempfile::tempdir().unwrap());
     let root = temporary.0.path();
@@ -216,7 +223,14 @@ fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
         environment: source.runtime.environment(),
     };
     let source_text = "👩🏽‍💻 é sound premises";
-    let raw_source = format!("WEBVTT\n\nCue\n00:01.000 --> 00:02.000\n{source_text}\n\n");
+    let mut raw_source = format!("WEBVTT\n\nCue\n00:01.000 --> 00:02.000\n{source_text}\n\n");
+    for index in 1..unit_count {
+        raw_source.push_str(&format!(
+            "Cue{index}\n00:{:02}.000 --> 00:{:02}.000\nSynthetic independent sample {index}\n\n",
+            index * 3,
+            index * 3 + 1
+        ));
+    }
     // Source setup uses the ordinary capture/runtime APIs and an actual Node
     // extractor. The independent proof and adoption use registered IPC below.
     review_phase("setup: real source extraction");
@@ -331,7 +345,7 @@ fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
         )),
     )
     .unwrap();
-    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(page["rows"].as_array().unwrap().len(), unit_count);
     let unit = page["rows"][0]["unitId"].clone();
     let target_request = scoped(&context, json!({"unitId":unit,"locale":"zh-CN"}));
     let target = call(&window, "read_review_target", Some(target_request.clone())).unwrap();
@@ -652,16 +666,46 @@ fn with_joint_review_fixture(assertions: impl FnOnce(JointReviewFixture<'_>)) {
         "projectId":context["projectId"],"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],
         "expectedDecisionId":null,"actor":"Synthetic reviewer","kind":"approve","reason":"Checked exact selection","actionId":ExecutionId::new()
     }})))).unwrap();
-    assert_eq!(
-        call(
-            &window,
-            "read_review_eligibility",
-            Some(scoped(&context, json!({"locales":["zh-CN"]})))
-        )
-        .unwrap()["ready"],
-        true,
-        "an unadopted editorial warning must not become a mandatory blocker"
+    let eligibility = call(
+        &window,
+        "read_review_eligibility",
+        Some(scoped(&context, json!({"locales":["zh-CN"]}))),
+    )
+    .unwrap();
+    let locales = eligibility["locales"].as_array().unwrap();
+    assert_eq!(locales.len(), 1);
+    assert_eq!(locales[0]["checkedUnits"], json!(unit_count));
+    let blockers = locales[0]["blockers"].as_array().unwrap();
+    assert!(
+        blockers.iter().all(|reason| reason["unitId"] != unit),
+        "the approved first unit has no blocker from its unadopted editorial warning"
     );
+    if unit_count == 1 {
+        assert_eq!(
+            eligibility["ready"], true,
+            "an unadopted editorial warning must not become a mandatory blocker"
+        );
+    } else {
+        assert_eq!(eligibility["ready"], false);
+        assert_eq!(locales[0]["ready"], false);
+        for row in page["rows"].as_array().unwrap().iter().skip(1) {
+            let unit_blockers = blockers
+                .iter()
+                .filter(|reason| reason["unitId"] == row["unitId"])
+                .collect::<Vec<_>>();
+            assert_eq!(unit_blockers.len(), 2);
+            assert_eq!(
+                unit_blockers
+                    .iter()
+                    .map(|reason| reason["code"].as_str().unwrap())
+                    .collect::<BTreeSet<_>>(),
+                BTreeSet::from(["qa-missing-or-stale", "translation-missing"]),
+                "the remaining fixture units are still untranslated and unchecked"
+            );
+        }
+    }
+    assert_eq!(locales[0]["blockerCount"], json!((unit_count - 1) * 2));
+    assert_eq!(blockers.len(), (unit_count - 1) * 2);
     assert_eq!(
         call(
             &window,
@@ -872,3 +916,6 @@ mod currentness;
 
 #[path = "findings.rs"]
 mod findings;
+
+#[path = "strategy.rs"]
+mod strategy;

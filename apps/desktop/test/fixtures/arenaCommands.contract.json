@@ -68,7 +68,8 @@
               "neighbors": false,
               "maxBytes": 16384,
               "maxItems": 128
-            }
+            },
+            "contextStrategy": null
           },
           {
             "maxItems": 20,
@@ -89,7 +90,8 @@
               "neighbors": false,
               "maxBytes": 16384,
               "maxItems": 128
-            }
+            },
+            "contextStrategy": null
           }
         ],
         "maxRequests": 40,
@@ -219,7 +221,8 @@
                 "neighbors": false,
                 "maxBytes": 16384,
                 "maxItems": 128
-              }
+              },
+              "contextStrategy": null
             },
             {
               "maxItems": 20,
@@ -240,7 +243,8 @@
                 "neighbors": false,
                 "maxBytes": 16384,
                 "maxItems": 128
-              }
+              },
+              "contextStrategy": null
             }
           ],
           "maxRequests": 40,

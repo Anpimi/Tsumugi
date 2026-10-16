@@ -51,6 +51,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); status = structuredClone(workPlanToolStatus);
   invoke.mockReset(); invoke.mockImplementation(async (command, args) => {
+    if (command === "read_context_strategy_default") return null;
     if (command === "open_work_plan_agent_scope") return { ...structuredClone(agent.responses.scope), lease: args.request.lease, scope: structuredClone(status.plan.scope) };
     if (command === "read_work_plan_agent_guidance") return directory();
     if (command === "read_work_plan_agent_skill") return body("skill", args.request.toolHandle);
@@ -66,11 +67,11 @@ async function openDirectory() {
   await screen.findByRole("article", { name: status.plan.tools!.entries[0].binding.declaration.title }); return user;
 }
 function onlyReads() {
-  expect(invoke.mock.calls.every(([command]) => command === "open_work_plan_agent_scope" || command.startsWith("read_work_plan_agent_"))).toBe(true);
+  expect(invoke.mock.calls.every(([command]) => command === "read_context_strategy_default" || command === "open_work_plan_agent_scope" || command.startsWith("read_work_plan_agent_"))).toBe(true);
 }
 
 it("discovers captured tool guidance without prefetching and displays explicitly read hostile content as plain text", async () => {
-  render(<Harness />, project); expect(invoke).not.toHaveBeenCalled();
+  render(<Harness />, project); expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_context_strategy_default"]);
   const user = await openDirectory(), tool = status.plan.tools!.entries[0], provider = tool.binding.capability.provider;
   expect(calls("read_work_plan_agent_skill")).toHaveLength(0); expect(calls("read_work_plan_agent_resource")).toHaveLength(0);
   expect(screen.getByText(provider.packageDigest)).toBeVisible(); expect(screen.getByText(tool.resourceId)).toBeVisible();

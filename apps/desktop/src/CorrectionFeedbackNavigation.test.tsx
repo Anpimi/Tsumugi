@@ -82,6 +82,7 @@ beforeEach(async () => {
       previousEventId: basis.before.selectionId, unitId: basis.unitId, locale: basis.locale, sequence: "2", actionId: fixtureIdentity(850) },
       currentText: evidence.afterText, total: "2", rows: [savedRevision()], nextOrdinal: null } };
   invoke.mockReset().mockImplementation(async (command: string, { request }: { request: Record<string, unknown> }) => {
+    if (command === "read_context_strategy_default") return null;
     try {
       const result = await reply(command, request);
       const validate = responses[command];

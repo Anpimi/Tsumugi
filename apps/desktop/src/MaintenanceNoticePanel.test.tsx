@@ -34,6 +34,7 @@ function Harness({ active = true }: { active?: boolean }) {
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); observation = hookObservation(); assessment = hookAssessment(); snapshot = assessment.sourceSnapshotId;
   invoke.mockReset().mockImplementation(async (command: string, { request }: { request: Record<string, unknown> }) => {
+    if (command === "read_context_strategy_default") return null;
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: snapshot };
     if (command === "read_source_maintenance_hook") return structuredClone(observation);
     if (command === "read_maintenance_assessment") return { ...structuredClone(assessment), locale: request.locale, after: request.after };
@@ -51,7 +52,7 @@ async function open() {
 it("opens the saved notice without changing the AI locale or capturing a draft and explicitly captures into the original owner", async () => {
   const { user } = await open();
   expect(ai.locale).toBe("fr"); expect(ai.maintenance).toBeNull(); expect(ai.selected).toEqual([]); expect(ai.current().dirty).toBe(false);
-  expect(invoke.mock.calls.every(([command]) => ["read_content_scope", "read_source_maintenance_hook", "read_maintenance_assessment"].includes(command))).toBe(true);
+  expect(invoke.mock.calls.every(([command]) => ["read_context_strategy_default", "read_content_scope", "read_source_maintenance_hook", "read_maintenance_assessment"].includes(command))).toBe(true);
   await user.click(screen.getByRole("button", { name: i18n.t("sourceHook.createDraft") }));
   expect(ai.locale).toBe("zh-CN"); expect(ai.selected).toEqual([id(8811)]); expect(ai.maintenance?.choices.filter(choice => choice.excluded).map(choice => choice.unitId)).toEqual([id(8812), id(8813)]);
   expect(ai.preparedPlan).toBeNull(); expect(ai.consent).toBe(false);

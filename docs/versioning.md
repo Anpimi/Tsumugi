@@ -1,5 +1,20 @@
 # Application versioning and changelog maintenance
 
+Project-local context strategies add immutable candidates from saved manual
+corrections, fixed calibration/holdout experiments, independent candidate checks,
+human judgments and explicit adoption or withdrawal for future AI drafts. The
+original ProjectStore, Arena execution, Provider budgets and Review checks retain
+their respective authority. A captured strategy reference grants no execution or
+sharing permission and never resolves a changing default during accepted work.
+
+These resource facts and the required nullable AiConfig strategy reference advance
+the current-only development project format to schema 49. Earlier development
+directories, including schema 48, are preserved and refused without migration,
+conversion or reset. SDK/Process3, WorkPlan3, dependencies and SDK artifacts remain
+unchanged. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same
+undistributed batch; bilingual Unreleased entries describe the user-visible
+behavior and incompatible development format without another version bump.
+
 The public prebuilt-package compatibility entry orchestrates existing Host/Core
 conformance tests for exact WebVTT and SMAPI packages and approved runtime trees.
 It changes development tooling, tests and contributor documentation only. No

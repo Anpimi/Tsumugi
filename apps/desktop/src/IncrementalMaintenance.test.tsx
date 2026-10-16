@@ -31,6 +31,7 @@ beforeEach(async()=>{
       reviewBasis:"b".repeat(64),protection:{unitId:fixtureIdentity(900+index),locale:"zh-CN",revision:"1",protected:index===2},mappingUnresolved:index===3,
       reasons:index===4?[]:[index===3?"correspondence-unresolved":"translation-missing"],suggested:index===3?"unresolved":index===4?"keep":"repair"}))};
   invoke.mockReset().mockImplementation(async(command:string,{request}:{request:Record<string,unknown>})=>{
+    if(command==="read_context_strategy_default")return null;
     if(command==="read_content_scope")return{revision:"1",currentSnapshot:snapshot};
     if(command==="read_maintenance_assessment")return{...structuredClone(assessment),after:request.after};
     throw new Error(command);
@@ -48,7 +49,7 @@ it("captures only explicit repair choices, excludes protected and unresolved map
   await user.selectOptions(screen.getByRole("combobox",{name:i18n.t("ai.maintenance.actionFor",{name:"Entry 4"})}),"repair");
   expect(owner.selected).toEqual([fixtureIdentity(901),fixtureIdentity(904)]);expect(owner.consent).toBe(false);expect(owner.preparedPlan).toBeNull();
   expect(owner.config.model).toBe("Newer config B");expect(manual.current()?.text).toBe("Manual B");
-  expect(invoke.mock.calls.every(([command])=>["read_content_scope","read_maintenance_assessment"].includes(command))).toBe(true);
+  expect(invoke.mock.calls.every(([command])=>["read_context_strategy_default","read_content_scope","read_maintenance_assessment"].includes(command))).toBe(true);
   await user.click(screen.getByRole("button",{name:i18n.t("ai.maintenance.review")}));expect(navigate).toHaveBeenCalledWith("review");
   await user.click(screen.getByRole("button",{name:i18n.t("ai.maintenance.source")}));expect(navigate).toHaveBeenCalledWith("source");
 });

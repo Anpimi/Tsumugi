@@ -1,6 +1,8 @@
 import type { UiMessages } from "./types";
 
+import { strategyZh } from "./strategy";
 export const zhCN = {
+strategy: strategyZh,
 mcpRetrieval: {
   mode: "查询提供方类型", local: "已安装插件", external: "外部 MCP 服务", title: "外部术语检索",
   help: "通过一个外部服务，为一个已保存条目及目标语言检索术语。结果仅是不可信参考材料，不会自动采纳或发送给模型。",

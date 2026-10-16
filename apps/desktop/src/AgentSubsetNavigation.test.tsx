@@ -44,6 +44,7 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US"); vi.restoreAllMocks(); status = structuredClone(workPlanToolStatus);
   vi.spyOn(aiOwner, "useAiPreparation").mockImplementation(() => { const value = actual(); ai = value; return value; });
   invoke.mockReset().mockImplementation(async (command, { request }) => {
+    if (command === "read_context_strategy_default") return null;
     if (command === "read_project_changes") return { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
       epoch: fixtureIdentity(4000), sequence: "0", progressSequence: "0", scopes: [], runtime: execution.status };
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: status.plan.scope[0].sourceSnapshotId };
