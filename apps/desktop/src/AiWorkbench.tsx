@@ -301,7 +301,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,
       dispatch:intent=>{registry.dispatch("ai.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});},
     }} />
-    {preparation.notice?<p role="status">{t(preparation.notice==="started"?"ai.startRecorded":preparation.notice==="saved"?"ai.candidateRecorded":"ai.newerInput")}</p>:null}
+    {preparation.notice?<p role="status">{t(preparation.notice==="started"?"ai.startRecorded":preparation.notice==="saved"?"ai.candidateRecorded":preparation.notice==="maintenance"?"sourceHook.captured":"ai.newerInput")}</p>:null}
     {open&&(scopeRead.isFetching||contentRead.isFetching&&!!scopeRead.data?.currentSnapshot||viewRead.isFetching&&!!attempt||planRead.isFetching&&!!planId)?<p role="status">{t("ai.readLoading")}</p>:null}
     {failure?<div role="alert" tabIndex={-1} ref={errorRef}><p>{t(`ai.errors.${failure}`,{defaultValue:t("ai.errors.failed")})}</p><CommandFailureDetails failure={failureValue} /><button className="secondary-button" onClick={refreshReads} disabled={busy}>{t("ai.refresh")}</button></div>:null}
     {!targetAvailable&&locale?<p role="alert">{t("ai.errors.ai-locale")}</p>:null}

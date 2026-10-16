@@ -81,8 +81,8 @@ export function SourceReadFeedback({ error, fetching, retry, impact = false, mes
 }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 
-export function SourceHistoryPanel({ project, disabled, active = true, onHistoryCursor }: {
-  project: ProjectView; disabled: boolean; active?: boolean; onHistoryCursor?: (offset: number) => void;
+export function SourceHistoryPanel({ project, disabled, active = true, onHistoryCursor, onOpenNotice }: {
+  project: ProjectView; disabled: boolean; active?: boolean; onHistoryCursor?: (offset: number) => void; onOpenNotice?: (sourceActionId: string) => void;
 }) {
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const label = useSourceOccurrenceLabel();
@@ -148,6 +148,7 @@ export function SourceHistoryPanel({ project, disabled, active = true, onHistory
     <SourceReadFeedback error={historyRead.error} fetching={active && historyRead.isFetching} retry={() => historyPage(offset ?? 0)} />
     {history ? <><p>{t("source.historyCount", { count: history.total })}</p><ul>{history.snapshots.map(entry => <li key={entry.snapshotId}>
       <button className="text-button" disabled={!contentAvailability(contentPayload(entry.snapshotId, query, 0), true).enabled} onClick={() => dispatchContent(contentPayload(entry.snapshotId, query, 0))}>{t("source.snapshotLabel", { revision: String(entry.revision) })} · {t(entry.current ? "source.currentSnapshot" : "source.historicalSnapshot")}</button>
+      {onOpenNotice ? <button type="button" className="text-button" disabled={!common(true).enabled || !ready(historyOptions.key)} onClick={() => onOpenNotice(entry.actionId)}>{t("sourceHook.history")}</button> : null}
       <details><summary>{t("source.fingerprint")}</summary><code>{entry.snapshotId}</code><p>{entry.total}</p><code>{entry.resultDigest}</code>{entry.coverage.map(file => <p key={file.artifactId}>{file.logicalPath}<br /><code>{file.sha256}</code></p>)}</details>
     </li>)}</ul>{history.nextOffset !== null ? <button className="secondary-button" disabled={!common(true).enabled || !ready(historyOptions.key)} onClick={() => historyPage(history.nextOffset!)}>{t("execution.nextPage")}</button> : null}</> : null}
     {snapshotId ? <><label className="source-field">{t("source.searchHistory")}<input value={query} maxLength={256} onChange={event => setQuery(event.target.value)} /></label>

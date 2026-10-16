@@ -3137,6 +3137,8 @@ impl ProjectStore {
         mut result_ids: Vec<ExecutionId>,
         parameters: serde_json::Value,
     ) -> Result<AdoptionAction, ExecutionError> {
+        let epoch = self.changes_since(Revision::new(0)?).epoch;
+        let hook_slots = self.source_hook_deadlines.len() < 128;
         let tx = self.execution_write()?;
         if read_continuation(&tx, action_id)?.is_some() {
             return Err(error(ErrorCode::ResultMismatch, "action-identity"));
@@ -3189,7 +3191,15 @@ impl ProjectStore {
             ],
         )
         .map_err(sql_error)?;
+        let hook_deadline =
+            super::content::maintenance_hook::prepare_deadline(&tx, &action, &epoch)?;
+        if hook_deadline.is_some() && !hook_slots {
+            return Err(error(ErrorCode::LimitExceeded, "source-hook-preparations"));
+        }
         commit(tx)?;
+        if let Some(deadline) = hook_deadline {
+            self.source_hook_deadlines.insert(action_id, deadline);
+        }
         Ok(action)
     }
     pub fn adoption_receipt(
@@ -3226,6 +3236,7 @@ impl ProjectStore {
         prepared: PreparedAdoption,
     ) -> Result<AdoptionReceipt, ExecutionError> {
         let authority = self.plugin_authority.clone();
+        let store_epoch = self.changes_since(Revision::new(0)?).epoch;
         let mut tx = self.execution_write()?;
         let action = &prepared.capture.action;
         let current = capture_adoption_in(&tx, action, &authority)?;
@@ -3251,7 +3262,7 @@ impl ProjectStore {
         let mutation = prepared
             .mutation
             .ok_or_else(|| error(ErrorCode::CorruptLedger, "receipt"))?;
-        let changes = mutation(&AdoptionTransaction::new(&tx))?;
+        let changes = mutation(&AdoptionTransaction::new(&tx, &store_epoch))?;
         let receipt = AdoptionReceipt {
             project_id: action.project_id,
             attempt_id: action.attempt_id,

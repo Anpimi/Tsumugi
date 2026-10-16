@@ -1218,6 +1218,36 @@ impl ProjectStore {
         if limit == 0 || limit > 100 || offset > 2_000 {
             return Err(failure(ErrorCode::InvalidInput, "impact-page"));
         }
+        let items = self
+            .capture_resource_impacts(project_id, locale, None)?
+            .evaluate()?;
+        let total_affected = items.len() as u32;
+        Ok(ImpactPage {
+            items: items
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .collect(),
+            total_affected,
+            next_offset: (offset.saturating_add(limit) < total_affected).then_some(offset + limit),
+            coverage: "current-snapshot; explicit unit and literal possible matches".into(),
+        })
+    }
+    pub(in crate::persistence) fn capture_resource_impacts(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+        units: Option<&[ExecutionId]>,
+    ) -> Result<CapturedResourceImpacts, ExecutionError> {
+        if units
+            .is_some_and(|u| u.len() > 100 || u.iter().collect::<BTreeSet<_>>().len() != u.len())
+        {
+            return Err(failure(ErrorCode::InvalidInput, "impact-units"));
+        }
+        let wanted = units
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|_| failure(ErrorCode::InvalidInput, "impact-units"))?;
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "impact-read"))?;
@@ -1242,7 +1272,7 @@ impl ProjectStore {
                  ORDER BY rowid LIMIT 10001",
             )
             .map_err(sql)?;
-        let changes = changes_statement
+        let change_rows = changes_statement
             .query_map(params![project_id.to_string(), locale], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
@@ -1259,9 +1289,19 @@ impl ProjectStore {
                     row.get::<_, bool>(11)?,
                 ))
             })
-            .map_err(sql)?
-            .collect::<Result<Vec<_>, _>>()
             .map_err(sql)?;
+        let mut changes = Vec::new();
+        let mut captured_bytes = 0usize;
+        for row in change_rows {
+            let row = row.map_err(sql)?;
+            if units.is_some() {
+                captured_bytes = captured_bytes
+                    .checked_add(codec::encode(&row, MAX_INPUT_BYTES)?.len())
+                    .filter(|v| *v <= MAX_INPUT_BYTES)
+                    .ok_or_else(|| failure(ErrorCode::LimitExceeded, "impact-capture-bytes"))?;
+            }
+            changes.push(row);
+        }
         if changes.len() > 10_000 {
             return Err(failure(ErrorCode::LimitExceeded, "impact-history-budget"));
         }
@@ -1276,6 +1316,7 @@ impl ProjectStore {
                  JOIN translation_selections s ON s.unit_id=o.unit_id
                  LEFT JOIN translation_resource_baselines b ON b.revision_id=s.revision_id
                  WHERE u.project_id=?1 AND s.locale=?2
+                   AND (?3 IS NULL OR o.unit_id IN (SELECT value FROM json_each(?3)))
                    AND s.sequence=(SELECT MAX(x.sequence) FROM translation_selections x
                                    WHERE x.unit_id=s.unit_id AND x.locale=s.locale)
                    AND o.ordinal=(SELECT MIN(first.ordinal) FROM source_occurrences first
@@ -1284,7 +1325,7 @@ impl ProjectStore {
             )
             .map_err(sql)?;
         let selections = selected_statement
-            .query_map(params![project_id.to_string(), locale], |row| {
+            .query_map(params![project_id.to_string(), locale, wanted], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -1301,6 +1342,41 @@ impl ProjectStore {
         if selections.len() > 2_000 {
             return Err(failure(ErrorCode::LimitExceeded, "impact-unit-budget"));
         }
+        Ok(CapturedResourceImpacts {
+            locale: locale.into(),
+            changes,
+            selections,
+        })
+    }
+}
+type ImpactChange = (
+    i64,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    bool,
+);
+type ImpactSelection = (String, String, String, String, String, String, i64);
+#[derive(Clone, Debug, Serialize)]
+pub(in crate::persistence) struct CapturedResourceImpacts {
+    locale: String,
+    changes: Vec<ImpactChange>,
+    selections: Vec<ImpactSelection>,
+}
+impl CapturedResourceImpacts {
+    pub(in crate::persistence) fn evaluate(self) -> Result<Vec<ImpactItem>, ExecutionError> {
+        let Self {
+            locale,
+            changes,
+            selections,
+        } = self;
         let mut items = Vec::new();
         for (
             unit,
@@ -1367,7 +1443,7 @@ impl ProjectStore {
             if !reasons.is_empty() {
                 items.push(ImpactItem {
                     unit_id: id(unit)?,
-                    locale: locale.to_owned(),
+                    locale: locale.clone(),
                     source_revision_id: id(source_revision)?,
                     native_key,
                     source_text,
@@ -1382,21 +1458,10 @@ impl ProjectStore {
                 });
             }
         }
-        let total_affected = items.len() as u32;
-        let next_offset =
-            ((offset as usize) + (limit as usize) < items.len()).then_some(offset + limit);
-        Ok(ImpactPage {
-            items: items
-                .into_iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .collect(),
-            total_affected,
-            next_offset,
-            coverage: "current-snapshot; explicit unit and literal possible matches".into(),
-        })
+        Ok(items)
     }
-
+}
+impl ProjectStore {
     pub fn tm_suggestions(
         &self,
         project_id: ExecutionId,

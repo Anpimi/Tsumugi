@@ -35,6 +35,8 @@ import { SessionNavigation, type AiReviewOrigin, type ReviewHandoffPresentation,
 import type { ContentSelection } from "./contentSelection";
 import { resourceCommands, type CorrectionTermEvidence } from "./resourceCommands";
 import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
+import { sourceMaintenanceHookCommands } from "./sourceMaintenanceHookCommands";
+import { sourceHookKey } from "./SourceMaintenanceHook";
 
 /** The same project owners are shared by production assembly and isolated consumer tests. */
 export function ProjectSessionOwners({ project, children, bridge = true }: { project: ProjectView; children: ReactNode; bridge?: boolean }) {
@@ -135,7 +137,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
           rel.workflow?.pending, rel.workflow?.stopPending, rel.workflow?.uncertain, rel.workflow?.stopUncertain, rel.workflow?.safety, rel.workflowControlBusy]),
       row("tasks", tasks.unresolved(), false, null),
       row("source", source.hasPending(),
-        !!src.selection || Object.keys(src.lineage).length > 0 || !!src.actor.trim() || source.inFlight(), src.editSeq),
+        !!src.selection || Object.keys(src.lineage).length > 0 || !!src.actor.trim() || source.hook.hasDraft() || source.inFlight(), [src.editSeq, source.hook.revision()]),
       row("translation", sharing.blocked() || translation.candidates.blocked() || translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
         || imported.busy || imports.hasPending() || imports.hasActive(),
         translation.candidates.hasDraft() || !!manual && (manual.text !== (manual.baseText ?? "") || manual.newerDraftSaved),
@@ -184,6 +186,25 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       memory.write("tasks", "outputSelection", null); memory.write("tasks", "savedOutput", null);
       memory.write("tasks", "receiptSelection", null); memory.write("tasks", "confirmation", null);
       return true;
+    }
+    if (destination.kind === "maintenance-notice") {
+      const before = ai.current(), sourceBefore = source.current();
+      const sameOwners = () => current() && !ai.reserved() && !source.hasPending() && !source.inFlight()
+        && source.current().editSeq === destination.sourceEditSeq && source.current().editSeq === sourceBefore.editSeq
+        && ai.current().editSeq === destination.aiEditSeq && ai.current().editSeq === before.editSeq
+        && source.hook.current().sourceActionId === destination.sourceActionId;
+      if (!sameOwners()) { setFailure("source-notice-handoff-blocked"); return false; }
+      const key = reads.key(sourceHookKey(destination.sourceActionId));
+      const observation = await reads.client.fetchQuery({ queryKey: key, staleTime: 0, meta: { scopes: ["source", "execution"] },
+        queryFn: () => sourceMaintenanceHookCommands.read({ ...scope, sourceActionId: destination.sourceActionId }, source.hook.current().originalActivation) });
+      const checked = () => { const query = reads.client.getQueryState(key); return sameOwners() && query?.status === "success" && query.fetchStatus === "idle"
+        && !query.isInvalidated && query.error === null && query.data === observation && observation.state === "adopted"
+        && observation.view?.phase === "observed" && !!observation.view.outcome?.assessment
+        && committed.current.project.metadata.targetLocales.includes(observation.view.activation.locale); };
+      if (!checked()) { setFailure("source-notice-handoff-changed"); return false; }
+      return () => { if (!checked()) return false;
+        committed.current.view.memory.write("ai", "maintenanceNotice", { sourceActionId: destination.sourceActionId, sourceEditSeq: destination.sourceEditSeq, aiEditSeq: destination.aiEditSeq });
+        committed.current.view.memory.write("ai", "maintenanceOpen", true); return true; };
     }
     if (destination.kind === "ai-selection") {
       const selected = destination.selection, cached = reads.client.getQueryState<ContentScope>(reads.key(["translation-source-scope"]));
@@ -521,6 +542,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     navigation.navigate({ kind: "arena-comparison", target, locale, revisionId: revision.revisionId, revisionOrdinal: revision.ordinal, returnTo });
   const attempt = (area: "source" | "translation" | "ai" | "arena", attemptId: string) => { void navigation.navigate({ kind: "attempt", area, attemptId }); };
   const locked = disabled || navigating;
+  const sourceNoticeMessage = failureReason(failure) === "source-notice-handoff-blocked" || failureReason(failure) === "source-notice-handoff-changed" ? "sourceHook.captureBlocked" : null;
   const reviewMessage = failureReason(failure) === "review-handoff-no-selection" ? "ai.reviewHandoff.noSelection"
     : failureReason(failure) === "review-handoff-source" ? "ai.reviewHandoff.source"
     : failureReason(failure) === "review-handoff-unavailable" ? "ai.reviewHandoff.unavailable"
@@ -531,15 +553,17 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   if (retired) return <section className="workbench-panel" aria-label={t("workbench.retiredDraftTitle")}>
     <h2>{t("workbench.retiredDraftTitle")}</h2><p>{t("workbench.retiredDraftHelp")}</p>
     <label className="field"><span>{t("workbench.retiredDraftData")}</span><textarea readOnly rows={18} value={JSON.stringify({
-      translation: translation.current(), candidateDecision: translation.candidates.current(), translationImport: imports.current(), source: source.current(), resources: resources.current(),
+      translation: translation.current(), candidateDecision: translation.candidates.current(), translationImport: imports.current(), source: source.current(), sourceNotice: source.hook.current(), resources: resources.current(),
       review: review.current(), release: release.current(), ai: ai.current(), arena: arena.current(),
       tasks: { cancellation: tasks.state, adoption: tasks.currentActivity() },
     }, null, 2)} /></label>
   </section>;
-  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(reviewMessage ?? (failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : failureReason(failure)==="correction-editor-blocked" ? "correctionFeedback.blocked" : failureReason(failure)==="correction-editor-changed" ? "correctionFeedback.changed" : failureReason(failure)==="context-editor-blocked" ? "resource.contextEditorBlocked" : failureReason(failure)==="context-editor-changed" ? "resource.contextEditorChanged" : "workbench.navigationBlocked"))}</p><CommandFailureDetails failure={failure} />{reviewMessage ? <button className="secondary-button" disabled={locked} onClick={() => { void navigation.navigate({ kind: "area", area: failureReason(failure) === "review-handoff-blocked" ? "review" : "translation" }); }}>{t(failureReason(failure) === "review-handoff-blocked" ? "ai.reviewHandoff.retained" : "ai.reviewHandoff.openCurrent")}</button> : null}</div> : null}
+  return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(sourceNoticeMessage ?? reviewMessage ?? (failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : failureReason(failure)==="correction-editor-blocked" ? "correctionFeedback.blocked" : failureReason(failure)==="correction-editor-changed" ? "correctionFeedback.changed" : failureReason(failure)==="context-editor-blocked" ? "resource.contextEditorBlocked" : failureReason(failure)==="context-editor-changed" ? "resource.contextEditorChanged" : "workbench.navigationBlocked"))}</p><CommandFailureDetails failure={failure} />{reviewMessage ? <button className="secondary-button" disabled={locked} onClick={() => { void navigation.navigate({ kind: "area", area: failureReason(failure) === "review-handoff-blocked" ? "review" : "translation" }); }}>{t(failureReason(failure) === "review-handoff-blocked" ? "ai.reviewHandoff.retained" : "ai.reviewHandoff.openCurrent")}</button> : null}</div> : null}
     <McpSharingPanel />
     {view.area === "overview" && !reads.retired ? <OverviewSourceObserver project={project} onSourceState={onSourceState} /> : null}
-    {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
+    {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions}
+      onOpenMaintenance={(sourceActionId, sourceEditSeq) => navigation.navigate({ kind: "maintenance-notice", sourceActionId, sourceEditSeq, aiEditSeq: ai.current().editSeq })}
+      onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} onOpenExtensions={onOpenExtensions}
       onOpenComparison={openComparison("translation")}
       onEditContext={capture=>navigation.navigate({kind:"resource-context",capture})}

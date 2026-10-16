@@ -2,7 +2,7 @@
 mod agents;
 mod control;
 mod guidance;
-mod maintenance;
+pub(in crate::persistence) mod maintenance;
 mod selection;
 mod services;
 mod tools;

@@ -93,6 +93,7 @@ pub(super) struct SessionExecutor {
     admission: Arc<SessionAdmission>,
     changes: Arc<Mutex<Option<super::changes::ChangeSink>>>,
     mcp_shutdown: Arc<super::mcp::Shutdown>,
+    source_hook_shutdown: Arc<super::source_hooks::Shutdown>,
 }
 
 impl Drop for SessionExecutor {
@@ -102,6 +103,7 @@ impl Drop for SessionExecutor {
         // existing leases and accepted jobs retain their original completion.
         self.admission.accepting.store(false, Ordering::Release);
         self.mcp_shutdown.close();
+        self.source_hook_shutdown.close();
     }
 }
 
@@ -114,6 +116,17 @@ pub(super) struct SessionCallback {
 }
 
 impl SessionCallback {
+    pub(super) fn reserve_control(&self) -> Result<SessionLease, CommandError> {
+        self.admission
+            .upgrade()
+            .ok_or_else(|| {
+                CommandError::simple(
+                    CommandErrorCode::SessionInvalid,
+                    CommandStage::ExecutionCancel,
+                )
+            })?
+            .lease(CommandStage::ExecutionCancel)
+    }
     pub(super) fn submit<T, F>(
         &self,
         operation: &'static str,
@@ -150,6 +163,12 @@ impl Default for SessionExecutor {
 
 impl SessionExecutor {
     pub(super) fn new(plugins: Arc<super::plugins::ApplicationPlugins>) -> Self {
+        Self::with_io(plugins, BlockingExecutor::new(4))
+    }
+    pub(super) fn with_io(
+        plugins: Arc<super::plugins::ApplicationPlugins>,
+        io: BlockingExecutor,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel::<Job>();
         let admission = Arc::new(SessionAdmission {
             sender,
@@ -162,14 +181,18 @@ impl SessionExecutor {
                 admission: Arc::downgrade(&admission),
             },
             plugins,
+            io,
         };
         let changes: Arc<Mutex<Option<super::changes::ChangeSink>>> = Arc::default();
         let sink = changes.clone();
         let mcp_shutdown = Arc::new(super::mcp::Shutdown::default());
         let owner_shutdown = mcp_shutdown.clone();
+        let source_hook_shutdown = Arc::new(super::source_hooks::Shutdown::default());
+        let hook_shutdown = source_hook_shutdown.clone();
         std::thread::Builder::new().name("project-commands".into()).spawn(move || {
             let mut sessions = SessionManager {
                 mcp: super::mcp::Shares::with_shutdown(owner_shutdown),
+                source_hooks: super::source_hooks::SourceHooks::with_shutdown(hook_shutdown),
                 services: Some(services),
                 ..SessionManager::default()
             };
@@ -206,6 +229,7 @@ impl SessionExecutor {
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
+                super::source_hooks::advance(&mut sessions);
                 let callback = sink.lock().expect("change sink poisoned").clone();
                 if let Some(callback) = callback {
                     notifications.publish(&sessions, &callback);
@@ -224,6 +248,7 @@ impl SessionExecutor {
             admission,
             changes,
             mcp_shutdown,
+            source_hook_shutdown,
         }
     }
 }
@@ -231,6 +256,7 @@ impl SessionExecutor {
 impl SessionExecutor {
     pub(super) fn close_external_disclosures(&self) {
         self.mcp_shutdown.close();
+        self.source_hook_shutdown.close();
     }
     pub(super) fn set_change_sink(&self, sink: Option<super::changes::ChangeSink>) {
         *self.changes.lock().expect("change sink poisoned") = sink;

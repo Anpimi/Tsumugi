@@ -5,6 +5,8 @@ import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCom
 
 export interface AiReviewOrigin { attemptId: string; taskId: string; itemId: string; editSeq: number }
 export interface ReviewHandoffPresentation { unitId: string; locale: string; basis: string; currentBasis: string; fallbackId: string | null }
+/** A read-only destination, carrying no plan, consent or execution authority. */
+export interface MaintenanceNoticeTarget { sourceActionId: string; sourceEditSeq: number; aiEditSeq: number }
 
 export type WorkspaceDestination =
   | { kind: "area"; area: WorkspaceArea }
@@ -14,6 +16,7 @@ export type WorkspaceDestination =
   | { kind: "review-work" }
   | { kind: "review-target"; target: EditorTarget; locale: string; origin: AiReviewOrigin }
   | { kind: "ai-selection"; selection: ContentSelection; expectedEditSeq: number }
+  | ({ kind: "maintenance-notice" } & MaintenanceNoticeTarget)
   | { kind: "arena-comparison"; target: EditorTarget; locale: string; revisionId: string; revisionOrdinal: string; returnTo: "translation" | "ai" }
   | { kind: "saved-build"; attemptId: string }
   | { kind: "tool-query"; text: string }
@@ -42,7 +45,7 @@ export interface SessionNavigationPorts {
 }
 export function destinationArea(destination: WorkspaceDestination): WorkspaceArea {
   return destination.kind === "area" || destination.kind === "attempt" ? destination.area
-    : destination.kind === "translation" ? "translation" : destination.kind === "ai-selection" ? "ai" : destination.kind === "saved-build" ? "release"
+    : destination.kind === "translation" ? "translation" : destination.kind === "ai-selection" || destination.kind === "maintenance-notice" ? "ai" : destination.kind === "saved-build" ? "release"
       : destination.kind === "tool-query" || destination.kind === "resource-context" || destination.kind === "resource-correction" ? "resources" : destination.kind === "resource-context-return" || destination.kind === "resource-correction-return" ? "translation" : destination.kind === "arena-comparison" ? "arena" : destination.kind === "task" || destination.kind === "task-list" ? "tasks" : "review";
 }
 

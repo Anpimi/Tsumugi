@@ -13,6 +13,7 @@ mod dispatch;
 mod execution;
 pub(crate) mod mcp;
 mod plugins;
+mod source_hooks;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -398,9 +399,10 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         let plugins = Arc::new(plugins::ApplicationPlugins::default());
+        let io = dispatch::BlockingExecutor::new(4);
         Self {
-            sessions: dispatch::SessionExecutor::new(plugins.clone()),
-            io: dispatch::BlockingExecutor::new(4),
+            sessions: dispatch::SessionExecutor::with_io(plugins.clone(), io.clone()),
+            io,
             dialogs: dispatch::BlockingExecutor::new(1),
             review_check_cancellations: Arc::default(),
             plugins,
@@ -424,11 +426,13 @@ impl Drop for AppState {
 struct ProjectServiceContext {
     callback: dispatch::SessionCallback,
     plugins: Arc<plugins::ApplicationPlugins>,
+    io: dispatch::BlockingExecutor,
 }
 
 #[derive(Default)]
 struct SessionManager {
     mcp: mcp::Shares,
+    source_hooks: source_hooks::SourceHooks,
     services: Option<ProjectServiceContext>,
     active: Option<ActiveSession>,
     directory_recovery: Option<DirectoryRecovery>,
@@ -781,6 +785,9 @@ impl SessionManager {
 
         self.ensure_package_operation_idle(CommandStage::Rename)?;
         self.mcp.close_and_check()?;
+        if let Some(active) = &mut self.active {
+            self.source_hooks.close(&mut active.store)?;
+        }
         let active = self.active.take().ok_or_else(|| {
             CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Rename)
         })?;
@@ -991,6 +998,9 @@ impl SessionManager {
             return Err(CommandError::unknown(CommandStage::Close));
         }
         self.mcp.close_and_check()?;
+        if let Some(active) = &mut self.active {
+            self.source_hooks.close(&mut active.store)?;
+        }
         self.active
             .as_mut()
             .expect("active session checked above")
@@ -1006,6 +1016,9 @@ impl SessionManager {
     fn ensure_switch_allowed(&mut self, stage: CommandStage) -> Result<(), CommandError> {
         self.ensure_package_operation_idle(stage)?;
         self.mcp.close_and_check()?;
+        if let Some(active) = &mut self.active {
+            self.source_hooks.close(&mut active.store)?;
+        }
         if let Some(active) = &self.active {
             active.ensure_execution_idle(stage)?;
         }

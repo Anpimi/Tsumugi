@@ -628,6 +628,93 @@ fn source_impact_reads_one_work_set_for_two_thousand_units() {
 }
 
 #[test]
+fn maintenance_reads_only_window_targets_while_preserving_original_impact_reasons() {
+    let (_directory, mut store, project) = large_fixture(120);
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let first = store.source_content(snapshot, 0, 1).unwrap().rows.remove(0);
+    let saved = store
+        .save_translation_edit(&crate::SaveTranslationRevision {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: first.unit_id.unwrap(),
+            locale: "zh-CN".into(),
+            source_revision_id: first.source_revision_id.unwrap(),
+            expected_selection_id: None,
+            text: "Synthetic translation".into(),
+        })
+        .unwrap();
+    store
+        .save_term(&crate::SaveTerm {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Source".into(),
+            aliases: vec![],
+            target: "Terminology".into(),
+            protected: false,
+            scope_unit_id: None,
+            expected_revision_id: None,
+            reason: "Synthetic literal impact".into(),
+        })
+        .unwrap();
+    let protection = store
+        .work_protection(first.unit_id.unwrap(), "zh-CN")
+        .unwrap();
+    store
+        .set_work_protection(&crate::application::SetWorkProtection {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: first.unit_id.unwrap(),
+            locale: "zh-CN".into(),
+            source_revision_id: first.source_revision_id.unwrap(),
+            selection_id: Some(saved.selection.event_id),
+            expected_revision: protection.revision,
+            protected: true,
+            confirmed_release: false,
+        })
+        .unwrap();
+    let original = store.source_impact(snapshot, "zh-CN", 0, 100).unwrap();
+    let (assessment, statements, _) = measure(&store, || {
+        store
+            .maintenance_assessment(project, snapshot, "zh-CN", 0, 100)
+            .unwrap()
+    });
+    assert_eq!(assessment.rows.len(), 100);
+    assert_eq!(assessment.next_ordinal, Some(100));
+    assert!(assessment.rows[0].protection.protected);
+    assert!(
+        assessment.rows[0]
+            .reasons
+            .iter()
+            .any(|r| r.starts_with("resource-change:"))
+    );
+    for row in &assessment.rows {
+        let old = original
+            .rows
+            .iter()
+            .find(|r| r.current.unit_id == Some(row.unit_id))
+            .unwrap();
+        assert_eq!(row.reasons, old.reasons);
+        assert_eq!(row.review_basis, old.review_basis);
+    }
+    assert!(
+        !statements
+            .iter()
+            .any(|sql| sql.contains("GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001")),
+        "maintenance must not build the complete project unit set"
+    );
+    let selection = statements
+        .iter()
+        .find(|sql| sql.contains("COALESCE(b.last_change_rowid,0)"))
+        .unwrap();
+    assert!(
+        selection.contains("o.unit_id IN (SELECT value FROM json_each(?3))"),
+        "resource selection must use the same wanted window"
+    );
+}
+
+#[test]
 fn multi_statement_reads_hold_a_snapshot_until_the_external_writer_can_commit() {
     let (_directory, mut store, project, units) = fixture();
     translate(&mut store, project, units[0], "zh-CN", "Before");

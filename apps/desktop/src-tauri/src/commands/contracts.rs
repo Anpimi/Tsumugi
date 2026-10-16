@@ -161,6 +161,9 @@ struct ExecutionResponses {
 #[allow(dead_code)]
 struct SourceRequests {
     session: execution::SessionRequest,
+    maintenance_hook_session: execution::SessionRequest,
+    maintenance_hook: source_hooks::SourceMaintenanceHookReadRequest,
+    maintenance_hook_stop: source_hooks::SourceMaintenanceHookStopRequest,
     preview: execution::source::PreviewRequest,
     content: execution::source::ContentRequest,
     source_context: execution::source::SourceContextReadRequest,
@@ -180,6 +183,9 @@ struct SourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct SourceResponses {
+    maintenance_hook_session: tsumugi_core::content::SourceMaintenanceHookSession,
+    maintenance_hook: source_hooks::SourceMaintenanceHookObservation,
+    maintenance_hook_stopped: source_hooks::SourceMaintenanceHookStopped,
     attempt: tsumugi_core::execution::ExecutionId,
     cancelled: (),
     scope: tsumugi_core::content::ContentScope,

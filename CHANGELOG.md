@@ -6,6 +6,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Optionally request one bounded maintenance notice after applying checked source
+  content. Its exact source action records the original impact, expiry and stop
+  state; notice failure does not undo saved source. Viewing history never restarts
+  it, and creating or replacing an AI maintenance draft requires explicit action
+  and current-input checks.
+- Advance the current-only development project format to preserve source-notice
+  causality and require an explicit nullable maintenance choice in source
+  confirmations. Earlier development projects are preserved and refused without
+  automatic migration or reset.
+
 - Preview and explicitly share a fixed saved entry with an external MCP client.
   Adopted terms and human context are separate choices. An independent, expiring
   stdio connection can be revoked without granting project browsing or writes;

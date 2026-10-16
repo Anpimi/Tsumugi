@@ -10,7 +10,8 @@ import { i18n } from "./i18n";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import commandErrors from "../test/fixtures/commandErrors.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourcePageFixture, sourceRowFixture, sourceAttemptFixture, sourceActionFixture, sourceReceiptFixture } from "./testSupport/sourceFixture";
+import { sourcePageFixture, sourceRowFixture, sourceAttemptFixture, sourceActionFixture, sourceReceiptFixture, sourceHistoryFixture } from "./testSupport/sourceFixture";
+import { hookObservation } from "./testSupport/sourceMaintenanceHookFixture";
 import { pluginSourceView, pluginSourceWorkflow, pluginSourceRequest, pluginSourceInventory, pluginSourcePackage } from "./testSupport/pluginSourceFixture";
 import { useSourceDraftSession } from "./SourceDraftSession";
 import { useWorkbenchCommands, type SourceBasisCommandPayload } from "./workbenchCommands";
@@ -44,6 +45,21 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it("discovers a saved notice by the canonical history action identity without enabling or rerunning it", async () => {
+  const original = invoke.getMockImplementation()!, history = sourceHistoryFixture(), actionId = history.snapshots[0].actionId;
+  const notice = hookObservation(actionId, undefined, "interrupted"); notice.view!.cause!.projectId = project.metadata.projectId;
+  invoke.mockImplementation((command, args) => command === "read_source_history" ? Promise.resolve(history)
+    : command === "read_source_maintenance_hook" ? Promise.resolve(notice) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false}/>); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("source.title") }));
+  await user.click(screen.getByRole("button", { name: i18n.t("source.history") }));
+  await user.click((await screen.findAllByRole("button", { name: i18n.t("sourceHook.history") }))[0]);
+  await screen.findByText(i18n.t("sourceHook.phase", { locale: "zh-CN", phase: i18n.t("sourceHook.phases.interrupted") }));
+  expect(invoke).toHaveBeenCalledWith("read_source_maintenance_hook", { request: { sessionToken: project.sessionToken, projectId: project.metadata.projectId, sourceActionId: actionId } });
+  expect(screen.getByRole("heading", { name: i18n.t("sourceHook.statusTitle") })).toHaveFocus();
+  expect(invoke.mock.calls.some(([command]) => ["read_source_maintenance_hook_session", "prepare_source_adoption", "adopt_execution", "stop_source_maintenance_hook"].includes(command))).toBe(false);
+});
 
 it("shows bounded saved source failure detail as text and retries only its failed read", async () => {
   const original = invoke.getMockImplementation()!;

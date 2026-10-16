@@ -878,6 +878,20 @@ pub async fn prepare_source_adoption(
             "prepare_source_adoption",
             CommandStage::ExecutionAdopt,
             move |sessions| {
+                if request.confirmation.maintenance_hook.is_some() {
+                    authorized(
+                        sessions,
+                        &request.session_token,
+                        request.project_id,
+                        CommandStage::ExecutionAdopt,
+                    )?;
+                    let active = sessions.active.as_ref().expect("authorized session");
+                    sessions.source_hooks.prepare(
+                        &active.store,
+                        request.project_id,
+                        request.action_id,
+                    )?;
+                }
                 let active = authorized(
                     sessions,
                     &request.session_token,
@@ -896,7 +910,7 @@ pub async fn prepare_source_adoption(
                 }
                 let parameters =
                     serde_json::to_value(&request.confirmation).map_err(|_| stale())?;
-                store
+                let action = store
                     .prepare_adoption_with_id(
                         request.action_id,
                         request.attempt_id,
@@ -904,7 +918,20 @@ pub async fn prepare_source_adoption(
                         vec![request.result_id],
                         parameters,
                     )
-                    .map_err(map_source)
+                    .map_err(map_source)?;
+                if let Some(activation) = request.confirmation.maintenance_hook {
+                    let read = store
+                        .source_maintenance_hook(request.project_id, request.action_id)
+                        .map_err(map_source)?;
+                    if read.view.is_some_and(|v| !v.admission_closed) {
+                        sessions.source_hooks.prepared(
+                            request.session_token,
+                            request.action_id,
+                            activation,
+                        );
+                    }
+                }
+                Ok(action)
             },
         )
         .await

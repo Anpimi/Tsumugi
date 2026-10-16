@@ -32,7 +32,8 @@
       "expectedCurrentSnapshot": null,
       "lineageBaseSnapshot": null,
       "lineage": [],
-      "actor": null
+      "actor": null,
+      "maintenanceHook": null
     }
   },
   "page": {
@@ -51,7 +52,8 @@
       "expectedCurrentSnapshot": null,
       "lineageBaseSnapshot": null,
       "lineage": [],
-      "actor": null
+      "actor": null,
+      "maintenanceHook": null
     },
     "namespace": "Fixture.Mod",
     "coverage": [
@@ -196,7 +198,8 @@
       "expectedCurrentSnapshot": null,
       "lineageBaseSnapshot": null,
       "lineage": [],
-      "actor": null
+      "actor": null,
+      "maintenanceHook": null
     },
     "total": 1,
     "filteredTotal": 1,

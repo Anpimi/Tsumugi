@@ -15,6 +15,7 @@ use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 mod ai;
 mod application;
+pub(crate) use application::maintenance::CapturedMaintenanceAssessment;
 mod changes;
 #[cfg(test)]
 mod current_tests;
@@ -98,7 +99,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 46;
+pub(crate) const SCHEMA_VERSION: i64 = 47;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -363,6 +364,8 @@ pub struct ProjectStore {
     plugin_authority: std::sync::Arc<crate::execution::plugin_authority::PluginAuthority>,
     review_scopes: review::ReadScopes,
     changes: std::sync::Arc<changes::ChangeClock>,
+    source_hook_deadlines:
+        std::collections::BTreeMap<crate::execution::ExecutionId, std::time::Instant>,
     #[cfg(test)]
     fault: Option<StorageFault>,
     #[cfg(test)]
@@ -407,6 +410,7 @@ impl ProjectStore {
             plugin_authority: Default::default(),
             review_scopes: Default::default(),
             changes: Default::default(),
+            source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]
@@ -460,6 +464,7 @@ impl ProjectStore {
             plugin_authority: Default::default(),
             review_scopes: Default::default(),
             changes: Default::default(),
+            source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]

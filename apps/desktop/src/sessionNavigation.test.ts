@@ -20,6 +20,15 @@ function setup() {
 }
 
 describe("project session navigation", () => {
+  it("routes a readonly source notice to AI through both source guards and preserves its original owner sequences", async () => {
+    const test = setup(); test.setArea("source"); const wait = deferred<boolean>();
+    test.presentation.allowNavigate.mockImplementationOnce(() => wait.promise);
+    const destination: Extract<WorkspaceDestination, { kind: "maintenance-notice" }> = { kind: "maintenance-notice", sourceActionId: "original-source-action", sourceEditSeq: 3, aiEditSeq: 7 };
+    const moving = test.navigation.navigate(destination); destination.sourceActionId = "newer-action"; destination.aiEditSeq = 8;
+    wait.resolve(true); expect(await moving).toBe(true); expect(test.area()).toBe("ai");
+    expect(test.ports.accept).toHaveBeenCalledWith({ kind: "maintenance-notice", sourceActionId: "original-source-action", sourceEditSeq: 3, aiEditSeq: 7 }, expect.any(Function));
+    expect(test.presentation.allowNavigate).toHaveBeenCalledTimes(2);
+  });
   it("checks the same captured destination in both source guards without lending a recovery intent to another task", async () => {
     const test = setup(); test.setArea("ai");
     const exact: WorkspaceDestination = { kind: "task", taskId: "child-task", attemptId: "child-attempt" };

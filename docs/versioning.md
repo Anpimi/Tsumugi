@@ -1,5 +1,22 @@
 # Application versioning and changelog maintenance
 
+Source adoption can explicitly capture a default-off, single-language maintenance
+notice. The original Source action owns its immutable activation, reliable
+cause, one claim, complete outcome and irreversible stop facts. The original
+adoption receipt still identifies exactly one saved source snapshot. Read and
+stop interfaces preserve the original action; reopening reads history without
+resuming work or restoring authorization. Creating an AI maintenance draft
+remains a separate explicit action with current-input checks.
+
+This advances the current-only development project format to schema 47 and adds
+a required nullable `maintenanceHook` field to Source confirmations. Earlier
+development directories, including schema 46, are preserved and refused without
+migration, conversion or reset. WorkPlan3, SDK/Process3, package formats,
+dependencies and lockfiles remain unchanged. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain the same undistributed batch with synchronized bilingual
+Unreleased entries and no repeated version bump. The following assessments
+describe earlier source units.
+
 Outbound MCP sharing adds explicit preview, recipient authorization, status and
 revocation interfaces for one fixed entry. Its stdio bridge uses the original
 Desktop project owner and an independent, expiring, single-connection credential.

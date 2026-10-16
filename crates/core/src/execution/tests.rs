@@ -513,7 +513,7 @@ fn handler_checks_only_relevant_dependencies_within_the_owners_transaction() {
         .prepare(&fixed, &action, &[output.clone()])
         .unwrap();
     let tx = connection.transaction().unwrap();
-    let changes = mutation(&AdoptionTransaction::new(&tx)).unwrap();
+    let changes = mutation(&AdoptionTransaction::new(&tx, "test-epoch")).unwrap();
     assert_eq!(changes[0].revision.get(), 2);
     tx.rollback().unwrap();
     let value: String = connection
@@ -530,7 +530,9 @@ fn handler_checks_only_relevant_dependencies_within_the_owners_transaction() {
     let mutation = FixtureHandler.prepare(&fixed, &action, &[output]).unwrap();
     let tx = connection.transaction().unwrap();
     assert_eq!(
-        mutation(&AdoptionTransaction::new(&tx)).unwrap_err().code,
+        mutation(&AdoptionTransaction::new(&tx, "test-epoch"))
+            .unwrap_err()
+            .code,
         ErrorCode::DependencyConflict
     );
     tx.rollback().unwrap();

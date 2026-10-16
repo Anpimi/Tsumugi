@@ -12,6 +12,13 @@ import { sourceActionFixture, sourceAttemptFixture, sourcePageFixture, sourceRow
 import { pluginSourceRequest, pluginSourceWorkflow } from "./testSupport/pluginSourceFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { failureReason } from "./CommandFailure";
+import { sourceMaintenanceHookCommands as hookCommands, type SourceMaintenanceHookObservation } from "./sourceMaintenanceHookCommands";
+import { hookObservation } from "./testSupport/sourceMaintenanceHookFixture";
+import { SourceMaintenanceHookChoice, SourceMaintenanceHookStatus } from "./SourceMaintenanceHookControls";
+import { sourceHookKey } from "./SourceMaintenanceHook";
+import { useSessionReads } from "./SessionReadProvider";
+import { i18n } from "./i18n";
+import userEvent from "@testing-library/user-event";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -54,7 +61,7 @@ beforeEach(() => {
     throw new Error(command);
   });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 async function ready(update = false) {
   const page = update ? comparison : preview;
@@ -541,4 +548,168 @@ it("disposes a fresh Source query witness on real owner destruction before ident
   view.unmount(); expect(dispose).toHaveBeenCalledTimes(1);
   await act(async () => { finish(fixtureIdentity(998)); await work; }); expect(dispose).toHaveBeenCalledTimes(1);
   expect(invoke.mock.calls.filter(([name]) => name === "prepare_source_adoption" || name === "adopt_execution")).toHaveLength(0);
+});
+
+function deferredHook<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
+function mockHook() {
+  vi.spyOn(hookCommands, "session").mockResolvedValue({ policyVersion: "source-maintenance-notice-1", sessionEpoch: fixtureIdentity(8800), defaultLifetimeMs: 300_000, maxLifetimeMs: 600_000, windowLimit: 100 });
+  vi.spyOn(hookCommands, "read").mockImplementation(async request => hookObservation(request.sourceActionId, owner.hook.current().originalActivation ?? undefined));
+  vi.spyOn(hookCommands, "stop").mockImplementation(async request => ({ request: request.stop, result: { kind: "stopped", receipt: { request: request.stop, admissionClosed: true } }, callbacksDrained: true }));
+}
+async function enableHook() { act(() => owner.hook.editLocale("zh-CN")); await act(async () => { await owner.hook.enable(true); }); }
+let hookReads: ReturnType<typeof useSessionReads>;
+function HookProbe() { const reads = useSessionReads(); useLayoutEffect(() => { hookReads = reads; }); return <Probe/>; }
+
+it("keeps notice opt-in off and performs no notice IPC until the explicit locale and consent", async () => {
+  mockHook(); render(<><Probe/><SourceMaintenanceHookChoice project={project} disabled={false}/></>, project);
+  expect(owner.hook.current().enabled).toBe(false); expect(hookCommands.session).not.toHaveBeenCalled(); expect(hookCommands.read).not.toHaveBeenCalled();
+  const user = userEvent.setup(); await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("sourceHook.locale") }), "zh-CN");
+  expect(hookCommands.session).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("sourceHook.consent") }));
+  await waitFor(() => expect(owner.hook.current().activation).not.toBeNull());
+  expect(owner.hook.current().activation).toMatchObject({ locale: "zh-CN", after: 0, limit: 100, sessionEpoch: fixtureIdentity(8800) });
+  expect(hookCommands.read).not.toHaveBeenCalled(); expect(hookCommands.stop).not.toHaveBeenCalled();
+});
+
+it("freezes the original declaration through unknown adoption and preserves newer source input B", async () => {
+  mockHook(); render(<Probe/>, project); await ready(); await enableHook(); act(() => owner.confirm(true));
+  const activation = structuredClone(owner.hook.current().activation), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "adopt_execution" ? Promise.reject(new Error("Synthetic disconnected source acknowledgement")) : original(command, args));
+  await act(async () => { await owner.apply(); });
+  const request = owner.current().pendingApply!; expect(request.confirmation.maintenanceHook).toEqual(activation);
+  act(() => { owner.edit("actor", "Newer source B"); owner.hook.editLocale("zh-CN"); });
+  await act(async () => { await owner.hook.enable(true); });
+  const newer = owner.hook.current().activation;
+  invoke.mockImplementation(original); await act(async () => { await owner.checkReceipt(); });
+  expect(owner.current().pendingApply).toBeNull(); expect(owner.current().receipt?.actionId).toBe(request.actionId); expect(owner.current().actor).toBe("Newer source B");
+  expect(owner.hook.current().activation).toBe(newer); expect(owner.hook.current().originalActivation).toEqual(activation);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_source_adoption").every(([, args]) => JSON.stringify(args.request.confirmation.maintenanceHook) === JSON.stringify(activation))).toBe(true);
+  expect(hookCommands.stop).not.toHaveBeenCalled();
+});
+
+it("can stop independently while source prepare is waiting and never treats not-known as stopped", async () => {
+  mockHook(); render(<Probe/>, project); await ready(); await enableHook(); act(() => owner.confirm(true));
+  const pendingPrepare = deferredHook<AdoptionAction>(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "prepare_source_adoption" ? (originalRequest = args.request as SourceAdoptRequest, pendingPrepare.promise) : original(command, args));
+  vi.mocked(hookCommands.stop).mockImplementationOnce(async request => ({ request: request.stop, result: { kind: "not-known" }, callbacksDrained: true }));
+  vi.mocked(hookCommands.read).mockImplementationOnce(async request => ({ sourceActionId: request.sourceActionId, state: "action-not-known", view: null, callbacksDrained: true, error: null }));
+  let adoption!: Promise<void>; act(() => { adoption = owner.apply(); }); await waitFor(() => expect(originalRequest).not.toBeNull());
+  const pending = owner.current().pendingApply!; expect(owner.inFlight()).toBe(true);
+  await act(async () => { await owner.hook.stop(); });
+  expect(owner.hook.current().stop?.notKnown).toBe(true); expect(owner.hook.current().closed).toBe(false); expect(owner.current().pendingApply).toBe(pending);
+  const stop = vi.mocked(hookCommands.stop).mock.calls[0][0]; await act(async () => { await owner.hook.stop(); });
+  expect(vi.mocked(hookCommands.stop).mock.calls[1][0]).toBe(stop); expect(owner.hook.current().closed).toBe(true); expect(owner.current().pendingApply).toBe(pending);
+  vi.mocked(hookCommands.read).mockImplementation(async request => ({ ...hookObservation(request.sourceActionId, stop.stop.activation, "stopped"), view: { ...hookObservation(request.sourceActionId, stop.stop.activation, "stopped").view!, stop: { request: stop.stop, admissionClosed: true } } }));
+  await act(async () => { pendingPrepare.resolve(sourceActionFixture(pending)); await adoption; });
+  expect(owner.current().receipt?.actionId).toBe(pending.actionId); expect(owner.current().pendingApply).toBeNull(); expect(owner.hook.current().closed).toBe(true);
+});
+
+it("retires a hung notice read explicitly and ignores its late result after the exact recheck", async () => {
+  mockHook(); render(<HookProbe/>, project); await ready(); await enableHook(); act(() => owner.confirm(true));
+  const first = deferredHook<SourceMaintenanceHookObservation>(); vi.mocked(hookCommands.read).mockImplementationOnce(() => first.promise);
+  await act(async () => { await owner.apply(); }); await waitFor(() => expect(owner.hook.current().reading).toBe(true));
+  const id = owner.hook.current().sourceActionId!, activation = owner.hook.current().originalActivation!;
+  const closed = hookObservation(id, activation, "stopped"); vi.mocked(hookCommands.read).mockResolvedValueOnce(closed);
+  await act(async () => { await owner.hook.retryRead(); }); expect(owner.hook.current().closed).toBe(true);
+  await act(async () => { first.resolve(hookObservation(id, activation, "running")); await first.promise; });
+  expect(owner.hook.current().closed).toBe(true); expect(hookReads.client.getQueryData(hookReads.key(sourceHookKey(id)))).toEqual(closed);
+  expect(hookCommands.session).toHaveBeenCalledTimes(1); expect(hookCommands.stop).not.toHaveBeenCalled();
+});
+
+it("retains the exact unknown stop while source acknowledgement is pending and accepts only its late receipt", async () => {
+  mockHook(); render(<Probe/>, project); await ready(); await enableHook(); act(() => owner.confirm(true));
+  const sourceAck = deferredHook<Receipt>(), stopAck = deferredHook<Awaited<ReturnType<typeof hookCommands.stop>>>(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "adopt_execution" ? sourceAck.promise : original(command, args));
+  let adoption!: Promise<void>; act(() => { adoption = owner.apply(); }); await waitFor(() => expect(owner.current().preparedAction).not.toBeNull());
+  vi.mocked(hookCommands.stop).mockImplementationOnce(() => stopAck.promise); let stopping!: Promise<void>; act(() => { stopping = owner.hook.stop(); });
+  await waitFor(() => expect(owner.hook.current().stop?.pending).toBe(true)); const request = owner.hook.current().stop!.request;
+  await act(async () => { await owner.hook.retryStop(); }); expect(owner.hook.current().closed).toBe(true);
+  expect(vi.mocked(hookCommands.stop).mock.calls[1][0]).toBe(request);
+  await act(async () => { stopAck.resolve({ request: request.stop, result: { kind: "not-known" }, callbacksDrained: true }); await stopping; });
+  expect(owner.hook.current().closed).toBe(true); expect(owner.hook.current().stop?.notKnown).toBe(false); expect(owner.current().pendingApply).not.toBeNull();
+  await act(async () => { sourceAck.resolve(sourceReceiptFixture(owner.current().pendingApply!)); await adoption; });
+  expect(owner.current().receipt).not.toBeNull();
+});
+
+it("discovers only history on reopen and keeps original notice status across consumer unmount", async () => {
+  mockHook(); const view = render(<><Probe/><SourceMaintenanceHookStatus active/></>, project);
+  const id = fixtureIdentity(8899); vi.mocked(hookCommands.read).mockResolvedValueOnce(hookObservation(id, undefined, "interrupted"));
+  await act(async () => { expect(await owner.hook.select(id)).toBe(true); });
+  await waitFor(() => expect(owner.hook.status()?.view?.phase).toBe("interrupted"));
+  expect(hookCommands.session).not.toHaveBeenCalled(); expect(hookCommands.stop).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_source_adoption" || command === "adopt_execution")).toBe(false);
+  view.rerender(<Probe/>); expect(owner.hook.current().sourceActionId).toBe(id);
+  view.rerender(<><Probe/><SourceMaintenanceHookStatus active/></>);
+  await screen.findByText(i18n.t("sourceHook.phase", { locale: "zh-CN", phase: i18n.t("sourceHook.phases.interrupted") }));
+});
+
+it("keeps source success separate from a failed notice read and requires an explicit read retry", async () => {
+  mockHook(); render(<><Probe/><SourceMaintenanceHookStatus active/></>, project); await ready(); await enableHook(); act(() => owner.confirm(true));
+  vi.mocked(hookCommands.read).mockRejectedValueOnce(new Error("Synthetic notice read failure"));
+  await act(async () => { await owner.apply(); }); await screen.findByText(i18n.t("sourceHook.readFailed"));
+  expect(owner.current().receipt).not.toBeNull(); expect(owner.current().failure).toBeNull(); expect(owner.current().pendingApply).toBeNull();
+  expect(hookCommands.read).toHaveBeenCalledTimes(1); expect(hookCommands.stop).not.toHaveBeenCalled();
+  await userEvent.setup().click(screen.getByRole("button", { name: i18n.t("sourceHook.read") }));
+  await waitFor(() => expect(owner.hook.status()?.view?.phase).toBe("observed")); expect(hookCommands.read).toHaveBeenCalledTimes(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+});
+
+it("does not renew a declaration at expiry or let a retired declaration read overwrite newer choices", async () => {
+  mockHook(); render(<Probe/>, project); await ready();
+  const wait = deferredHook<Awaited<ReturnType<typeof hookCommands.session>>>(); vi.mocked(hookCommands.session).mockImplementationOnce(() => wait.promise);
+  act(() => owner.hook.editLocale("zh-CN")); let first!: Promise<void>; act(() => { first = owner.hook.enable(true); });
+  await waitFor(() => expect(hookCommands.session).toHaveBeenCalledTimes(1));
+  await act(async () => { await owner.hook.enable(true); }); const current = owner.hook.current().activation!;
+  await act(async () => { wait.resolve({ policyVersion: "source-maintenance-notice-1", sessionEpoch: fixtureIdentity(8891), defaultLifetimeMs: 300_000, maxLifetimeMs: 600_000, windowLimit: 100 }); await first; });
+  expect(owner.hook.current().activation).toBe(current); vi.spyOn(Date, "now").mockReturnValue(current.expiresAtMs + 1);
+  expect(owner.hook.canPrepare()).toBe(false); act(() => owner.confirm(true)); await act(async () => { await owner.apply(); });
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_source_adoption")).toBe(false); expect(hookCommands.session).toHaveBeenCalledTimes(2);
+  expect(owner.hook.current().activation).toBe(current);
+});
+
+it("keeps only the latest explicitly selected history identity while an older selection retires its read", async () => {
+  mockHook(); render(<Probe/>, project); const first = fixtureIdentity(8897), second = fixtureIdentity(8898);
+  let a!: Promise<boolean>, b!: Promise<boolean>; act(() => { a = owner.hook.select(first); b = owner.hook.select(second); });
+  await act(async () => { await Promise.all([a, b]); }); await waitFor(() => expect(owner.hook.status()?.sourceActionId).toBe(second));
+  expect(owner.hook.current().sourceActionId).toBe(second); expect(hookCommands.session).not.toHaveBeenCalled();
+});
+
+it.each(["observed", "expired"] as const)("can replay the exact unknown stop after the notice naturally becomes %s", async phase => {
+  mockHook(); render(<Probe/>, project); await ready(); await enableHook(); act(() => owner.confirm(true));
+  const ack = deferredHook<Receipt>(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "adopt_execution" ? ack.promise : original(command, args));
+  let applying!: Promise<void>; act(() => { applying = owner.apply(); }); await waitFor(() => expect(owner.current().pendingApply).not.toBeNull());
+  vi.mocked(hookCommands.stop).mockRejectedValueOnce(new Error("Synthetic lost stop acknowledgement")); await act(async () => { await owner.hook.stop(); });
+  const request = owner.hook.current().stop!.request, value = hookObservation(request.stop.sourceActionId, request.stop.activation, phase);
+  value.view!.admissionClosed = true; vi.mocked(hookCommands.read).mockResolvedValueOnce(value);
+  await act(async () => { await owner.hook.read(); });
+  expect(owner.hook.current().closed).toBe(true); expect(owner.hook.blocked()).toBe(true); expect(owner.hook.canStop()).toBe(true);
+  vi.mocked(hookCommands.read).mockResolvedValueOnce({ ...value, view: { ...value.view!, stop: { request: request.stop, admissionClosed: true } } });
+  await act(async () => { await owner.hook.stop(); });
+  expect(vi.mocked(hookCommands.stop).mock.calls[1][0]).toBe(request); expect(owner.hook.blocked()).toBe(false); expect(owner.hook.current().stop?.unknown).toBe(false);
+  await act(async () => { ack.resolve(sourceReceiptFixture(owner.current().pendingApply!)); await applying; });
+  expect(owner.current().receipt).not.toBeNull();
+});
+
+it("explicitly ends only the local unknown stop wait after another lifecycle stop is closed and drained", async () => {
+  mockHook(); render(<><Probe/><SourceMaintenanceHookStatus active/></>, project); await ready(); await enableHook(); act(() => owner.confirm(true));
+  vi.mocked(hookCommands.read).mockImplementation(async request => hookObservation(request.sourceActionId, owner.hook.current().originalActivation ?? undefined, "prepared"));
+  const ack = deferredHook<Receipt>(), stopAck = deferredHook<Awaited<ReturnType<typeof hookCommands.stop>>>(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "adopt_execution" ? ack.promise : original(command, args));
+  let applying!: Promise<void>; act(() => { applying = owner.apply(); }); await waitFor(() => expect(owner.current().pendingApply).not.toBeNull());
+  vi.mocked(hookCommands.stop).mockImplementationOnce(() => stopAck.promise); let stopping!: Promise<void>; act(() => { stopping = owner.hook.stop(); });
+  await waitFor(() => expect(owner.hook.current().stop).not.toBeNull()); const request = owner.hook.current().stop!.request, pending = owner.current().pendingApply;
+  const closed = hookObservation(request.stop.sourceActionId, request.stop.activation, "stopped");
+  closed.view!.stop = { request: { ...request.stop, actionId: fixtureIdentity(8894) }, admissionClosed: true }; closed.callbacksDrained = false;
+  vi.mocked(hookCommands.read).mockResolvedValueOnce(closed); await act(async () => { await owner.hook.read(); });
+  expect(owner.hook.canEndWait()).toBe(false); expect(owner.hook.endWait()).toBe(false); expect(owner.hook.blocked()).toBe(true);
+  vi.mocked(hookCommands.read).mockResolvedValueOnce({ ...closed, callbacksDrained: true }); await act(async () => { await owner.hook.read(); });
+  expect(owner.hook.canEndWait()).toBe(true);
+  await userEvent.setup().click(screen.getByRole("button", { name: i18n.t("sourceHook.endWait") }));
+  expect(owner.hook.blocked()).toBe(false); expect(owner.hook.current().waitEnded).toBe(true); expect(owner.hook.current().stop?.ended).toBe(true);
+  expect(owner.current().pendingApply).toBe(pending); expect(screen.getByText(i18n.t("sourceHook.waitEnded"))).toBeInTheDocument();
+  await act(async () => { stopAck.resolve({ request: request.stop, result: { kind: "not-known" }, callbacksDrained: false }); await stopping; });
+  expect(owner.hook.current().waitEnded).toBe(true); expect(owner.hook.current().stop?.notKnown).toBe(false);
+  vi.mocked(hookCommands.read).mockResolvedValue({ ...closed, callbacksDrained: true });
+  await act(async () => { ack.resolve(sourceReceiptFixture(pending!)); await applying; }); expect(owner.current().receipt).not.toBeNull();
 });
