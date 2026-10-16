@@ -352,36 +352,12 @@ impl ValidatedManifest {
         contract: &ContractRef,
         profile: Option<&ContractRef>,
     ) -> Result<&CapabilityDeclaration, ContractError> {
-        let contribution = self
-            .0
-            .contributions
-            .iter()
-            .find(|c| c.id == contribution_id)
-            .ok_or_else(|| {
-                ContractError::at(ContractErrorCode::IncompatibleContract, "contributions.id")
-            })?;
-        let ContributionKind::Capability { declaration } = &contribution.contribution else {
-            return Err(ContractError::at(
-                ContractErrorCode::IncompatibleContract,
-                "contributions.kind",
-            ));
-        };
-        if declaration.contract != *contract
-            || profile.is_some_and(|p| !declaration.profiles.contains(p))
-        {
-            return Err(ContractError::at(
-                ContractErrorCode::IncompatibleContract,
-                "contributions.contract",
-            ));
-        }
-        // A profile-sensitive declaration cannot be called with an unspecified profile.
-        if profile.is_none() && !declaration.profiles.is_empty() {
-            return Err(ContractError::at(
-                ContractErrorCode::IncompatibleContract,
-                "contributions.profiles",
-            ));
-        }
-        Ok(declaration)
+        crate::compatibility::resolve_capability_declaration(
+            self.manifest(),
+            contribution_id,
+            contract,
+            profile,
+        )
     }
 }
 

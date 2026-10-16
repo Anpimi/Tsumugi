@@ -95,6 +95,15 @@ also checks owner references, duplicate identities, SemVer syntax, requested
 permissions, bounds and package-relative paths. Structural JSON Schema validation
 alone cannot prove those relationships or runtime authorization.
 
+`CapabilityCompatibilityRequest` and `ValidatedManifest::diagnose_capability`
+expose the same exact capability contract/profile predicate used by
+`capability()` and provider resolution. They report missing/non-callable
+contributions, independent contract schema/behavior differences and unsupported
+or omitted profiles without selecting another implementation. The public Host's
+[package diagnostics](../../docs/capability-compatibility.md) apply that API to
+one actual captured package. These data reports grant no execution authority or
+guarantee about a domain implementation's behavior.
+
 The crate has its own experimental version and can be packaged independently.
 It has not been published. Plugin authors may use an explicitly pinned development
 SDK snapshot; a production distribution must use a verified SDK artifact.

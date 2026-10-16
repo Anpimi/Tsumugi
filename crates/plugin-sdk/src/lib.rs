@@ -9,6 +9,7 @@
 mod binding;
 mod build;
 mod checks;
+mod compatibility;
 mod content;
 mod declaration;
 mod environment;
@@ -31,6 +32,7 @@ mod validation;
 pub use binding::{CapabilityBinding, ProviderSelectionBinding, bind_capability};
 pub use build::*;
 pub use checks::*;
+pub use compatibility::*;
 pub use content::*;
 pub use declaration::*;
 pub use environment::*;

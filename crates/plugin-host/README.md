@@ -186,6 +186,14 @@ component loading, download, build or installation script. Independent plugins
 can materialize their declared runtime files and use this public tool instead of
 copying the Host's package digest algorithm.
 
+The explicit `diagnose <prebuilt-directory> <request-json>` operation adds
+[capability declaration/profile diagnostics](../../docs/capability-compatibility.md)
+from that same immutable capture. It compares independently supplied expected
+contract/profile identities through the SDK's original matcher. Compatible and
+incompatible reports retain actual declared versions and the five-field package
+inspection; the original `inspect` output stays unchanged. Diagnosis runs no
+component, creates no Store and grants no installation or execution authority.
+
 ## Fixed runtime environment
 
 `PackageImage::capability_tool` resolves an SDK [read-only tool declaration](../plugin-sdk/docs/tools.md)

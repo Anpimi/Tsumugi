@@ -11,7 +11,7 @@ pub(crate) const MAX_DEPTH: usize = 16;
 
 mod directory;
 pub(crate) mod installation;
-pub use directory::PackageInspection;
+pub use directory::{PackageCompatibilityInspection, PackageInspection};
 
 pub(crate) fn portable_path(path: &str) -> HostResult<()> {
     validate_portable_package_path(path).map_err(|_| HostError::PackagePath)

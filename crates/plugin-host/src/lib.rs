@@ -28,7 +28,7 @@ pub use package::installation::{
     RepositoryPendingAction, RepositoryRefreshRequest, RepositorySourceRecord, RuntimeApproval,
     RuntimeInstallReceipt, UninstallReceipt, UninstallRecord, repository_source_id,
 };
-pub use package::{PackageFile, PackageImage, PackageInspection};
+pub use package::{PackageCompatibilityInspection, PackageFile, PackageImage, PackageInspection};
 pub use runtime::{CapturedRuntime, RuntimeInspection, RuntimeInspectionRequest};
 pub use service::*;
 pub use session::*;

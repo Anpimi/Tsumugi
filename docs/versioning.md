@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Explicit package capability diagnostics add a read-only CLI operation and an
+additive Rust SDK reporting API. They reuse the original exact contract/profile
+predicate; existing resolution errors and ordinary inspection output remain
+unchanged. No manifest, process, SDK wire, project, settings or Store format
+changes, dependency updates or replacement SDK artifacts are required. This
+stays in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with synchronized Unreleased entries and no repeated bump.
+
 Manual offline Pack installation captures bounded immutable package bytes and
 requires separate consent for each selected member. New packages remain disabled;
 existing source/publisher conflicts, settings CAS and original-action recovery

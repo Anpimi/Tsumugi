@@ -14,6 +14,16 @@ pub struct PackageInspection {
     pub byte_count: u64,
 }
 
+/// Exact declaration compatibility and package pins from one immutable capture.
+/// This is not runtime/process compatibility, authenticated provenance or
+/// permission to install, activate or invoke a component.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageCompatibilityInspection {
+    pub package: PackageInspection,
+    pub compatibility: CapabilityCompatibilityReport,
+}
+
 impl PackageImage {
     /// Inspect a prebuilt candidate using the same bounded descriptor-relative
     /// capture as approved loading. The resulting fingerprint must be verified
@@ -25,6 +35,36 @@ impl PackageImage {
     ) -> HostResult<PackageInspection> {
         let image = Self::read_directory(root, None, authorized)?;
         Ok(image.inspection())
+    }
+
+    /// Capture a prebuilt directory once and compare its declaration with an
+    /// independently supplied capability/profile requirement. Invalid requests
+    /// are refused before touching the directory. An incompatible declaration
+    /// is a successful inspection with a structured negative report.
+    pub fn inspect_directory_compatibility(
+        root: &Path,
+        request: &CapabilityCompatibilityRequest,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<PackageCompatibilityInspection> {
+        request.validate().map_err(|_| HostError::InvalidContract)?;
+        let image = Self::read_directory(root, None, authorized)?;
+        image.compatibility_inspection(request)
+    }
+
+    /// Diagnose the declaration already held in this image. Neither the
+    /// fingerprint nor compatibility is read from a later source pathname.
+    pub fn compatibility_inspection(
+        &self,
+        request: &CapabilityCompatibilityRequest,
+    ) -> HostResult<PackageCompatibilityInspection> {
+        let compatibility = self
+            .manifest()
+            .diagnose_capability(request)
+            .map_err(|_| HostError::InvalidContract)?;
+        Ok(PackageCompatibilityInspection {
+            package: self.inspection(),
+            compatibility,
+        })
     }
 
     /// Describe this already captured image without touching its former source.

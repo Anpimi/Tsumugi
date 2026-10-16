@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Diagnose a captured package's capability contract and profile with explicit
+  expected versions. Reports distinguish schema and behavior mismatches, missing
+  contributions and profile requirements through the existing SDK matcher;
+  ordinary inspection output and all approval/execution boundaries stay unchanged.
+
 - Explicitly discover a compatible HTTP MCP terminology tool, preview the exact
   query and destination, and authorize one bounded request. Saved proposals
   retain external service and execution provenance and require normal resource
