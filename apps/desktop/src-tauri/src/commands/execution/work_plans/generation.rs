@@ -217,6 +217,12 @@ fn consent(
     store
         .check_work_plan_agent_scope(scope)
         .map_err(map_recover)?;
+    if scope.delegation().is_some() {
+        return Err(map_recover(ExecutionError::new(
+            ErrorCode::Unauthorized,
+            "service-agent-subset",
+        )));
+    }
     let plan = store
         .work_plan(scope.lease().plan_id)
         .map_err(map_recover)?;

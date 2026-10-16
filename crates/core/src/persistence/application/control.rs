@@ -20,7 +20,7 @@ const TABLES: &[(&str, &str)] = &[
     ),
     (
         "application_executions",
-        "CREATE TABLE application_executions (attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_attempts(attempt_id), plan_id TEXT NOT NULL REFERENCES application_plans(plan_id), generation INTEGER NOT NULL CHECK(generation>0), kind TEXT NOT NULL CHECK(kind IN ('model','tool')), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 4096), root_task TEXT NOT NULL REFERENCES execution_tasks(task_id), CHECK((kind='model' AND delegation IS NULL) OR (kind='tool' AND delegation IS NOT NULL)))",
+        "CREATE TABLE application_executions (attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_attempts(attempt_id), plan_id TEXT NOT NULL REFERENCES application_plans(plan_id), generation INTEGER NOT NULL CHECK(generation>0), kind TEXT NOT NULL CHECK(kind IN ('model','tool')), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 8192), root_task TEXT NOT NULL REFERENCES execution_tasks(task_id), CHECK(kind='model' OR (kind='tool' AND delegation IS NOT NULL)))",
     ),
     (
         "application_protections",
@@ -278,7 +278,7 @@ fn matches_scope(input: &InputEnvelope, root: &InputEnvelope) -> bool {
         && input.operation == root.operation
         && input.capability_id == root.capability_id
         && input.capability_version == root.capability_version
-        && input.settings == root.settings
+        && generation_settings_match(input, root)
         && input.limits == root.limits
         && input.previous_attempt_id.is_none()
         && input.reused_results.is_empty()
@@ -290,6 +290,19 @@ fn matches_scope(input: &InputEnvelope, root: &InputEnvelope) -> bool {
                     && item.dependencies == allowed.dependencies
             })
         })
+}
+fn generation_settings_match(input: &InputEnvelope, root: &InputEnvelope) -> bool {
+    let (Ok(mut actual), Ok(allowed)) = (
+        serde_json::from_value::<crate::ai::AiSettings>(input.settings.clone()),
+        serde_json::from_value::<crate::ai::AiSettings>(root.settings.clone()),
+    ) else {
+        return false;
+    };
+    if allowed.agent.is_some() {
+        return false;
+    }
+    actual.agent = None;
+    actual == allowed
 }
 fn latest_input(c: &Connection, task: ExecutionId) -> Result<FixedInput, ExecutionError> {
     let (attempt, stored) = c.query_row(&format!(
@@ -320,6 +333,26 @@ pub(in crate::persistence) fn check_enqueue(
     if !matches_scope(input.envelope(), stored.plan.execution_input()?) {
         return Err(err(ErrorCode::Unauthorized, "work-plan-scope"));
     }
+    if let Some(binding) = super::agents::binding(input)? {
+        let scope = super::agents::scope_from_binding(input.envelope().project_id, &binding);
+        super::agents::validate_scope_basis(&stored.plan, &scope)?;
+        let request = AgentGenerationRequest {
+            task_id: input.envelope().task_id,
+            attempt_id: input.envelope().attempt_id,
+            unit_ids: input
+                .envelope()
+                .items
+                .iter()
+                .map(|item| ExecutionId::parse(&item.scope.id))
+                .collect::<Result<_, _>>()?,
+        };
+        if parent != Some(binding.root_task)
+            || binding.lease != stored.lease
+            || derive_agent_generation(&stored.plan, &scope, &request)?.bytes() != input.bytes()
+        {
+            return Err(err(ErrorCode::Unauthorized, "work-plan-agent-input"));
+        }
+    }
     if let Some(parent) = parent {
         let ancestor: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM execution_budget_ancestry WHERE task_id=?1 AND ancestor_id=?2)",
             params![parent.to_string(), stored.plan.execution_input()?.task_id.to_string()], |r|r.get(0)).map_err(sql)?;
@@ -348,7 +381,7 @@ pub(in crate::persistence) fn record_input(
 ) -> Result<(), ExecutionError> {
     if let Some(lease) = input.envelope().automation {
         c.execute(
-            "INSERT INTO application_executions VALUES (?1,?2,?3,'model',NULL,?4)",
+            "INSERT INTO application_executions VALUES (?1,?2,?3,'model',?5,?4)",
             params![
                 input.envelope().attempt_id.to_string(),
                 lease.plan_id.to_string(),
@@ -357,7 +390,10 @@ pub(in crate::persistence) fn record_input(
                     .plan
                     .execution_input()?
                     .task_id
-                    .to_string()
+                    .to_string(),
+                super::agents::binding(input)?
+                    .map(|binding| codec::encode(&binding, MAX_AGENT_DELEGATION_BYTES))
+                    .transpose()?
             ],
         )
         .map_err(sql)?;
@@ -382,7 +418,7 @@ pub(in crate::persistence) fn check_input(
             .map_err(sql)?;
         let bytes =
             bytes.ok_or_else(|| err(ErrorCode::Unauthorized, "work-plan-tool-association"))?;
-        let delegation: WorkPlanToolDelegation = codec::decode(&bytes, 4096)?;
+        let delegation: WorkPlanToolDelegation = codec::decode(&bytes, MAX_AGENT_DELEGATION_BYTES)?;
         return super::tools::check_tool_delegation(c, input, &delegation);
     }
     let association: Option<(String, i64)> = c
@@ -399,6 +435,7 @@ pub(in crate::persistence) fn check_input(
             if id == lease.plan_id.to_string() && generation == lease.generation.get() as i64 =>
         {
             let stored = active(c, input)?.unwrap();
+            super::agents::validate_model_input(c, input)?;
             if !matches_scope(input.envelope(), stored.plan.execution_input()?)
                 || !stored.effects.contains(&AutomationEffect::SaveCandidate)
             {
@@ -527,6 +564,7 @@ impl ProjectStore {
                 parent_task: root.task_id,
                 store_epoch: self.changes.snapshot(Revision::new(0)?).epoch,
                 caller_id: ExecutionId::new(),
+                delegation: None,
             };
             self.check_work_plan_agent_scope(&scope)?;
             Ok(scope)
@@ -543,41 +581,24 @@ impl ProjectStore {
         if scope.store_epoch != self.changes.snapshot(Revision::new(0)?).epoch {
             return Err(err(ErrorCode::Unauthorized, "work-plan-agent-session"));
         }
-        let stored = load(c, scope.lease.plan_id)?;
-        if stored.lease != scope.lease
-            || stored.state != WorkPlanState::Active
-            || stored.expires_at <= now()?
-        {
-            return Err(err(ErrorCode::Cancelled, "work-plan-control"));
-        }
-        let root = stored.plan.execution_input()?;
-        if root.project_id != scope.project_id
-            || root.task_id != scope.parent_task
-            || !stored.effects.contains(&AutomationEffect::SaveCandidate)
-        {
-            return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
-        }
-        let registered: bool = c
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1)",
-                [scope.parent_task.to_string()],
-                |r| r.get(0),
-            )
-            .map_err(sql)?;
-        if !registered {
-            return Err(err(ErrorCode::Unauthorized, "work-plan-budget-owner"));
-        }
-        Ok(())
+        check_scope_in(c, scope)
     }
 
-    /// Derive exact child bytes in one read snapshot. The caller selects only
-    /// captured units; original configuration, sharing, evidence and limits stay
-    /// fixed. Enqueue and HTTP dispatch still check the durable control lease.
+    /// A sealed preparation is the only admission proof for Agent model work.
+    pub(crate) fn check_prepared_agent_session(
+        &self,
+        prepared: &PreparedWorkPlanAgentGeneration,
+    ) -> Result<(), ExecutionError> {
+        self.check_work_plan_agent_scope(&prepared.scope)?;
+        self.verify_work_plan(&self.work_plan(prepared.scope.lease.plan_id)?)
+    }
+
+    /// Derive exact child bytes in one read snapshot. No authority is renewed.
     pub fn prepare_work_plan_agent_generation(
         &self,
         scope: &WorkPlanAgentScope,
         request: &AgentGenerationRequest,
-    ) -> Result<FixedInput, ExecutionError> {
+    ) -> Result<PreparedWorkPlanAgentGeneration, ExecutionError> {
         let c = self
             .connection()
             .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
@@ -587,7 +608,11 @@ impl ProjectStore {
             let input = derive_agent_generation(&stored.plan, scope, request)?;
             self.verify_work_plan(&stored.plan)?;
             check_enqueue(c, &input, Some(scope.parent_task))?;
-            Ok(input)
+            Ok(PreparedWorkPlanAgentGeneration {
+                scope: scope.clone(),
+                request: request.clone(),
+                input,
+            })
         })
     }
 
@@ -604,6 +629,49 @@ impl ProjectStore {
             .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
         Ok(load(c, plan_id)?.plan)
     }
+}
+
+pub(super) fn check_scope_in(
+    c: &Connection,
+    scope: &WorkPlanAgentScope,
+) -> Result<(), ExecutionError> {
+    let stored = load(c, scope.lease.plan_id)?;
+    if stored.lease != scope.lease
+        || stored.state != WorkPlanState::Active
+        || stored.expires_at <= now()?
+    {
+        return Err(err(ErrorCode::Cancelled, "work-plan-control"));
+    }
+    let root = stored.plan.execution_input()?;
+    super::agents::validate_scope_basis(&stored.plan, scope)?;
+    if scope
+        .delegation
+        .as_ref()
+        .is_some_and(|subset| !subset.tool_handles.is_empty())
+        && !stored.effects.contains(&AutomationEffect::QueryTools)
+    {
+        return Err(err(ErrorCode::Unauthorized, "work-plan-agent-subset"));
+    }
+    if root.project_id != scope.project_id
+        || root.task_id != scope.parent_task
+        || !stored.effects.contains(&AutomationEffect::SaveCandidate)
+    {
+        return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
+    }
+    let registered: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1)",
+            [scope.parent_task.to_string()],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    if !registered {
+        return Err(err(ErrorCode::Unauthorized, "work-plan-budget-owner"));
+    }
+    Ok(())
+}
+
+impl ProjectStore {
     pub fn work_plan_receipt(
         &self,
         action_id: ExecutionId,
@@ -1064,12 +1132,15 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
                     let bytes = delegation.ok_or_else(|| {
                         err(ErrorCode::CorruptLedger, "work-plan-tool-association")
                     })?;
-                    let delegation: WorkPlanToolDelegation = codec::decode(&bytes, 4096)?;
+                    let delegation: WorkPlanToolDelegation =
+                        codec::decode(&bytes, MAX_AGENT_DELEGATION_BYTES)?;
                     super::tools::validate_tool_input(c, &input, &delegation)?;
                     true
                 } else {
+                    if kind == "model" {
+                        super::agents::validate_model_input(c, &input)?;
+                    }
                     kind == "model"
-                        && delegation.is_none()
                         && matches_scope(input.envelope(), stored.plan.execution_input()?)
                 };
                 if generation == 0
@@ -1187,6 +1258,27 @@ pub(super) fn derive_agent_generation(
     scope: &WorkPlanAgentScope,
     request: &AgentGenerationRequest,
 ) -> Result<FixedInput, ExecutionError> {
+    super::agents::validate_scope_basis(plan, scope)?;
+    derive_generation(plan, scope, request, Some(scope.execution_binding()))
+}
+
+pub(super) fn derive_service_generation(
+    plan: &WorkPlan,
+    scope: &WorkPlanAgentScope,
+    request: &AgentGenerationRequest,
+) -> Result<FixedInput, ExecutionError> {
+    if scope.delegation.is_some() {
+        return Err(err(ErrorCode::Unauthorized, "service-agent-subset"));
+    }
+    derive_generation(plan, scope, request, None)
+}
+
+fn derive_generation(
+    plan: &WorkPlan,
+    scope: &WorkPlanAgentScope,
+    request: &AgentGenerationRequest,
+    agent: Option<WorkPlanAgentExecutionBinding>,
+) -> Result<FixedInput, ExecutionError> {
     let original = plan.fixed_input()?;
     if request.unit_ids.len() > tsumugi_plugin_sdk::MAX_GENERATION_SERVICE_UNITS {
         return Err(err(ErrorCode::LimitExceeded, "work-plan-agent-items"));
@@ -1204,6 +1296,10 @@ pub(super) fn derive_agent_generation(
         || selected
             .iter()
             .any(|id| !plan.selection_basis.iter().any(|b| b.unit_id == *id))
+        || scope
+            .delegation
+            .as_ref()
+            .is_some_and(|subset| selected.iter().any(|id| !subset.unit_ids.contains(id)))
     {
         return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
     }
@@ -1211,6 +1307,13 @@ pub(super) fn derive_agent_generation(
     envelope.task_id = request.task_id;
     envelope.attempt_id = request.attempt_id;
     envelope.automation = Some(scope.lease);
+    let mut settings = crate::ai::settings(&original)?;
+    if settings.agent.is_some() {
+        return Err(err(ErrorCode::InvalidInput, "work-plan-agent-root"));
+    }
+    settings.agent = agent;
+    envelope.settings = serde_json::to_value(settings)
+        .map_err(|_| err(ErrorCode::InvalidInput, "work-plan-agent-input"))?;
     let scopes = selected
         .iter()
         .map(ToString::to_string)

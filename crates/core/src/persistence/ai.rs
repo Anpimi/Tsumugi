@@ -256,6 +256,7 @@ impl AiPreview {
         e.settings = serde_json::to_value(AiSettings {
             recipe: RECIPE.into(),
             config: self.config.clone(),
+            agent: None,
         })
         .map_err(|_| error(ErrorCode::InvalidInput, "ai-input"))?;
         // Allow bounded retries inside the producer without the generic runtime

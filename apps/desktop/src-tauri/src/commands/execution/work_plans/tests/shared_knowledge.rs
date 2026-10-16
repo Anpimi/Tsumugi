@@ -261,6 +261,7 @@ fn shared_knowledge_in_order(reverse: bool) {
                     .unwrap();
                 assert!(input.envelope().automation.is_none());
                 assert!(input.envelope().settings.get("callerId").is_none());
+                assert!(input.envelope().settings.get("agent").is_none());
                 assert_eq!(
                     input.envelope().plugin.as_ref().unwrap().capability,
                     original_binding
@@ -367,7 +368,7 @@ fn shared_knowledge_in_order(reverse: bool) {
                     .execution_input(id)
                     .unwrap();
                 assert!(input.envelope().automation.is_some());
-                assert_eq!(input.envelope().settings["callerId"], caller);
+                assert_eq!(input.envelope().settings["agent"]["callerId"], caller);
                 assert_eq!(
                     input.envelope().plugin.as_ref().unwrap().capability,
                     original_binding

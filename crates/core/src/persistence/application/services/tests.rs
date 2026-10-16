@@ -287,9 +287,19 @@ impl Fixture {
         }
     }
     fn prepare(&self) -> PreparedWorkPlanServiceGeneration {
-        self.store
+        let prepared = self
+            .store
             .prepare_work_plan_service_generation(&self.origin, &self.call)
-            .unwrap()
+            .unwrap();
+        assert!(
+            prepared
+                .input()
+                .envelope()
+                .settings
+                .get("agent")
+                .is_some_and(serde_json::Value::is_null)
+        );
+        prepared
     }
     fn submit(&mut self) -> (PreparedWorkPlanServiceGeneration, WorkPlanServiceReceipt) {
         let prepared = self.prepare();

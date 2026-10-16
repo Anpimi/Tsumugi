@@ -1,6 +1,8 @@
 //! Broker authority and ledger evidence; the separate Host test executes the worker.
 #[path = "work_plan_tools/guidance.rs"]
 mod guidance;
+#[path = "work_plan_tools/subsets.rs"]
+mod subsets;
 mod support;
 use serde_json::json;
 use std::{
@@ -916,7 +918,7 @@ fn delegated_tool_derives_source_and_requires_independent_process_consent() {
         "same"
     );
     assert_eq!(
-        prepared.input().envelope().settings["callerId"],
+        prepared.input().envelope().settings["agent"]["callerId"],
         json!(f.scope.caller_id())
     );
     assert_eq!(

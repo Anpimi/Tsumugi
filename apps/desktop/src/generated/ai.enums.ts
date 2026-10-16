@@ -29,5 +29,6 @@ export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;
 export const TextReviewFieldValues = ["source","translation"] as const;
 export const ValidationStateValues = ["absent","pending","valid","invalid"] as const;
+export const WorkPlanAgentReconciliationOutcomeValues = ["active","enqueued","not-enqueued"] as const;
 export const WorkPlanStateValues = ["active","paused","stopped","taken-over"] as const;
 export const WorkStageValues = ["understanding","resources","generation","checks","delivery"] as const;

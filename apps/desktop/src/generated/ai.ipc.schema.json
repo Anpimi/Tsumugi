@@ -37,6 +37,35 @@
         ],
         "type": "object"
       },
+      "AgentDelegationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "delegationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "toolHandles": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "delegationId",
+          "unitIds",
+          "toolHandles"
+        ],
+        "type": "object"
+      },
       "AgentGenerationRequest": {
         "additionalProperties": false,
         "description": "A bounded proposal within an already-authorized plan. It contains no model,\ndestination, payload, effect, human confirmation or authority override.",
@@ -1488,6 +1517,110 @@
         ],
         "type": "object"
       },
+      "WorkPlanAgentDelegateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "delegation": {
+            "$ref": "#/definitions/AgentDelegationRequest"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "delegation"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentGenerationAttemptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/AgentGenerationRequest"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "generation",
+          "inputDigest",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentGenerationOutputRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/AgentGenerationRequest"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "generation",
+          "inputDigest",
+          "itemId",
+          "resultId"
+        ],
+        "type": "object"
+      },
       "WorkPlanAgentGuidanceRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1549,6 +1682,39 @@
           "projectId",
           "scopeId",
           "generation"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentReconcileRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "lease",
+          "taskId",
+          "attemptId",
+          "inputDigest"
         ],
         "type": "object"
       },
@@ -2286,6 +2452,15 @@
       "workPlanAction": {
         "$ref": "#/definitions/WorkPlanActionRequest"
       },
+      "workPlanAgentDelegate": {
+        "$ref": "#/definitions/WorkPlanAgentDelegateRequest"
+      },
+      "workPlanAgentGenerationAttempt": {
+        "$ref": "#/definitions/WorkPlanAgentGenerationAttemptRequest"
+      },
+      "workPlanAgentGenerationOutput": {
+        "$ref": "#/definitions/WorkPlanAgentGenerationOutputRequest"
+      },
       "workPlanAgentGuidance": {
         "$ref": "#/definitions/WorkPlanAgentGuidanceRequest"
       },
@@ -2294,6 +2469,9 @@
       },
       "workPlanAgentPrepare": {
         "$ref": "#/definitions/WorkPlanAgentPrepareRequest"
+      },
+      "workPlanAgentReconcile": {
+        "$ref": "#/definitions/WorkPlanAgentReconcileRequest"
       },
       "workPlanAgentResource": {
         "$ref": "#/definitions/WorkPlanAgentResourceRequest"
@@ -2360,6 +2538,10 @@
       "workPlanGenerationStart",
       "workPlanGenerationDiscard",
       "workPlanAgentOpen",
+      "workPlanAgentDelegate",
+      "workPlanAgentReconcile",
+      "workPlanAgentGenerationAttempt",
+      "workPlanAgentGenerationOutput",
       "workPlanAgentPrepare",
       "workPlanAgentStart",
       "workPlanAgentToolPrepare",
@@ -7500,6 +7682,32 @@
         ],
         "type": "string"
       },
+      "WorkPlanAgentExecutionIdentity": {
+        "additionalProperties": false,
+        "description": "Human recovery identity. It contains no scope or execution authority.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "lease",
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
       "WorkPlanAgentGenerationView": {
         "additionalProperties": false,
         "properties": {
@@ -7578,7 +7786,6 @@
               "$ref": "#/definitions/WorkPlanToolSpec"
             },
             "maxItems": 32,
-            "minItems": 1,
             "type": "array"
           }
         },
@@ -7586,6 +7793,63 @@
           "scopeId",
           "parentTask",
           "tools"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentReconciliation": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/definitions/WorkPlanAgentExecutionIdentity"
+          },
+          "outcome": {
+            "$ref": "#/definitions/WorkPlanAgentReconciliationOutcome"
+          }
+        },
+        "required": [
+          "identity",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentReconciliationOutcome": {
+        "enum": [
+          "active",
+          "enqueued",
+          "not-enqueued"
+        ],
+        "type": "string"
+      },
+      "WorkPlanAgentSubset": {
+        "additionalProperties": false,
+        "properties": {
+          "delegationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "parentScopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "toolHandles": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "delegationId",
+          "parentScopeId",
+          "unitIds",
+          "toolHandles"
         ],
         "type": "object"
       },
@@ -7635,6 +7899,16 @@
           "budget": {
             "$ref": "#/definitions/ProviderBudget"
           },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanAgentSubset"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lease": {
             "$ref": "#/definitions/AutomationLease"
           },
@@ -7656,7 +7930,8 @@
           "lease",
           "parentTask",
           "scope",
-          "budget"
+          "budget",
+          "delegation"
         ],
         "type": "object"
       },
@@ -8140,8 +8415,17 @@
       "workPlanAgentGeneration": {
         "$ref": "#/definitions/WorkPlanAgentGenerationView"
       },
+      "workPlanAgentGenerationAttempt": {
+        "$ref": "#/definitions/AttemptDetail"
+      },
+      "workPlanAgentGenerationOutput": {
+        "$ref": "#/definitions/ExecutionOutputView"
+      },
       "workPlanAgentGuidance": {
         "$ref": "#/definitions/WorkPlanAgentGuidanceView"
+      },
+      "workPlanAgentReconcile": {
+        "$ref": "#/definitions/WorkPlanAgentReconciliation"
       },
       "workPlanAgentResource": {
         "$ref": "#/definitions/WorkPlanAgentGuidanceTextView"
@@ -8180,7 +8464,10 @@
       "maintenanceAssessment",
       "workPlanGenerationPreflight",
       "workPlanAgent",
+      "workPlanAgentReconcile",
       "workPlanAgentGeneration",
+      "workPlanAgentGenerationAttempt",
+      "workPlanAgentGenerationOutput",
       "workPlanAgentTool",
       "workPlanAgentToolAttempt",
       "workPlanAgentToolOutput",

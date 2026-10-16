@@ -107,6 +107,38 @@ tool identity; stopping, expiry, a new control generation or reopening rejects
 the old scope. Reconcile unresolved original actions through their existing
 controls before preparing or continuing work.
 
+## Child Agent scopes
+
+An active authorized plan can delegate a selected subset of its captured entries
+and tools to a child Agent. A child cannot delegate again or add entries, tools,
+permissions, model settings, sharing choices or time. Every child shares the
+original plan's cumulative execution budget and tool invocation limit.
+
+Keep the child consumer that prepared each operation to inspect that operation's
+results. Generation and tool results retain their original caller, input and
+item identities; a parent or sibling cannot substitute its own scope to read
+them. Guidance is limited to tools included in that child's captured subset.
+Creating a child does not itself execute a model or tool.
+
+A changed or expired plan invalidates the old child scope. Uncertain starts keep
+their original request for reconciliation, and newer preparation edits remain
+available. Use the existing explicit task-history action when human recovery is
+needed; rejected child reads do not automatically fall back to project history
+or renew permission.
+
+If creating the child returned no confirmation, you may explicitly end that
+preparation after its original deadline has passed or the plan was stopped. The
+child might have been created; ending this preparation does not renew its
+permission. This closes only that preparation; possibly started generation or
+tool work still requires its own reconciliation.
+
+Explicitly stop or take over the original plan before reconciling an uncertain
+start that was not accepted. Reaching its deadline alone does not settle that
+uncertainty. If the project engine confirms that the exact request was never
+enqueued after the plan ended, you can end that preparation. An accepted request
+keeps its task history and budget record; a read failure never establishes that
+work was not accepted.
+
 ## Arena comparison
 
 Choose **Arena comparison** to generate two to four schemes for the same selected original strings and one target language. Each scheme has its own endpoint, model, output token parameter, timeout, retry limit, terms/human-context sharing and source-observation selection and budget. The whole round shares one request and concurrency budget. Defaults are two schemes, up to 20 original strings, 40 requests including retries and concurrency 1. At most 100 expanded string × scheme items are allowed; requests are bounded to 300 and concurrency to 2. An initial request count larger than the chosen budget is rejected.

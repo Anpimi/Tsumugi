@@ -255,6 +255,23 @@ fn inherits_configuration(child: &FixedInput, parent: &FixedInput) -> bool {
         return false;
     }
     let (mut actual, mut allowed) = (child.settings.clone(), parent.settings.clone());
+    if child.operation == crate::ai::OPERATION {
+        // Agent provenance narrows a caller; it cannot change model, sharing or
+        // any ancestor budget. Decode the complete required shape first.
+        let (Ok(mut c), Ok(mut p)) = (
+            serde_json::from_value::<crate::ai::AiSettings>(actual.clone()),
+            serde_json::from_value::<crate::ai::AiSettings>(allowed.clone()),
+        ) else {
+            return false;
+        };
+        c.agent = None;
+        p.agent = None;
+        let (Ok(c), Ok(p)) = (serde_json::to_value(c), serde_json::to_value(p)) else {
+            return false;
+        };
+        actual = c;
+        allowed = p;
+    }
     for key in ["maxRequests", "maxItems", "concurrency"] {
         let (Some(c), Some(p)) = (
             actual["config"][key].as_u64(),

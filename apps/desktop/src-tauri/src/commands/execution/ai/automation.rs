@@ -1359,7 +1359,7 @@ mod tracking_tests {
             .unwrap();
         // The real runtime rejects a missing producer before its durable enqueue.
         let error = runtime
-            .submit_child(&mut fixture.store, &child, scope.parent_task())
+            .submit_work_plan_agent_generation(&mut fixture.store, &child)
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::InvalidInput);
         assert_eq!(error.stage, "capability");
@@ -1385,7 +1385,7 @@ mod tracking_tests {
             [&child.envelope().items[0].item_id]
             .candidate_action;
         runtime
-            .submit_child(&mut fixture.store, &child, scope.parent_task())
+            .submit_work_plan_agent_generation(&mut fixture.store, &child)
             .unwrap();
         prepared.commit();
         assert_eq!(

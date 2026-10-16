@@ -36,7 +36,7 @@ request!(
 pub struct WorkPlanAgentGuidanceView {
     pub scope_id: ExecutionId,
     pub parent_task: ExecutionId,
-    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 32)))]
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
     pub tools: Vec<WorkPlanToolSpec>,
 }
 

@@ -6,6 +6,8 @@ import type {
   WorkProtectionReadRequest, WorkProtectionSetRequest,
   WorkPlanAgentOpenRequest, WorkPlanAgentStartRequest, WorkPlanAgentToolStartRequest,
   WorkPlanAgentToolAttemptRequest, WorkPlanAgentToolOutputRequest,
+  WorkPlanAgentDelegateRequest, WorkPlanAgentGenerationAttemptRequest,
+  WorkPlanAgentReconcileRequest,
   MaintenanceAssessmentRequest,
 } from "./generated/ai.requests";
 import type { AttemptDetail, ExecutionOutputView, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
@@ -28,6 +30,14 @@ function invalidAcknowledgement(): never {
 
 /** Receipts report an action's historical result. Read status for current authority. */
 export const workPlanCommands = {
+  reconcileAgent: async (input: WorkPlanAgentReconcileRequest) => {
+    const request = structuredClone(input);
+    if (!validators.validateRequestWorkPlanAgentReconcile(request)) throw new Error("Invalid Agent reconciliation request");
+    const value = await checkedInvoke("reconcile_work_plan_agent_execution", request, validators.validateResponseWorkPlanAgentReconcile);
+    if (jsonIdentity(value.identity.lease) !== jsonIdentity(request.lease) || value.identity.taskId !== request.taskId
+      || value.identity.attemptId !== request.attemptId || value.identity.inputDigest !== request.inputDigest) invalidAcknowledgement();
+    return value;
+  },
   maintenance: (request: MaintenanceAssessmentRequest) => checkedInvoke("read_maintenance_assessment", request,
     (value): value is import("./generated/ai.responses").MaintenanceAssessment => validators.validateResponseMaintenanceAssessment(value)
       && value.projectId===request.projectId && value.sourceSnapshotId===request.snapshotId && value.locale===request.locale
@@ -155,6 +165,7 @@ export async function openWorkPlanAgentScope(request: WorkPlanAgentOpenRequest, 
   });
   if (opened.lease.planId !== opening.lease.planId
     || opened.lease.generation !== opening.lease.generation
+    || opened.delegation !== null
     || !matchesCapturedScope(opened.scope, capturedScope, capturedScope.map(unit => unit.unitId))) invalidAcknowledgement();
   return opened;
 }
@@ -171,13 +182,56 @@ export async function openWorkPlanAgent(
   request: WorkPlanAgentOpenRequest, expectedScope: readonly PlanSelectionBasis[], expectedTools: readonly WorkPlanToolSpec[] = [],
 ) {
   const opening = structuredClone(request), capturedScope = structuredClone(expectedScope);
+  const capturedTools = structuredClone(expectedTools);
+  if (new Set(capturedTools.map(tool => tool.handle)).size !== capturedTools.length) throw new Error("Invalid Agent tool scope");
+  const opened = await openWorkPlanAgentScope(opening, capturedScope);
+  const root = createWorkPlanAgentConsumer(opening, opened, capturedScope, capturedTools);
+  const proposals = new WeakMap<object, WorkPlanAgentDelegateRequest>();
+  return Object.freeze({ ...root, delegate: async (proposal: { unitIds: string[]; toolHandles: string[] }) => {
+    if (!proposal || typeof proposal !== "object") throw new Error("Invalid Agent subset request");
+    let captured = proposals.get(proposal);
+    if (!captured && (Object.keys(proposal).length !== 2
+      || Object.keys(proposal).some(key => key !== "unitIds" && key !== "toolHandles")
+      || !Array.isArray(proposal.unitIds) || !proposal.unitIds.length || proposal.unitIds.length > 100
+      || new Set(proposal.unitIds).size !== proposal.unitIds.length || proposal.unitIds.some(id => !capturedScope.some(unit => unit.unitId === id))
+      || !Array.isArray(proposal.toolHandles) || proposal.toolHandles.length > 32
+      || new Set(proposal.toolHandles).size !== proposal.toolHandles.length || proposal.toolHandles.some(id => !capturedTools.some(tool => tool.handle === id))))
+      throw new Error("Invalid Agent subset request");
+    if (!captured) {
+      const value: unknown = { projectId: opening.projectId, sessionToken: opening.sessionToken,
+        scopeId: opened.scopeId, delegation: { delegationId: crypto.randomUUID(),
+          unitIds: [...proposal.unitIds].sort(), toolHandles: [...proposal.toolHandles].sort() } };
+      if (!validators.validateRequestWorkPlanAgentDelegate(value)) throw new Error("Invalid Agent subset request");
+      captured = value;
+      proposals.set(proposal, captured);
+    }
+    const sending = structuredClone(captured);
+    if (!validators.validateRequestWorkPlanAgentDelegate(sending)) throw new Error("Invalid Agent subset request");
+    const value = await checkedInvoke("delegate_work_plan_agent_scope", sending, validators.validateResponseWorkPlanAgent);
+    if (!value.delegation || value.delegation.parentScopeId !== opened.scopeId || value.scopeId === opened.scopeId
+      || value.delegation.delegationId !== sending.delegation.delegationId
+      || jsonIdentity(value.delegation.unitIds) !== jsonIdentity(sending.delegation.unitIds)
+      || jsonIdentity(value.delegation.toolHandles) !== jsonIdentity(sending.delegation.toolHandles)
+      || jsonIdentity(value.lease) !== jsonIdentity(opened.lease) || value.parentTask !== opened.parentTask
+      || value.budget.limit !== opened.budget.limit
+      || jsonIdentity(value.scope) !== jsonIdentity(capturedScope.filter(unit => sending.delegation.unitIds.includes(unit.unitId)))
+      || !matchesCapturedScope(value.scope, capturedScope, sending.delegation.unitIds)) invalidAcknowledgement();
+    return createWorkPlanAgentConsumer(opening, value, value.scope, capturedTools.filter(tool => sending.delegation.toolHandles.includes(tool.handle)));
+  } });
+}
+
+export type WorkPlanAgentLeaf = ReturnType<typeof createWorkPlanAgentConsumer>;
+function createWorkPlanAgentConsumer(opening: WorkPlanAgentOpenRequest, received: WorkPlanAgentView,
+  expectedScope: readonly PlanSelectionBasis[], expectedTools: readonly WorkPlanToolSpec[]) {
+  const opened = structuredClone(received), capturedScope = structuredClone(expectedScope);
   const tools = new Map(structuredClone(expectedTools).map(tool => [tool.handle, tool]));
   if (tools.size !== expectedTools.length) throw new Error("Invalid Agent tool scope");
-  const opened = await openWorkPlanAgentScope(opening, capturedScope);
   const basis = new Map(capturedScope.map(unit => [unit.unitId, unit]));
   const matchesScope = (actual: PlanSelectionBasis[], ids: readonly string[]) => matchesCapturedScope(actual, capturedScope, ids);
   const preparedRequests = new WeakMap<WorkPlanAgentGenerationView, WorkPlanAgentStartRequest>();
   const preparedTools = new WeakMap<WorkPlanAgentToolView, WorkPlanAgentToolStartRequest>();
+  const generationReads = new WeakMap<WorkPlanAgentGenerationView, { identity: string | undefined;
+    positions: Map<number, { itemId: string; unitId: string; locale: string }>; locale?: string }>();
   // Bounded identity witnesses only. Authority and current execution state stay
   // in Core; caller-owned DTOs and prior successful reads cannot renew a scope.
   const toolReadIdentities = new WeakMap<WorkPlanAgentToolView, {
@@ -209,6 +263,12 @@ export async function openWorkPlanAgent(
     if (!tool) throw new Error("Tool is outside this Agent guidance scope");
     return tool;
   }
+  function generationCapture(prepared: WorkPlanAgentGenerationView) {
+    const request = preparedRequests.get(prepared), witness = generationReads.get(prepared);
+    if (!request || !witness) throw new Error("Generation was not prepared by this Agent scope");
+    if (jsonIdentity(prepared) !== witness.identity) throw new Error("Agent generation preparation changed");
+    return { request, witness };
+  }
   function confirmGuidanceText(value: WorkPlanAgentGuidanceTextView, tool: WorkPlanToolSpec) {
     if (value.scopeId !== context.scopeId || value.parentTask !== parentTask || jsonIdentity(value.tool) !== jsonIdentity(tool)) invalidAcknowledgement();
     const bytes = new TextEncoder().encode(value.content.text);
@@ -217,6 +277,7 @@ export async function openWorkPlanAgent(
     return value;
   }
   return Object.freeze({
+    scope: structuredClone(opened),
     readGuidance: async () => {
       const value = await checkedInvoke("read_work_plan_agent_guidance", { ...context }, (value: unknown): value is WorkPlanAgentGuidanceView => {
         if (!validators.validateResponseWorkPlanAgentGuidance(value)) invalidAcknowledgement();
@@ -267,6 +328,7 @@ export async function openWorkPlanAgent(
         || value.taskId !== preparing.generation.taskId || value.attemptId !== preparing.generation.attemptId
         || !matchesScope(value.scope, ids)) invalidAcknowledgement();
       preparedRequests.set(value, { ...preparing, inputDigest: value.inputDigest });
+      generationReads.set(value, { identity: jsonIdentity(value), positions: new Map() });
       return value;
     },
     start: async (prepared: WorkPlanAgentGenerationView) => {
@@ -277,6 +339,42 @@ export async function openWorkPlanAgent(
         return true;
       });
       if (value !== starting.generation.attemptId) invalidAcknowledgement();
+      return value;
+    },
+    readGenerationAttempt: async (prepared: WorkPlanAgentGenerationView, page: Pick<WorkPlanAgentGenerationAttemptRequest, "offset" | "limit">) => {
+      const captured = generationCapture(prepared);
+      readOptions(page, ["offset", "limit"]);
+      const reading = { ...structuredClone(captured.request), ...structuredClone(page) }, ids = captured.request.generation.unitIds;
+      if (!validators.validateRequestWorkPlanAgentGenerationAttempt(reading) || !Number.isInteger(reading.offset) || reading.offset < 0 || reading.offset > ids.length
+        || !Number.isInteger(reading.limit) || reading.limit < 1 || reading.limit > 100) throw new Error("Invalid Agent generation read request");
+      const value = await checkedInvoke("read_work_plan_agent_generation_attempt", reading, validators.validateResponseWorkPlanAgentGenerationAttempt);
+      if (generationCapture(prepared).request !== captured.request) throw new Error("Agent generation preparation changed");
+      const count = Math.min(reading.limit, ids.length - reading.offset), next = reading.offset + count;
+      if (value.attemptId !== reading.generation.attemptId || value.taskId !== reading.generation.taskId || value.operation !== "ai-translation"
+        || value.recovery.attemptId !== reading.generation.attemptId || value.progress.total !== ids.length || value.items.length !== count
+        || value.nextOffset !== (next < ids.length ? next : null)
+        || new Set(value.items.map(item => item.status.itemId)).size !== count || new Set(value.items.map(item => item.scope.id)).size !== count) invalidAcknowledgement();
+      let locale = captured.witness.locale;
+      const positions = value.items.map((item, index) => {
+        if (item.scope.kind !== "translation-unit" || !ids.includes(item.scope.id) || !item.scope.locale
+          || locale !== undefined && item.scope.locale !== locale || index > 0 && value.items[index - 1].status.itemId >= item.status.itemId) invalidAcknowledgement();
+        locale = item.scope.locale;
+        const position = reading.offset + index, identity = { itemId: item.status.itemId, unitId: item.scope.id, locale };
+        const prior = captured.witness.positions.get(position);
+        if (prior && jsonIdentity(prior) !== jsonIdentity(identity)
+          || [...captured.witness.positions].some(([seen, item]) => seen !== position && (item.itemId === identity.itemId || item.unitId === identity.unitId))) invalidAcknowledgement();
+        return { position, identity };
+      });
+      captured.witness.locale = locale;
+      for (const { position, identity } of positions) captured.witness.positions.set(position, identity);
+      return value;
+    },
+    readGenerationOutput: async (prepared: WorkPlanAgentGenerationView, itemId: string, resultId: string) => {
+      const captured = generationCapture(prepared), reading = { ...structuredClone(captured.request), itemId, resultId };
+      if (!validators.validateRequestWorkPlanAgentGenerationOutput(reading)) throw new Error("Invalid Agent generation read request");
+      const value = await checkedInvoke("read_work_plan_agent_generation_output", reading, validators.validateResponseWorkPlanAgentGenerationOutput);
+      if (generationCapture(prepared).request !== captured.request) throw new Error("Agent generation preparation changed");
+      if (value.projectId !== reading.projectId || value.attemptId !== reading.generation.attemptId || value.itemId !== itemId || value.resultId !== resultId) invalidAcknowledgement();
       return value;
     },
     prepareTool: async (tool: unknown) => {

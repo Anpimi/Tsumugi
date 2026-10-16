@@ -14,6 +14,7 @@ import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { workPlanCommands, type MaintenanceAssessment, type MaintenancePlanBasis, type MaintenanceChoice, type WorkPlanView, type WorkPlanStatusView, type PlanOptions } from "./workPlanCommands";
 import { useWorkPlanControlSession } from "./WorkPlanControls";
 import { useWorkPlanAgentSession } from "./WorkPlanAgentControls";
+import { childLifecycleKey, childRunWorking, hasChildUncertainty } from "./WorkPlanChildControls";
 import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
 import type { PlanToolDraft, PlanToolChoiceHandle } from "./WorkPlanToolChoice";
 import type { PluginTextReviewSelection } from "./pluginCommands";
@@ -123,12 +124,23 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     stateRef.current = preparationState(next); setState(stateRef.current);
   }
   const planControl = useWorkPlanControlSession(live), agent = useWorkPlanAgentSession(live), component = useWorkPlanGenerationSession(live);
-  function reserved() {
+  function parentReserved() {
     const toolRun = agent.current().toolRun;
     const toolView = toolRun && reads.client.getQueryData<AttemptDetail | null>(reads.key(["agent-tool-attempt",toolRun.prepared.attemptId]));
     const toolWorking = !!toolRun && (!toolView || toolView.items.some(item => item.status.execution === "queued" || item.status.execution === "dispatched"));
     return !!flight.current || !!current().pendingStart || !!current().pendingAdopt
       || !!planControl.current().pending || !!planControl.current().ready || !!agent.current().pending || toolWorking || !!component.current().operation;
+  }
+  function reserved() {
+    return parentReserved() || !!agent.current().child.pending || agent.current().child.children.some(child => child.runs.some(action => childRunWorking(action,
+      reads.client.getQueryData<AttemptDetail | null>(reads.key(childLifecycleKey(child.consumer.scope.scopeId, action.prepared.attemptId))))));
+  }
+  function canRunChild(recovery = false) {
+    return live() && !parentReserved() && (recovery || !hasChildUncertainty(agent.current().child));
+  }
+  function canOpenChildHistory(taskId: string, attemptId: string) {
+    return canRunChild(true) && agent.current().child.children.some(child => child.runs.some(action =>
+      action.phase !== "not-enqueued" && action.request.taskId === taskId && action.request.attemptId === attemptId));
   }
   function available(locale = current().locale) { return locale !== "" && locales.current.includes(locale); }
   function connectionCurrent() { return connectionConfigCurrent(connections.current(), current().config); }
@@ -378,6 +390,12 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       finally { dispose(); if (candidateReadCleanup.current === dispose) candidateReadCleanup.current = null; }
     }, true);
   }
+  async function runChildWorkPlan(work: (current: WorkPlanContinuation) => Promise<void>, planId: string | null, sourceContentKey: readonly unknown[], recovery = false) {
+    // Known queued children share Core's original concurrency budget. Only a
+    // submission in flight or an unresolved intent blocks another child call.
+    if (!canRunChild(recovery)) return;
+    await runWorkPlan(work, planId, sourceContentKey);
+  }
   function recordPlanStart(attemptId: string, planId: string, prepared: WorkPlanView, generation: string, editSeq: number) {
     if (!live() || !validateResponseIdentity(attemptId) || prepared.planId !== planId) return;
     update(before => ({ ...before,attempt:attemptId,planId,checkedTask:null,started:null,
@@ -624,7 +642,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }), [reads,state.attempt,contentToolAttempt]);
   const contentRangeAvailable = useSyncExternalStore(subscribeContentAvailability, canReceiveContentSelection, canReceiveContentSelection);
   return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan, contentRangeAvailable,
-    planControl, agent, component, captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
+    planControl, agent, component, captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
     setAdvisoryChecks:(value:PluginTextReviewSelection[]) => edit("advisoryChecks",value),

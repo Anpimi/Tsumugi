@@ -20,6 +20,20 @@ function setup() {
 }
 
 describe("project session navigation", () => {
+  it("checks the same captured destination in both source guards without lending a recovery intent to another task", async () => {
+    const test = setup(); test.setArea("ai");
+    const exact: WorkspaceDestination = { kind: "task", taskId: "child-task", attemptId: "child-attempt" };
+    let recovery: WorkspaceDestination | null = exact;
+    test.presentation.allowNavigate.mockImplementation(async (destination?: WorkspaceDestination) =>
+      destination?.kind === "task" && recovery?.kind === "task" && destination.taskId === recovery.taskId && destination.attemptId === recovery.attemptId);
+    expect(await test.navigation.navigate({ kind: "task", taskId: "another-task", attemptId: "child-attempt" })).toBe(false);
+    expect(test.ports.accept).not.toHaveBeenCalled();
+    expect(await test.navigation.navigate(exact)).toBe(true);
+    expect(test.presentation.allowNavigate).toHaveBeenLastCalledWith(exact);
+    test.setArea("ai"); recovery = null;
+    expect(await test.navigation.navigate(exact)).toBe(false);
+    expect(test.area()).toBe("ai");
+  });
   it.each(["source-guard", "newer-draft"] as const)("does not commit a prepared Review handoff after %s or revive its old closure", async reason => {
     const test = setup(); test.setArea("ai");
     let editSeq = 0, commit!: () => boolean;

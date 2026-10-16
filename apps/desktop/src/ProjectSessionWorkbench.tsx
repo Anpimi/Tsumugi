@@ -142,7 +142,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
         Object.values(rev.drafts).some(value => value.length > 0) || Object.keys(rev.chosen).length > 0 || !!rev.checkReview || rev.checkConsent.length > 0 || rev.advisoryChecks.length > 0,
         [rev.locale, rev.actor, rev.editSeq, rev.checkReview?.request, rev.checkConsent, rev.advisoryChecks, Object.values(rev.chosen).map(value => [value.unitId, value.locale, value.basis]),
           Object.values(rev.draftTargets).map(value => [value.unitId, value.locale, value.basis])]),
-      row("ai", ai.reserved(), prepared.dirty, [prepared.editSeq, prepared.consent, prepared.capture, ai.planControl.current().pending, ai.agent.current().pending, ai.component.current().operation]),
+      row("ai", ai.reserved(), prepared.dirty, [prepared.editSeq, prepared.consent, prepared.capture, ai.planControl.current().pending, ai.agent.current().pending, ai.component.current().operation,
+        ai.agent.current().child.editSeq,ai.agent.current().child.pending?.proposal,ai.agent.current().child.children.map(child=>[child.consumer.scope.scopeId,child.accepted,child.toolHandle,child.runs.map(action=>[action.prepared.attemptId,action.phase,action.retryAllowed])])]),
       row("arena", arena.reserved(), comparison.dirty || !!comparison.draft, [comparison.editSeq, comparison.draft?.editSeq, comparison.consent]),
     ];
   }
@@ -550,7 +551,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       handoff={view.memory.read<ReviewHandoffPresentation>("review", "aiHandoff")}
       onReturnToAi={view.memory.read<boolean>("review", "returnToAi") ? () => navigation.navigate({ kind: "area", area: "ai" }) : undefined} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
-    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenComparison={openComparison("ai")} onOpenTranslation={openAiTranslation} onOpenReview={openAiReview} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
+    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenComparison={openComparison("ai")} onOpenTranslation={openAiTranslation} onOpenReview={openAiReview} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenTask={(taskId,attemptId)=>navigation.navigate({kind:"task",taskId,attemptId})} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
     {view.area === "arena" ? <ArenaWorkbench ref={handle => register("arena", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenConnections={onOpenConnections}
       onReturn={comparisonReturnTo ? () => { void navigation.navigate({ kind: "area", area: comparisonReturnTo }); } : undefined} /> : null}
     {view.area === "tasks" ? <ExecutionTasks ref={handle => register("tasks", handle)} project={project} disabled={locked}

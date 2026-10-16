@@ -183,6 +183,13 @@ pub struct AiItem {
 pub struct AiSettings {
     pub recipe: String,
     pub config: AiConfig,
+    #[serde(deserialize_with = "required_agent_binding")]
+    pub agent: Option<crate::application::WorkPlanAgentExecutionBinding>,
+}
+fn required_agent_binding<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::application::WorkPlanAgentExecutionBinding>, D::Error> {
+    Option::deserialize(deserializer)
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -229,6 +236,9 @@ pub fn settings(input: &FixedInput) -> Result<AiSettings, ExecutionError> {
     )?;
     s.config.validate()?;
     if e.operation != OPERATION
+        || s.agent
+            .as_ref()
+            .is_some_and(|agent| e.automation != Some(agent.lease) || e.task_id == agent.root_task)
         || e.capability_id != CAPABILITY
         || e.capability_version != "1"
         || s.recipe != RECIPE

@@ -225,6 +225,100 @@ pub(crate) struct WorkPlanToolDelegation {
     pub tool_handle: ExecutionId,
     pub caller: String,
     pub caller_id: ExecutionId,
+    #[serde(deserialize_with = "required_agent_subset")]
+    pub delegation: Option<WorkPlanAgentSubset>,
+}
+
+/// The largest allowed proof includes 100 unit IDs and 32 captured tool IDs.
+pub const MAX_AGENT_DELEGATION_BYTES: usize = 8192;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct AgentDelegationRequest {
+    pub delegation_id: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 100)))]
+    pub unit_ids: Vec<ExecutionId>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+    pub tool_handles: Vec<ExecutionId>,
+}
+
+/// Human recovery identity. It contains no scope or execution authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanAgentExecutionIdentity {
+    pub lease: AutomationLease,
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(regex(pattern = "^[a-f0-9]{64}$")))]
+    pub input_digest: String,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum WorkPlanAgentReconciliationOutcome {
+    Active,
+    Enqueued,
+    NotEnqueued,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanAgentReconciliation {
+    pub identity: WorkPlanAgentExecutionIdentity,
+    pub outcome: WorkPlanAgentReconciliationOutcome,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanAgentSubset {
+    pub delegation_id: ExecutionId,
+    pub parent_scope_id: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 100)))]
+    pub unit_ids: Vec<ExecutionId>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+    pub tool_handles: Vec<ExecutionId>,
+}
+
+pub fn required_agent_subset<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<WorkPlanAgentSubset>, D::Error> {
+    Option::deserialize(deserializer)
+}
+#[cfg(feature = "wire-schema")]
+pub fn agent_subset_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    <Option<WorkPlanAgentSubset> as schemars::JsonSchema>::json_schema(generator)
+}
+
+/// Immutable provenance, never a substitute for a live opaque scope.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanAgentExecutionBinding {
+    pub lease: AutomationLease,
+    pub root_task: ExecutionId,
+    pub caller_id: ExecutionId,
+    #[serde(deserialize_with = "required_agent_subset")]
+    pub delegation: Option<WorkPlanAgentSubset>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PreparedWorkPlanAgentGeneration {
+    pub(crate) scope: WorkPlanAgentScope,
+    pub(crate) request: AgentGenerationRequest,
+    pub(crate) input: FixedInput,
+}
+impl PreparedWorkPlanAgentGeneration {
+    pub fn input(&self) -> &FixedInput {
+        &self.input
+    }
+}
+impl std::ops::Deref for PreparedWorkPlanAgentGeneration {
+    type Target = FixedInput;
+    fn deref(&self) -> &FixedInput {
+        &self.input
+    }
 }
 
 /// A reference to durable authority. Possessing or editing this reference does
@@ -247,6 +341,7 @@ pub struct WorkPlanAgentScope {
     pub(crate) parent_task: ExecutionId,
     pub(crate) store_epoch: String,
     pub(crate) caller_id: ExecutionId,
+    pub(crate) delegation: Option<WorkPlanAgentSubset>,
 }
 
 /// A read snapshot of the original scope's tool guidance, never an execution
@@ -271,6 +366,17 @@ impl CapturedWorkPlanToolGuidance {
 }
 
 impl WorkPlanAgentScope {
+    pub fn delegation(&self) -> Option<&WorkPlanAgentSubset> {
+        self.delegation.as_ref()
+    }
+    pub(crate) fn execution_binding(&self) -> WorkPlanAgentExecutionBinding {
+        WorkPlanAgentExecutionBinding {
+            lease: self.lease,
+            root_task: self.parent_task,
+            caller_id: self.caller_id,
+            delegation: self.delegation.clone(),
+        }
+    }
     pub fn caller_id(&self) -> ExecutionId {
         self.caller_id
     }
@@ -791,6 +897,12 @@ impl WorkPlan {
             ));
         }
         let settings = ai::settings(&input)?;
+        if settings.agent.is_some() {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "work-plan-agent-root",
+            ));
+        }
         settings.config.validate()?;
         let mut units = BTreeSet::new();
         let mut snapshot = None;
@@ -859,3 +971,66 @@ pub use crate::persistence::{
     PreparedWorkPlanServiceGeneration, WorkPlanServiceCall, WorkPlanServiceCallIdentity,
     WorkPlanServiceOrigin, WorkPlanServiceReceipt,
 };
+
+#[cfg(test)]
+mod agent_binding_tests {
+    use super::*;
+    #[test]
+    fn agent_subset_maximum_proof_fits_the_shared_bound_and_nullable_fields_are_required() {
+        let mut units = (0..100).map(|_| ExecutionId::new()).collect::<Vec<_>>();
+        units.sort();
+        let mut tools = (0..32).map(|_| ExecutionId::new()).collect::<Vec<_>>();
+        tools.sort();
+        let binding = WorkPlanAgentExecutionBinding {
+            lease: AutomationLease {
+                plan_id: ExecutionId::new(),
+                generation: Revision::new(i64::MAX as u64).unwrap(),
+            },
+            root_task: ExecutionId::new(),
+            caller_id: ExecutionId::new(),
+            delegation: Some(WorkPlanAgentSubset {
+                delegation_id: ExecutionId::new(),
+                parent_scope_id: ExecutionId::new(),
+                unit_ids: units,
+                tool_handles: tools,
+            }),
+        };
+        let tool = WorkPlanToolDelegation {
+            lease: binding.lease,
+            root_task: binding.root_task,
+            caller_id: binding.caller_id,
+            caller: "work-plan-agent".into(),
+            tool_handle: ExecutionId::new(),
+            delegation: binding.delegation.clone(),
+        };
+        let bytes = codec::encode(&tool, MAX_AGENT_DELEGATION_BYTES).unwrap();
+        assert!(bytes.len() > 4096);
+        assert!(bytes.len() <= MAX_AGENT_DELEGATION_BYTES);
+        assert_eq!(
+            codec::decode::<WorkPlanToolDelegation>(&bytes, MAX_AGENT_DELEGATION_BYTES).unwrap(),
+            tool
+        );
+        assert_eq!(
+            codec::decode::<WorkPlanAgentExecutionBinding>(
+                &codec::encode(&binding, MAX_AGENT_DELEGATION_BYTES).unwrap(),
+                MAX_AGENT_DELEGATION_BYTES
+            )
+            .unwrap(),
+            binding
+        );
+        let mut root = serde_json::to_value(binding).unwrap();
+        root["delegation"] = serde_json::Value::Null;
+        serde_json::from_value::<WorkPlanAgentExecutionBinding>(root.clone()).unwrap();
+        root.as_object_mut().unwrap().remove("delegation");
+        assert!(serde_json::from_value::<WorkPlanAgentExecutionBinding>(root).is_err());
+        let mut settings = serde_json::to_value(ai::AiSettings {
+            recipe: ai::RECIPE.into(),
+            config: ai::AiConfig::default(),
+            agent: None,
+        })
+        .unwrap();
+        serde_json::from_value::<ai::AiSettings>(settings.clone()).unwrap();
+        settings.as_object_mut().unwrap().remove("agent");
+        assert!(serde_json::from_value::<ai::AiSettings>(settings).is_err());
+    }
+}

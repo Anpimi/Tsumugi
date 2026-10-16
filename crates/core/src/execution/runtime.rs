@@ -428,6 +428,17 @@ impl ExecutionRuntime {
     ) -> Result<(), ExecutionError> {
         self.submit_with_parent(store, input, Some(parent))
     }
+    /// Agent provenance is accepted only with its original sealed preparation.
+    pub fn submit_work_plan_agent_generation(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedWorkPlanAgentGeneration,
+    ) -> Result<(), ExecutionError> {
+        store.check_prepared_agent_session(prepared)?;
+        let policy =
+            self.submission_policy(store, prepared.input(), Some(prepared.scope.parent_task()))?;
+        store.enqueue_work_plan_agent_generation(prepared, policy)
+    }
     /// A component proposal uses the same queue and ancestor budget, with its
     /// original caller recorded atomically alongside the child attempt.
     pub fn submit_work_plan_service_child(

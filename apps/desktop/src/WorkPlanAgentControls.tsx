@@ -12,6 +12,7 @@ import { jsonIdentity } from "./pluginToolChoices";
 import { useWorkbenchCommands, type CommandAvailability, type AiAgentCommandPayload, type AiAgentPendingCommandPayload } from "./workbenchCommands";
 import { WorkPlanGenerationControls, type WorkPlanGenerationSession } from "./WorkPlanGenerationControls";
 import { ToolGuidance } from "./ToolGuidance";
+import { WorkPlanChildControls, type ChildAgentState, initialChildAgentState } from "./WorkPlanChildControls";
 
 type AgentConsumer = Awaited<ReturnType<typeof openWorkPlanAgent>>;
 type ToolCapture = Awaited<ReturnType<AgentConsumer["prepareTool"]>>;
@@ -21,8 +22,8 @@ export type AgentPending = ({ kind: "tool"; consumer: AgentConsumer; prepared: T
   & { plan: WorkPlanStatusView["plan"]; generation: string; unitIds: string[]; uncertain: boolean };
 export type ToolRun = { prepared: ToolCapture; plan: WorkPlanStatusView["plan"] };
 
-export interface AgentState { selected: string[]; toolHandle: string; pending: AgentPending | null; toolRun: ToolRun | null }
-const initialAgent = (): AgentState => ({ selected: [], toolHandle: "", pending: null, toolRun: null });
+export interface AgentState { selected: string[]; toolHandle: string; pending: AgentPending | null; toolRun: ToolRun | null; child: ChildAgentState }
+const initialAgent = (): AgentState => ({ selected: [], toolHandle: "", pending: null, toolRun: null, child: initialChildAgentState() });
 export function useWorkPlanAgentSession(live: () => boolean) {
   const [state, setState] = useState(initialAgent), ref = useRef(state);
   function update(change: (before: AgentState) => AgentState) {
@@ -34,7 +35,9 @@ export function useWorkPlanAgentSession(live: () => boolean) {
 export type WorkPlanAgentSession = ReturnType<typeof useWorkPlanAgentSession>;
 
 /** A bounded production consumer of the original plan, provider and tool ledger. */
-export function WorkPlanAgentControls({ context, status, open, disabled, busy, run, onBlockedChange, onGenerated, session, component, ownerBusy }: {
+export function WorkPlanAgentControls({ context, status, open, disabled, busy, run, onBlockedChange, onGenerated, session, component, ownerBusy, childControls }: {
+  childControls?: { disabled: boolean; canRun: (recovery?: boolean) => boolean; run: (work: (current: WorkPlanContinuation) => Promise<void>, recovery?: boolean) => Promise<void>;
+    onOpenTask: (taskId: string, attemptId: string) => Promise<boolean> };
   session: WorkPlanAgentSession; component: WorkPlanGenerationSession; ownerBusy: () => boolean;
   context: SessionRequest; status: WorkPlanStatusView; open: boolean; disabled: boolean; busy: boolean;
   run: (work: (current: WorkPlanContinuation) => Promise<void>) => Promise<void>;
@@ -154,6 +157,7 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
   return <section aria-label={t("ai.tools.agentTitle")}>
     <h3>{t("ai.tools.agentTitle")}</h3><p>{t("ai.tools.agentHelp")}</p>
     <ToolGuidance context={context} status={status} open={open} disabled={disabled} />
+    {childControls ? <WorkPlanChildControls context={context} status={status} open={open} busy={busy} session={session} {...childControls} /> : null}
     <fieldset disabled={locked}><legend>{t("ai.tools.subset")}</legend>
       {status.plan.scope.map(unit => <label className="source-check" key={unit.unitId}><input type="checkbox" checked={selected.includes(unit.unitId)}
         onChange={event => setSelected(ids => event.target.checked ? [...ids, unit.unitId] : ids.filter(id => id !== unit.unitId))} />{unit.nativeKey}</label>)}
