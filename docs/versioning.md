@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+New AI workbench drafts and explicit full draft resets now recommend adopted
+terms and saved human context. The existing preparation owner retains explicit
+opt-outs and requires a fresh exact preview and sharing consent before execution.
+Previously captured plans, Arena defaults and source-observation defaults remain
+unchanged. This frontend initial-state change adds no Core/Host/IPC, schema45,
+WorkPlan3, SDK/Process3, dependency or lockfile change. Application `0.2.0-alpha.1`
+and SDK `0.1.0-alpha.1` remain the same undistributed batch; both Unreleased
+changelogs are synchronized without another version bump.
+
 AI result rows can navigate to the exact current selected translation in the
 existing human Review workspace. Fresh target reads and the original session,
 Query, navigation and draft guards protect current evidence and newer edits.

@@ -58,6 +58,9 @@ function freeze<T>(part: T): T {
   return part;
 }
 function fixed<T>(value: T): T { return freeze(structuredClone(value)); }
+function newDraftConfig(): AiConfig {
+  return fixed({ ...defaultAiConfig, shareTerms: true, shareContext: true });
+}
 type PreparationState = State & { readonly prepared: AiPrepared | null; readonly preparedPlan: WorkPlanView | null };
 function preparationState(value: State): PreparationState {
   const snapshot: PreparationState = { ...value,
@@ -101,7 +104,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   const reads = useSessionReads(), tasks = useExecutionTaskSession();
   const connections = useConnectionFacts();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
-  const [state,setState] = useState<PreparationState>(() => preparationState({ maintenance:null,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,
+  const [state,setState] = useState<PreparationState>(() => preparationState({ maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,
     options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
     staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,checkedTask:null,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null }));
   const stateRef = useRef(state), mounted = useSessionAlive(), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
@@ -611,7 +614,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   function reset() {
     if (!live() || reserved()) return false;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
-    update(before => ({ ...before,maintenance:null,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,
       dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],failure:null,notice:null })); return true;
   }
   const contentToolAttempt = agent.current().toolRun?.prepared.attemptId ?? null;
