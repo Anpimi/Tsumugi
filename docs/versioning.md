@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Outbound MCP sharing adds explicit preview, recipient authorization, status and
+revocation interfaces for one fixed entry. Its stdio bridge uses the original
+Desktop project owner and an independent, expiring, single-connection credential.
+The read-only projection and session authority add no persisted project fields,
+execution permission or model sharing. The desktop adds the official `rmcp`
+3.5.1 dependency and directly uses the already locked Tokio 1.53.1; the lockfile
+records their required dependency features and four new package entries.
+
+Schema 46, WorkPlan3, SDK/Process3 and package formats remain unchanged.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
+batch, with synchronized bilingual Unreleased entries and no repeated version
+bump. The following assessments describe earlier source units.
+
 Saved builds can materialize up to sixteen exact independent artifact-check
 inputs and run an explicitly consented subset serially. The original Release
 session owns the bounded continuation; Core retains each original semantic

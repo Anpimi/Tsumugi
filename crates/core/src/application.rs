@@ -13,7 +13,13 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+mod disclosure;
 mod maintenance;
+pub use disclosure::{
+    CapturedMcpShare, MAX_MCP_SHARE_BYTES, MAX_MCP_SHARE_PREVIEW_BYTES, MCP_SHARE_PREVIEW_VERSION,
+    McpShareBasis, McpSharePreview, McpShareRequest, McpSharedContext, McpSharedSource,
+    McpSharedTerm, McpSharedTermEntry, McpSharedTranslation, McpSharedUnit,
+};
 #[cfg(feature = "wire-schema")]
 pub use maintenance::maintenance_schema;
 pub use maintenance::required_maintenance;

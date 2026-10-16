@@ -92,6 +92,7 @@ impl SessionAdmission {
 pub(super) struct SessionExecutor {
     admission: Arc<SessionAdmission>,
     changes: Arc<Mutex<Option<super::changes::ChangeSink>>>,
+    mcp_shutdown: Arc<super::mcp::Shutdown>,
 }
 
 impl Drop for SessionExecutor {
@@ -100,6 +101,7 @@ impl Drop for SessionExecutor {
         // admission prevents that upgrade from keeping new work admissible;
         // existing leases and accepted jobs retain their original completion.
         self.admission.accepting.store(false, Ordering::Release);
+        self.mcp_shutdown.close();
     }
 }
 
@@ -163,8 +165,11 @@ impl SessionExecutor {
         };
         let changes: Arc<Mutex<Option<super::changes::ChangeSink>>> = Arc::default();
         let sink = changes.clone();
+        let mcp_shutdown = Arc::new(super::mcp::Shutdown::default());
+        let owner_shutdown = mcp_shutdown.clone();
         std::thread::Builder::new().name("project-commands".into()).spawn(move || {
             let mut sessions = SessionManager {
+                mcp: super::mcp::Shares::with_shutdown(owner_shutdown),
                 services: Some(services),
                 ..SessionManager::default()
             };
@@ -215,11 +220,18 @@ impl SessionExecutor {
                 }
             }
         }).expect("failed to start project command thread");
-        Self { admission, changes }
+        Self {
+            admission,
+            changes,
+            mcp_shutdown,
+        }
     }
 }
 
 impl SessionExecutor {
+    pub(super) fn close_external_disclosures(&self) {
+        self.mcp_shutdown.close();
+    }
     pub(super) fn set_change_sink(&self, sink: Option<super::changes::ChangeSink>) {
         *self.changes.lock().expect("change sink poisoned") = sink;
     }

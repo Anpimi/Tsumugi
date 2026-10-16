@@ -29,6 +29,27 @@ struct Responses {
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
+struct McpRequests {
+    session: execution::SessionRequest,
+    prepare: mcp::McpSharePrepareRequest,
+    authorize: mcp::McpShareAuthorizeRequest,
+    read: mcp::McpShareReadRequest,
+    revoke: mcp::McpShareRevokeRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct McpResponses {
+    session: mcp::McpShareSessionView,
+    prepared: mcp::McpSharePrepared,
+    authorized: mcp::McpShareAuthorized,
+    share: mcp::McpShareView,
+    revoked: mcp::McpShareRevocation,
+    error: CommandError,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct ConnectionRequests {
     snapshot: connections::ConnectionSnapshotRequest,
     change: tsumugi_core::model_connections::ModelConnectionChange,
@@ -540,6 +561,7 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         path,
         serde_json::to_string_pretty(&serde_json::json!({
             "project": schemas::<Requests, Responses>(),
+            "mcp": schemas::<McpRequests, McpResponses>(),
             "connections": schemas::<ConnectionRequests, ConnectionResponses>(),
             "plugins": schemas::<PluginRequests, PluginResponses>(),
             "execution": schemas::<ExecutionRequests, ExecutionResponses>(),

@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
-#[path = "../runtime_bundle.rs"]
-mod runtime_bundle;
 #[path = "../plugin_bundle.rs"]
 mod plugin_bundle;
+#[path = "../runtime_bundle.rs"]
+mod runtime_bundle;
 
 #[cfg(target_os = "macos")]
 use tauri::Manager;
@@ -43,6 +43,9 @@ fn macos_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
 }
 
 fn main() {
+    if commands::mcp::bridge_main() {
+        return;
+    }
     #[cfg(feature = "wire-schema")]
     if std::env::args_os()
         .nth(1)

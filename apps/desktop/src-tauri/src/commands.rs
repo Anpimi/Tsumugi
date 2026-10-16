@@ -11,6 +11,7 @@ mod connections;
 pub(crate) mod contracts;
 mod dispatch;
 mod execution;
+pub(crate) mod mcp;
 mod plugins;
 
 use serde::{Deserialize, Serialize};
@@ -412,6 +413,7 @@ impl Default for AppState {
 
 impl Drop for AppState {
     fn drop(&mut self) {
+        self.sessions.close_external_disclosures();
         self.plugins.close();
     }
 }
@@ -426,6 +428,7 @@ struct ProjectServiceContext {
 
 #[derive(Default)]
 struct SessionManager {
+    mcp: mcp::Shares,
     services: Option<ProjectServiceContext>,
     active: Option<ActiveSession>,
     directory_recovery: Option<DirectoryRecovery>,
@@ -777,6 +780,7 @@ impl SessionManager {
         }
 
         self.ensure_package_operation_idle(CommandStage::Rename)?;
+        self.mcp.close_and_check()?;
         let active = self.active.take().ok_or_else(|| {
             CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Rename)
         })?;
@@ -986,6 +990,7 @@ impl SessionManager {
         if active.store.is_reconciling() {
             return Err(CommandError::unknown(CommandStage::Close));
         }
+        self.mcp.close_and_check()?;
         self.active
             .as_mut()
             .expect("active session checked above")
@@ -998,8 +1003,9 @@ impl SessionManager {
         Ok(CloseProjectView { closed: true })
     }
 
-    fn ensure_switch_allowed(&self, stage: CommandStage) -> Result<(), CommandError> {
+    fn ensure_switch_allowed(&mut self, stage: CommandStage) -> Result<(), CommandError> {
         self.ensure_package_operation_idle(stage)?;
+        self.mcp.close_and_check()?;
         if let Some(active) = &self.active {
             active.ensure_execution_idle(stage)?;
         }

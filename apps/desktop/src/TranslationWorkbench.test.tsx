@@ -21,6 +21,7 @@ import errorFixture from "../test/fixtures/commandErrors.contract.json";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { useSessionReads } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
+import { McpSharingPanel } from "./McpSharingPanel";
 import type { ReviewSummaryPage } from "./reviewCommands";
 import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
 import { useWorkspaceView } from "./WorkbenchFrame";
@@ -156,6 +157,27 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it("opens sharing from the exact current saved editor entry and retains its original local owner after the editor consumer is removed", async () => {
+  const user = userEvent.setup();
+  const view = render(<><TranslationWorkbench project={project} disabled={false} /><McpSharingPanel /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const entry = await screen.findByRole("button", { name: "Share this saved entry with an external MCP client" });
+  await waitFor(() => expect(entry).toBeEnabled()); await user.click(entry);
+  expect(screen.getByRole("heading", { name: "Share one saved entry" })).toHaveFocus();
+  expect(screen.getByText("Entry first → zh-CN")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Include adopted terms for this entry" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Include the saved manual context for this entry" })).not.toBeChecked();
+  expect(invoke.mock.calls.filter(([name]) => String(name).includes("mcp_share"))).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Close sharing draft" })); expect(entry).toHaveFocus(); await user.click(entry);
+  await user.type(screen.getByRole("textbox", { name: "External recipient" }), "Retained recipient B");
+  view.rerender(<McpSharingPanel />);
+  expect(screen.getByRole("textbox", { name: "External recipient" })).toHaveValue("Retained recipient B");
+  expect(screen.getByText("Entry first → zh-CN")).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => String(name).includes("mcp_share"))).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Close sharing draft" })); expect(screen.getByRole("button", { name: "Translations" })).toHaveFocus();
+});
 
 it.each(["completed", "unknown"] as const)("does not label incomplete selected QA as passed (%s)", async outcome => {
   const original = invoke.getMockImplementation()!;

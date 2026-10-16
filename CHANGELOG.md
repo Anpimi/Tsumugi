@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Preview and explicitly share a fixed saved entry with an external MCP client.
+  Adopted terms and human context are separate choices. An independent, expiring
+  stdio connection can be revoked without granting project browsing or writes;
+  delivered data may be retained or forwarded by the recipient.
+
 - Review a captured batch of build artifact checks, explicitly authorize selected
   checker inputs, and run them in sequence. Each successful check records its
   original verification proof; failures and uncertain operations pause remaining
