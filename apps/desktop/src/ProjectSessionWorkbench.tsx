@@ -3,6 +3,8 @@ import { matchQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { SessionReadProvider, SessionReadStatus, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { TranslationDraftSession, useTranslationDraftSession } from "./TranslationDraftSession";
+import { McpSharingSession, useMcpSharing } from "./McpSharingSession";
+import { McpSharingPanel } from "./McpSharingPanel";
 import { TranslationImportSession, useTranslationImportSession } from "./TranslationImportSession";
 import { ExecutionTaskSession, useExecutionTaskSession } from "./ExecutionTaskSession";
 import { ReviewDraftSession, useReviewDraftSession } from "./ReviewDraftSession";
@@ -37,7 +39,7 @@ import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCom
 /** The same project owners are shared by production assembly and isolated consumer tests. */
 export function ProjectSessionOwners({ project, children, bridge = true }: { project: ProjectView; children: ReactNode; bridge?: boolean }) {
   return <SessionReadProvider context={executionContext(project)} bridge={bridge}>
-    <TranslationDraftSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}>
+    <TranslationDraftSession project={project}><McpSharingSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}>
       <ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>
         <ArenaDraftSession project={project}><ReleaseDraftSession project={project}>
           <AiPreparationSession initialLocale={project.metadata.targetLocales[0] ?? ""} targetLocales={project.metadata.targetLocales}>
@@ -45,7 +47,7 @@ export function ProjectSessionOwners({ project, children, bridge = true }: { pro
           </AiPreparationSession>
         </ReleaseDraftSession></ArenaDraftSession>
       </SourceDraftSession></ResourceDraftSession></ReviewDraftSession>
-    </TranslationImportSession></ExecutionTaskSession></TranslationDraftSession>
+    </TranslationImportSession></ExecutionTaskSession></McpSharingSession></TranslationDraftSession>
   </SessionReadProvider>;
 }
 export interface ProjectSessionHandle {
@@ -95,6 +97,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   const { t } = useTranslation(), view = useWorkspaceView(), reads = useSessionReads();
   useWorkspaceViewChanges();
   const translation = useTranslationDraftSession(), imports = useTranslationImportSession(), tasks = useExecutionTaskSession();
+  const sharing = useMcpSharing();
   const source = useSourceDraftSession(), resources = useResourceDraftSession(), review = useReviewDraftSession();
   const release = useReleaseDraftSession(), ai = useAiPreparation(), arena = useArenaDraftSession();
   const mounted = useRef(false), handles = useRef(new Map<WorkspaceArea, SessionConsumer>());
@@ -133,11 +136,11 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       row("tasks", tasks.unresolved(), false, null),
       row("source", source.hasPending(),
         !!src.selection || Object.keys(src.lineage).length > 0 || !!src.actor.trim() || source.inFlight(), src.editSeq),
-      row("translation", translation.candidates.blocked() || translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
+      row("translation", sharing.blocked() || translation.candidates.blocked() || translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
         || imported.busy || imports.hasPending() || imports.hasActive(),
         translation.candidates.hasDraft() || !!manual && (manual.text !== (manual.baseText ?? "") || manual.newerDraftSaved),
         [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.protection.current().pending,
-          translation.candidates.current().editSeq,translation.candidates.current().pending]),
+          translation.candidates.current().editSeq,translation.candidates.current().pending, sharing.revision()]),
       row("resources", resources.factBlocked() || resources.inFlight() || !!res.pending || resources.tool.blocked(), resources.factDirty() || resources.termDirty() || resources.contextDirty() || resources.correctionDirty() || resources.tool.hasDraft(),
         [res.termSeq, res.contextSeq, res.correctionDraft, res.factDraft, res.factPending, resources.tool.draftSequence.current, resources.tool.current().capture?.review.inputDigest, resources.tool.current().pending]),
       row("review", review.inFlight() || rev.batchRunning || !!rev.pending,
@@ -489,7 +492,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (area === "resources" && resources.tool.blocked()) memory.write("resources", "tab", "queries");
     if (area === "translation") {
       const draft = translation.current();
-      memory.write("translation", "tab", translation.candidates.blocked() || translation.candidates.hasDraft() || translation.protection.blocked() || draft && (draft.pending || draft.pendingSelection || draft.saving || draft.text !== (draft.baseText ?? "") || draft.newerDraftSaved) ? "edit" : "import");
+      memory.write("translation", "tab", sharing.blocked() || translation.candidates.blocked() || translation.candidates.hasDraft() || translation.protection.blocked() || draft && (draft.pending || draft.pendingSelection || draft.saving || draft.text !== (draft.baseText ?? "") || draft.newerDraftSaved) ? "edit" : "import");
     }
   }
   const ports = useRef({ live, inspect, consumer, accept, blocked });
@@ -534,6 +537,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     }, null, 2)} /></label>
   </section>;
   return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t(reviewMessage ?? (failureReason(failure) === "session-exit-blocked" ? "workbench.exitBlocked" : failureReason(failure) === "arena-context-blocked" ? "arena.contextBlocked" : failureReason(failure)==="correction-editor-blocked" ? "correctionFeedback.blocked" : failureReason(failure)==="correction-editor-changed" ? "correctionFeedback.changed" : failureReason(failure)==="context-editor-blocked" ? "resource.contextEditorBlocked" : failureReason(failure)==="context-editor-changed" ? "resource.contextEditorChanged" : "workbench.navigationBlocked"))}</p><CommandFailureDetails failure={failure} />{reviewMessage ? <button className="secondary-button" disabled={locked} onClick={() => { void navigation.navigate({ kind: "area", area: failureReason(failure) === "review-handoff-blocked" ? "review" : "translation" }); }}>{t(failureReason(failure) === "review-handoff-blocked" ? "ai.reviewHandoff.retained" : "ai.reviewHandoff.openCurrent")}</button> : null}</div> : null}
+    <McpSharingPanel />
     {view.area === "overview" && !reads.retired ? <OverviewSourceObserver project={project} onSourceState={onSourceState} /> : null}
     {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} onOpenExtensions={onOpenExtensions}

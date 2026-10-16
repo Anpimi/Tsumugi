@@ -17,6 +17,7 @@ import { WorkProtectionControl, editingProtectionScope } from "./WorkProtectionC
 import { PluginTranslationControls } from "./PluginTranslationControls";
 import { TranslationCandidateDecisionFields } from "./TranslationCandidateDecisionFields";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
+import { useMcpSharing } from "./McpSharingSession";
 import { useWorkbenchCommands, type CommandAvailability, type TranslationImportPreviewCommandPayload, type TranslationImportRowTarget,
   type TranslationImportRowCommandPayload, type TranslationImportBatchCommandPayload, type TranslationImportPendingCommandPayload,
   type TranslationRevisionCommandPayload, type TranslationSelectionPendingCommandPayload, type TranslationContentRowCommandPayload,
@@ -84,6 +85,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const { t } = useTranslation();
   const context = executionContext(project);
   const draftSession = useTranslationDraftSession();
+  const sharing = useMcpSharing();
   const resourceDrafts=useResourceDraftSession();
   const candidates = draftSession.candidates;
   const importSession = useTranslationImportSession();
@@ -1191,6 +1193,12 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     }}>{t("toolQuery.querySelection")}</button></div> : null}
                   {queryUnavailable ? <p role="status">{t("toolQuery.editorUnavailable")}</p> : null}
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorDraft?.baseSelectionId ? editorDraft.baseText || t("translation.empty") : t("translation.noSelection")}</pre></details>
+                  <button type="button" className="secondary-button" disabled={disabled || !!sharing.state.target || !targetAvailable || !snapshot || readyEditorRead !== editorIntent?.id
+                    || snapshot.target.sourceRevisionId !== displayedTarget.sourceRevisionId || !checkedRead(editorKey(editorIntent), snapshot)}
+                    onClick={event => { if (snapshot && targetAvailable && readyEditorRead === editorIntent?.id && checkedRead(editorKey(editorIntent), snapshot)) sharing.begin({
+                      unitId: snapshot.target.unitId, locale: targetLocale, key: snapshot.target.nativeKey, sourceRevisionId: snapshot.target.sourceRevisionId,
+                      sourceSnapshotId: snapshot.target.sourceSnapshotId, selectionId: snapshot.target.selectionId, translationRevisionId: snapshot.target.revisionId }, event.currentTarget); }}>
+                    {t("mcpSharing.open")}</button>
                   <WorkProtectionControl session={draftSession.protection} context={context} target={displayedTarget} locale={targetLocale}
                     selectionId={editorDraft.baseSelectionId} selectionText={editorDraft.baseText} open={open && tab === "edit"} disabled={disabled || !!pendingSave || !!pendingSelection}
                     draftBlocked={dirty || !!pendingSave || !!pendingSelection} run={perform} onBlockedChange={() => {}}

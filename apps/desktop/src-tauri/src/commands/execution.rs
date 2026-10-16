@@ -17,6 +17,8 @@ macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
+        super::mcp::read_mcp_share_session,super::mcp::prepare_mcp_share,
+        super::mcp::authorize_mcp_share,super::mcp::read_mcp_share,super::mcp::revoke_mcp_share,
         super::connections::read_model_connections,
         super::connections::change_model_connections,
         super::connections::read_model_connection_action,
@@ -221,6 +223,9 @@ struct QueryJob {
     pending_outcome: Option<QueryOutcome>,
 }
 impl ExecutionHost {
+    pub(super) fn is_quiescing(&self) -> bool {
+        self.quiescing
+    }
     fn new(store: &ProjectStore) -> Result<Self, CommandError> {
         #[allow(unused_mut)]
         let mut host = Self {
@@ -1662,6 +1667,14 @@ pub async fn quiesce_execution(
             "quiesce_execution",
             CommandStage::ExecutionQuiesce,
             move |sessions| {
+                // Authenticate before revoking the original external recipient.
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionQuiesce,
+                )?;
+                sessions.mcp.close();
                 let active = authorized(
                     sessions,
                     &request.session_token,

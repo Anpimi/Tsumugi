@@ -18,6 +18,7 @@ mod application;
 mod changes;
 #[cfg(test)]
 mod current_tests;
+mod disclosure;
 pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;

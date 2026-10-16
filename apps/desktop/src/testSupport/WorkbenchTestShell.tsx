@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, isValidElement, type ReactNode } from "re
 import { render, act } from "@testing-library/react";
 import { WorkbenchNavigation, WorkspaceViewProvider, WorkspaceViewMemory, useWorkspaceViewChanges, type WorkspaceArea } from "../WorkbenchFrame";
 import { TranslationDraftSession } from "../TranslationDraftSession";
+import { McpSharingSession } from "../McpSharingSession";
 import { TranslationImportSession } from "../TranslationImportSession";
 import { ReviewDraftSession } from "../ReviewDraftSession";
 import { SourceDraftSession } from "../SourceDraftSession";
@@ -35,7 +36,7 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
   const memory = useMemo(() => new WorkspaceViewMemory(), [project?.sessionToken, project?.metadata.projectId]);
   return <ApplicationReadProvider><WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, memory, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
     <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
-    {project ? <SessionReadProvider key={`${project.metadata.projectId}:${project.sessionToken}`} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}><ArenaDraftSession project={project}><ReleaseDraftSession project={project}>{children}</ReleaseDraftSession></ArenaDraftSession></SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></ExecutionTaskSession></TranslationDraftSession></SessionReadProvider> : children}
+    {project ? <SessionReadProvider key={`${project.metadata.projectId}:${project.sessionToken}`} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><McpSharingSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}><ArenaDraftSession project={project}><ReleaseDraftSession project={project}>{children}</ReleaseDraftSession></ArenaDraftSession></SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></ExecutionTaskSession></McpSharingSession></TranslationDraftSession></SessionReadProvider> : children}
   </WorkspaceViewProvider></WorkbenchCommandsProvider></ApplicationReadProvider>;
 }
 

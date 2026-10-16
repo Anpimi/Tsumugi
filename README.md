@@ -369,3 +369,5 @@ Tsumugi is in early development. Current work focuses on the foundations for com
 - persistence and recovery
 
 Detailed APIs, storage schemas, transport protocols, and public extension contracts are still under design. There is no stable plugin API yet.
+
+Experimental [MCP sharing](docs/mcp-sharing.md) lets an explicitly authorized external client read one fixed saved entry through a single-use stdio connection. Adopted terms and human context are separately selected; the connection grants no project browsing or writes.
