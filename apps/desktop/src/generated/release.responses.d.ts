@@ -68,17 +68,176 @@ export type CheckImplementation =
       kind: "plugin";
       provider: ProviderSelectionBinding;
     };
+export type CommandErrorCode =
+  | "invalid-input"
+  | "destination-conflict"
+  | "missing-project"
+  | "permission-denied"
+  | "unsupported-schema"
+  | "corrupt-project"
+  | "stale-revision"
+  | "session-invalid"
+  | "project-in-use"
+  | "busy"
+  | "storage-failed"
+  | "outcome-unknown"
+  | "limit-exceeded"
+  | "result-mismatch"
+  | "output-invalid"
+  | "dependency-conflict"
+  | "cancelled";
+/**
+ * Values compared at the rejecting boundary, without user text or credentials.
+ */
+export type ConflictEvidence =
+  | {
+      current: ExecutionId;
+      expected: ExecutionId;
+      kind: "source-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "translation-selection";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "review-basis";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-decision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-check";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-waiver";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "source-fallback";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "build-eligibility";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "comparison-basis";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "term-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "context-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "source-snapshot";
+    }
+  | {
+      current: Revision;
+      expected: Revision;
+      kind: "content-revision";
+    };
+export type Revision = string;
+export type CommandOutcome = "rejected" | "unknown";
+export type RecoveryAction =
+  "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+/**
+ * A read or user decision to make before another mutation; never replay authority.
+ */
+export type RecoveryGuidance = "reconcile-original" | "review-current" | "choose-destination";
+export type CommandStage =
+  | "create"
+  | "open"
+  | "read"
+  | "rename"
+  | "add-target-locale"
+  | "set-target-locales"
+  | "close"
+  | "plugin-install"
+  | "plugin-settings"
+  | "model-connections"
+  | "execution-read"
+  | "execution-cancel"
+  | "execution-recover"
+  | "execution-adopt"
+  | "execution-quiesce";
+export type ArtifactCheckWorkflowPhase =
+  "preparing" | "prepared" | "running" | "paused" | "completed" | "stopped" | "failed";
+export type ArtifactCheckWorkflowStepPhase =
+  | "prepared"
+  | "not-selected"
+  | "waiting"
+  | "enqueued"
+  | "recording"
+  | "proved"
+  | "failed"
+  | "unknown"
+  | "cancelled"
+  | "not-started";
+export type ComponentScope = "application" | "project" | "attempt";
+export type CheckOutcome =
+  | {
+      findings: CheckFinding[];
+      kind: "completed";
+    }
+  | {
+      basis: NotApplicableBasis;
+      kind: "not-applicable";
+    }
+  | {
+      kind: "failed";
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "unavailable";
+    };
+export type FindingSeverity = "warning" | "error";
+export type ArtifactCheckWorkflowObservationKind = "current" | "retired" | "admission-closed";
+export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
+export type ArtifactCheckWorkflowEnqueueOutcome = "pending" | "enqueued" | "not-enqueued";
+export type ArtifactCheckWorkflowSessionView =
+  | {
+      kind: "unavailable";
+    }
+  | {
+      current: ArtifactCheckWorkflowIdentity | null;
+      kind: "available";
+      nextGeneration: Revision;
+      ownerId: ExecutionId;
+    };
 export type DeliveryFileState = "pending" | "succeeded" | "failed" | "unknown";
 export type DeliveryState = "pending" | "succeeded" | "partial" | "failed" | "unknown";
 export type DeliveryPreviewState = "absent" | "same" | "conflict";
 export type ReleaseExceptionKind = "source-fallback" | "qa-waiver";
-export type ComponentScope = "application" | "project" | "attempt";
-export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
 
 export interface Responses {
   artifactCheck: ArtifactCheckReview;
+  artifactWorkflow: ArtifactCheckWorkflowView;
+  artifactWorkflowObservation: ArtifactCheckWorkflowObservation;
+  artifactWorkflowSession: ArtifactCheckWorkflowSessionView;
+  artifactWorkflowStopped: ArtifactCheckWorkflowStopReceipt;
   cancelPluginBuild: boolean;
   deliveries: DeliveryView[];
   delivery: DeliveryView;
@@ -254,6 +413,808 @@ export interface NotApplicableBasis {
   basisDigest: string;
   code: string;
 }
+export interface ArtifactCheckWorkflowView {
+  admissionClosed: boolean;
+  callbacksDrained: boolean;
+  currentTask: ArtifactCheckWorkflowTask | null;
+  error: CommandError | null;
+  materializationDigest: string | null;
+  phase: ArtifactCheckWorkflowPhase;
+  preparation: ArtifactCheckWorkflowPreparation;
+  start: ArtifactCheckWorkflowStart | null;
+  /**
+   * @maxItems 16
+   */
+  steps:
+    | []
+    | [ArtifactCheckWorkflowStepView]
+    | [ArtifactCheckWorkflowStepView, ArtifactCheckWorkflowStepView]
+    | [ArtifactCheckWorkflowStepView, ArtifactCheckWorkflowStepView, ArtifactCheckWorkflowStepView]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ]
+    | [
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView,
+        ArtifactCheckWorkflowStepView
+      ];
+}
+export interface ArtifactCheckWorkflowTask {
+  attemptId: ExecutionId;
+  taskId: ExecutionId;
+}
+export interface CommandError {
+  code: CommandErrorCode;
+  conflict?: ConflictEvidence | null;
+  currentRevision?: string;
+  diagnosticId?: ExecutionId | null;
+  field?: string;
+  itemIds?: ExecutionId[];
+  outcome: CommandOutcome;
+  reason?: string;
+  recoveryActions?: RecoveryAction[];
+  recoveryGuidance?: RecoveryGuidance | null;
+  recoveryRequired: boolean;
+  stage: CommandStage;
+}
+export interface ArtifactCheckWorkflowPreparation {
+  build: PluginBuildRequest;
+  buildAttemptId: ExecutionId;
+  buildInputDigest: string;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  buildResults:
+    | [ArtifactCheckBuildResultRef]
+    | [ArtifactCheckBuildResultRef, ArtifactCheckBuildResultRef]
+    | [ArtifactCheckBuildResultRef, ArtifactCheckBuildResultRef, ArtifactCheckBuildResultRef]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ]
+    | [
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef,
+        ArtifactCheckBuildResultRef
+      ];
+  identity: ArtifactCheckWorkflowIdentity;
+}
+export interface PluginBuildRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+export interface ArtifactCheckBuildResultRef {
+  itemId: ExecutionId;
+  resultId: ExecutionId;
+}
+export interface ArtifactCheckWorkflowIdentity {
+  generation: Revision;
+  ownerId: ExecutionId;
+  workflowId: ExecutionId;
+}
+export interface ArtifactCheckWorkflowStart {
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  consents:
+    | [ArtifactCheckWorkflowConsent]
+    | [ArtifactCheckWorkflowConsent, ArtifactCheckWorkflowConsent]
+    | [ArtifactCheckWorkflowConsent, ArtifactCheckWorkflowConsent, ArtifactCheckWorkflowConsent]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ]
+    | [
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent,
+        ArtifactCheckWorkflowConsent
+      ];
+  identity: ArtifactCheckWorkflowIdentity;
+  materializationDigest: string;
+}
+export interface ArtifactCheckWorkflowConsent {
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  step: ArtifactCheckWorkflowStepIdentity;
+  unsandboxedExecution: boolean;
+}
+export interface ArtifactCheckWorkflowStepIdentity {
+  attemptId: ExecutionId;
+  buildItemId: ExecutionId;
+  buildResultId: ExecutionId;
+  inputDigest: string;
+  locale: string;
+  producerAttemptId: ExecutionId;
+  producerInputDigest: string;
+  taskId: ExecutionId;
+}
+export interface ArtifactCheckWorkflowStepView {
+  buildResultDigest: string;
+  error: CommandError | null;
+  ordinal: number;
+  phase: ArtifactCheckWorkflowStepPhase;
+  proof: SavedArtifactCheckProof | null;
+  review: ArtifactCheckReview;
+  selected: boolean;
+  step: ArtifactCheckWorkflowStepIdentity;
+}
+export interface SavedArtifactCheckProof {
+  checker: PluginExecutionBinding;
+  checkerAttemptId: ExecutionId;
+  checkerInputDigest: string;
+  checkerResultDigest: string;
+  checkerResultId: ExecutionId;
+  checks: CheckResult[] | null;
+  valid: boolean;
+}
+export interface PluginExecutionBinding {
+  applicationScope: ApplicationScopeBasis | null;
+  capability: CapabilityBinding;
+  /**
+   * Captured from the selected component, never inferred from a result.
+   */
+  componentScope: ComponentScope;
+  /**
+   * Exact captured Node artifacts or actual native application Host identity.
+   * This data value does not authenticate its source or grant execution.
+   */
+  environment: ExecutionEnvironmentDescriptor;
+  profile: ContractRef | null;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
+}
+export interface CheckResult {
+  coveredTargets: string[];
+  inputDigest: string;
+  key: CheckKey;
+  outcome: CheckOutcome;
+  scopeDigest: string;
+}
+export interface CheckFinding {
+  code: string;
+  severity: FindingSeverity;
+  target: string;
+}
+export interface ArtifactCheckWorkflowObservation {
+  admissionClosed: boolean;
+  callbacksDrained: boolean;
+  currentTask: ArtifactCheckWorkflowTask | null;
+  identity: ArtifactCheckWorkflowIdentity;
+  kind: ArtifactCheckWorkflowObservationKind;
+  /**
+   * @maxItems 16
+   */
+  steps:
+    | []
+    | [ArtifactCheckWorkflowStepObservation]
+    | [ArtifactCheckWorkflowStepObservation, ArtifactCheckWorkflowStepObservation]
+    | [ArtifactCheckWorkflowStepObservation, ArtifactCheckWorkflowStepObservation, ArtifactCheckWorkflowStepObservation]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ]
+    | [
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation,
+        ArtifactCheckWorkflowStepObservation
+      ];
+  view: ArtifactCheckWorkflowView | null;
+}
+export interface ArtifactCheckWorkflowStepObservation {
+  execution: ExecutionState | null;
+  outcome: ArtifactCheckWorkflowEnqueueOutcome;
+  proof: SavedArtifactCheckProof | null;
+  resultId: ExecutionId | null;
+  step: ArtifactCheckWorkflowStepIdentity;
+}
+export interface ArtifactCheckWorkflowStopReceipt {
+  admissionClosed: boolean;
+  callbacksDrained: boolean;
+  currentTask: ArtifactCheckWorkflowTask | null;
+  identity: ArtifactCheckWorkflowIdentity;
+}
 export interface DeliveryView {
   actionId: ExecutionId;
   createdAt: string;
@@ -362,29 +1323,8 @@ export interface BuildBinding {
   checker: CapabilityBinding;
   declaration: BuildDeclaration;
 }
-export interface PluginExecutionBinding {
-  applicationScope: ApplicationScopeBasis | null;
-  capability: CapabilityBinding;
-  /**
-   * Captured from the selected component, never inferred from a result.
-   */
-  componentScope: ComponentScope;
-  /**
-   * Exact captured Node artifacts or actual native application Host identity.
-   * This data value does not authenticate its source or grant execution.
-   */
-  environment: ExecutionEnvironmentDescriptor;
-  profile: ContractRef | null;
-}
-/**
- * Identity allocated by the application instance owner before consent. This
- * persisted fact never recreates the owner's session-local execution lease.
- */
-export interface ApplicationScopeBasis {
-  activationGeneration: number;
-  instanceId: ExecutionId;
-}
 export interface SavedBuildLocale {
+  artifactCheck: SavedArtifactCheckProof | null;
   choice: PluginBuildLocaleChoice;
   itemId: ExecutionId;
   result: SavedBuildResult | null;

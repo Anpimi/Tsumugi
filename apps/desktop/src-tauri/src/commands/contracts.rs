@@ -323,6 +323,13 @@ struct ReviewResponses {
 #[allow(dead_code)]
 struct ReleaseRequests {
     session: execution::SessionRequest,
+    artifact_workflow_session: execution::SessionRequest,
+    artifact_workflow_prepare:
+        execution::release::plugin::workflow::ArtifactCheckWorkflowPrepareRequest,
+    artifact_workflow_start:
+        execution::release::plugin::workflow::ArtifactCheckWorkflowStartRequest,
+    artifact_workflow_read: execution::release::plugin::workflow::ArtifactCheckWorkflowReadRequest,
+    artifact_workflow_stop: execution::release::plugin::workflow::ArtifactCheckWorkflowStopRequest,
     saved_plugin_build: execution::release::plugin::SavedPluginBuildRequest,
     plugin_build: execution::release::plugin::PluginBuildPrepareRequest,
     plugin_start: execution::PluginStartRequest,
@@ -337,6 +344,13 @@ struct ReleaseRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReleaseResponses {
+    artifact_workflow_session:
+        execution::release::plugin::workflow::ArtifactCheckWorkflowSessionView,
+    artifact_workflow: execution::release::plugin::workflow::ArtifactCheckWorkflowView,
+    artifact_workflow_observation:
+        execution::release::plugin::workflow::ArtifactCheckWorkflowObservation,
+    artifact_workflow_stopped:
+        execution::release::plugin::workflow::ArtifactCheckWorkflowStopReceipt,
     saved_plugin_build: tsumugi_core::SavedPluginBuildView,
     plugin_build: execution::release::plugin::PluginBuildReview,
     artifact_check: execution::release::plugin::ArtifactCheckReview,

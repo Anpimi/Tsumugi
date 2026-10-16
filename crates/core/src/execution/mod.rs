@@ -24,7 +24,8 @@ use uuid::Uuid;
 use crate::{Locale, ProjectId};
 pub use adoption::{AdoptionCapture, PreparedAdoption};
 pub use artifact_validation::{
-    ARTIFACT_CHECK_OPERATION, ArtifactValidationCapture, PreparedArtifactValidation,
+    ARTIFACT_CHECK_OPERATION, ArtifactCheckBuildResultRef, ArtifactValidationCapture,
+    PreparedArtifactValidation,
 };
 pub use plugin::*;
 pub use plugin_authority::{ApplicationExecutionLease, PluginConsent, PluginPermit};

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { validateResponseIdentity } from "./generated/execution.validators";
+import { validateRequestArtifactWorkflowPrepare, validateRequestArtifactWorkflowStart } from "./generated/release.validators";
 import { executionCommands, confirmExecutionAction, confirmExecutionReceipt, type AttemptDetail, type Receipt } from "./executionCommands";
 import { hasUnknownOutcome, projectCommands, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
@@ -9,8 +10,11 @@ import { sourceCommands } from "./sourceCommands";
 import { pluginCommands, type PluginBuildRequest, type PluginBuildView } from "./pluginCommands";
 import type { ContentScope } from "./generated/source.responses";
 import type { ReconcileRequest } from "./generated/release.requests";
-import { releaseCommands, confirmReleasePreview, confirmReleaseDelivery, type ReleasePluginIntent,
+import { releaseCommands, confirmReleasePreview, confirmReleaseDelivery, sameArtifactWorkflowMaterialization, type ReleasePluginIntent,
   type PluginBuildPrepareRequest, type PluginBuildReview, type ArtifactCheckReview, type PluginStartRequest,
+  type ArtifactCheckWorkflowPrepareRequest, type ArtifactCheckWorkflowStartRequest, type ArtifactCheckWorkflowStopRequest,
+  type ArtifactCheckWorkflowReadRequest, type ArtifactCheckWorkflowObservation, type ArtifactCheckWorkflowView,
+  type ArtifactCheckWorkflowStopReceipt, type ArtifactCheckWorkflowConsent,
   type ExportRequest, type DeliverySelection, type DeliveryPreview, type DeliveryView, type ReleaseView } from "./releaseCommands";
 
 interface BuildPending { kind: "build"; intent: ReleasePluginIntent; editSeq: number; version: number; retryAllowed: boolean; uncertain: boolean; sourceSnapshotId: string | null }
@@ -25,6 +29,19 @@ interface ReconcilePending {
 type Pending = BuildPending | ExportPending | ReconcilePending;
 interface Assessment { editSeq: number; version: number; scope: ContentScope; build: PluginBuildView; sourceLocale: string; targetLocales: string[] }
 export interface ReleaseReadProof { current: () => boolean; dispose: () => void }
+interface WorkflowCapture {
+  request: ArtifactCheckWorkflowPrepareRequest;
+  review: ArtifactCheckWorkflowView | null;
+  approved: string[];
+  start: ArtifactCheckWorkflowStartRequest | null;
+  stop: ArtifactCheckWorkflowStopRequest | null;
+  pending: "prepare" | "start" | null;
+  uncertain: boolean;
+  stopPending: boolean;
+  stopUncertain: boolean;
+  safety: Pick<ArtifactCheckWorkflowStopReceipt, "admissionClosed" | "callbacksDrained" | "currentTask"> | null;
+  observed: string | null;
+}
 interface State {
   languages: string[]; names: Record<string, string>; configuration: Record<string, PluginBuildPrepareRequest["choices"][number]["configuration"]>;
   choiceKey: string; runtimeDigest: string; buildChoice: PluginBuildRequest | null;
@@ -33,6 +50,7 @@ interface State {
   prepared: { request: PluginBuildPrepareRequest; review: PluginBuildReview } | null;
   buildConsent: string | null; checkReview: ArtifactCheckReview | null; checkConsent: string | null; checkAttempt: string | null;
   savedAttempt: string | null; buildReceipt: Receipt | null;
+  workflow: WorkflowCapture | null; workflowControlBusy: boolean; workflowStopBusy: boolean;
   chosen: ReleaseView | null; selection: DeliverySelection | null; preview: DeliveryPreview | null; overwrite: boolean;
   attempt: string | null; result: DeliveryView | null; pending: Pending | null; busy: boolean;
   failure: CommandFailure | null; failureArea: "build" | "delivery" | null; exportMissing: boolean; earlierBuild: boolean;
@@ -45,7 +63,7 @@ function fixed<T>(value: T): T { return freeze(structuredClone(value)); }
 function initial(): State {
   return { languages: [], names: {}, configuration: {}, choiceKey: "", runtimeDigest: "", buildChoice: null,
     editSeq: 0, buildDirty: false, deliveryDirty: false, stale: false, eligibility: null, assessment: null,
-    prepared: null, buildConsent: null, checkReview: null, checkConsent: null, checkAttempt: null, savedAttempt: null, buildReceipt: null,
+    prepared: null, buildConsent: null, checkReview: null, checkConsent: null, checkAttempt: null, savedAttempt: null, buildReceipt: null, workflow: null, workflowControlBusy: false, workflowStopBusy: false,
     chosen: null, selection: null, preview: null, overwrite: false, attempt: null, result: null, pending: null, busy: false,
     failure: null, failureArea: null, exportMissing: false, earlierBuild: false };
 }
@@ -64,6 +82,7 @@ function useReleaseOwner(project: ProjectView) {
   const [state, setState] = useState<State>(() => freeze(initial()));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive();
   const flight = useRef<object | null>(null), version = useRef(0);
+  const workflowPrimaryFlight = useRef<object | null>(null), workflowStopFlight = useRef<object | null>(null), workflowReadFlight = useRef<object | null>(null);
   const readCleanup = useRef<(() => void) | null>(null);
   useLayoutEffect(() => { mounted.current = true; return () => {
     mounted.current = false; flight.current = null; readCleanup.current?.(); readCleanup.current = null;
@@ -79,7 +98,12 @@ function useReleaseOwner(project: ProjectView) {
   function current() { return stateRef.current; }
   function update(change: (before: State) => State) { if (live()) { stateRef.current = freeze(change(current())); setState(stateRef.current); } }
   function reportFailure(failure: CommandFailure | null, area: "build" | "delivery" = "build") { update(before => ({ ...before, failure, failureArea: area })); }
-  function reserved() { return !!flight.current || !!current().pending; }
+  function workflowWorking() {
+    const value = current().workflow;
+    return !!value && (!!value.pending || value.stopPending || (!value.review || !!value.start || !!value.stop)
+      && !(value.safety?.admissionClosed && value.safety.callbacksDrained));
+  }
+  function reserved() { return !!flight.current || !!workflowStopFlight.current || !!workflowReadFlight.current || !!current().pending || workflowWorking(); }
   function available() { return current().languages.length > 0 && current().languages.every(locale => projectRef.current.metadata.targetLocales.includes(locale)); }
   function revoke() { version.current++; update(before => ({ ...before, eligibility: null, assessment: null, stale: before.languages.length > 0 || before.stale })); }
   useEffect(() => reads.subscribeChanges(scopes => {
@@ -227,11 +251,12 @@ function useReleaseOwner(project: ProjectView) {
   }
   function setConsent(checker: boolean, value: boolean) {
     const before = current(), review = checker ? before.checkReview : before.prepared?.review;
-    if (!live() || reserved() || !review || (checker ? before.checkAttempt : before.attempt)) return;
+    if (!live() || reserved() || before.workflow || !review || (checker ? before.checkAttempt : before.attempt)) return;
     update(state => ({ ...state, ...(checker ? { checkConsent: value ? review.inputDigest : null } : { buildConsent: value ? review.inputDigest : null }) }));
   }
   async function startBuild(checker = false) {
     const before = current(), review = checker ? before.checkReview : before.prepared?.review;
+    if (before.workflow) return;
     if (!review || (checker ? before.checkConsent : before.buildConsent) !== review.inputDigest || (checker ? before.checkAttempt : before.attempt)) return;
     const captured = fixed({ attemptId: review.attemptId, inputDigest: review.inputDigest });
     const expiresAtMs = String(Date.now()+600_000), generation = version.current;
@@ -245,7 +270,7 @@ function useReleaseOwner(project: ProjectView) {
   }
   async function prepareCheck(buildAttemptId: string, buildResultId: string, proof?: ReleaseReadProof) {
     const before = current(), build = before.prepared?.request.build;
-    if (!build || before.attempt !== buildAttemptId || before.checkReview) { proof?.dispose(); return; }
+    if (!build || before.attempt !== buildAttemptId || before.checkReview || before.workflow) { proof?.dispose(); return; }
     const captured = fixed({ buildAttemptId, buildResultId, build });
     await withReadProof(proof, () => runBuild(async () => {
       const attemptId = await executionCommands.identity(session);
@@ -254,7 +279,7 @@ function useReleaseOwner(project: ProjectView) {
     }));
   }
   async function finishCheck(resultId: string, proof?: ReleaseReadProof) {
-    const before = current(); if (!before.checkReview || !before.checkAttempt) { proof?.dispose(); return; }
+    const before = current(); if (!before.checkReview || !before.checkAttempt || before.workflow) { proof?.dispose(); return; }
     const request = fixed({ ...session, attemptId: before.checkAttempt, resultId });
     await withReadProof(proof, () => runBuild(() => submitBuild(pendingFor({ kind: "finish-check", request }))));
   }
@@ -274,6 +299,183 @@ function useReleaseOwner(project: ProjectView) {
       await submitBuild(pendingFor({ kind: "adopt", request: { ...session, ...captured, actionId }, prepared: false }),proof);
     }));
   }
+  function workflowReadRequest(): ArtifactCheckWorkflowReadRequest | null {
+    const value = current().workflow;
+    return value ? fixed({ ...session, preparation: value.request.preparation, start: value.start?.start ?? null }) : null;
+  }
+  function workflowReadKey(request: ArtifactCheckWorkflowReadRequest) {
+    return ["release-check-workflow", request.preparation, request.start] as const;
+  }
+  function workflowOriginal(value: WorkflowCapture) { return live() && current().workflow === value; }
+  function workflowSafety(value: Pick<ArtifactCheckWorkflowView, "admissionClosed" | "callbacksDrained" | "currentTask">) {
+    return { admissionClosed: value.admissionClosed, callbacksDrained: value.callbacksDrained, currentTask: value.currentTask };
+  }
+  async function sendWorkflow(kind: "prepare" | "start", original: WorkflowCapture) {
+    if (!workflowOriginal(original)) return;
+    const sent = fixed({ ...original, pending: kind, observed: null });
+    workflowPrimaryFlight.current = flight.current;
+    update(before => ({ ...before, workflow: sent }));
+    try {
+      const view = kind === "prepare" ? await releaseCommands.prepareWorkflow(sent.request)
+        : sent.start ? await releaseCommands.startWorkflow(sent.start, sent.request.preparation) : invalidAck();
+      if (workflowOriginal(sent)) update(before => ({ ...before, workflow: fixed({ ...sent,
+        review: sent.review ?? (view.materializationDigest !== null ? view : null), pending: null, uncertain: false, safety: workflowSafety(view) }) }));
+    } catch (failure) {
+      if (!workflowOriginal(sent)) return;
+      if (workflowOriginal(sent)) update(before => ({ ...before, workflow: fixed({ ...sent,
+        pending: sent.uncertain || hasUnknownOutcome(failure) ? kind : null,
+        uncertain: sent.uncertain || hasUnknownOutcome(failure) }) }));
+      throw failure;
+    } finally { if (live()) reads.invalidate(["execution", "release"], false); }
+  }
+  async function prepareWorkflow(detail: AttemptDetail, proof?: ReleaseReadProof) {
+    const before = current(), prepared = before.prepared, generation = version.current;
+    if (!live() || reserved() || before.workflow || before.checkReview || before.checkAttempt || !prepared || !before.attempt
+      || detail.attemptId !== before.attempt || detail.operation !== "locale-build" || detail.nextOffset !== null
+      || detail.items.length === 0 || detail.items.length > 16 || detail.items.length !== detail.progress.total
+      || detail.items.length !== prepared.review.choices.length || new Set(detail.items.map(item => item.status.itemId)).size !== detail.items.length
+      || prepared.review.choices.some(choice => detail.items.filter(item => item.scope.locale === choice.locale).length !== 1)
+      || detail.items.some(item => item.scope.kind !== "release-build" || item.scope.id !== prepared.review.sourceSnapshotId
+        || !item.resultId || item.status.execution !== "succeeded" || item.status.cancellationRequested)) { proof?.dispose(); return; }
+    const captured = fixed({ buildAttemptId: detail.attemptId, buildInputDigest: prepared.review.inputDigest,
+      buildResults: detail.items.map(item => { if (!item.resultId) return invalidAck(); return { itemId: item.status.itemId, resultId: item.resultId }; }),
+      build: prepared.request.build });
+    await withReadProof(proof, () => runBuild(async () => {
+      const owner = await releaseCommands.workflowSession(session);
+      if (!live() || proof?.current() === false || current().prepared !== prepared || current().attempt !== captured.buildAttemptId
+        || current().editSeq !== before.editSeq || version.current !== generation || current().workflow) return;
+      if (owner.kind !== "available") throw new Error("Artifact check workflow owner is unavailable");
+      const workflowId = await executionCommands.identity(session);
+      if (!live() || proof?.current() === false || current().prepared !== prepared || current().attempt !== captured.buildAttemptId
+        || current().editSeq !== before.editSeq || version.current !== generation || current().workflow) return;
+      const candidate: unknown = fixed({ ...session, preparation: {
+        identity: { ownerId: owner.ownerId, generation: owner.nextGeneration, workflowId }, ...captured } });
+      if (!validateRequestArtifactWorkflowPrepare(candidate)) return invalidAck();
+      const request = candidate;
+      const value: WorkflowCapture = fixed({ request, review: null, approved: [], start: null, stop: null,
+        pending: null, uncertain: false, stopPending: false, stopUncertain: false, safety: null, observed: null });
+      update(state => ({ ...state, workflow: value }));
+      await sendWorkflow("prepare", value);
+    }));
+  }
+  function setWorkflowConsent(attemptId: string | null, approved: boolean) {
+    const value = current().workflow;
+    if (!live() || reserved() || !value?.review || value.review.phase !== "prepared" || value.start || value.stop || value.safety?.admissionClosed) return;
+    const selected = attemptId === null ? value.review.steps.map(item => item.step.attemptId)
+      : value.review.steps.filter(item => item.step.attemptId === attemptId).map(item => item.step.attemptId);
+    if (!selected.length) return;
+    update(before => ({ ...before, workflow: fixed({ ...value, approved: approved
+      ? [...new Set([...value.approved, ...selected])] : value.approved.filter(id => !selected.includes(id)) }) }));
+  }
+  async function startWorkflow() {
+    const before = current(), value = before.workflow, generation = version.current;
+    if (!live() || reserved() || !value?.review || value.review.phase !== "prepared" || !value.review.materializationDigest
+      || value.start || value.stop || value.safety?.admissionClosed || value.approved.length === 0) return;
+    const steps = fixed(value.review.steps.filter(item => value.approved.includes(item.step.attemptId)).map(item => item.step));
+    const materializationDigest = value.review.materializationDigest, expiresAtMs = String(Date.now() + 600_000);
+    if (steps.length !== value.approved.length) return;
+    await runBuild(async () => {
+      const consents: ArtifactCheckWorkflowConsent[] = [];
+      for (const step of steps) {
+        const grantId = await executionCommands.identity(session);
+        if (!workflowOriginal(value) || current().editSeq !== before.editSeq || version.current !== generation) return;
+        consents.push({ step, grantId, expiresAtMs, unsandboxedExecution: true });
+      }
+      const candidate: unknown = fixed({ ...session, start: {
+        identity: value.request.preparation.identity, materializationDigest, consents } });
+      if (!validateRequestArtifactWorkflowStart(candidate)) return invalidAck();
+      const start = candidate;
+      const next = fixed({ ...value, start }); update(state => ({ ...state, workflow: next }));
+      await sendWorkflow("start", next);
+    }, true);
+  }
+  async function runWorkflowControl(kind: "stop" | "read", work: (current: () => boolean) => Promise<void>) {
+    const control = kind === "stop" ? workflowStopFlight : workflowReadFlight;
+    if (!live() || kind === "stop" && control.current || current().pending) return;
+    // Replacing a read only retires its local waiter. It never changes execution.
+    const ticket = {}; control.current = ticket;
+    const original = () => live() && control.current === ticket;
+    update(before => ({ ...before, workflowControlBusy: true, workflowStopBusy: !!workflowStopFlight.current }));
+    try { await work(original); }
+    catch (failure) { if (original()) reportFailure(commandFailure(failure, "outcome-unknown")); }
+    finally {
+      if (original()) { control.current = null; update(before => ({ ...before, workflowControlBusy: !!workflowStopFlight.current || !!workflowReadFlight.current, workflowStopBusy: !!workflowStopFlight.current })); }
+    }
+  }
+  async function stopWorkflow() {
+    const value = current().workflow;
+    if (!live() || !value || current().pending || workflowStopFlight.current || value.safety?.admissionClosed && value.safety.callbacksDrained) return;
+    const request = value.stop ?? fixed({ ...session, identity: value.request.preparation.identity });
+    await runWorkflowControl("stop", async () => {
+      if (!workflowOriginal(value)) return;
+      const next = fixed({ ...value, stop: request, stopPending: true, observed: null });
+      update(before => ({ ...before, workflow: next }));
+      try {
+        const receipt = await releaseCommands.stopWorkflow(request);
+        const now = current().workflow;
+        if (live() && now && same(now.request, value.request) && same(now.stop, request)) update(before => ({ ...before,
+          workflow: fixed({ ...now, stopPending: false, stopUncertain: false,
+            safety: now.safety?.admissionClosed && now.safety.callbacksDrained ? now.safety : workflowSafety(receipt) }) }));
+      } catch (failure) {
+        const now = current().workflow;
+        if (now?.safety?.admissionClosed && now.safety.callbacksDrained) return;
+        if (live() && now && same(now.request, value.request) && same(now.stop, request)) update(before => ({ ...before,
+          workflow: fixed({ ...now, stopPending: next.stopUncertain || hasUnknownOutcome(failure), stopUncertain: next.stopUncertain || hasUnknownOutcome(failure) }) }));
+        throw failure;
+      } finally { if (live()) reads.invalidate(["execution", "release"], false); }
+    });
+  }
+  /** Accept only an exact fresh read of this owner's original intent; never dispatch from a read. */
+  function observeWorkflow(request: ArtifactCheckWorkflowReadRequest, observation: ArtifactCheckWorkflowObservation) {
+    const value = current().workflow;
+    if (!live() || !value || !same(request, workflowReadRequest())) return;
+    if (value.review && observation.view && observation.view.materializationDigest !== null
+      && !sameArtifactWorkflowMaterialization(value.review, observation.view)) return;
+    const stamp = JSON.stringify([observation.kind, observation.admissionClosed, observation.callbacksDrained, observation.currentTask,
+      observation.view?.phase, observation.view?.materializationDigest, observation.view?.start,
+      observation.steps.map(item => [item.step, item.outcome, item.execution, item.resultId, item.proof?.checkerResultDigest])]);
+    if (value.observed === stamp) return;
+    if (value.safety?.admissionClosed && !observation.admissionClosed
+      || value.safety?.callbacksDrained && value.safety.admissionClosed && !observation.callbacksDrained) return;
+    let pending = value.pending;
+    if (pending === "prepare" && observation.view && observation.view.phase !== "preparing") pending = null;
+    if (pending === "start" && observation.view?.start && same(observation.view.start, value.start?.start)) pending = null;
+    if (observation.admissionClosed && observation.callbacksDrained) pending = null;
+    if (value.pending && pending === null && flight.current === workflowPrimaryFlight.current) {
+      flight.current = null; workflowPrimaryFlight.current = null;
+      update(before => ({ ...before, busy: false }));
+    }
+    if (value.stopPending && observation.admissionClosed && observation.callbacksDrained && workflowStopFlight.current) {
+      workflowStopFlight.current = null;
+      update(before => ({ ...before, workflowStopBusy: false, workflowControlBusy: !!workflowReadFlight.current }));
+    }
+    update(before => ({ ...before, workflow: fixed({ ...value, observed: stamp,
+      review: value.review ?? (observation.view?.materializationDigest ? observation.view : null), pending,
+      stopPending: value.stopPending && !(observation.admissionClosed && observation.callbacksDrained),
+      stopUncertain: value.stopUncertain && !(observation.admissionClosed && observation.callbacksDrained),
+      uncertain: pending !== null && value.uncertain, safety: workflowSafety(observation) }) }));
+  }
+  async function reconcileWorkflow() {
+    const request = workflowReadRequest(), value = current().workflow;
+    if (!live() || current().pending || !request || !value) return;
+    await runWorkflowControl("read", async original => {
+      const key = workflowReadKey(request);
+      await reads.client.cancelQueries({ queryKey: reads.key(key), exact: true });
+      if (!original()) return;
+      await reads.client.fetchQuery({ queryKey: reads.key(key), staleTime: 0, meta: { scopes: ["execution", "release"] },
+        queryFn: () => releaseCommands.readWorkflow(request) });
+      const observation = reads.client.getQueryData<ArtifactCheckWorkflowObservation>(reads.key(key));
+      const query = reads.client.getQueryState(reads.key(key));
+      if (original() && same(current().workflow?.request, value.request) && same(current().workflow?.start, value.start)
+        && observation && query?.status === "success" && !query.isInvalidated && query.fetchStatus === "idle" && !query.error)
+        observeWorkflow(request, observation);
+    });
+  }
+  function closeWorkflow() {
+    const value = current().workflow;
+    if (!live() || flight.current || workflowStopFlight.current || workflowReadFlight.current || !value || value.pending || value.stopPending || !value.safety?.admissionClosed || !value.safety.callbacksDrained) return false;
+    update(before => ({ ...before, workflow: null })); return true;
+  }
   async function checkBuild() {
     const pending = current().pending; if (pending?.kind !== "build") return;
     await runBuild(async () => {
@@ -292,6 +494,7 @@ function useReleaseOwner(project: ProjectView) {
   }
   async function discardBuild(clearDraft = false) {
     const pending = current().pending;
+    if (current().workflow && !closeWorkflow()) return false;
     if (pending && (pending.kind !== "build" || !["prepare-build","prepare-check"].includes(pending.intent.kind))) return false;
     let accepted = false;
     await runBuild(async () => {
@@ -306,7 +509,7 @@ function useReleaseOwner(project: ProjectView) {
   function showSavedBuild(attemptId: string) {
     const before = current();
     if (!validateResponseIdentity(attemptId) || !live() || reserved() || before.buildDirty || before.deliveryDirty || before.prepared || before.buildConsent || before.checkConsent
-      || before.checkReview || before.attempt || before.checkAttempt) return false;
+      || before.checkReview || before.attempt || before.checkAttempt || before.workflow) return false;
     update(value => ({ ...value,savedAttempt:attemptId })); return true;
   }
   function closeSavedBuild() { if (!reserved()) update(before => ({ ...before,savedAttempt:null })); }
@@ -402,11 +605,13 @@ function useReleaseOwner(project: ProjectView) {
     }, true);
   }
   function reset() {
-    if (!live() || reserved() || current().prepared || current().checkReview || current().attempt || current().checkAttempt) return false;
+    if (!live() || reserved() || current().prepared || current().checkReview || current().attempt || current().checkAttempt || current().workflow) return false;
     version.current++; update(() => initial()); return true;
   }
   return { ...state, current, reserved, available, choices, setBuildSelection, setLanguage, setName, setConfiguration, assess, build,
     setConsent, startBuild, prepareCheck, finishCheck, recordBuild, checkBuild, retryBuild, discardBuild, showSavedBuild, closeSavedBuild,
+    workflowWorking, workflowReadRequest, workflowReadKey, prepareWorkflow, setWorkflowConsent, startWorkflow, stopWorkflow,
+    observeWorkflow, reconcileWorkflow, closeWorkflow,
     chooseRelease, chooseFolder, previewFolder, setOverwrite, exportFiles, checkExport, reconcile, reportFailure, reset };
 }
 type ReleaseOwner = ReturnType<typeof useReleaseOwner>;

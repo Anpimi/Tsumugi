@@ -122,6 +122,13 @@ pub struct PreparedResultValidation {
     pub(crate) proof: ValidationProof,
 }
 impl ResultValidationCapture {
+    /// Restore an original artifact checker without renewing either grant.
+    pub fn restore_artifact_check(
+        self,
+        input: FixedInput,
+    ) -> Result<ArtifactValidationCapture, ExecutionError> {
+        ArtifactValidationCapture::restore(self, input)
+    }
     /// Recover the original independently captured checker input. Only generated
     /// identities may differ from reconstruction; every payload and binding is
     /// compared by the same owner used when restoring durable proof links.
@@ -169,6 +176,9 @@ impl ResultValidationCapture {
 
     pub fn input(&self) -> &FixedInput {
         &self.input
+    }
+    pub fn result(&self) -> &FixedResult {
+        &self.result
     }
     pub fn prepare(
         self,

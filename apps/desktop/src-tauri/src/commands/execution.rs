@@ -76,6 +76,11 @@ macro_rules! handlers {
         release::plugin::read_saved_plugin_build,
         release::plugin::prepare_artifact_check,release::plugin::start_artifact_check,
         release::plugin::finish_artifact_check,release::plugin::cancel_plugin_build_preparation,
+        release::plugin::workflow::read_artifact_check_workflow_session,
+        release::plugin::workflow::prepare_artifact_check_workflow,
+        release::plugin::workflow::start_artifact_check_workflow,
+        release::plugin::workflow::read_artifact_check_workflow,
+        release::plugin::workflow::stop_artifact_check_workflow,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
         arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
         arena::reveal_arena_identity,arena::save_arena_merge,
@@ -339,6 +344,12 @@ impl ExecutionHost {
         if self.release.delivery_is_active() {
             return Err(ExecutionError::new(ErrorCode::Busy, "delivery-active"));
         }
+        if self.release.plugin.is_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "artifact-workflow-draining",
+            ));
+        }
         if self.review.active() {
             return Err(ExecutionError::new(ErrorCode::Busy, "review-check-active"));
         }
@@ -360,11 +371,24 @@ impl ExecutionHost {
     }
     fn tick(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.poll_queries(store)?;
+        release::plugin::workflow::tick(self, store)?;
+        let workflow_authority = release::plugin::workflow::prepare_runtime_tick(self, store)?;
         let review_authority = self.review.prepare_runtime_tick(store, &mut self.runtime)?;
         self.review.tick(store, &mut self.runtime)?;
         let checker_consent = self.ai.prepare_runtime_tick(store, &mut self.runtime)?;
         let mut dispatch = || self.runtime.tick(store).map_err(map_read);
-        match (review_authority, checker_consent) {
+        if let (
+            Some((workflow_plugins, workflow_revision)),
+            Some((review_plugins, review_revision)),
+        ) = (&workflow_authority, &review_authority)
+        {
+            if workflow_revision != review_revision
+                || !Arc::ptr_eq(workflow_plugins, review_plugins)
+            {
+                return Err(review::checkers::stale());
+            }
+        }
+        match (workflow_authority.or(review_authority), checker_consent) {
             (Some((plugins, revision)), consent) => {
                 if consent.as_ref().is_some_and(|consent| {
                     consent.settings_revision != revision
@@ -377,6 +401,7 @@ impl ExecutionHost {
             (None, Some(consent)) => consent.with_current_environment(dispatch)?,
             (None, None) => dispatch()?,
         }
+        release::plugin::workflow::tick(self, store)?;
         self.ai.tick(store, &mut self.runtime);
         self.ai
             .release_terminal_service_origins(store, &mut self.runtime)

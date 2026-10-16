@@ -2,12 +2,21 @@ import { checkedInvoke } from "./ipc";
 import type { SessionRequest, ReleaseRequest, PreviewRequest, ExportRequest, ReconcileRequest, PluginBuildPrepareRequest, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest, SavedPluginBuildRequest } from "./generated/release.requests";
 import * as validators from "./generated/release.validators";
 import type { DeliveryFile, DeliveryPreview, DeliveryView, ReleaseView } from "./generated/release.responses";
+import type { ArtifactCheckWorkflowPreparation, ArtifactCheckWorkflowStart, ArtifactCheckWorkflowStepIdentity,
+  ArtifactCheckWorkflowPrepareRequest, ArtifactCheckWorkflowStartRequest, ArtifactCheckWorkflowReadRequest,
+  ArtifactCheckWorkflowStopRequest } from "./generated/release.requests";
+import type { ArtifactCheckWorkflowView, ArtifactCheckWorkflowObservation } from "./generated/release.responses";
 
 export type { PluginBuildRequest } from "./generated/release.requests";
 export type { ExportRequest } from "./generated/release.requests";
 export type { PluginBuildPrepareRequest, PluginBuildLocaleChoice, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest } from "./generated/release.requests";
 export type { PluginBuildReview, ArtifactCheckReview, CheckedArtifact } from "./generated/release.responses";
 export type { SavedPluginBuildView, SavedBuildLocale } from "./generated/release.responses";
+export type { ArtifactCheckWorkflowPreparation, ArtifactCheckWorkflowIdentity, ArtifactCheckWorkflowStart,
+  ArtifactCheckWorkflowConsent, ArtifactCheckWorkflowStepIdentity, ArtifactCheckWorkflowPrepareRequest,
+  ArtifactCheckWorkflowStartRequest, ArtifactCheckWorkflowReadRequest, ArtifactCheckWorkflowStopRequest } from "./generated/release.requests";
+export type { ArtifactCheckWorkflowView, ArtifactCheckWorkflowObservation, ArtifactCheckWorkflowSessionView,
+  ArtifactCheckWorkflowStopReceipt, ArtifactCheckWorkflowTask, ArtifactCheckWorkflowStepView } from "./generated/release.responses";
 export type { ReleaseView, ReleasedArtifact, ReleaseException, ReleaseExceptionKind, BuildSourceFile as ReleaseSourceFile, DeliverySelection, PreviewFile, DeliveryPreview, DeliveryPreviewState, DeliveryFile, DeliveryFileState, DeliveryView, DeliveryState } from "./generated/release.responses";
 
 /** Original Plugin actions remain complete across reconciliation and never acquire a replacement grant. */
@@ -20,6 +29,79 @@ export type ReleasePluginIntent =
 
 function requireConfirmation(condition: boolean) {
   if (!condition) throw new Error("Invalid IPC acknowledgement: release action");
+}
+const digest = (value: string) => /^[0-9a-f]{64}$/.test(value);
+function sameWorkflowIdentity(left: ArtifactCheckWorkflowPreparation["identity"], right: ArtifactCheckWorkflowPreparation["identity"]) {
+  return left.ownerId === right.ownerId && left.generation === right.generation && left.workflowId === right.workflowId;
+}
+function sameWorkflowStep(left: ArtifactCheckWorkflowStepIdentity, right: ArtifactCheckWorkflowStepIdentity) {
+  return left.locale === right.locale && left.buildItemId === right.buildItemId && left.buildResultId === right.buildResultId
+    && left.producerAttemptId === right.producerAttemptId && left.producerInputDigest === right.producerInputDigest
+    && left.taskId === right.taskId && left.attemptId === right.attemptId && left.inputDigest === right.inputDigest;
+}
+function sameWorkflowStart(left: ArtifactCheckWorkflowStart, right: ArtifactCheckWorkflowStart) {
+  return sameWorkflowIdentity(left.identity, right.identity) && left.materializationDigest === right.materializationDigest
+    && left.consents.length === right.consents.length && left.consents.every((consent, index) => {
+      const expected = right.consents[index];
+      return sameWorkflowStep(consent.step, expected.step) && consent.grantId === expected.grantId
+        && consent.expiresAtMs === expected.expiresAtMs && consent.unsandboxedExecution === expected.unsandboxedExecution;
+    });
+}
+/** Progress and proofs may change; the materialized checker inputs may not. */
+export function sameArtifactWorkflowMaterialization(left: ArtifactCheckWorkflowView, right: ArtifactCheckWorkflowView) {
+  return left.materializationDigest === right.materializationDigest && left.steps.length === right.steps.length
+    && left.steps.every((item, index) => {
+      const expected = right.steps[index];
+      return item.ordinal === expected.ordinal && sameWorkflowStep(item.step, expected.step)
+        && item.buildResultDigest === expected.buildResultDigest && JSON.stringify(item.review) === JSON.stringify(expected.review);
+    });
+}
+function confirmWorkflowPreparation(actual: ArtifactCheckWorkflowPreparation, expected: ArtifactCheckWorkflowPreparation) {
+  requireConfirmation(sameWorkflowIdentity(actual.identity, expected.identity) && actual.buildAttemptId === expected.buildAttemptId
+    && actual.buildInputDigest === expected.buildInputDigest && actual.build.resourceId === expected.build.resourceId
+    && actual.build.environmentDigest === expected.build.environmentDigest
+    && actual.build.package.packageDigest === expected.build.package.packageDigest
+    && actual.build.package.plugin.publisher === expected.build.package.plugin.publisher
+    && actual.build.package.plugin.id === expected.build.package.plugin.id && actual.build.package.plugin.version === expected.build.package.plugin.version
+    && actual.buildResults.length === expected.buildResults.length && new Set(actual.buildResults.map(item => item.itemId)).size === actual.buildResults.length
+    && actual.buildResults.every(item => expected.buildResults.some(value => value.itemId === item.itemId && value.resultId === item.resultId)));
+}
+/** Materialized inputs and every later ACK retain the exact original build and consent set. */
+export function confirmArtifactWorkflow(view: ArtifactCheckWorkflowView, preparation: ArtifactCheckWorkflowPreparation, start: ArtifactCheckWorkflowStart | null, requireAcceptedStart = false) {
+  confirmWorkflowPreparation(view.preparation, preparation);
+  requireConfirmation(view.materializationDigest === null || digest(view.materializationDigest));
+  requireConfirmation(start === null ? view.start === null : view.start === null ? !requireAcceptedStart : sameWorkflowStart(view.start, start));
+  requireConfirmation(new Set(view.steps.map(item => item.step.locale)).size === view.steps.length
+    && new Set(view.steps.map(item => item.step.attemptId)).size === view.steps.length
+    && new Set(view.steps.map(item => item.step.taskId)).size === view.steps.length
+    && new Set(view.steps.map(item => item.step.buildItemId)).size === view.steps.length
+    && new Set(view.steps.map(item => item.ordinal)).size === view.steps.length
+    && view.steps.every(item => preparation.buildResults.some(expected => expected.itemId === item.step.buildItemId && expected.resultId === item.step.buildResultId)
+      && digest(item.step.inputDigest) && digest(item.step.producerInputDigest) && digest(item.buildResultDigest)
+      && item.review.attemptId === item.step.attemptId && item.review.inputDigest === item.step.inputDigest
+      && item.review.buildAttemptId === item.step.producerAttemptId && item.review.buildResultId === item.step.buildResultId
+      && item.review.locale === item.step.locale && matchesBuild(preparation.build, item.review.build)
+      && (item.proof === null || item.proof.checkerAttemptId === item.step.attemptId && item.proof.checkerInputDigest === item.step.inputDigest)
+      && (item.phase !== "proved" || item.proof?.valid === true)
+      && item.selected === !!view.start?.consents.some(consent => sameWorkflowStep(consent.step, item.step))));
+  if (view.materializationDigest !== null) requireConfirmation(view.steps.length === preparation.buildResults.length);
+  if (start) requireConfirmation(start.materializationDigest === view.materializationDigest
+    && start.consents.every(consent => view.steps.some(item => sameWorkflowStep(item.step, consent.step))));
+  if (view.phase === "completed") requireConfirmation(!!view.start && view.start.consents.length > 0 && view.steps.some(item => item.selected)
+    && view.steps.filter(item => item.selected).every(item => item.phase === "proved" && item.proof?.valid === true));
+}
+export function confirmArtifactWorkflowObservation(value: ArtifactCheckWorkflowObservation, request: ArtifactCheckWorkflowReadRequest) {
+  requireConfirmation(sameWorkflowIdentity(value.identity, request.preparation.identity));
+  if (value.view) confirmArtifactWorkflow(value.view, request.preparation, request.start);
+  requireConfirmation(value.kind !== "current" || value.view !== null);
+  requireConfirmation(value.steps.length === (request.start?.consents.length ?? 0));
+  requireConfirmation(new Set(value.steps.map(item => item.step.attemptId)).size === value.steps.length
+    && value.steps.every((item, index) => request.preparation.buildResults.some(expected => expected.itemId === item.step.buildItemId && expected.resultId === item.step.buildResultId)
+      && request.start !== null && sameWorkflowStep(request.start.consents[index].step, item.step)
+      && (item.outcome !== "not-enqueued" || value.admissionClosed)
+      && (item.outcome === "enqueued" ? item.execution !== null : item.execution === null && item.resultId === null && item.proof === null)
+      && (item.proof === null || item.proof.checkerAttemptId === item.step.attemptId && item.proof.checkerInputDigest === item.step.inputDigest
+        && item.proof.checkerResultId === item.resultId)));
 }
 
 type ExpectedFile = Pick<DeliveryFile, "locale" | "fileName" | "expectedSha256">;
@@ -64,6 +146,32 @@ export function confirmReleaseDelivery(delivery: DeliveryView, original: Pick<Ex
 }
 
 export const releaseCommands = {
+  workflowSession: async (request: SessionRequest) => {
+    const result = await checkedInvoke("read_artifact_check_workflow_session", request, validators.validateResponseArtifactWorkflowSession);
+    requireConfirmation(result.kind !== "available" || result.current === null || result.current.ownerId === result.ownerId
+      && BigInt(result.nextGeneration) > BigInt(result.current.generation));
+    return result;
+  },
+  prepareWorkflow: async (request: ArtifactCheckWorkflowPrepareRequest) => {
+    requireConfirmation(validators.validateRequestArtifactWorkflowPrepare(request));
+    const result = await checkedInvoke("prepare_artifact_check_workflow", request, validators.validateResponseArtifactWorkflow);
+    confirmArtifactWorkflow(result, request.preparation, null); return result;
+  },
+  startWorkflow: async (request: ArtifactCheckWorkflowStartRequest, preparation: ArtifactCheckWorkflowPreparation) => {
+    requireConfirmation(validators.validateRequestArtifactWorkflowStart(request));
+    const result = await checkedInvoke("start_artifact_check_workflow", request, validators.validateResponseArtifactWorkflow);
+    confirmArtifactWorkflow(result, preparation, request.start, true); return result;
+  },
+  readWorkflow: async (request: ArtifactCheckWorkflowReadRequest) => {
+    requireConfirmation(validators.validateRequestArtifactWorkflowRead(request));
+    const result = await checkedInvoke("read_artifact_check_workflow", request, validators.validateResponseArtifactWorkflowObservation);
+    confirmArtifactWorkflowObservation(result, request); return result;
+  },
+  stopWorkflow: async (request: ArtifactCheckWorkflowStopRequest) => {
+    requireConfirmation(validators.validateRequestArtifactWorkflowStop(request));
+    const result = await checkedInvoke("stop_artifact_check_workflow", request, validators.validateResponseArtifactWorkflowStopped);
+    requireConfirmation(sameWorkflowIdentity(result.identity, request.identity) && result.admissionClosed); return result;
+  },
   savedBuild: async (request: SavedPluginBuildRequest) => {
     const result = await checkedInvoke("read_saved_plugin_build", request, validators.validateResponseSavedPluginBuild);
     requireConfirmation(result.projectId === request.projectId && result.attemptId === request.attemptId

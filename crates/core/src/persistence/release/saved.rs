@@ -6,6 +6,39 @@ use crate::execution::{ExecutionState, ItemStatus};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct SavedArtifactCheckProof {
+    pub checker_attempt_id: ExecutionId,
+    pub checker_input_digest: String,
+    pub checker_result_id: ExecutionId,
+    pub checker_result_digest: String,
+    pub checker: crate::execution::PluginExecutionBinding,
+    pub valid: bool,
+    #[serde(deserialize_with = "required_checks")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "checks_schema"))]
+    pub checks: Option<Vec<tsumugi_plugin_sdk::CheckResult>>,
+}
+fn required_checks<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<tsumugi_plugin_sdk::CheckResult>>, D::Error> {
+    Option::deserialize(d)
+}
+#[cfg(feature = "wire-schema")]
+fn checks_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    <Option<Vec<tsumugi_plugin_sdk::CheckResult>> as schemars::JsonSchema>::json_schema(g)
+}
+fn required_proof<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<SavedArtifactCheckProof>, D::Error> {
+    Option::deserialize(d)
+}
+#[cfg(feature = "wire-schema")]
+fn proof_schema(g: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    <Option<SavedArtifactCheckProof> as schemars::JsonSchema>::json_schema(g)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SavedBuildArtifact {
     pub id: String,
     pub role: String,
@@ -35,6 +68,9 @@ pub struct SavedBuildLocale {
     pub target_count: u32,
     pub status: ItemStatus,
     pub result: Option<SavedBuildResult>,
+    #[serde(deserialize_with = "required_proof")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "proof_schema"))]
+    pub artifact_check: Option<SavedArtifactCheckProof>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,12 +183,27 @@ impl ProjectStore {
                         plan.plugin_input(&choice.locale)?.targets.len(),
                     )
                     .map_err(|_| failure(ErrorCode::OutputInvalid, "saved-build-target-count"))?;
+                    let artifact_check = result
+                        .as_ref()
+                        .map(|result| {
+                            let fixed = super::super::ledger::load_result(
+                                connection,
+                                &input,
+                                result.result_id,
+                            )?;
+                            super::super::ledger::artifact_check_proof_in(
+                                connection, &input, &fixed,
+                            )
+                        })
+                        .transpose()?
+                        .flatten();
                     Ok(SavedBuildLocale {
                         item_id: item.item_id,
                         choice,
                         target_count,
                         status,
                         result,
+                        artifact_check,
                     })
                 })
                 .collect::<Result<Vec<_>, ExecutionError>>()?;

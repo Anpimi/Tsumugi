@@ -782,6 +782,7 @@
           "configuration": []
         },
         "targetCount": 2,
+        "artifactCheck": null,
         "status": {
           "itemId": "77777777-7777-4777-8777-777777777771",
           "execution": "succeeded",
