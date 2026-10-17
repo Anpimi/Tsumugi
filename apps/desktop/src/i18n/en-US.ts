@@ -823,6 +823,11 @@ commandError: {
     "source-snapshot": "The source snapshot changed.", "content-revision": "The source content changed.",
   },
 },
+contentPaneLayout: {
+  views: "Content view", list: "Entries", editor: "Current entry",
+  resizeList: "Resize entry list", resizeReferenceWidth: "Resize reference width", resizeReferenceHeight: "Resize reference height",
+  pixels: "{{value}} pixels",
+},
 workbench: {
   retiredDraftTitle: "Local work from the previous project",
   retiredDraftHelp: "The previous project session has ended. Its local work is read-only and kept in this window so you can copy it. No more operations will run from it. Copy what you need before discarding it or closing this window. This recovery view does not save changes to the project.",

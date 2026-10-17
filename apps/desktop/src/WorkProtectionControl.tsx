@@ -22,6 +22,7 @@ export interface WorkProtectionControlProps {
   run: (work: (current: () => boolean) => Promise<void>) => Promise<void>;
   onBlockedChange: (blocked: boolean) => void;
   onEditingReadyChange?: (scope: string, ready: boolean) => void;
+  onReturnFocus?: () => boolean;
 }
 
 export function editingProtectionScope(context: SessionRequest, target: { unitId: string; sourceRevisionId: string }, locale: string) {
@@ -38,7 +39,7 @@ function protectionIdentity(request: Pick<ProtectionRequest, "projectId" | "sess
 
 /** Current reads and the release dialog consume the stable translation protection owner. */
 export function WorkProtectionControl({ context, session, target, locale, selectionId, selectionText, open, disabled,
-  draftBlocked, run, onBlockedChange, onEditingReadyChange }: WorkProtectionControlProps) {
+  draftBlocked, run, onBlockedChange, onEditingReadyChange, onReturnFocus }: WorkProtectionControlProps) {
   const { t } = useTranslation();
   const reads = useSessionReads(), registry = useWorkbenchCommands();
   const commandScope = { ...context, area: "translation" as const };
@@ -180,6 +181,7 @@ export function WorkProtectionControl({ context, session, target, locale, select
         </button></Dialog.Trigger>
         <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog"
           onCloseAutoFocus={event => {
+            if (onReturnFocus?.()) { focusAfterRelease.current = false; event.preventDefault(); return; }
             // Confirming disables the release trigger. Keep keyboard focus in
             // the protection region while its committed state refreshes.
             if (focusAfterRelease.current) {

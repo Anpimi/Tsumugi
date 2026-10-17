@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Resize the content list and references with the pointer or keyboard. Sizes
+  are remembered separately for wide and compact layouts within the project
+  session and stay within the available space. Narrow content areas can switch
+  between the list and current entry while preserving the editor and draft.
+  Opening a match from the import preview now reliably reaches its editor.
+
 - Recheck installed extensions and configured repositories when reopening
   Extensions or returning to the window. Closing the panel cancels its old
   read wait; late results cannot replace the new check or a confirmed change.

@@ -25,6 +25,7 @@ import wire from "../test/fixtures/reviewCommands.contract.json";
 import { semanticDiagnosticFixture } from "./testSupport/semanticDiagnosticFixture";
 import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
 import { reviewFindingsKey } from "./reviewQueries";
+import { controlContentPaneGeometry } from "./testSupport/contentPaneGeometry";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -153,7 +154,7 @@ beforeEach(async () => {
     unexpected.push(command); throw new Error(`Unexpected synthetic IPC command: ${command}`);
   });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 async function openQueue() {
   const ui = render(<Harness />), user = userEvent.setup();
   await act(async () => { expect(await session.current!.navigate({ kind: "review-work" })).toBe(true); });
@@ -175,6 +176,21 @@ async function locateModel(user: ReturnType<typeof userEvent.setup>, start = 1, 
   const input = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t(field === "source" ? "review.diagnosticNavigation.sourceText" : "translation.draft") });
   await waitFor(() => expect(input.selectionStart).toBe(start)); expect(input.selectionEnd).toBe(end); expect(input).toHaveFocus(); return input;
 }
+
+it("keeps a pending model diagnostic out of the hidden editor and locates it only after an explicit return", async () => {
+  const resize = controlContentPaneGeometry(), value = installSemantic(), response = deferred<ReviewEditorSnapshot>(); holdEditor = response.promise;
+  const { ui, user } = await openQueue(); await user.click(await modelFinding().findByRole("button", { name: "Locate in translation" }));
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "Your draft" });
+  resize(ui.container.querySelector(".translation-columns")!, 600);
+  await user.click(screen.getByRole("button", { name: "Entries" }));
+  const selectedRange = [input.selectionStart, input.selectionEnd];
+  await act(async () => { response.resolve(structuredClone(value.editor)); });
+  expect(input).not.toBeVisible(); expect(document.activeElement).not.toBe(input);
+  expect([input.selectionStart, input.selectionEnd]).toEqual(selectedRange);
+  await user.click(screen.getByRole("button", { name: "Current entry" }));
+  await waitFor(() => expect(input.selectionStart).toBe(1)); expect(input.selectionEnd).toBe(8); expect(input).toHaveFocus();
+  noWrites();
+});
 
 it.each([
   { encoding: "utf8-byte" as const, field: "source" as const },

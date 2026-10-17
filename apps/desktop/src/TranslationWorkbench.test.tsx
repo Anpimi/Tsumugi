@@ -25,6 +25,7 @@ import { McpSharingPanel } from "./McpSharingPanel";
 import type { ReviewSummaryPage } from "./reviewCommands";
 import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
 import { useWorkspaceView } from "./WorkbenchFrame";
+import { controlContentPaneGeometry, panePointer, pointerCaptureFor } from "./testSupport/contentPaneGeometry";
 
 function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => void }) {
   const commands = useWorkbenchCommands();
@@ -156,7 +157,287 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+it("keeps the real editor DOM, draft, selection and composition through pane resizing without dispatching commands", async () => {
+  seedSelectedTranslation();
+  const resize = controlContentPaneGeometry(), user = userEvent.setup();
+  let owner!: ReturnType<typeof useTranslationDraftSession>;
+  const ui = render(<><QueryProbe capture={(_reads, draft) => { owner = draft; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole("textbox", { name: "Your draft" }) as HTMLTextAreaElement;
+  await user.type(field, " local B"); await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+  const draft = owner.current(), columns = ui.container.querySelector(".translation-columns")!;
+  resize(columns, 1300); field.setSelectionRange(2, 7);
+  const before = invoke.mock.calls.length, separator = screen.getByRole("separator", { name: "Resize entry list" });
+  pointerCaptureFor(separator); panePointer(separator, "pointerdown", 300); panePointer(separator, "pointermove", 350); panePointer(separator, "pointerup", 350);
+  resize(columns, 900); resize(columns, 600);
+  await user.click(screen.getByRole("button", { name: "Entries" }));
+  expect(field).not.toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Current entry" }));
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field);
+  expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(7); expect(owner.current()).toBe(draft);
+  await user.click(screen.getByRole("button", { name: "Entries" })); resize(columns, 1300);
+  field.focus(); fireEvent.compositionStart(field);
+  fireEvent.change(field, { target: { value: "Saved base local B 日本語" } });
+  resize(columns, 500);
+  expect(field).toBeVisible(); expect(field).toHaveFocus(); expect(field).toHaveValue("Saved base local B 日本語");
+  expect(screen.getByRole("button", { name: "Entries" })).toBeDisabled();
+  fireEvent.keyDown(field, { key: "s", ctrlKey: true, isComposing: true });
+  fireEvent.compositionEnd(field);
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field);
+  expect(owner.current()).toMatchObject({ unitId: draft!.unitId, locale: draft!.locale, text: "Saved base local B 日本語" });
+  expect(invoke.mock.calls.slice(before)).toEqual([]);
+});
+
+it("keeps B and the original save A while layout changes during the accepted save", async () => {
+  seedSelectedTranslation();
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry();
+  let finish!: () => void;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => command === "save_translation_revision"
+    ? new Promise(resolve => { finish = () => { void original(command, args).then(resolve); }; }) : original(command, args));
+  const user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(field, " A");
+  await user.click(screen.getByRole("button", { name: "Save revision" })); await waitFor(() => expect(finish).toBeDefined());
+  await user.type(field, " newer B");
+  const columns = ui.container.querySelector(".translation-columns")!, request = invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1];
+  resize(columns, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  await user.click(screen.getByRole("button", { name: "Current entry" })); resize(columns, 1300);
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field); expect(field).toHaveValue("Saved base A newer B");
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+  await act(async () => finish());
+  await screen.findByText(i18n.t("translation.savedNewerDraft"));
+  expect(field).toHaveValue("Saved base A newer B");
+  expect(invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1]).toEqual(request);
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+});
+
+it.each(["save", "neighbor"])("does not replace a later list choice after save-and-next waits for %s", async waitAt => {
+  seedSelectedTranslation();
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry();
+  let finish!: () => void, held = false;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page") {
+      const page = await original(command, args);
+      return { ...page, rows: [...page.rows, { ...page.rows[0], unitId: fixtureIdentity(217), nativeKey: "second" }], total: 2 };
+    }
+    if (!held && command === (waitAt === "save" ? "save_translation_revision" : "read_review_neighbor")) {
+      held = true;
+      return new Promise(resolve => { finish = () => { void original(command, args).then(resolve); }; });
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole("textbox", { name: "Your draft" }), columns = ui.container.querySelector(".translation-columns")!;
+  await user.type(field, " saved A"); resize(columns, 600);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Save and next" })); await waitFor(() => expect(finish).toBeDefined());
+  await user.click(screen.getByRole("button", { name: "Entries" }));
+  await act(async () => finish());
+  await waitFor(() => expect(screen.getByRole("button", { name: "second" })).toHaveAttribute("aria-current", "true"));
+  expect(screen.getByRole("button", { name: "Entries" })).toHaveAttribute("aria-pressed", "true");
+  expect(field).not.toBeVisible(); expect(document.activeElement).not.toBe(field);
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+  expect(invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1].request.text).toBe("Saved base saved A");
+  await user.click(screen.getByRole("button", { name: "Current entry" }));
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field);
+  expect(screen.getByRole("heading", { name: "second" })).toBeVisible();
+});
+
+it("retains the exact unknown save request while changing panes and only retries it explicitly", async () => {
+  seedSelectedTranslation();
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry();
+  let saves = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "save_translation_revision" && ++saves === 1) throw { code: "outcome-unknown", stage: "save", outcome: "unknown", recoveryRequired: true };
+    return original(command, args);
+  });
+  const user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(field, " uncertain A");
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await screen.findByRole("button", { name: "Retry the same action" });
+  const columns = ui.container.querySelector(".translation-columns")!;
+  resize(columns, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  await user.click(screen.getByRole("button", { name: "Current entry" }));
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field);
+  expect(saves).toBe(1); expect(field).toHaveValue("Saved base uncertain A");
+  await user.click(screen.getByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(saves).toBe(2));
+  const attempts = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
+  expect(attempts[1][1]).toEqual(attempts[0][1]);
+});
+
+it("keeps a later list choice when editor A arrives and allows an explicit same-unit return", async () => {
+  seedSelectedTranslation();
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry();
+  let finish!: () => void, hold = true;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page") {
+      const page = await original(command, args);
+      return { ...page, rows: [...page.rows, { ...page.rows[0], unitId: fixtureIdentity(217), nativeKey: "second" }], total: 2 };
+    }
+    if (command === "read_review_editor_snapshot" && args.request.unitId === fixtureIdentity(217) && hold) {
+      return new Promise(resolve => { finish = () => { hold = false; void original(command, args).then(resolve); }; });
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole("textbox", { name: "Your draft" }), columns = ui.container.querySelector(".translation-columns")!;
+  resize(columns, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  await user.click(screen.getByRole("button", { name: "second" })); await waitFor(() => expect(finish).toBeDefined());
+  await user.click(screen.getByRole("button", { name: "Entries" }));
+  await act(async () => finish());
+  await waitFor(() => expect(screen.getByRole("button", { name: "second" })).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Entries" })).toHaveAttribute("aria-pressed", "true");
+  expect(field).not.toBeVisible(); expect(document.activeElement).not.toBe(field);
+  await user.click(screen.getByRole("button", { name: "second" }));
+  expect(await screen.findByRole("textbox", { name: "Your draft" })).toBe(field);
+  expect(field).toBeVisible(); expect(screen.getByRole("heading", { name: "second" })).toBeVisible();
+  const outside = screen.getByRole("button", { name: "Back to overview" }); outside.focus(); resize(columns, 900);
+  expect(outside).toHaveFocus();
+});
+
+it("leaves a failed first editor read in the narrow list and reveals a typed target only after success", async () => {
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry(), ref = createRef<TranslationHandle>();
+  let fail = true, finish!: () => void;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_editor_snapshot") {
+      if (fail) throw new Error("Editor unavailable");
+      return new Promise(resolve => { finish = () => { void original(command, args).then(resolve); }; });
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup(), ui = render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  const first = await screen.findByRole("button", { name: "first" }), columns = ui.container.querySelector(".translation-columns")!;
+  resize(columns, 600); await user.click(first);
+  await waitFor(() => expect(first).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Current entry" })).toBeDisabled();
+  expect(screen.queryByRole("textbox", { name: "Your draft" })).not.toBeInTheDocument();
+  fail = false;
+  act(() => { expect(ref.current!.openUnit({ unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(205), key: "first", sourceText: "Original" }, "zh-CN")).toBe(true); });
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(screen.getByRole("button", { name: "Entries" })).toHaveAttribute("aria-pressed", "true");
+  await act(async () => finish());
+  expect(await screen.findByRole("textbox", { name: "Your draft" })).toBeVisible();
+});
+
+it("reveals the successfully opened import-preview editor in a narrow layout that was not mounted at action start", async () => {
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry(), ref = createRef<TranslationHandle>(), user = userEvent.setup();
+  let finish!: () => void;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => command === "read_review_editor_snapshot"
+    ? new Promise(resolve => { finish = () => { void original(command, args).then(resolve); }; }) : original(command, args));
+  const ui = render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  act(() => ref.current!.showAttempt(preview.attemptId));
+  await screen.findByRole("heading", { name: "Review translation matches" });
+  expect(ui.container.querySelector(".translation-columns")).toBeNull();
+  const openEditor = await screen.findByRole("button", { name: i18n.t("translation.openEditor") });
+  await waitFor(() => expect(openEditor).toBeEnabled());
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(0);
+  await user.click(openEditor); await waitFor(() => expect(finish).toBeDefined());
+  resize(ui.container.querySelector(".translation-columns")!, 600);
+  expect(screen.getByRole("button", { name: "Current entry" })).toBeDisabled();
+  await act(async () => finish());
+  const field = await screen.findByRole("textbox", { name: "Your draft" });
+  const editorReads = invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot");
+  expect(editorReads).toHaveLength(1);
+  expect(editorReads[0][1].request).toMatchObject({ unitId: fixtureIdentity(204), locale: "zh-CN" });
+  expect(field).toBeVisible();
+  expect(screen.getByRole("button", { name: "Current entry" })).toHaveAttribute("aria-pressed", "true");
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision" || name === "adopt_execution")).toEqual([]);
+});
+
+it.each([false, true])("keeps the original typed reveal intent across an absent layout, with later list choice=%s", async laterList => {
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry(), ref = createRef<TranslationHandle>();
+  let finish!: () => void;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => command === "read_review_editor_snapshot"
+    ? new Promise(resolve => { finish = () => { void original(command, args).then(resolve); }; }) : original(command, args));
+  const user = userEvent.setup(), ui = render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  expect(ui.container.querySelector(".translation-columns")).toBeNull();
+  act(() => { expect(ref.current!.openUnit({ unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(205), key: "first", sourceText: "Original" }, "zh-CN")).toBe(true); });
+  await waitFor(() => expect(finish).toBeDefined());
+  const columns = ui.container.querySelector(".translation-columns")!;
+  resize(columns, 600);
+  if (laterList) await user.click(screen.getByRole("button", { name: "Entries" }));
+  await act(async () => finish());
+  const field = await screen.findByLabelText("Your draft");
+  if (laterList) {
+    expect(field).not.toBeVisible(); expect(document.activeElement).not.toBe(field);
+    expect(screen.getByRole("button", { name: "Entries" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Current entry" }));
+  }
+  expect(field).toBeVisible(); expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field);
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision" || name === "adopt_execution")).toEqual([]);
+});
+
+it("returns dirty-switch Stay focus to the visible list without changing the draft or reading the rejected target", async () => {
+  seedSelectedTranslation();
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry();
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    const value = await original(command, args);
+    return command === "read_review_summary_page" ? { ...value, rows: [...value.rows, { ...value.rows[0], unitId: fixtureIdentity(217), nativeKey: "second" }], total: 2 } : value;
+  });
+  const user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(field, " kept B");
+  resize(ui.container.querySelector(".translation-columns")!, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  await user.click(screen.getByRole("button", { name: "second" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: i18n.t("translation.stay") }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "first" })).toHaveFocus());
+  expect(field).not.toBeVisible(); expect(field).toHaveValue("Saved base kept B");
+  expect(invoke.mock.calls.some(([name, args]) => name === "read_review_editor_snapshot" && args.request.unitId === fixtureIdentity(217))).toBe(false);
+});
+
+it("keeps hidden editor references inactive while preserving the workbench's current facts and visible focus", async () => {
+  seedSelectedTranslation();
+  history = { ...history, current: { ...history.current!, previousEventId: fixtureIdentity(590) } };
+  const original = invoke.getMockImplementation()!, resize = controlContentPaneGeometry();
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === "read_correction_term_basis") throw new Error("Synthetic correction unavailable");
+    return original(command, args);
+  });
+  let reads!: ReturnType<typeof useSessionReads>;
+  const user = userEvent.setup(), ui = render(<><QueryProbe capture={value => { reads = value; }} />
+    <TranslationWorkbench project={project} disabled={false} onProposeTerm={async () => false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.click(screen.getByText("Terms, context and history"));
+  const auxiliary = ["read_correction_term_basis", "tm_suggestions", "read_source_context"];
+  await waitFor(() => { for (const name of auxiliary) expect(invoke.mock.calls.filter(([command]) => command === name)).toHaveLength(1); });
+  resize(ui.container.querySelector(".translation-columns")!, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  const checks = invoke.mock.calls.filter(([name]) => name === "read_work_protection").length;
+  await act(async () => { reads.invalidate(["source", "translation"]); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_work_protection").length).toBeGreaterThan(checks));
+  for (const name of auxiliary) expect(invoke.mock.calls.filter(([command]) => command === name)).toHaveLength(1);
+  expect(field).not.toBeVisible(); expect(document.activeElement).not.toBe(field);
+  await user.click(screen.getByRole("button", { name: "Current entry" }));
+  await waitFor(() => { for (const name of auxiliary) expect(invoke.mock.calls.filter(([command]) => command === name)).toHaveLength(2); });
+  expect(field).toBeVisible(); expect(field).not.toHaveAttribute("readonly");
+});
+
+it.each(["cancel", "confirm"])("returns protection-release %s focus to the visible list after narrowing", async action => {
+  seedSelectedTranslation();
+  const resize = controlContentPaneGeometry(), user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole("textbox", { name: "Your draft" }), columns = ui.container.querySelector(".translation-columns")!;
+  resize(columns, 600); await user.click(screen.getByRole("button", { name: "Entries" })); resize(columns, 1300);
+  const release = await screen.findByRole("button", { name: i18n.t("protection.release") });
+  await waitFor(() => expect(release).toBeEnabled()); await user.click(release);
+  const dialog = await screen.findByRole("dialog"); resize(columns, 600);
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  await user.click(within(dialog).getByRole("button", { name: i18n.t(action === "cancel" ? "protection.cancel" : "protection.confirmRelease") }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  await waitFor(() => expect(document.activeElement?.closest(".content-pane-list")).not.toBeNull());
+  expect(document.activeElement).toBeVisible(); expect(field).not.toBeVisible();
+  const writes = invoke.mock.calls.filter(([name]) => name === "set_work_protection");
+  expect(writes).toHaveLength(action === "confirm" ? 1 : 0);
+  if (action === "confirm") expect(writes[0][1].request.protected).toBe(false);
+});
 
 it("opens sharing from the exact current saved editor entry and retains its original local owner after the editor consumer is removed", async () => {
   const user = userEvent.setup();

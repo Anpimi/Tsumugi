@@ -1,5 +1,16 @@
 import "@testing-library/jest-dom/vitest";
 
+// Geometry is supplied explicitly by layout tests; JSDOM does not measure boxes.
+Object.defineProperty(globalThis, "ResizeObserver", {
+  configurable: true,
+  writable: true,
+  value: class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+});
+
 // JSDOM has no layout engine; rendered scroll visibility needs native coverage.
 Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
   configurable: true,

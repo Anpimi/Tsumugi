@@ -815,6 +815,11 @@ commandError: {
     "source-snapshot": "源快照已变化。", "content-revision": "源内容已变化。",
   },
 },
+contentPaneLayout: {
+  views: "内容显示", list: "条目列表", editor: "当前条目",
+  resizeList: "调整条目列表宽度", resizeReferenceWidth: "调整参考区宽度", resizeReferenceHeight: "调整参考区高度",
+  pixels: "{{value}} 像素",
+},
 workbench: {
   retiredDraftTitle: "上一个项目的本地工作",
   retiredDraftHelp: "上一个项目会话已结束。本地工作以只读方式保留在此窗口，便于复制，不会继续执行操作。请在丢弃这些内容或关闭窗口前复制需要的内容。恢复界面不会将修改写回项目。",

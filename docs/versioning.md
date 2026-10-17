@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The content workbench adds pointer and keyboard pane sizing, project-session
+view preferences per layout mode and narrow-container pane switching. Existing
+draft, selection, query and command owners retain their authority. Opening an
+imported match activates the edit view before its checked editor read. No IPC,
+schema 52, SDK/Process3, WorkPlan3, dependency or package metadata changes are
+required. This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with synchronized bilingual Unreleased entries and no
+additional version bump.
+
 Extensions current reads now use the existing Application query owner for
 visibility and focus cancellation while respecting the original synchronous
 operation reservation. This changes no IPC, schema 52, SDK/Process3, WorkPlan3,
