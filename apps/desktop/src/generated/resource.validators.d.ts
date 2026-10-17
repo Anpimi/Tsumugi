@@ -4,7 +4,9 @@ import type { Responses } from "./resource.responses";
 export declare function validateRequestCapture(value: unknown): value is Requests["capture"];
 export declare function validateRequestCaptures(value: unknown): value is Requests["captures"];
 export declare function validateRequestContext(value: unknown): value is Requests["context"];
+export declare function validateRequestContextAction(value: unknown): value is Requests["contextAction"];
 export declare function validateRequestContextCapture(value: unknown): value is Requests["contextCapture"];
+export declare function validateRequestContextCaptureAction(value: unknown): value is Requests["contextCaptureAction"];
 export declare function validateRequestContextFact(value: unknown): value is Requests["contextFact"];
 export declare function validateRequestContextFactAction(value: unknown): value is Requests["contextFactAction"];
 export declare function validateRequestContextFactHistory(value: unknown): value is Requests["contextFactHistory"];
@@ -18,6 +20,7 @@ export declare function validateRequestSession(value: unknown): value is Request
 export declare function validateRequestSuggestions(value: unknown): value is Requests["suggestions"];
 export declare function validateRequestTbxPreview(value: unknown): value is Requests["tbxPreview"];
 export declare function validateRequestTerm(value: unknown): value is Requests["term"];
+export declare function validateRequestTermAction(value: unknown): value is Requests["termAction"];
 export declare function validateRequestTermHistory(value: unknown): value is Requests["termHistory"];
 export declare function validateRequestTerms(value: unknown): value is Requests["terms"];
 export declare function validateRequestTmxPreview(value: unknown): value is Requests["tmxPreview"];
@@ -25,7 +28,9 @@ export declare function validateRequestUnitLocale(value: unknown): value is Requ
 export declare function validateResponseCapture(value: unknown): value is Responses["capture"];
 export declare function validateResponseCaptures(value: unknown): value is Responses["captures"];
 export declare function validateResponseContext(value: unknown): value is Responses["context"];
+export declare function validateResponseContextAction(value: unknown): value is Responses["contextAction"];
 export declare function validateResponseContextCapture(value: unknown): value is Responses["contextCapture"];
+export declare function validateResponseContextCaptureAction(value: unknown): value is Responses["contextCaptureAction"];
 export declare function validateResponseContextFact(value: unknown): value is Responses["contextFact"];
 export declare function validateResponseContextFactAction(value: unknown): value is Responses["contextFactAction"];
 export declare function validateResponseContextFactHistory(value: unknown): value is Responses["contextFactHistory"];
@@ -42,5 +47,6 @@ export declare function validateResponseSavedContext(value: unknown): value is R
 export declare function validateResponseSuggestions(value: unknown): value is Responses["suggestions"];
 export declare function validateResponseTbxPreview(value: unknown): value is Responses["tbxPreview"];
 export declare function validateResponseTerm(value: unknown): value is Responses["term"];
+export declare function validateResponseTermAction(value: unknown): value is Responses["termAction"];
 export declare function validateResponseTerms(value: unknown): value is Responses["terms"];
 export declare function validateResponseTmxPreview(value: unknown): value is Responses["tmxPreview"];

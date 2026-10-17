@@ -58,8 +58,9 @@ pub(crate) use resources::mcp;
 pub use resources::mcp::validate_mcp_term_query_result;
 pub use resources::strategy::*;
 pub use resources::{
-    CaptureContext, CaptureCorrectionTerm, ContextCapture, ContextItem, ContextOmission,
-    ContextRevision, CorrectionTermBasis, CorrectionTermEvidence, CorrectionTermPreview,
+    CaptureContext, CaptureCorrectionTerm, ContextCapture, ContextCaptureActionRead, ContextItem,
+    ContextOmission, ContextRevision, ContextSaveActionRead, CorrectionTermBasis,
+    CorrectionTermEvidence, CorrectionTermPreview,
     CorrectionTermReceipt, GlossaryCapture, GlossaryCaptureOrigin, GlossaryEntry, GlossaryFile,
     ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind, ResourceDecision,
     ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence, ResourceImpactKind,
@@ -70,7 +71,7 @@ pub use resources::{
     SourceContextOmissionSample, SourceContextOmissions, SourceContextProviderFact,
     SourceContextProviderNeighbor, SourceContextProviderOrigin, SourceContextProviderProjection,
     SourceContextRequest, SourceContextSelection, SourceContextView, TermOrigin, TermResolution,
-    TermResolutionEntry, TermRevision, TmMatchKind, TmSuggestion, UnknownSourceBlockSample,
+    TermResolutionEntry, TermRevision, TermSaveActionRead, TmMatchKind, TmSuggestion, UnknownSourceBlockSample,
     select_source_context,
 };
 pub use resources::{

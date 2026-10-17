@@ -190,7 +190,9 @@ export interface Responses {
   capture: GlossaryCapture | null;
   captures: GlossaryCapture[];
   context: ContextRevision | null;
+  contextAction: ContextSaveActionRead | null;
   contextCapture: ContextCapture;
+  contextCaptureAction: ContextCaptureActionRead | null;
   contextFact: ContextFactDecision;
   contextFactAction: ContextFactDecision | null;
   contextFactHistory: ContextFactHistory;
@@ -207,6 +209,7 @@ export interface Responses {
   suggestions: TmSuggestion[];
   tbxPreview: TbxFilePreview | null;
   term: TermRevision;
+  termAction: TermSaveActionRead | null;
   terms: TermRevision[];
   tmxPreview: TmxFilePreview | null;
 }
@@ -275,6 +278,20 @@ export interface ContextRevision {
   text: string;
   unitId: ExecutionId;
 }
+export interface ContextSaveActionRead {
+  receipt: ContextRevision;
+  request: SaveContext;
+}
+export interface SaveContext {
+  actionId: ExecutionId;
+  expectedRevisionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
 export interface ContextCapture {
   budgetBytes: number;
   captureId: ExecutionId;
@@ -294,6 +311,18 @@ export interface ContextOmission {
   kind: string;
   reason: string;
   reference: string;
+}
+export interface ContextCaptureActionRead {
+  receipt: ContextCapture;
+  request: CaptureContext;
+}
+export interface CaptureContext {
+  actionId: ExecutionId;
+  budgetBytes: number;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
 }
 export interface ContextFactDecision {
   request: ContextFactWrite;
@@ -542,6 +571,23 @@ export interface TbxTermPreview {
   termSecId: string | null;
   text: string | null;
   usageStatuses: string[];
+}
+export interface TermSaveActionRead {
+  receipt: TermRevision;
+  request: SaveTerm;
+}
+export interface SaveTerm {
+  actionId: ExecutionId;
+  aliases: string[];
+  expectedRevisionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  protected: boolean;
+  reason: string;
+  scopeUnitId: ExecutionId | null;
+  source: string;
+  target: string;
+  termId: string | null;
 }
 export interface TmxFilePreview {
   fileName: string;

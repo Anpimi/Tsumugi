@@ -38,6 +38,8 @@ struct Fixture {
     window: tauri::WebviewWindow<tauri::test::MockRuntime>,
     directory: tempfile::TempDir,
     context: Value,
+    unit_id: ExecutionId,
+    source_revision_id: ExecutionId,
     after: Value,
     basis_request: Value,
     capture: Value,
@@ -160,6 +162,8 @@ impl Fixture {
             window,
             directory,
             context,
+            unit_id: unit,
+            source_revision_id: source_revision,
             after,
             basis_request,
             capture,
@@ -177,6 +181,73 @@ impl Fixture {
         request["limit"] = json!(100);
         call(&self.window, "read_terms", request).unwrap()
     }
+}
+
+#[test]
+fn manual_resource_action_reads_use_registered_ipc_and_original_requests() {
+    let fixture = Fixture::new();
+    let window = &fixture.window;
+    let project = fixture.context["projectId"].clone();
+    let term = json!({
+        "projectId": project.clone(), "actionId": ExecutionId::new(), "termId": null,
+        "locale": "zh-CN", "source": "Copper", "aliases": ["Cu"],
+        "target": "铜", "protected": true, "scopeUnitId": fixture.unit_id,
+        "expectedRevisionId": null, "reason": "Reviewed",
+    });
+    let context = json!({
+        "projectId": project.clone(), "actionId": ExecutionId::new(),
+        "unitId": fixture.unit_id, "locale": "zh-CN",
+        "sourceRevisionId": fixture.source_revision_id, "expectedRevisionId": null,
+        "text": "Copper context", "reason": "Reviewed",
+    });
+    let capture = json!({
+        "projectId": project.clone(), "actionId": ExecutionId::new(),
+        "unitId": fixture.unit_id, "locale": "zh-CN",
+        "sourceRevisionId": fixture.source_revision_id, "budgetBytes": 16384,
+    });
+    let term_request = json!({"sessionToken":fixture.context["sessionToken"],"projectId":project.clone(),"term":term});
+    let context_request = json!({"sessionToken":fixture.context["sessionToken"],"projectId":project.clone(),"context":context});
+    let capture_request = json!({"sessionToken":fixture.context["sessionToken"],"projectId":project,"capture":capture});
+
+    assert_eq!(call(window, "read_term_save_action", term_request.clone()).unwrap(), Value::Null);
+    assert_eq!(call(window, "read_context_save_action", context_request.clone()).unwrap(), Value::Null);
+    assert_eq!(call(window, "read_context_capture_action", capture_request.clone()).unwrap(), Value::Null);
+    let term_receipt = call(window, "save_term", term_request.clone()).unwrap();
+    let context_receipt = call(window, "save_context", context_request.clone()).unwrap();
+    let capture_receipt = call(window, "capture_context", capture_request.clone()).unwrap();
+    let sequence = fixture.app.state::<AppState>().sessions.with(|sessions| {
+        sessions.active.as_ref().unwrap().store
+            .changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence
+    });
+    assert_eq!(
+        call(window, "read_term_save_action", term_request.clone()).unwrap(),
+        json!({"request":term_request["term"],"receipt":term_receipt})
+    );
+    assert_eq!(
+        call(window, "read_context_save_action", context_request.clone()).unwrap(),
+        json!({"request":context_request["context"],"receipt":context_receipt})
+    );
+    assert_eq!(
+        call(window, "read_context_capture_action", capture_request.clone()).unwrap(),
+        json!({"request":capture_request["capture"],"receipt":capture_receipt})
+    );
+    assert_eq!(fixture.app.state::<AppState>().sessions.with(|sessions| {
+        sessions.active.as_ref().unwrap().store
+            .changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence
+    }), sequence);
+
+    let mut changed = term_request.clone();
+    changed["term"]["target"] = json!("铜锭");
+    assert!(call(window, "read_term_save_action", changed).is_err());
+    let mut wrong_kind = context_request.clone();
+    wrong_kind["context"]["actionId"] = term_request["term"]["actionId"].clone();
+    assert!(call(window, "read_context_save_action", wrong_kind).is_err());
+    let mut wrong_project = capture_request.clone();
+    wrong_project["capture"]["projectId"] = json!(ExecutionId::new());
+    assert!(call(window, "read_context_capture_action", wrong_project).is_err());
+    let mut wrong_session = term_request;
+    wrong_session["sessionToken"] = json!("foreign-session");
+    assert!(call(window, "read_term_save_action", wrong_session).is_err());
 }
 
 #[test]

@@ -312,7 +312,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       if (before.pending !== action) return before;
       const unchanged = before.termSeq === action.submittedSeq && sameTerm(before.termDraft, request) && before.aliasInput === action.aliasInput;
       return { ...before, selectedTerm: revision, termDraft: unchanged ? resourceTermDraftFor(revision) : before.termDraft,
-        aliasInput: unchanged ? revision.aliases.join(", ") : before.aliasInput, newerTerm: !unchanged, pending: null, pendingUncertain: false,
+        aliasInput: unchanged ? revision.aliases.join(", ") : before.aliasInput, newerTerm: !unchanged, pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null,
         notice: unchanged ? "saved" : "savedNewer", failure: null, completionVersion: before.completionVersion + 1 };
     });
   }
@@ -324,7 +324,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       if (before.pending !== action) return before;
       const unchanged = before.contextSeq === action.submittedSeq && before.contextDraft === request.text && before.contextReason === request.reason;
       return { ...before, contextRevision: revision, contextDraft: unchanged ? revision.text : before.contextDraft,
-        contextReason: unchanged ? revision.reason : before.contextReason, newerContext: !unchanged, pending: null, pendingUncertain: false,
+        contextReason: unchanged ? revision.reason : before.contextReason, newerContext: !unchanged, pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null,
         notice: unchanged ? "saved" : "savedNewer", failure: null, completionVersion: before.completionVersion + 1 };
     });
   }
@@ -335,7 +335,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   function confirmCapture(action: Extract<ResourcePending, { kind: "capture" }>, capture: ContextCapture) {
     const request = action.request;
     if (capture.unitId !== request.unitId || capture.locale !== request.locale || capture.sourceRevisionId !== request.sourceRevisionId || capture.budgetBytes !== request.budgetBytes) invalidReceipt();
-    update(before => before.pending === action ? { ...before, fixedContext: capture, pending: null, pendingUncertain: false, notice: "captureSaved", failure: null, completionVersion: before.completionVersion + 1 } : before);
+    update(before => before.pending === action ? { ...before, fixedContext: capture, pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null, notice: "captureSaved", failure: null, completionVersion: before.completionVersion + 1 } : before);
   }
   function canReceiveCorrection(locale: string) {
     return localeAvailable(locale) && !reserved() && !termDirty() && !contextDirty() && !factDirty() && !correctionDirty()
@@ -376,7 +376,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       await dispatch({ kind: "correction", session, request, submittedSeq: draft.editSeq });
     } catch (error) { fail(error); } finally { release(); }
   }
-  async function lookupPending(action: Extract<ResourcePending, {kind:"correction"|"decision"}>) {
+  async function lookupPending(action: ResourcePending) {
     if (!live() || current().pending !== action) return;
     update(before => ({ ...before, checkingAction: "resource", failure: null, notice: null, pendingCheckedMissing: false }));
     try {
@@ -385,16 +385,28 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
         const receipt = await resourceCommands.correctionAction(request);
         if (!live() || current().pending !== action) return;
         if (receipt === null) update(before => ({ ...before, pendingCheckedMissing: true })); else confirmCorrection(action, receipt);
-      } else {
+      } else if (action.kind === "decision") {
         const receipt = await resourceCommands.decisionAction(request);
         if (!live() || current().pending !== action) return;
         if (receipt === null) update(before => ({ ...before, pendingCheckedMissing: true })); else confirmDecision(action, receipt);
+      } else if (action.kind === "term") {
+        const value = await resourceCommands.termAction({ ...action.session, term: action.request });
+        if (!live() || current().pending !== action) return;
+        if (value === null) update(before => ({ ...before, pendingCheckedMissing: true })); else confirmTerm(action, value.receipt);
+      } else if (action.kind === "context") {
+        const value = await resourceCommands.contextAction({ ...action.session, context: action.request });
+        if (!live() || current().pending !== action) return;
+        if (value === null) update(before => ({ ...before, pendingCheckedMissing: true })); else confirmContext(action, value.receipt);
+      } else {
+        const value = await resourceCommands.contextCaptureAction({ ...action.session, capture: action.request });
+        if (!live() || current().pending !== action) return;
+        if (value === null) update(before => ({ ...before, pendingCheckedMissing: true })); else confirmCapture(action, value.receipt);
       }
     } finally { if (live() && current().pending === action) update(before => ({ ...before, checkingAction: null })); }
   }
   async function checkPending() {
     const action = current().pending, previousFailure = current().failure;
-    if (!live() || running.current || !action || (action.kind !== "correction" && action.kind !== "decision")) return;
+    if (!live() || running.current || !action) return;
     running.current = true; update(before => ({ ...before, busyMutation: true }));
     try {
       await lookupPending(action);
@@ -440,19 +452,18 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     } catch (error) {
       if (!live() || current().pending !== action) return;
       const notCommitted = current().pending === action && isReceiptFirstRejection(action, error);
-      const unknown = hasUnknownOutcome(error), readable = action.kind === "correction" || action.kind === "decision";
+      const unknown = hasUnknownOutcome(error);
       writeFailure = commandFailure(error);
       update(before => {
         if (before.pending !== action) return before;
         const uncertain = !notCommitted && (unknown || before.pendingUncertain);
         return { ...before, pending: uncertain ? action : null, pendingUncertain: uncertain, pendingCheckedMissing: false,
           previewNeedsRefresh: before.previewNeedsRefresh || notCommitted && action.kind === "decision",
-          notice: unknown && readable ? null : uncertain ? "unknown" : "error", failure: unknown && readable ? null : writeFailure };
+          notice: unknown ? null : uncertain ? "unknown" : "error", failure: unknown ? null : writeFailure };
       });
       if (notCommitted) reads.invalidate(["source", "translation", "resources"], false);
-      if (!unknown || !readable) return;
+      if (!unknown) return;
     }
-    if (action.kind !== "correction" && action.kind !== "decision") return;
     try {
       await lookupPending(action);
       if (live() && current().pending === action) update(before => ({ ...before, failure: writeFailure, notice: "unknown" }));
@@ -492,7 +503,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   async function retryPending() {
     const action = current().pending;
-    if (!live() || !action || running.current || current().pendingUncertain && (action.kind === "correction" || action.kind === "decision") && !current().pendingCheckedMissing) return;
+    if (!live() || !action || running.current || current().pendingUncertain && !current().pendingCheckedMissing) return;
     running.current = true; update(before => ({ ...before, busyMutation: true, failure: null, notice: null }));
     try { await dispatch(action); } finally { release(); }
   }

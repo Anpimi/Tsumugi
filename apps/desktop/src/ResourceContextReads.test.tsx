@@ -14,6 +14,7 @@ import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { i18n } from "./i18n";
+import { validateRequestContext, validateResponseContextAction } from "./generated/resource.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -28,13 +29,14 @@ const replacement: ContextRevision = { ...initial, revisionId: fixtureIdentity(8
 const commandScope = { ...executionContext(project), area: "resources" as const };
 let owner: ReturnType<typeof useResourceDraftSession>, reads: ReturnType<typeof useSessionReads>, registry: ReturnType<typeof useWorkbenchCommands>;
 let saved: ContextRevision | null;
+let contextActions: Map<string, { request: SaveContext; receipt: ContextRevision }>;
 function Probe({ project: value }: { project: ProjectView }) {
   const currentOwner = useResourceDraftSession(), currentReads = useSessionReads(), currentRegistry = useWorkbenchCommands();
   useEffect(() => { owner = currentOwner; reads = currentReads; registry = currentRegistry; }, [currentOwner, currentReads, currentRegistry]);
   return <ResourceWorkbench project={value} disabled={false} onOpenTranslation={() => true} />;
 }
 beforeEach(async () => {
-  await i18n.changeLanguage("en-US"); saved = initial; invoke.mockReset();
+  await i18n.changeLanguage("en-US"); saved = initial; contextActions = new Map(); invoke.mockReset();
   invoke.mockImplementation(async (name: string, payload: { request: { context: SaveContext; unitId: string; locale: string } }) => {
     if (name === "read_content_scope") return page.scope;
     if (name === "read_source_content") return page;
@@ -42,9 +44,16 @@ beforeEach(async () => {
     if (name === "read_context_revision") return saved;
     if (name === "resolve_terms") return { unitId: payload.request.unitId, locale: payload.request.locale, sourceRevisionId: row.sourceRevisionId, entries: [] };
     if (name === "create_execution_identity") return fixtureIdentity(807);
+    if (name === "read_context_save_action") {
+      if (!validateRequestContext(payload.request)) throw new Error("Invalid original context lookup request");
+      const value = contextActions.get(payload.request.context.actionId) ?? null;
+      if (value) expect(value.request).toEqual(payload.request.context);
+      expect(validateResponseContextAction(value)).toBe(true); return value;
+    }
     if (name === "save_context") {
       const request = payload.request.context;
       saved = { revisionId: fixtureIdentity(808), unitId: request.unitId, locale: request.locale, text: request.text, reason: request.reason, previousRevisionId: request.expectedRevisionId ?? null };
+      contextActions.set(request.actionId, { request: structuredClone(request), receipt: saved });
       return saved;
     }
     throw new Error(name);
@@ -207,27 +216,28 @@ it("blocks a fresh save when current context changes during identity allocation"
   expect(owner.current().contextDraft).toBe("Submitted A"); expect(owner.current().contextRevision).toEqual(initial);
 });
 
-it("retains and retries the original uncertain context write while current context has changed", async () => {
+it("retains and reads the original uncertain context write while current context has changed", async () => {
   const { user } = await ready(); act(() => owner.editContext("Submitted A"));
-  const original = invoke.getMockImplementation()!; let attempts = 0, originalReceipt: ContextRevision | null = null;
+  const original = invoke.getMockImplementation()!; let actionReads = 0;
   invoke.mockImplementation(async (name: string, payload: { request: { context: SaveContext } }) => {
+    if (name === "read_context_save_action" && actionReads++ === 0) throw new Error("Original context lookup temporarily unavailable");
     if (name === "save_context") {
-      if (++attempts === 1) { originalReceipt = await original(name, payload); throw new Error("reply lost"); }
-      return originalReceipt;
+      await original(name, payload); throw new Error("reply lost");
     }
     return original(name, payload);
   });
   await user.click(screen.getByRole("button", { name: "Save context" }));
-  await screen.findByRole("button", { name: "Check or retry the same action" });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") })).toBeEnabled());
   const pending = owner.current().pending; act(() => { owner.editContext("New B"); owner.editContextReason("Reason B"); });
   saved = replacement; await refreshWorkbenchReads(["resources"]);
   expect(await screen.findByRole("button", { name: "Use current context and keep my edits" })).toBeDisabled();
   expect(registry.dispatch("resource.adopt-context-basis", commandScope, basisPayload())).toBe(false);
   expect(owner.current().pending).toBe(pending);
-  await user.click(screen.getByRole("button", { name: "Check or retry the same action" }));
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
   await screen.findByText("Saved. Earlier revisions remain available.");
   const requests = invoke.mock.calls.filter(([name]) => name === "save_context").map(([, payload]) => payload.request);
-  expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
+  expect(requests).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_context_save_action").map(([, payload]) => payload.request)).toEqual([requests[0], requests[0]]);
   expect(requests[0].context).toMatchObject({ expectedRevisionId: initial.revisionId, text: "Submitted A" });
   expect(owner.current().contextDraft).toBe("New B"); expect(owner.current().contextReason).toBe("Reason B");
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);

@@ -10,13 +10,13 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import resourceFixture from "../test/fixtures/resourceCommands.contract.json";
 import errorFixture from "../test/fixtures/commandErrors.contract.json";
-import { useResourceDraftSession } from "./ResourceDraftSession";
+import { useResourceDraftSession, type ResourcePending } from "./ResourceDraftSession";
 import { useSessionReads } from "./SessionReadProvider";
 import { useWorkbenchCommands, type ResourceDecisionCommandPayload, type ResourceTranslationCommandPayload } from "./workbenchCommands";
 import type { SaveTerm, SaveContext, CaptureContext, ResourceDecision, ResourceDecisionResult, ResourcePreview, TermRevision, GlossaryCapture } from "./resourceCommands";
 import { retrievalCapture, retrievalResourcePreview } from "./testSupport/mcpRetrievalFixture";
 
-import { validateRequestCapture, validateRequestTerm, validateRequestResourceAction, validateResponseDecisionAction, validateResponseCapture, validateResponsePreview, validateResponseCorrectionBasis } from "./generated/resource.validators";
+import { validateRequestCapture, validateRequestTerm, validateRequestContext, validateRequestContextCapture, validateRequestResourceAction, validateResponseDecisionAction, validateResponseCapture, validateResponsePreview, validateResponseCorrectionBasis } from "./generated/resource.validators";
 const originalCapture = structuredClone(resourceFixture.responses.capture), originalPreview = structuredClone(resourceFixture.responses.preview);
 if (!validateResponseCapture(originalCapture) || originalCapture === null || !validateResponsePreview(originalPreview)) throw new Error("Invalid resource fixture");
 const checkedCapture = originalCapture, checkedPreview = originalPreview;
@@ -36,7 +36,12 @@ const page = sourcePageFixture({
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   invoke.mockReset();
-  invoke.mockImplementation(async (command: string) => {
+  invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_term_save_action" || command === "read_context_save_action" || command === "read_context_capture_action") {
+      const validate = command === "read_term_save_action" ? validateRequestTerm : command === "read_context_save_action" ? validateRequestContext : validateRequestContextCapture;
+      if (!validate(payload.request)) throw new Error("Invalid original resource action lookup request");
+      return null;
+    }
     if (command === "read_content_scope") return page.scope;
     if (command === "read_source_content") return page;
     if (command === "read_terms") return [];
@@ -231,6 +236,123 @@ function decisionReceipt(request: ResourceDecision): ResourceDecisionResult {
 }
 const lostResource: CommandError = { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown", recoveryRequired: true,
   reason: "resource-decision", diagnosticId: fixtureIdentity(510) };
+const plainActions = [
+  { kind: "term", command: "save_term", read: "read_term_save_action" },
+  { kind: "context", command: "save_context", read: "read_context_save_action" },
+  { kind: "capture", command: "capture_context", read: "read_context_capture_action" },
+] as const;
+function beginPlainAction() {
+  resourceOwner.beginContext(page.rows[0], null); resourceOwner.editContext("Context A"); resourceOwner.editContextReason("Reason A"); editTermA();
+}
+function sendPlainAction(kind: typeof plainActions[number]["kind"]) {
+  return kind === "term" ? resourceOwner.saveTerm() : kind === "context" ? resourceOwner.saveContext() : resourceOwner.captureContext();
+}
+function plainReceipt(action: ResourcePending) {
+  if (action.kind === "term") return { request: action.request, receipt: termAcknowledgement(action.request) };
+  if (action.kind === "context") return { request: action.request, receipt: contextAcknowledgement(action.request) };
+  if (action.kind === "capture") return { request: action.request, receipt: captureAcknowledgement(action.request) };
+  throw new Error("Expected a term, context or context capture action");
+}
+
+it.each(plainActions)("checks one original $kind action without resending it and preserves newer drafts after consumer removal", async test => {
+  if (test.kind === "context") await i18n.changeLanguage("zh-CN");
+  installResourceReads(); const native = invoke.getMockImplementation()!, write = deferred<unknown>(), lookup = deferred<unknown>();
+  invoke.mockImplementation((command, args) => command === test.command ? write.promise : command === test.read ? lookup.promise : native(command, args));
+  const view = render(<ResourceView project={project}/>), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
+  act(beginPlainAction);
+  let running!: Promise<void>; act(() => { running = sendPlainAction(test.kind); void sendPlainAction(test.kind); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === test.command)).toHaveLength(1));
+  const pending = resourceOwner.current().pending!;
+  expect(screen.queryByText(i18n.t("resource.checkingAction"))).not.toBeInTheDocument();
+  await act(async () => { write.reject(lostResource); });
+  await screen.findByText(i18n.t("resource.checkingAction"));
+  expect(resourceOwner.current()).toMatchObject({ busyMutation: true, checkingAction: "resource", failure: null });
+  expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") })).toBeDisabled();
+  act(() => { resourceOwner.editTerm({ ...resourceOwner.current().termDraft, target: "Term B" }, "Cask,    Drum"); resourceOwner.editContext("Context B"); resourceOwner.editContextReason("Reason B"); });
+  await act(async () => { await resourceOwner.checkPending(); await resourceOwner.retryPending(); await sendPlainAction(test.kind); });
+  view.rerender(null);
+  await act(async () => { lookup.resolve(plainReceipt(pending)); await running; });
+  view.rerender(<ResourceView project={project}/>);
+  expect(resourceOwner.current()).toMatchObject({ pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null, busyMutation: false, failure: null,
+    termDraft: { target: "Term B" }, aliasInput: "Cask,    Drum", contextDraft: "Context B", contextReason: "Reason B" });
+  if (pending.kind === "capture") expect(resourceOwner.current().fixedContext).toMatchObject({ unitId: pending.request.unitId, sourceRevisionId: pending.request.sourceRevisionId, budgetBytes: pending.request.budgetBytes });
+  const written = invoke.mock.calls.filter(([command]) => command === test.command).map(([, args]) => args.request);
+  expect(written).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === test.read).map(([, args]) => args.request)).toEqual(written);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+});
+
+it.each(plainActions)("keeps a $kind action unresolved after a forged echo or mismatching receipt and manually reads only the original request", async test => {
+  installResourceReads(); const native = invoke.getMockImplementation()!; let reads = 0;
+  invoke.mockImplementation((command, args) => {
+    if (command === test.command) return Promise.reject(lostResource);
+    if (command !== test.read) return native(command, args);
+    const pending = resourceOwner.current().pending!; const value = plainReceipt(pending); reads++;
+    if (reads === 1) return Promise.resolve({ ...value, request: { ...value.request, actionId: fixtureIdentity(599) } });
+    if (reads === 2) return Promise.resolve({ ...value, receipt: { ...value.receipt, locale: "fr" } });
+    return Promise.resolve(value);
+  });
+  const view = render(<ResourceView project={project}/>), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
+  await act(async () => { await resourceOwner.openPreview(checkedCapture); }); act(beginPlainAction);
+  const previewReads = invoke.mock.calls.filter(([command]) => command === "read_resource_preview").length;
+  await act(async () => { await sendPlainAction(test.kind); }); const pending = resourceOwner.current().pending;
+  expect(resourceOwner.current()).toMatchObject({ pendingCheckedMissing: false, pendingUncertain: true });
+  act(() => { resourceOwner.editContext("Retained context B"); resourceOwner.editTerm({ ...resourceOwner.current().termDraft, target: "Term B" }, "Cask,   Drum"); });
+  view.rerender(<ResourceView project={test.kind === "term" ? project : { ...project, metadata: { ...project.metadata, targetLocales: [] } }}/>);
+  for (const button of screen.queryAllByRole("button", { name: i18n.t("resource.retry") })) expect(button).toBeDisabled();
+  await act(async () => { await resourceOwner.retryPending(); });
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+  expect(resourceOwner.current()).toMatchObject({ pending, pendingCheckedMissing: false, failure: "failed" });
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+  await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
+  expect(resourceOwner.current()).toMatchObject({ checkingAction: null, failure: null, aliasInput: "Cask,   Drum", termDraft: { target: "Term B" }, contextDraft: "Retained context B" });
+  const written = invoke.mock.calls.filter(([command]) => command === test.command).map(([, args]) => args.request);
+  expect(written).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === test.read).map(([, args]) => args.request)).toEqual([written[0], written[0], written[0]]);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_preview")).toHaveLength(previewReads);
+});
+
+it("retains the original typed write error after a missing term receipt and the actual failure after a manual lookup error", async () => {
+  installResourceReads(); const native = invoke.getMockImplementation()!;
+  const readFailure: CommandError = { code: "storage-failed", stage: "execution-recover", outcome: "rejected", recoveryRequired: false, reason: "term-action-read" }; let reads = 0;
+  invoke.mockImplementation((command, args) => command === "save_term" ? Promise.reject(lostResource)
+    : command === "read_term_save_action" ? ++reads === 1 ? Promise.resolve(null) : Promise.reject(readFailure) : native(command, args));
+  render(<ResourceView project={project}/>); act(beginPlainAction); await act(async () => { await resourceOwner.saveTerm(); });
+  const pending = resourceOwner.current().pending;
+  expect(resourceOwner.current()).toMatchObject({ pendingCheckedMissing: true, failure: lostResource });
+  expect(resourceOwner.current().failure).toBe(lostResource);
+  await act(async () => { await resourceOwner.checkPending(); });
+  expect(resourceOwner.current()).toMatchObject({ pending, pendingCheckedMissing: false, failure: readFailure });
+  expect(resourceOwner.current().failure).toBe(readFailure);
+  await act(async () => { await resourceOwner.retryPending(); });
+  expect(invoke.mock.calls.filter(([command]) => command === "save_term")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_term_save_action")).toHaveLength(2);
+});
+
+it.each(plainActions)("does not read a fresh formally rejected $kind action", async test => {
+  installResourceReads(); const native = invoke.getMockImplementation()!;
+  const rejected: CommandError = { code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false };
+  invoke.mockImplementation((command, args) => command === test.command ? Promise.reject(rejected) : native(command, args));
+  render(<ResourceView project={project}/>); act(beginPlainAction); await act(async () => { await sendPlainAction(test.kind); });
+  expect(resourceOwner.current()).toMatchObject({ pending: null, checkingAction: null, failure: rejected });
+  expect(invoke.mock.calls.filter(([command]) => command === test.read)).toHaveLength(0);
+});
+
+it.each(["before", "during"] as const)("does not dispatch or settle a captured context lookup after the owner retires %s the read", async moment => {
+  installResourceReads(); const native = invoke.getMockImplementation()!, write = deferred<unknown>(), lookup = deferred<unknown>();
+  invoke.mockImplementation((command, args) => command === "capture_context" ? write.promise : command === "read_context_capture_action" ? lookup.promise : native(command, args));
+  render(<ResourceView project={project}/>); act(beginPlainAction);
+  let running!: Promise<void>; act(() => { running = resourceOwner.captureContext(); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "capture_context")).toHaveLength(1));
+  if (moment === "during") { await act(async () => { write.reject(lostResource); }); await waitFor(() => expect(resourceOwner.current().checkingAction).toBe("resource")); }
+  const before = resourceOwner.current(), pending = before.pending!; act(() => resourceReads.retire());
+  await act(async () => { if (moment === "before") write.reject(lostResource); else lookup.resolve(plainReceipt(pending)); await running; });
+  expect(resourceOwner.current()).toBe(before);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_context_capture_action")).toHaveLength(moment === "before" ? 0 : 1);
+  expect(invoke.mock.calls.filter(([command]) => command === "capture_context")).toHaveLength(1);
+});
 
 it.each(["file", "mcp"] as const)("confirms one original %s decision read after consumer removal without replacing either resource draft", async origin => {
   installResourceReads(); const native = invoke.getMockImplementation()!, preview = decisionPreview(origin), lookup = deferred<ResourceDecisionResult | null>();
@@ -998,7 +1120,7 @@ it.each(["term", "context", "decision", "capture"] as const)("retains the origin
   expect(resourceOwner.current().pendingUncertain).toBe(true);
   await act(async () => { await resourceOwner.saveTerm(); await resourceOwner.saveContext(); });
   expect(writes).toBe(2);
-  if (kind === "decision") await act(async () => { await resourceOwner.checkPending(); });
+  await act(async () => { await resourceOwner.checkPending(); });
   await act(async () => { await resourceOwner.retryPending(); });
   expect(resourceOwner.current().pending).toBeNull();
   const requests = invoke.mock.calls.filter(([name]) => name === command).map(([, payload]) => payload.request);

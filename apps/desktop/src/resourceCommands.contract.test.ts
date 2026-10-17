@@ -3,6 +3,7 @@ import fixture from "../test/fixtures/resourceCommands.contract.json";
 import { resourceCommands } from "./resourceCommands";
 import * as validators from "./generated/resource.validators";
 import { hasUnknownOutcome } from "./projectCommands";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -135,6 +136,39 @@ it("keeps malformed mutation acknowledgements unknown and preserves backend reje
   const rejected = { code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", reason: "term-revision" };
   invoke.mockRejectedValueOnce(rejected);
   await expect(resourceCommands.saveTerm(fixture.requests.term)).rejects.toBe(rejected);
+});
+
+const savedActionCases = [
+  { kind: "term", command: "read_term_save_action", request: fixture.requests.term,
+    response: { request: fixture.requests.term.term, receipt: fixture.responses.term }, validate: validators.validateResponseTermAction,
+    read: () => resourceCommands.termAction(fixture.requests.term),
+    proofChanges: [{ termId: "different-term" }, { expectedRevisionId: fixtureIdentity(991) }, { aliases: ["Different alias"] }, { scopeUnitId: fixtureIdentity(992) }] },
+  { kind: "context", command: "read_context_save_action", request: fixture.requests.context,
+    response: { request: fixture.requests.context.context, receipt: fixture.responses.savedContext }, validate: validators.validateResponseContextAction,
+    read: () => resourceCommands.contextAction(fixture.requests.context),
+    proofChanges: [{ sourceRevisionId: fixtureIdentity(991) }, { expectedRevisionId: fixtureIdentity(992) }, { text: "Different context" }, { reason: "Different reason" }] },
+  { kind: "capture", command: "read_context_capture_action", request: fixture.requests.contextCapture,
+    response: { request: fixture.requests.contextCapture.capture, receipt: fixture.responses.contextCapture }, validate: validators.validateResponseContextCaptureAction,
+    read: () => resourceCommands.contextCaptureAction(fixture.requests.contextCapture),
+    proofChanges: [{ sourceRevisionId: fixtureIdentity(991) }, { budgetBytes: 1 }, { unitId: fixtureIdentity(992) }, { locale: "fr" }] },
+] as const;
+
+it.each(savedActionCases)("reads only the complete original $kind action and rejects schema-valid forged request echoes", async test => {
+  expect(test.validate(test.response)).toBe(true); expect(test.validate(null)).toBe(true);
+  invoke.mockResolvedValueOnce(test.response);
+  await expect(test.read()).resolves.toEqual(test.response);
+  expect(invoke).toHaveBeenLastCalledWith(test.command, { request: test.request });
+  invoke.mockResolvedValueOnce(null); await expect(test.read()).resolves.toBeNull();
+  for (const change of [{ actionId: fixtureIdentity(993) }, { projectId: fixtureIdentity(994) }, ...test.proofChanges]) {
+    const forged = { ...test.response, request: { ...test.response.request, ...change } };
+    expect(test.validate(forged)).toBe(true);
+    invoke.mockResolvedValueOnce(forged); await expect(test.read()).rejects.toThrow(`Invalid IPC response: ${test.command}`);
+  }
+  for (const value of [undefined, { request: test.response.request }, { receipt: test.response.receipt }, { ...test.response, receipt: null }, { ...test.response, extra: true }]) {
+    expect(test.validate(value)).toBe(false);
+    invoke.mockResolvedValueOnce(value); await expect(test.read()).rejects.toThrow(`Invalid IPC response: ${test.command}`);
+  }
+  expect(invoke.mock.calls.every(([command]) => command === test.command)).toBe(true);
 });
 
 

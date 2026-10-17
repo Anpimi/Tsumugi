@@ -44,7 +44,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   const correctionSourceInvalid = !!correctionDraft?.source && (!correctionDraft.source.trim() || !correctionDraft.evidence.sourceText.includes(correctionDraft.source));
   const correctionTargetInvalid = !!correctionDraft?.target && (!correctionDraft.target.trim() || !correctionDraft.evidence.afterText.includes(correctionDraft.target));
   const correctionFieldsTooLarge = !!correctionDraft && [correctionDraft.source, correctionDraft.target, correctionDraft.reason].some(text => new TextEncoder().encode(text).length > 16 * 1024);
-  const pendingChecked = pending && owner.state.pendingUncertain && (pending.kind === "correction" || pending.kind === "decision");
+  const pendingChecked = pending && owner.state.pendingUncertain;
   const pendingTerm = pending?.kind === "term" ? pending.request : null;
   const pendingContext = pending?.kind === "context" ? pending.request : null;
   const pendingDecision = pending?.kind === "decision" ? pending.request : null;
@@ -275,9 +275,9 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     if (current() && !owner.current().pending && owner.current().correctionReceipt) await owner.retryPreview(current);
   }
   async function checkPending() {
-    const current = currentView();
+    const current = currentView(), action = owner.current().pending;
     await owner.checkPending();
-    if (current() && !owner.current().pending && owner.current().previewCapture) await owner.retryPreview(current);
+    if ((action?.kind === "correction" || action?.kind === "decision") && current() && !owner.current().pending && owner.current().previewCapture) await owner.retryPreview(current);
   }
   function termPayload(): ResourceTermCommandPayload { const value = owner.current(); return { kind: "resource-term", locale: value.locale, termId: value.selectedTerm?.termId ?? null, expectedRevisionId: value.selectedTerm?.revisionId ?? null, editSeq: value.termSeq }; }
   function contextPayload(): ResourceContextCommandPayload | null { const value = owner.current(); return value.selectedUnit?.unitId && value.selectedUnit.sourceRevisionId ? { kind: "resource-context", unitId: value.selectedUnit.unitId, locale: value.locale,
@@ -487,7 +487,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
           {correctionEditorReturn && onReturnFromCorrection ? <button type="button" disabled={busyMutation || !!pending || disabled || owner.tool.blocked() || owner.tool.hasDraft()} onClick={() => { void onReturnFromCorrection(correctionEditorReturn); }}>{t("correctionFeedback.return")}</button> : null}
           {pendingChecked ? <div role="status"><p>{t(owner.state.checkingAction === "resource" ? "resource.checkingAction" : owner.state.pendingCheckedMissing ? "correctionFeedback.missing" : "correctionFeedback.unknown")}</p>
             <button type="button" disabled={busyMutation || disabled} onClick={() => { const input = pendingPayload(); if (input) registry.dispatch("resource.check-pending", commandScope, input); }}>{t("correctionFeedback.check")}</button>
-            {owner.state.pendingCheckedMissing ? <button type="button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button> : null}</div> : null}
+            {owner.state.pendingCheckedMissing && !(pendingTerm && tab === "terms") && !(pendingContext && tab === "context") ? <button type="button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button> : null}</div> : null}
           {tab === "updates" && locale ? <section><h3 ref={captureHeading} tabIndex={-1}>{t("resource.resourceUpdates")}</h3><p>{t("resource.fileHelp")}</p><button className="primary-button" disabled={!chooseFileAvailability().enabled} onClick={() => registry.dispatch("resource.choose-file", commandScope, { kind: "resource-locale", locale })}>{t("resource.chooseFile")}</button>
             {readStatus(capturesRead.error, capturesRead.isFetching, () => { void capturesRead.refetch(); })}{captures.length ? <div><h4>{t("resource.savedCaptures")}</h4><ul>{captures.filter(item => item.targetLocale === locale || item.origin.kind === "correction" || item.origin.kind === "mcp").map(item => <li key={item.captureId}><button className="text-button" disabled={!captureAvailability(capturePayload(item)).enabled} onClick={() => registry.dispatch("resource.open-preview", commandScope, capturePayload(item))}>{captureLabel(item)}</button></li>)}</ul></div> : null}
             {previewCapture && (!preview || previewNeedsRefresh || !previewSourceCurrent() || !same(preview, previewRead.data) || !!previewRead.error) ? <p>{t(preview && !previewNeedsRefresh && !previewRead.error ? "resource.previewChanged" : "resource.previewUnavailable")} <button className="secondary-button" disabled={!captureAvailability(capturePayload(previewCapture), true).enabled} onClick={() => registry.dispatch("resource.refresh-preview", commandScope, capturePayload(previewCapture))}>{t("resource.retryPreview")}</button></p> : null}

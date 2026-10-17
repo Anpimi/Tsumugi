@@ -109,7 +109,9 @@ export interface Requests {
   capture: CaptureRequest;
   captures: CaptureListRequest;
   context: ContextWriteRequest;
+  contextAction: ContextWriteRequest;
   contextCapture: ContextCaptureRequest;
+  contextCaptureAction: ContextCaptureRequest;
   contextFact: ContextFactRequest;
   contextFactAction: ContextFactActionRequest;
   contextFactHistory: ContextFactHistoryRequest;
@@ -123,6 +125,7 @@ export interface Requests {
   suggestions: SuggestionRequest;
   tbxPreview: TbxPreviewRequest;
   term: TermRequest;
+  termAction: TermRequest;
   termHistory: TermHistoryRequest;
   terms: TermListRequest;
   tmxPreview: TmxPreviewRequest;

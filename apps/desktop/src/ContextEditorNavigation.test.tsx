@@ -17,7 +17,7 @@ import { validateResponseChanges, validateResponseError } from "./generated/vali
 import { validateResponseScope, validateResponsePage, validateResponseSourceContext } from "./generated/source.validators";
 import { validateResponseSummary, validateResponseEditor } from "./generated/review.validators";
 import { validateResponseActivity } from "./generated/execution.validators";
-import { validateRequestContextFact, validateRequestContextFacts, validateResponseContextFacts, validateResponseContextFact, validateResponseContextFactAction, validateResponseContextFactHistory } from "./generated/resource.validators";
+import { validateRequestContext, validateResponseContextAction, validateRequestContextFact, validateRequestContextFacts, validateResponseContextFacts, validateResponseContextFact, validateResponseContextFactAction, validateResponseContextFactHistory } from "./generated/resource.validators";
 import { validateRequestWorkProtectionSet, validateResponseWorkProtection } from "./generated/ai.validators";
 import type { WorkProtection } from "./workPlanCommands";
 
@@ -29,6 +29,7 @@ const wireValidators: Record<string, (value: unknown) => boolean> = {
   read_review_editor_snapshot: validateResponseEditor, read_execution_task_activity: validateResponseActivity,
   read_source_context: validateResponseSourceContext,
   read_context_fact_decisions:validateResponseContextFacts,decide_context_fact:validateResponseContextFact,read_context_fact_action:validateResponseContextFactAction,read_context_fact_history:validateResponseContextFactHistory,
+  read_context_save_action:validateResponseContextAction,
   read_work_protection: validateResponseWorkProtection, set_work_protection: validateResponseWorkProtection,
 };
 let wireFailures: string[];
@@ -118,6 +119,9 @@ beforeEach(async()=>{
       entries:factsEnabled?[{kind:"block",value:{blockIndex:0,target:{kind:"unit",id:"synthetic-entry"},schema:{id:"tsumugi.source-context-facts",schemaVersion:1,behaviorVersion:1},handling:"preserve",inRevisionBasis:true,
         facts:{facts:[{id:"role",kind:"role",text:"inferred captain",origin:{kind:"inferred",rationale:"synthetic hypothesis",sources:[{artifactId:"synthetic-context",range:{encoding:"utf8-byte",start:0,end:8}}]}}]}}}]:[],after:0,totalEntries:factsEnabled?1:0,nextAfter:null};
     if(command==="create_execution_identity")return holdIdentity?holdIdentity():fixtureIdentity(identities++);
+    if(command==="read_context_save_action"){
+      if(!validateRequestContext(request))throw new Error("Invalid original context lookup request");return null;
+    }
     if(command==="save_context"){
       if(loseSave)throw new Error("Synthetic lost context acknowledgement");
       const value=request.context as SaveContext;saved={revisionId:fixtureIdentity(631),unitId:value.unitId,locale:value.locale,text:value.text,reason:value.reason,previousRevisionId:value.expectedRevisionId??null};version="saved-context-view";return saved;

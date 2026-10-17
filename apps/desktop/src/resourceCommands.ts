@@ -1,7 +1,7 @@
 import { jsonIdentity } from "./pluginToolChoices";
 import type { CorrectionBasisRequest, CorrectionCaptureRequest, ResourceActionRequest } from "./generated/resource.requests";
 import { validateResponseCorrectionBasis, validateResponseCorrectionCapture, validateResponseCorrectionAction, validateResponseDecisionAction } from "./generated/resource.validators";
-import type { CorrectionTermEvidence, CorrectionTermReceipt, ResourceDecisionResult, ResourcePreview } from "./generated/resource.responses";
+import type { Responses, CorrectionTermEvidence, CorrectionTermReceipt, ResourceDecisionResult, ResourcePreview } from "./generated/resource.responses";
 export type { CorrectionTermBasis, CorrectionTermEvidence, CorrectionTermReceipt, GlossaryCaptureOrigin } from "./generated/resource.responses";
 export type { CaptureCorrectionTerm } from "./generated/resource.requests";
 import type { ContextFactRequest, ContextFactsRequest, ContextFactActionRequest, ContextFactHistoryRequest } from "./generated/resource.requests";
@@ -12,7 +12,7 @@ import type { ContextFactDecision, ContextFactHistory } from "./generated/resour
 import type { SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import type { TbxPreviewRequest, TmxPreviewRequest, CaptureListRequest, CaptureRequest, TermRequest, DecisionRequest, TermListRequest, TermHistoryRequest, UnitLocaleRequest, ContextWriteRequest, ContextCaptureRequest, SuggestionRequest, ImpactRequest } from "./generated/resource.requests";
-import { validateResponseTbxPreview, validateResponseTmxPreview, validateResponseCaptures, validateResponseCapture, validateResponsePreview, validateResponseDecision, validateResponseTerm, validateResponseTerms, validateResponseResolution, validateResponseContext, validateResponseSavedContext, validateResponseContextCapture, validateResponseSuggestions, validateResponseImpacts } from "./generated/resource.validators";
+import { validateResponseTbxPreview, validateResponseTmxPreview, validateResponseCaptures, validateResponseCapture, validateResponsePreview, validateResponseDecision, validateResponseTerm, validateResponseTermAction, validateResponseContextAction, validateResponseContextCaptureAction, validateResponseTerms, validateResponseResolution, validateResponseContext, validateResponseSavedContext, validateResponseContextCapture, validateResponseSuggestions, validateResponseImpacts } from "./generated/resource.validators";
 
 export type { SaveTerm, SaveContext, CaptureContext, ResourceDecision } from "./generated/resource.requests";
 export type { TbxPreviewRequest, TmxPreviewRequest } from "./generated/resource.requests";
@@ -75,12 +75,21 @@ export const resourceCommands = {
           : value.mcp === null)),
   decide: (request: DecisionRequest) => checkedInvoke("decide_resource_entry", request, validateResponseDecision),
   saveTerm: (request: TermRequest) => checkedInvoke("save_term", request, validateResponseTerm),
+  termAction: (request: TermRequest) => checkedInvoke("read_term_save_action", request,
+    (value): value is Responses["termAction"] => validateResponseTermAction(value)
+      && (value === null || jsonIdentity(value.request) === jsonIdentity(request.term))),
   terms: (request: TermListRequest) => checkedInvoke("read_terms", request, validateResponseTerms),
   termHistory: (request: TermHistoryRequest) => checkedInvoke("read_term_history", request, validateResponseTerms),
   resolve: (request: UnitLocaleRequest) => checkedInvoke("resolve_terms", request, validateResponseResolution),
   context: (request: UnitLocaleRequest) => checkedInvoke("read_context_revision", request, validateResponseContext),
   saveContext: (request: ContextWriteRequest) => checkedInvoke("save_context", request, validateResponseSavedContext),
+  contextAction: (request: ContextWriteRequest) => checkedInvoke("read_context_save_action", request,
+    (value): value is Responses["contextAction"] => validateResponseContextAction(value)
+      && (value === null || jsonIdentity(value.request) === jsonIdentity(request.context))),
   captureContext: (request: ContextCaptureRequest) => checkedInvoke("capture_context", request, validateResponseContextCapture),
+  contextCaptureAction: (request: ContextCaptureRequest) => checkedInvoke("read_context_capture_action", request,
+    (value): value is Responses["contextCaptureAction"] => validateResponseContextCaptureAction(value)
+      && (value === null || jsonIdentity(value.request) === jsonIdentity(request.capture))),
   readCapture: (request: CaptureRequest) => checkedInvoke("read_context_capture", request, validateResponseContextCapture),
   suggestions: (request: SuggestionRequest) => checkedInvoke("tm_suggestions", request, validateResponseSuggestions),
   impacts: (request: ImpactRequest) => checkedInvoke("resource_impacts", request, validateResponseImpacts),
