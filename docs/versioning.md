@@ -1,5 +1,11 @@
 # Application versioning and changelog maintenance
 
+The opt-in macOS runtime profile explicitly enables `.app` bundling and selects
+the existing macOS icon. This corrects the documented build path without changing
+ordinary builds, runtime authority, dependencies or data formats. It remains in
+the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
+with synchronized bilingual Unreleased entries and no additional version bump.
+
 The macOS default WebVTT and SMAPI bundle selection now pins the current
 prebuilt candidate archives and SDK artifact. Archive transport identities and
 Host package digests remain separate; the recorded source commit is the

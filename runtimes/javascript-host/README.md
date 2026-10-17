@@ -281,15 +281,25 @@ changed inputs fail the build. Build the desktop with:
 pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
 ```
 
+This profile explicitly enables macOS `.app` bundling and its macOS icon; the
+base configuration leaves bundling disabled. Append `--no-sign` for an unsigned
+local candidate. Building or bundling does not launch the application.
+
+Before distributing a candidate, use Rust's `--remap-path-prefix` build flag for
+the builder's source, Cargo cache and toolchain roots, and inspect the resulting
+binary for machine-local paths. Keep local path mappings in the build environment;
+do not commit builder-specific paths into the application configuration.
+
 The `bundled-plugins` feature includes `bundled-runtime` and requires an Apple
 silicon macOS builder and target. The build captures both runtime trees through
 the Host, compares the complete tool digest with the independent source pin,
 and embeds the actual complete SDK descriptor, package metadata, public
 application-build origin and limits. Tauri preserves the package, tool and Host
-trees at logical resource paths. Preparation JSON is not copied into the bundle
-or used as approval. This opt-in bundle requires macOS 13.5; ordinary builds
-retain their base minimum and offer no implicit development package or Node/PATH
-fallback.
+trees at logical resource paths. Runtime preparation JSON stays outside those
+mapped trees. The plugin preparation report accompanies its mapped directory;
+neither report is used as approval. This opt-in bundle requires macOS 13.5;
+ordinary builds retain their base minimum and offer no implicit development
+package or Node/PATH fallback.
 
 In the global Extensions panel, review the exact included set and select **Use
 included extensions**. The backend queries the real macOS version and captures

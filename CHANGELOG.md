@@ -6,6 +6,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Generate a macOS `.app` with the included runtime and extensions when selecting
+  the optional bundled-runtime build profile.
+
 - Refresh the bundled WebVTT and SMAPI snapshots to the current pinned SDK
   artifact. Package approval and existing project bindings remain separate
   from the default bundle selection.
