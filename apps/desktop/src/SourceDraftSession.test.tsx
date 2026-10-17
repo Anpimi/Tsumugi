@@ -6,7 +6,7 @@ import { useSourceDraftSession } from "./SourceDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { executionCommands, type AdoptionAction, type Receipt } from "./executionCommands";
 import { sourceCommands, type ContentScope, type SourceAdoptRequest, type SourceChangePage } from "./sourceCommands";
-import type { ProjectView } from "./projectCommands";
+import type { CommandError, ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { sourceActionFixture, sourceAttemptFixture, sourcePageFixture, sourceRowFixture, sourceReceiptFixture } from "./testSupport/sourceFixture";
 import { pluginSourceRequest, pluginSourceWorkflow } from "./testSupport/pluginSourceFixture";
@@ -19,6 +19,7 @@ import { sourceHookKey } from "./SourceMaintenanceHook";
 import { useSessionReads } from "./SessionReadProvider";
 import { i18n } from "./i18n";
 import userEvent from "@testing-library/user-event";
+import { validateRequestAdoptionAction, validateResponseAdoptionAction } from "./generated/source.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -31,12 +32,14 @@ const comparison: SourceChangePage = { ...sourceFixture.comparison,
   rows: [{ kind: "added", old: null, new: sourceRowFixture().occurrence, candidates: [] }] };
 let owner: ReturnType<typeof useSourceDraftSession>;
 let tasks: ReturnType<typeof useExecutionTaskSession>;
+let sessionReads: ReturnType<typeof useSessionReads>;
 let scope: ContentScope;
 let originalRequest: SourceAdoptRequest | null;
 function Probe() {
   const value = useSourceDraftSession();
   const cancellation = useExecutionTaskSession();
-  useLayoutEffect(() => { owner = value; tasks = cancellation; });
+  const reads = useSessionReads();
+  useLayoutEffect(() => { owner = value; tasks = cancellation; sessionReads = reads; });
   return <><output aria-label="Source outcome">{value.state.pendingApply ? "Unconfirmed" : value.state.receipt ? "Applied" : "Idle"}</output>
     <output aria-label="Source decisions">{Object.values(value.state.lineage).map(row => `${row.newOrdinal}: ${row.reason}`).join("; ")}</output></>;
 }
@@ -57,6 +60,10 @@ beforeEach(() => {
     if (command === "read_source_comparison") return comparison;
     if (command === "estimate_source_update") return sourceFixture.estimates;
     if (command === "prepare_source_adoption") { originalRequest = payload.request as unknown as SourceAdoptRequest; return sourceActionFixture(originalRequest); }
+    if (command === "read_source_adoption_action") {
+      if (!validateRequestAdoptionAction(payload.request)) throw new Error("Invalid source action lookup request");
+      return { action: sourceActionFixture(payload.request.adoption, payload.request.unitId), receipt: sourceReceiptFixture(payload.request.adoption, payload.request.unitId) };
+    }
     if (command === "adopt_execution" || command === "read_execution_receipt") return sourceReceiptFixture(originalRequest!);
     throw new Error(command);
   });
@@ -77,6 +84,130 @@ function editDecision(ordinal: number, reason: string) {
   act(() => { owner.edit("actor", "Reviewer"); owner.edit("lineage", before => ({ ...before,
     [ordinal]: { newOrdinal: ordinal, oldOccurrenceId: fixtureIdentity(ordinal + 300), decision: "continue", reason } })); });
 }
+function failFirstAdoptionRead() {
+  const original = invoke.getMockImplementation()!; let reads = 0;
+  invoke.mockImplementation((command: string, payload) => command === "read_source_adoption_action" && reads++ === 0
+    ? Promise.reject(new Error("Original source action read temporarily unavailable")) : original(command, payload));
+}
+function deferredAction<T>() {
+  let resolve!: (value: T) => void, reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+const lostSource: CommandError = { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown", recoveryRequired: true,
+  reason: "source-adoption", diagnosticId: fixtureIdentity(990) };
+
+it.each(["prepare", "adopt"] as const)("checks one original lost %s acknowledgement inside its reservation and preserves B after consumer removal", async boundary => {
+  const view = render(<Probe/>, project); await ready(true); editDecision(70, "Submitted reason");
+  await act(async () => { await owner.estimate(() => true); }); act(() => owner.confirm(true));
+  const native = invoke.getMockImplementation()!, write = deferredAction<unknown>(), lookup = deferredAction<Awaited<ReturnType<typeof sourceCommands.adoptionAction>>>();
+  invoke.mockImplementation((command: string, payload: { request: SourceAdoptRequest }) => {
+    if (command === "prepare_source_adoption" && boundary === "prepare") { originalRequest = payload.request; return write.promise; }
+    if (command === "adopt_execution" && boundary === "adopt") return write.promise;
+    if (command === "read_source_adoption_action") return lookup.promise;
+    return native(command, payload);
+  });
+  const identities = invoke.mock.calls.filter(([command]) => command === "create_execution_identity").length;
+  let running!: Promise<void>; act(() => { running = owner.apply(); void owner.apply(); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === (boundary === "prepare" ? "prepare_source_adoption" : "adopt_execution"))).toHaveLength(1));
+  expect(owner.current().checkingReceipt).toBe(false);
+  const request = owner.current().pendingApply!, unitId = owner.current().pendingApplyUnitId!;
+  await act(async () => { write.reject(lostSource); });
+  await waitFor(() => expect(owner.current().checkingReceipt).toBe(true));
+  expect(owner.current()).toMatchObject({ busyMutation: true, failure: null, receiptChecked: false });
+  expect(owner.inFlight()).toBe(true); editDecision(70, "Newer reason B");
+  await act(async () => { await owner.checkReceipt(); await owner.retryApply(); owner.keepOutput(); });
+  view.rerender(null);
+  await act(async () => { lookup.resolve({ action: sourceActionFixture(request, unitId), receipt: sourceReceiptFixture(request, unitId) }); await running; });
+  view.rerender(<Probe/>);
+  expect(owner.current()).toMatchObject({ pendingApply: null, pendingApplyUnitId: null, checkingReceipt: false, busyMutation: false, failure: null, stale: true });
+  expect(screen.getByLabelText("Source decisions")).toHaveTextContent("70: Newer reason B");
+  expect(request.confirmation.lineage?.[0].reason).toBe("Submitted reason");
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_adoption_action").map(([, args]) => args.request)).toEqual([{ adoption: request, unitId }]);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_source_adoption")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(boundary === "prepare" ? 0 : 1);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(identities + 1);
+  expect(invoke.mock.calls.some(([command]) => command === "read_execution_receipt" || command === "read_source_content")).toBe(false);
+});
+
+it.each(["missing", "prepared"] as const)("keeps the exact %s action after an empty read and does not read again after an explicit retry is rejected", async absence => {
+  render(<Probe/>, project); await ready();
+  const native = invoke.getMockImplementation()!, rejected: CommandError = { code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false };
+  let prepares = 0;
+  invoke.mockImplementation((command: string, payload) => {
+    if (command === "prepare_source_adoption" && ++prepares > 1) return Promise.reject(rejected);
+    if (command === "adopt_execution") return Promise.reject(lostSource);
+    if (command === "read_source_adoption_action") return Promise.resolve(absence === "missing" ? null : { action: sourceActionFixture(payload.request.adoption, payload.request.unitId), receipt: null });
+    return native(command, payload);
+  });
+  await act(async () => { await owner.apply(); });
+  const request = owner.current().pendingApply!, unitId = owner.current().pendingApplyUnitId;
+  expect(owner.current()).toMatchObject({ receiptChecked: true, failure: lostSource, checkingReceipt: false });
+  expect(owner.current().failure).toBe(lostSource);
+  await act(async () => { await owner.retryApply(); });
+  expect(owner.current()).toMatchObject({ pendingApply: request, pendingApplyUnitId: unitId, receiptChecked: false, failure: rejected });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_adoption_action")).toHaveLength(1);
+  await act(async () => { await owner.retryApply(); owner.keepOutput(); });
+  expect(prepares).toBe(2); expect(owner.current().pendingApply).toBe(request);
+  invoke.mockImplementation(native);
+  await act(async () => { await owner.checkReceipt(); });
+  expect(owner.current()).toMatchObject({ pendingApply: null, pendingApplyUnitId: null, receiptChecked: false, failure: null });
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_source_adoption").map(([, args]) => args.request)).toEqual([request, request]);
+  expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+});
+
+it.each(["prepare", "adopt"] as const)("does not read after a fresh %s action is formally rejected", async boundary => {
+  render(<Probe/>, project); await ready();
+  const native = invoke.getMockImplementation()!, rejected: CommandError = { code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false };
+  invoke.mockImplementation((command, payload) => command === (boundary === "prepare" ? "prepare_source_adoption" : "adopt_execution") ? Promise.reject(rejected) : native(command, payload));
+  await act(async () => { await owner.apply(); });
+  expect(owner.current()).toMatchObject({ pendingApply: null, pendingApplyUnitId: null, checkingReceipt: false, failure: rejected });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_adoption_action")).toHaveLength(0);
+});
+
+it.each(["operation", "unit", "parameters", "result", "cancellation", "undefined", "missing-receipt", "read-error"] as const)("does not authorize a retry from a %s action lookup and later confirms only the original proof", async field => {
+  render(<Probe/>, project); await ready();
+  const native = invoke.getMockImplementation()!;
+  const readFailure: CommandError = { code: "storage-failed", stage: "execution-read", outcome: "rejected", recoveryRequired: false, reason: "source-action-read" };
+  invoke.mockImplementation((command, payload) => {
+    if (command === "adopt_execution") return Promise.reject(lostSource);
+    if (command !== "read_source_adoption_action") return native(command, payload);
+    if (field === "undefined") return Promise.resolve(undefined);
+    if (field === "read-error") return Promise.reject(readFailure);
+    const request = payload.request.adoption as SourceAdoptRequest, action = sourceActionFixture(request, payload.request.unitId);
+    if (field === "missing-receipt") return Promise.resolve({ action });
+    if (field === "operation") action.operation = "sample-update";
+    if (field === "unit") action.unitId = fixtureIdentity(90);
+    if (field === "parameters") action.parameters = { ...request.confirmation, sourceLanguage: "fr" };
+    if (field === "result") action.resultIds = [fixtureIdentity(90)];
+    if (field === "cancellation") action.cancellationRevision = "9";
+    const value = { action, receipt: null }; expect(validateResponseAdoptionAction(value)).toBe(true); return Promise.resolve(value);
+  });
+  await act(async () => { await owner.apply(); });
+  const request = owner.current().pendingApply!, unitId = owner.current().pendingApplyUnitId;
+  expect(request).toBeTruthy(); expect(owner.current().receiptChecked).toBe(false);
+  if (field === "read-error") expect(owner.current().failure).toBe(readFailure);
+  await act(async () => { await owner.retryApply(); owner.keepOutput(); });
+  expect(owner.current().pendingApply).toBe(request);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_source_adoption")).toHaveLength(1);
+  invoke.mockImplementation(native); await act(async () => { await owner.checkReceipt(); });
+  expect(owner.current()).toMatchObject({ pendingApply: null, pendingApplyUnitId: null, receiptChecked: false, failure: null });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_adoption_action").map(([, args]) => args.request)).toEqual([{ adoption: request, unitId }, { adoption: request, unitId }]);
+  expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+});
+
+it.each(["before", "during"] as const)("does not dispatch or settle a lookup after its owner retires %s the read", async moment => {
+  render(<Probe/>, project); await ready();
+  const native = invoke.getMockImplementation()!, write = deferredAction<Receipt>(), lookup = deferredAction<Awaited<ReturnType<typeof sourceCommands.adoptionAction>>>();
+  invoke.mockImplementation((command, payload) => command === "adopt_execution" ? write.promise : command === "read_source_adoption_action" ? lookup.promise : native(command, payload));
+  let running!: Promise<void>; act(() => { running = owner.apply(); });
+  await waitFor(() => expect(originalRequest).not.toBeNull());
+  if (moment === "during") { await act(async () => { write.reject(lostSource); }); await waitFor(() => expect(owner.current().checkingReceipt).toBe(true)); }
+  const before = owner.current(), request = before.pendingApply!, unitId = before.pendingApplyUnitId!; act(() => sessionReads.retire());
+  await act(async () => { if (moment === "before") write.reject(lostSource); else lookup.resolve({ action: sourceActionFixture(request, unitId), receipt: sourceReceiptFixture(request, unitId) }); await running; });
+  expect(owner.current()).toBe(before);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_adoption_action")).toHaveLength(moment === "before" ? 0 : 1);
+});
 
 it("reserves a fresh action synchronously and settles its ACK after the consumer unmounts", async () => {
   const view = render(<Probe/>, project);
@@ -100,15 +231,17 @@ it("settles an original pending application after unrelated current reads and me
   await ready();
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => command === "adopt_execution" ? Promise.reject(new Error("Disconnected")) : original(command, payload));
+  failFirstAdoptionRead();
   await act(async () => { await owner.apply(); });
   const request = owner.current().pendingApply!;
   const changed = { ...project, metadata: { ...project.metadata, sourceLocale: "fr", targetLocales: [] } };
   view.rerender(<Probe/>, changed);
   invoke.mockImplementation((command: string, payload: unknown) => command === "read_content_scope" ? Promise.reject(new Error("Read unavailable"))
-    : command === "read_execution_receipt" ? Promise.resolve(sourceReceiptFixture(request)) : original(command, payload));
+    : original(command, payload));
   await act(async () => { await owner.checkReceipt(); });
   expect(screen.getByLabelText("Source outcome")).toHaveTextContent("Applied");
-  expect(invoke).toHaveBeenCalledWith("read_execution_receipt", { request: { ...sourceFixture.session, actionId: request.actionId } });
+  expect(invoke).toHaveBeenCalledWith("read_source_adoption_action", { request: { adoption: request, unitId: sourceActionFixture(request).unitId } });
+  expect(invoke.mock.calls.filter(([name]) => name === "prepare_source_adoption")).toHaveLength(1);
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
 });
 
@@ -119,7 +252,7 @@ it("retries the exact original request despite stale scope and revokes a previou
   act(() => owner.confirm(true));
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => command === "adopt_execution" ? Promise.reject({ code: "storage-failed" })
-    : command === "read_execution_receipt" ? Promise.resolve(null) : original(command, payload));
+    : command === "read_source_adoption_action" ? Promise.resolve(null) : original(command, payload));
   await act(async () => { await owner.apply(); });
   const request = structuredClone(owner.current().pendingApply!);
   await act(async () => { await owner.checkReceipt(); });
@@ -127,7 +260,8 @@ it("retries the exact original request despite stale scope and revokes a previou
   editDecision(70, "Newer reason");
   view.rerender(<Probe/>, { ...project, metadata: { ...project.metadata, sourceLocale: "fr", targetLocales: [] } });
   invoke.mockImplementation((command: string, payload: unknown) => command === "read_content_scope" ? Promise.reject(new Error("Read unavailable"))
-    : command === "adopt_execution" ? Promise.reject(new Error("Disconnected again")) : original(command, payload));
+    : command === "adopt_execution" ? Promise.reject(new Error("Disconnected again"))
+    : command === "read_source_adoption_action" ? Promise.reject(new Error("Original action lookup unavailable again")) : original(command, payload));
   await act(async () => { await owner.retryApply(); });
   expect(invoke.mock.calls.filter(([name]) => name === "prepare_source_adoption").map(([, payload]) => payload.request)).toEqual([request, request]);
   expect(owner.current().pendingApply).toEqual(request);
@@ -148,27 +282,29 @@ it.each(["operation", "unit", "parameters", "result"])("keeps a schema-valid wro
       : field === "result" ? { resultIds: [fixtureIdentity(90)] } : { parameters: { ...payload.request.confirmation, sourceLanguage: "fr" } };
     return Promise.resolve({ ...action, ...patch });
   });
+  failFirstAdoptionRead();
   await act(async () => { await owner.apply(); });
   expect(screen.getByLabelText("Source outcome")).toHaveTextContent("Unconfirmed");
   expect(owner.current().receiptChecked).toBe(false);
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(0);
   const request = owner.current().pendingApply!;
-  invoke.mockImplementation((command: string, payload: unknown) => command === "read_execution_receipt" ? Promise.resolve(sourceReceiptFixture(request)) : original(command, payload));
+  invoke.mockImplementation(original);
   await act(async () => { await owner.checkReceipt(); });
   expect(screen.getByLabelText("Source outcome")).toHaveTextContent("Applied");
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(0);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_adoption_action").at(-1)![1].request.adoption).toBe(request);
 });
 
 it.each(["unit", "revision", "changes"])("keeps a wrong receipt %s unknown until the original receipt is verified", async field => {
   render(<Probe/>, project); await ready();
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => {
-    if (command !== "adopt_execution" && command !== "read_execution_receipt") return original(command, payload);
+    if (command !== "adopt_execution" && command !== "read_source_adoption_action") return original(command, payload);
     const receipt = sourceReceiptFixture(originalRequest!);
     const patch: Partial<Receipt> = field === "unit" ? { unitId: fixtureIdentity(90) }
       : field === "revision" ? { changes: [{ ...receipt.changes[0], revision: preview.scope.revision }] }
         : { changes: [...receipt.changes, { ...receipt.changes[0], id: fixtureIdentity(91) }] };
-    return Promise.resolve({ ...receipt, ...patch });
+    return Promise.resolve(command === "adopt_execution" ? { ...receipt, ...patch } : { action: sourceActionFixture(originalRequest!), receipt: { ...receipt, ...patch } });
   });
   await act(async () => { await owner.apply(); await owner.checkReceipt(); });
   expect(screen.getByLabelText("Source outcome")).toHaveTextContent("Unconfirmed");
@@ -178,7 +314,7 @@ it.each(["unit", "revision", "changes"])("keeps a wrong receipt %s unknown until
   expect(screen.getByLabelText("Source outcome")).toHaveTextContent("Applied");
 });
 
-it("requires the exact original recovered prepare ACK before settling a receipt without a checked action", async () => {
+it("requires the exact original action proof from a pure read before settling a receipt without a checked action", async () => {
   render(<Probe/>, project); await ready();
   const original = invoke.getMockImplementation()!;
   let valid = false;
@@ -188,7 +324,8 @@ it("requires the exact original recovered prepare ACK before settling a receipt 
       return Promise.resolve(valid ? sourceActionFixture(payload.request)
         : { ...sourceActionFixture(payload.request), parameters: { ...payload.request.confirmation, sourceLanguage: "fr" } });
     }
-    if (command === "read_execution_receipt") return Promise.resolve(sourceReceiptFixture(originalRequest!));
+    if (command === "read_source_adoption_action") return Promise.resolve({ action: valid ? sourceActionFixture(originalRequest!)
+      : { ...sourceActionFixture(originalRequest!), parameters: { ...originalRequest!.confirmation, sourceLanguage: "fr" } }, receipt: sourceReceiptFixture(originalRequest!) });
     return original(command, payload);
   });
   await act(async () => { await owner.apply(); await owner.checkReceipt(); });
@@ -199,11 +336,12 @@ it("requires the exact original recovered prepare ACK before settling a receipt 
   valid = true;
   await act(async () => { await owner.checkReceipt(); });
   expect(screen.getByLabelText("Source outcome")).toHaveTextContent("Applied");
-  expect(invoke.mock.calls.filter(([name]) => name === "prepare_source_adoption").map(([, payload]) => payload.request)).toEqual([request, request, request]);
+  expect(invoke.mock.calls.filter(([name]) => name === "prepare_source_adoption").map(([, payload]) => payload.request)).toEqual([request]);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_adoption_action")).toHaveLength(3);
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(0);
 });
 
-it.each(["digest", "snapshot"])("pins the first matching receipt's %s while its prepare ACK is still unconfirmed", async field => {
+it.each(["digest", "snapshot", "missing", "prepared"])("rejects a matching receipt's later %s change while its prepare ACK is still unconfirmed", async field => {
   render(<Probe/>, project); await ready();
   const original = invoke.getMockImplementation()!;
   let validAction = false, changedReceipt = false;
@@ -212,10 +350,13 @@ it.each(["digest", "snapshot"])("pins the first matching receipt's %s while its 
       originalRequest = payload.request;
       return Promise.resolve(validAction ? sourceActionFixture(payload.request) : { ...sourceActionFixture(payload.request), operation: "sample-update" });
     }
-    if (command === "read_execution_receipt") {
+    if (command === "read_source_adoption_action") {
       const receipt = sourceReceiptFixture(originalRequest!);
-      return Promise.resolve(changedReceipt ? field === "digest" ? { ...receipt, requestDigest: "b".repeat(64) }
-        : { ...receipt, changes: [{ ...receipt.changes[0], id: fixtureIdentity(92) }] } : receipt);
+      if (changedReceipt && field === "missing") return Promise.resolve(null);
+      if (changedReceipt && field === "prepared") return Promise.resolve({ action: sourceActionFixture(originalRequest!), receipt: null });
+      return Promise.resolve({ action: validAction ? sourceActionFixture(originalRequest!) : { ...sourceActionFixture(originalRequest!), operation: "sample-update" },
+        receipt: changedReceipt ? field === "digest" ? { ...receipt, requestDigest: "b".repeat(64) }
+          : { ...receipt, changes: [{ ...receipt.changes[0], id: fixtureIdentity(92) }] } : receipt });
     }
     return original(command, payload);
   });
@@ -575,6 +716,7 @@ it("freezes the original declaration through unknown adoption and preserves newe
   mockHook(); render(<Probe/>, project); await ready(); await enableHook(); act(() => owner.confirm(true));
   const activation = structuredClone(owner.hook.current().activation), original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command, args) => command === "adopt_execution" ? Promise.reject(new Error("Synthetic disconnected source acknowledgement")) : original(command, args));
+  failFirstAdoptionRead();
   await act(async () => { await owner.apply(); });
   const request = owner.current().pendingApply!; expect(request.confirmation.maintenanceHook).toEqual(activation);
   act(() => { owner.edit("actor", "Newer source B"); owner.hook.editLocale("zh-CN"); });

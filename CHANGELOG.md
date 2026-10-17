@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check uncertain source adoption from its original action and receipt without
+  preparing or applying it again during result checks. Newer source-update
+  choices are retained while the original result is confirmed.
+
 - Check an uncertain correction proposal, resource-entry decision, or context-fact
   decision once against its original saved action. Newer edits are retained, with
   manual recovery available when the result remains unconfirmed.

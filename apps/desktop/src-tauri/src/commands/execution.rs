@@ -62,7 +62,7 @@ macro_rules! handlers {
         source::plugin::select_plugin_source,source::plugin::preflight_plugin_source,source::plugin::start_plugin_source,
         source::plugin::prepare_source_check,source::plugin::start_source_check,source::plugin::finish_source_check,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
-        source::read_content_scope,source::read_source_context,source::read_source_context_block,source::prepare_source_adoption,
+        source::read_content_scope,source::read_source_context,source::read_source_context_block,source::prepare_source_adoption,source::read_source_adoption_action,
         source::read_source_history,source::read_source_history_content,source::read_source_lineage,
         source::estimate_source_update,source::read_source_impact,
         source::plugin_translation::read_plugin_translation_source,source::plugin_translation::select_plugin_translation,

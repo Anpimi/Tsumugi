@@ -20,6 +20,7 @@ export type ContentTarget =
 
 export interface Requests {
   adopt: SourceAdoptRequest;
+  adoptionAction: SourceAdoptionActionRequest;
   checkFinish: SourceCheckFinishRequest;
   checkPrepare: SourceCheckPrepareRequest;
   comparison: ComparisonRequest;
@@ -71,6 +72,10 @@ export interface SourceMaintenanceHookActivation {
   locale: string;
   policyVersion: string;
   sessionEpoch: string;
+}
+export interface SourceAdoptionActionRequest {
+  adoption: SourceAdoptRequest;
+  unitId: ExecutionId;
 }
 export interface SourceCheckFinishRequest {
   attemptId: ExecutionId;

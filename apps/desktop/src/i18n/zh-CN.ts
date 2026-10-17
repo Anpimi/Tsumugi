@@ -2033,6 +2033,7 @@ ai: {
   "applyHelp": "完整捕获的源内容将一起应用，源文件不会被修改。",
   "apply": "应用到项目",
   "applyUnknown": "尚未确认应用结果。重试同一操作前，请先查询已保存的回执。",
+  "checkingReceipt": "正在核对源内容保存结果…",
   "adoptionSaved": "源内容已应用。读取失败时，可在下方重新读取。",
   "adoptionSavedNewer": "源内容已应用。后来编辑的身份决定已保留，未包含在此次应用中。",
   "readSaved": "读取已应用的源内容",

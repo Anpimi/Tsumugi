@@ -17,6 +17,14 @@ fn source_wire_fixture_matches_rust_types() {
     round_trip::<SourceContextReadRequest>(&fixture["sourceContextRequest"]);
     round_trip::<tsumugi_core::SourceContextPage>(&fixture["sourceContext"]);
     round_trip::<SourceAdoptRequest>(&fixture["prepare"]);
+    let action_read = json!({
+        "adoption": fixture["prepare"],
+        "unitId": ExecutionId::new(),
+    });
+    round_trip::<SourceAdoptionActionRequest>(&action_read);
+    let mut unexpected = action_read;
+    unexpected["sessionToken"] = json!("not-an-outer-session");
+    assert!(serde_json::from_value::<SourceAdoptionActionRequest>(unexpected).is_err());
     round_trip::<ContentPage>(&fixture["page"]);
     round_trip::<HistoryRequest>(&fixture["historyRequest"]);
     round_trip::<ComparisonRequest>(&fixture["comparisonRequest"]);
@@ -448,10 +456,33 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     prepare["resultId"] = preview["resultId"].clone();
     prepare["actionId"] = json!(action);
     prepare["confirmation"] = preview["confirmation"].clone();
-    call(&view, "prepare_source_adoption", prepare).unwrap();
+    let prepared = call(&view, "prepare_source_adoption", prepare.clone()).unwrap();
+    let mut action_read = json!({"adoption":prepare,"unitId":prepared["unitId"]});
+    let mut missing_action = action_read.clone();
+    missing_action["adoption"]["actionId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&view, "read_source_adoption_action", missing_action).unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        call(&view, "read_source_adoption_action", action_read.clone()).unwrap(),
+        json!({"action":prepared.clone(),"receipt":null})
+    );
+    assert!(serde_json::from_value::<SourceAdoptionActionRead>(json!({"action":prepared.clone()})).is_err());
+    assert!(serde_json::from_value::<SourceAdoptionActionRead>(json!({"action":prepared.clone(),"receipt":null})).is_ok());
+    let mut wrong_unit = action_read.clone();
+    wrong_unit["unitId"] = json!(ExecutionId::new());
+    assert!(call(&view, "read_source_adoption_action", wrong_unit).is_err());
+    let mut wrong_confirmation = action_read.clone();
+    wrong_confirmation["adoption"]["confirmation"]["sourceLanguage"] = json!("fr-FR");
+    assert!(call(&view, "read_source_adoption_action", wrong_confirmation).is_err());
     let mut adopt = context.clone();
     adopt["actionId"] = json!(action);
     let receipt = call(&view, "adopt_execution", adopt.clone()).unwrap();
+    assert_eq!(
+        call(&view, "read_source_adoption_action", action_read.clone()).unwrap(),
+        json!({"action":prepared.clone(),"receipt":receipt.clone()})
+    );
     assert_eq!(
         call(&view, "read_execution_receipt", adopt.clone()).unwrap(),
         receipt
@@ -573,6 +604,12 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
         json!({"locator":temp.path().join("project")}),
     )
     .unwrap();
+    assert!(call(&view, "read_source_adoption_action", action_read.clone()).is_err());
+    action_read["adoption"]["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(
+        call(&view, "read_source_adoption_action", action_read).unwrap(),
+        json!({"action":prepared,"receipt":receipt})
+    );
     assert!(call(&view, "read_source_content", read.clone()).is_err());
     assert!(call(&view, "read_review_summary_page", summary_request.clone()).is_err());
     summary_request["sessionToken"] = reopened["sessionToken"].clone();

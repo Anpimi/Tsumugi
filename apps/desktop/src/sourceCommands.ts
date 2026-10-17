@@ -1,9 +1,9 @@
 import type { AdoptionAction, Receipt, SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import { pluginCommands, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
-import type { SourceAdoptRequest, PreviewRequest, ContentRequest, SourceContextReadRequest, SourceContextBlockReadRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
-import type { SourceContextPage, SourceContextBlockBasis, SourceContextBlockDescriptor } from "./generated/source.responses";
-import { validateRequestAdopt, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseSourceContext, validateResponseSourceContextBlock, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
+import type { SourceAdoptRequest, SourceAdoptionActionRequest, PreviewRequest, ContentRequest, SourceContextReadRequest, SourceContextBlockReadRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
+import type { Responses, SourceContextPage, SourceContextBlockBasis, SourceContextBlockDescriptor } from "./generated/source.responses";
+import { validateRequestAdopt, validateResponseAdoptionAction, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseSourceContext, validateResponseSourceContextBlock, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
 
 export type { SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
 export type { SourceContextReadRequest, SourceContextBlockReadRequest } from "./generated/source.requests";
@@ -51,6 +51,7 @@ export const sourceCommands = {
   estimate: (request: SourceAdoptRequest) => checkedInvoke("estimate_source_update", request, validateResponseEstimates),
   impact: (request: ImpactRequest) => checkedInvoke("read_source_impact", request, validateResponseImpact),
   prepare: (request: SourceAdoptRequest) => checkedInvoke("prepare_source_adoption", request, validateResponseAction),
+  adoptionAction: (request: SourceAdoptionActionRequest): Promise<Responses["adoptionAction"]> => checkedInvoke("read_source_adoption_action", request, validateResponseAdoptionAction),
 };
 
 /** Metadata pages and explicit record reads use the same captured source identity. */

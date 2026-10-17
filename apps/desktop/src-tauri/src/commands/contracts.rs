@@ -205,6 +205,7 @@ struct SourceRequests {
     lineage: execution::source::LineageRequest,
     impact: execution::source::ImpactRequest,
     adopt: execution::source::SourceAdoptRequest,
+    adoption_action: execution::source::SourceAdoptionActionRequest,
     plugin_select: execution::source::plugin::PluginSourceSelectRequest,
     plugin_capture: execution::source::plugin::PluginCaptureRequest,
     plugin_start: execution::source::plugin::PluginStartRequest,
@@ -230,6 +231,7 @@ struct SourceResponses {
     estimates: Vec<tsumugi_core::content::SourceImpactSummary>,
     impact: tsumugi_core::content::SourceImpactPage,
     action: tsumugi_core::execution::AdoptionAction,
+    adoption_action: Option<tsumugi_core::execution::SourceAdoptionActionRead>,
     plugin_selection: Option<execution::source::plugin::PluginSourceSelection>,
     plugin_preflight: execution::source::plugin::PluginSourcePreflight,
     check_review: execution::source::plugin::SourceCheckReview,
@@ -717,6 +719,29 @@ mod tests {
                     .any(|value| value["type"] == "null")
             );
         }
+    }
+
+    #[test]
+    fn source_adoption_read_schema_requires_an_explicit_nullable_receipt() {
+        let schema = schemas::<
+            execution::source::SourceAdoptionActionRequest,
+            tsumugi_core::execution::SourceAdoptionActionRead,
+        >();
+        let response = &schema["responses"];
+        assert!(
+            response["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "receipt")
+        );
+        assert!(
+            response["properties"]["receipt"]["anyOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value["type"] == "null")
+        );
     }
 
     #[test]

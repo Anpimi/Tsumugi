@@ -2042,6 +2042,7 @@ ai: {
   "applyHelp": "The complete captured source is applied together. Source files are not modified.",
   "apply": "Apply to project",
   "applyUnknown": "Application has not been confirmed. Check the saved receipt before retrying the same action.",
+  "checkingReceipt": "Checking the saved source result…",
   "adoptionSaved": "Source content was applied. If reading it fails, retry the read below.",
   "adoptionSavedNewer": "Source content was applied. Your newer identity decisions are kept; they were not part of this application.",
   "readSaved": "Read applied source content",

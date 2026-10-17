@@ -3254,6 +3254,85 @@ impl ProjectStore {
             .map_err(sql_error)?;
         codec::decode(&bytes, MAX_INPUT_BYTES)
     }
+
+    /// Confirm a historical source action against the original request and frozen input.
+    /// This read never refreshes preparation authority or source eligibility.
+    pub fn source_adoption_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        action: ExecutionId,
+        unit: ExecutionId,
+        result: ExecutionId,
+        confirmation: &crate::content::SourceConfirmation,
+    ) -> Result<Option<SourceAdoptionActionRead>, ExecutionError> {
+        let parameters = serde_json::to_value(confirmation)
+            .map_err(|_| error(ErrorCode::InvalidInput, "source-action-confirmation"))?;
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            let row: Option<(String, String, Vec<u8>, String)> = connection
+                .query_row(
+                    "SELECT attempt_id,unit_id,CASE WHEN length(request)<=1048576 THEN request END,digest FROM execution_actions WHERE action_id=?1",
+                    [action.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            let Some((saved_attempt, saved_unit, bytes, saved_digest)) = row else {
+                if read_receipt(connection, action)?.is_some() {
+                    return Err(error(ErrorCode::CorruptLedger, "source-action-orphan"));
+                }
+                return Ok(None);
+            };
+            let original: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "source-action-bytes"))?;
+            let input = load_input_cached(connection, original.attempt_id)?;
+            let digest = original
+                .request_digest(&input)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "source-action-digest"))?;
+            if original.action_id != action
+                || saved_attempt != original.attempt_id.to_string()
+                || saved_unit != original.unit_id.to_string()
+                || original.project_id != input.envelope().project_id
+                || original.operation != input.envelope().operation
+                || !input
+                    .envelope()
+                    .units
+                    .iter()
+                    .any(|candidate| candidate.unit_id == original.unit_id)
+                || saved_digest != digest
+            {
+                return Err(error(ErrorCode::CorruptLedger, "source-action-association"));
+            }
+            if original.project_id != project
+                || original.attempt_id != attempt
+                || original.unit_id != unit
+                || original.operation != crate::content::OPERATION
+                || original.result_ids.len() != 1
+                || original.result_ids[0] != result
+                || original.parameters != parameters
+            {
+                return Err(error(ErrorCode::ResultMismatch, "source-action-request"));
+            }
+            let receipt = read_receipt(connection, action)?;
+            if receipt.as_ref().is_some_and(|value| {
+                value.project_id != original.project_id
+                    || value.attempt_id != original.attempt_id
+                    || value.action_id != action
+                    || value.unit_id != original.unit_id
+                    || value.request_digest != digest
+            }) {
+                return Err(error(ErrorCode::CorruptLedger, "source-action-receipt"));
+            }
+            Ok(Some(SourceAdoptionActionRead {
+                action: original,
+                receipt,
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
     pub fn prepare_adoption_with_id(
         &mut self,
         action_id: ExecutionId,

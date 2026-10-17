@@ -692,17 +692,171 @@ fn current_reopen_preserves_results_adoption_receipts_relations_and_refuses_sche
     let preview = store
         .source_preview(source_input.envelope().attempt_id, source_result_id, 0, 50)
         .unwrap();
+    let source_project = source_input.envelope().project_id;
+    let source_attempt = source_input.envelope().attempt_id;
+    let source_unit = source_input.envelope().units[0].unit_id;
+    let source_action_id = ExecutionId::new();
+    let confirmation = preview.confirmation;
+    assert_eq!(
+        store
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap(),
+        None
+    );
     let source_action = store
         .prepare_adoption_with_id(
-            ExecutionId::new(),
-            source_input.envelope().attempt_id,
-            source_input.envelope().units[0].unit_id,
+            source_action_id,
+            source_attempt,
+            source_unit,
             vec![source_result_id],
-            serde_json::to_value(preview.confirmation).unwrap(),
+            serde_json::to_value(&confirmation).unwrap(),
         )
         .unwrap();
+    assert_eq!(
+        store
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap(),
+        Some(SourceAdoptionActionRead {
+            action: source_action.clone(),
+            receipt: None,
+        })
+    );
+    let mut changed_confirmation = confirmation.clone();
+    changed_confirmation.source_language = "fr-FR".into();
+    for wrong in [
+        store.source_adoption_action_read(
+            ExecutionId::new(),
+            source_attempt,
+            source_action_id,
+            source_unit,
+            source_result_id,
+            &confirmation,
+        ),
+        store.source_adoption_action_read(
+            source_project,
+            ExecutionId::new(),
+            source_action_id,
+            source_unit,
+            source_result_id,
+            &confirmation,
+        ),
+        store.source_adoption_action_read(
+            source_project,
+            source_attempt,
+            source_action_id,
+            ExecutionId::new(),
+            source_result_id,
+            &confirmation,
+        ),
+        store.source_adoption_action_read(
+            source_project,
+            source_attempt,
+            source_action_id,
+            source_unit,
+            ExecutionId::new(),
+            &confirmation,
+        ),
+        store.source_adoption_action_read(
+            source_project,
+            source_attempt,
+            source_action_id,
+            source_unit,
+            source_result_id,
+            &changed_confirmation,
+        ),
+    ] {
+        assert_eq!(wrong.unwrap_err().code, ErrorCode::ResultMismatch);
+    }
     let source_receipt = store
         .adopt_execution(&source_action, &SourceAdoptionHandler)
+        .unwrap();
+    store
+        .execution_unknown
+        .store(true, std::sync::atomic::Ordering::Release);
+    let changes = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let receipt_count: i64 = store
+        .execution_connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        store
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap(),
+        Some(SourceAdoptionActionRead {
+            action: source_action.clone(),
+            receipt: Some(source_receipt.clone()),
+        })
+    );
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(changes).sequence, changes);
+    assert_eq!(
+        store
+            .execution_connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        receipt_count
+    );
+    let saved_digest: String = store
+        .execution_connection()
+        .unwrap()
+        .query_row(
+            "SELECT digest FROM execution_actions WHERE action_id=?1",
+            [source_action_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    store
+        .execution_connection()
+        .unwrap()
+        .execute(
+            "UPDATE execution_actions SET digest=?2 WHERE action_id=?1",
+            params![source_action_id.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger
+    );
+    store
+        .execution_connection()
+        .unwrap()
+        .execute(
+            "UPDATE execution_actions SET digest=?2 WHERE action_id=?1",
+            params![source_action_id.to_string(), saved_digest],
+        )
         .unwrap();
     let source_result_bytes = source_result.bytes().to_vec();
     store.close().unwrap();
@@ -735,6 +889,22 @@ fn current_reopen_preserves_results_adoption_receipts_relations_and_refuses_sche
     assert_eq!(
         reopened.adoption_receipt(source_action.action_id).unwrap(),
         Some(source_receipt)
+    );
+    assert_eq!(
+        reopened
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap(),
+        Some(SourceAdoptionActionRead {
+            action: source_action,
+            receipt: reopened.adoption_receipt(source_action_id).unwrap(),
+        })
     );
     let version: i64 = reopened
         .execution_connection()

@@ -15,6 +15,7 @@ import { hookObservation } from "./testSupport/sourceMaintenanceHookFixture";
 import { pluginSourceView, pluginSourceWorkflow, pluginSourceRequest, pluginSourceInventory, pluginSourcePackage } from "./testSupport/pluginSourceFixture";
 import { useSourceDraftSession } from "./SourceDraftSession";
 import { useWorkbenchCommands, type SourceBasisCommandPayload } from "./workbenchCommands";
+import { validateRequestAdoptionAction } from "./generated/source.validators";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: executionFixture.session.projectId, displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
@@ -35,6 +36,11 @@ beforeEach(async () => {
     if (command === "read_execution_attempt") return sourceAttemptFixture(args.request!.attemptId as string, preview.resultId);
     if (command === "read_source_preview") return { ...preview, attemptId: args.request!.attemptId };
     if (command === "prepare_source_adoption") { prepared = args.request as unknown as SourceAdoptRequest; return sourceActionFixture(prepared); }
+    if (command === "read_source_adoption_action") {
+      if (!validateRequestAdoptionAction(args.request)) throw new Error("Invalid source action lookup request");
+      expect(args.request.adoption).toEqual(prepared);
+      return { action: sourceActionFixture(args.request.adoption, args.request.unitId), receipt: sourceReceiptFixture(args.request.adoption, args.request.unitId) };
+    }
     if (command === "cancel_source_capture") return null;
     if (command === "adopt_execution" || command === "read_execution_receipt") return sourceReceiptFixture(prepared!);
     if (command === "read_source_content") return { ...preview, snapshotId: fixtureIdentity(100), scope: { revision: "2", currentSnapshot: fixtureIdentity(100) },
@@ -512,28 +518,57 @@ it("keeps the selection across view changes and requires a decision before leavi
   expect(await decision).toBe(true);
   expect(invoke).toHaveBeenCalledWith("cancel_source_capture", { request: { sessionToken: "session", projectId: executionFixture.session.projectId } });
 });
-it("queries a lost acknowledgement without applying a second time", async () => {
+it.each(["en-US", "zh-CN"])("automatically reads one lost acknowledgement and displays only the actual read phase (%s)", async language => {
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation(async (command: string, args: unknown) => {
-    if (command === "adopt_execution") throw { code: "outcome-unknown" };
-    if (command === "read_content_scope" && invoke.mock.calls.some(([name]) => name === "read_execution_receipt")) return { revision: "2", currentSnapshot: fixtureIdentity(100) };
-    return original(command, args);
-  });
-  render(<SourceWorkbench project={project} disabled={false} />);
+  let loseWrite!: () => void, finishRead!: (value: unknown) => void, applied = false;
+  const write = new Promise((_, reject) => { loseWrite = () => reject(new Error("Original source acknowledgement lost")); });
+  const lookup = new Promise(resolve => { finishRead = resolve; });
+  invoke.mockImplementation((command: string, args: unknown) => command === "adopt_execution" ? write
+    : command === "read_source_adoption_action" ? lookup
+      : command === "read_content_scope" && applied ? Promise.resolve({ revision: "2", currentSnapshot: fixtureIdentity(100) }) : original(command, args));
+  render(<><SourceProbe/><SourceWorkbench project={project} disabled={false}/></>, project);
   const user = await prepare();
-  await user.click(screen.getByRole("checkbox", { name: /Apply all 2/ }));
-  await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  await act(async () => { await i18n.changeLanguage(language); });
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("source.confirm", { count: preview.total, language: preview.confirmation.sourceLanguage }) }));
+  await user.click(screen.getByRole("button", { name: i18n.t("source.apply") }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1));
+  expect(screen.queryByText(i18n.t("source.checkingReceipt"))).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_adoption_action")).toHaveLength(0);
+  await act(async () => { loseWrite(); });
+  await screen.findByText(i18n.t("source.checkingReceipt"));
+  expect(screen.queryByText(i18n.t("source.applyUnknown"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: i18n.t("execution.checkReceipt") })).toBeDisabled();
+  expect(draft.current()).toMatchObject({ busyMutation: true, failure: null, checkingReceipt: true });
+  const request = draft.current().pendingApply!, unitId = draft.current().pendingApplyUnitId!;
+  const pendingPayload = { kind: "source-pending" as const, pendingKind: "apply" as const, attemptId: request.attemptId, actionId: request.actionId };
+  expect(registry.describe("source.check-receipt", sourceScope, pendingPayload)?.risk).toBe("reads-source");
+  await act(async () => { applied = true; finishRead({ action: sourceActionFixture(request, unitId), receipt: sourceReceiptFixture(request, unitId) }); });
+  await screen.findByRole("heading", { name: i18n.t("source.imported") });
+  expect(draft.current()).toMatchObject({ pendingApply: null, pendingApplyUnitId: null, checkingReceipt: false, failure: null });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_adoption_action").map(([, args]) => args.request)).toEqual([{ adoption: request, unitId }]);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_source_adoption")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+});
+it("keeps failed automatic reads available for one explicit read without applying a second time", async () => {
+  const original = invoke.getMockImplementation()!; let reads = 0;
+  invoke.mockImplementation((command: string, args: unknown) => command === "adopt_execution" ? Promise.reject(new Error("Original source acknowledgement lost"))
+    : command === "read_source_adoption_action" && reads++ === 0 ? Promise.reject(new Error("Original receipt read unavailable"))
+      : command === "read_content_scope" && reads > 1 ? Promise.resolve({ revision: "2", currentSnapshot: fixtureIdentity(100) }) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false}/>); const user = await prepare();
+  await user.click(screen.getByRole("checkbox", { name: /Apply all 2/ })); await user.click(screen.getByRole("button", { name: "Apply to project" }));
   expect(await screen.findByRole("alert")).toHaveFocus();
   expect(screen.getByRole("button", { name: "Keep output and return" })).toBeDisabled();
   await user.click(await screen.findByRole("button", { name: "Check recorded outcome" }));
   await screen.findByRole("heading", { name: "Imported source content" });
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "prepare_source_adoption")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_adoption_action")).toHaveLength(2);
 });
 it("checks each unknown retry before allowing another retry or return", async () => {
-  const original = invoke.getMockImplementation()!;
+  const original = invoke.getMockImplementation()!; let reads = 0;
   invoke.mockImplementation(async (command: string, args: unknown) => {
     if (command === "adopt_execution") throw { code: "storage-failed" };
-    if (command === "read_execution_receipt") return null;
+    if (command === "read_source_adoption_action") { if (++reads !== 2) throw new Error("Original action read temporarily unavailable"); return null; }
     return original(command, args);
   });
   render(<SourceWorkbench project={project} disabled={false} />);
@@ -1191,8 +1226,9 @@ it("rejects stale registry inputs and prevents a fresh application after its con
 });
 
 it("checks the original pending application even when current scope queries fail", async () => {
-  const original = invoke.getMockImplementation()!;
+  const original = invoke.getMockImplementation()!; let reads = 0;
   invoke.mockImplementation((command: string, payload: unknown) => command === "adopt_execution" ? Promise.reject(new Error("Unknown adoption"))
+    : command === "read_source_adoption_action" && reads++ === 0 ? Promise.reject(new Error("Original receipt read unavailable"))
     : command === "read_content_scope" && invoke.mock.calls.some(([name]) => name === "adopt_execution") ? Promise.reject(new Error("Current scope unavailable")) : original(command, payload));
   render(<><SourceProbe/><SourceWorkbench project={project} disabled={false}/></>, project); const user = await prepare();
   await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ })); await user.click(screen.getByRole("button", { name: "Apply to project" }));

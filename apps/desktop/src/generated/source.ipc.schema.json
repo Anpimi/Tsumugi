@@ -584,6 +584,22 @@
         ],
         "type": "object"
       },
+      "SourceAdoptionActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "adoption": {
+            "$ref": "#/definitions/SourceAdoptRequest"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "adoption",
+          "unitId"
+        ],
+        "type": "object"
+      },
       "SourceCheckFinishRequest": {
         "additionalProperties": false,
         "properties": {
@@ -996,6 +1012,9 @@
       "adopt": {
         "$ref": "#/definitions/SourceAdoptRequest"
       },
+      "adoptionAction": {
+        "$ref": "#/definitions/SourceAdoptionActionRequest"
+      },
       "checkFinish": {
         "$ref": "#/definitions/SourceCheckFinishRequest"
       },
@@ -1066,6 +1085,7 @@
       "lineage",
       "impact",
       "adopt",
+      "adoptionAction",
       "pluginSelect",
       "pluginCapture",
       "pluginStart",
@@ -1118,6 +1138,41 @@
           "resultIds",
           "cancellationRevision",
           "parameters"
+        ],
+        "type": "object"
+      },
+      "AdoptionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/definitions/ChangeReference"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "requestDigest": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "requestDigest",
+          "changes"
         ],
         "type": "object"
       },
@@ -1214,6 +1269,26 @@
           "maxOutputBytes",
           "concurrency",
           "timeoutMs"
+        ],
+        "type": "object"
+      },
+      "ChangeReference": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "revision"
         ],
         "type": "object"
       },
@@ -2940,6 +3015,29 @@
         "required": [
           "operatingSystem",
           "architecture"
+        ],
+        "type": "object"
+      },
+      "SourceAdoptionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AdoptionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "receipt"
         ],
         "type": "object"
       },
@@ -4687,6 +4785,16 @@
       "action": {
         "$ref": "#/definitions/AdoptionAction"
       },
+      "adoptionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/SourceAdoptionActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "attempt": {
         "$ref": "#/definitions/ExecutionId"
       },
@@ -4768,6 +4876,7 @@
       "estimates",
       "impact",
       "action",
+      "adoptionAction",
       "pluginSelection",
       "pluginPreflight",
       "checkReview"

@@ -315,6 +315,7 @@ export type SourceContextDirection = "before" | "after";
 
 export interface Responses {
   action: AdoptionAction;
+  adoptionAction: SourceAdoptionActionRead | null;
   attempt: ExecutionId;
   cancelled: null;
   checkReview: SourceCheckReview;
@@ -342,6 +343,23 @@ export interface AdoptionAction {
   projectId: ExecutionId;
   resultIds: ExecutionId[];
   unitId: ExecutionId;
+}
+export interface SourceAdoptionActionRead {
+  action: AdoptionAction;
+  receipt: AdoptionReceipt | null;
+}
+export interface AdoptionReceipt {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  changes: ChangeReference[];
+  projectId: ExecutionId;
+  requestDigest: string;
+  unitId: ExecutionId;
+}
+export interface ChangeReference {
+  id: string;
+  kind: string;
+  revision: Revision;
 }
 export interface SourceCheckReview {
   attemptId: ExecutionId;
