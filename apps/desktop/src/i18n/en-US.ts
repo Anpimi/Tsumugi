@@ -1828,6 +1828,7 @@ ai: {
       actor: "Decision made by", reason: "Reason for this candidate decision", reject: "Reject AI candidate", restore: "Restore AI candidate",
       rejected: "Rejected for this source basis", restored: "Explicitly restored", rejectedRecorded: "The candidate rejection was recorded. Your edits are kept.", restoredRecorded: "The candidate was restored by a new decision. It is available for selection again.",
       failed: "The decision could not be confirmed. Your text and original request are kept; refresh history or check the original decision before trying again.",
+      checking: "Checking the saved candidate decision…",
       unknown: "The original candidate decision for {{locale}} is unconfirmed. Check it before making another translation change.", check: "Check original candidate decision", retry: "Retry the same candidate decision",
     },
     translation: {

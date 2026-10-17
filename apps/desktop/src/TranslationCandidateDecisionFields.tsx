@@ -13,7 +13,7 @@ export function TranslationCandidateDecisionFields({ canCheck, canRetry, onCheck
     <label>{t("candidateDecisions.reason")}<textarea maxLength={1024} value={state.reason} onChange={event => candidates.edit("reason", event.target.value)} /></label>
     {state.recorded ? <p role="status">{t(state.recorded === "rejected" ? "candidateDecisions.rejectedRecorded" : "candidateDecisions.restoredRecorded")}</p> : null}
     {state.failure ? <div role="alert"><p>{t("candidateDecisions.failed")}</p><CommandFailureDetails failure={state.failure} /></div> : null}
-    {state.pending ? <div role="status"><p>{t("candidateDecisions.unknown", { locale: state.pending.decision.locale })}</p><p>{state.pending.decision.actor}: {state.pending.decision.reason}</p>
+    {state.pending ? <div role="status"><p>{t(state.checking ? "candidateDecisions.checking" : "candidateDecisions.unknown", { locale: state.pending.decision.locale })}</p><p>{state.pending.decision.actor}: {state.pending.decision.reason}</p>
       <button className="secondary-button" disabled={!canCheck} onClick={onCheck}>{t("candidateDecisions.check")}</button>
       {state.checkedMissing ? <button className="secondary-button" disabled={!canRetry} onClick={onRetry}>{t("candidateDecisions.retry")}</button> : null}
     </div> : null}

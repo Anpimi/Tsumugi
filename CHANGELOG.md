@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check the original saved candidate decision once when a rejection or restore
+  response is lost or uncertain. Newer reviewer and reason input is retained,
+  with manual recovery available when the decision remains unconfirmed.
+
 - Check the original saved export result once after a lost or uncertain
   acknowledgement, then retain manual recovery if it remains unconfirmed.
   This read does not repeat the export or alter verified file results.

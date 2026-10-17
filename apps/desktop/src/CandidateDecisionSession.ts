@@ -7,7 +7,7 @@ import { translationCommands, confirmCandidateDecision, type CandidateDecisionRe
 
 export interface CandidateBasis { unitId: string; locale: string; sourceRevisionId: string; baseSelectionId: string | null; baseRevisionId: string | null }
 export interface CandidateDecisionState {
-  actor: string; reason: string; editSeq: number; busy: boolean; pending: CandidateDecisionRequest | null;
+  actor: string; reason: string; editSeq: number; busy: boolean; checking: boolean; pending: CandidateDecisionRequest | null;
   checkedMissing: boolean; failure: CommandFailure | null; recorded: CandidateDisposition | null;
 }
 /** Human proposal decisions share the existing translation mutation reservation. */
@@ -16,7 +16,7 @@ export function useCandidateDecisionSession(project: ProjectView, owner: {
 }) {
   const reads = useSessionReads(), alive = useSessionAlive();
   const projectRef = useRef(project), ownerRef = useRef(owner);
-  const [state, setState] = useState<CandidateDecisionState>({ actor: "", reason: "", editSeq: 0, busy: false, pending: null, checkedMissing: false, failure: null, recorded: null });
+  const [state, setState] = useState<CandidateDecisionState>({ actor: "", reason: "", editSeq: 0, busy: false, checking: false, pending: null, checkedMissing: false, failure: null, recorded: null });
   const currentState = useRef(state), reservation = useRef<symbol | null>(null);
   const settledSequence = useRef(0), pendingSequence = useRef(0);
   const [session] = useState(() => executionContext(project));
@@ -32,17 +32,38 @@ export function useCandidateDecisionSession(project: ProjectView, owner: {
     confirmCandidateDecision(request, value);
     if (current().pending !== request) return;
     settledSequence.current = pendingSequence.current;
-    update(before => ({ ...before, pending: null, checkedMissing: false, failure: null, recorded: value.request.disposition }));
+    update(before => ({ ...before, pending: null, checking: false, checkedMissing: false, failure: null, recorded: value.request.disposition }));
     release(); reads.invalidate(["translation", "review"], false);
   }
+  async function lookup(request: CandidateDecisionRequest) {
+    if (!alive.current || current().pending !== request) return;
+    update(before => ({ ...before, checking: true }));
+    try {
+      const { actionId, unitId, locale } = request.decision;
+      const receipt = await translationCommands.candidateAction({ ...session, actionId, unitId, locale });
+      if (!alive.current || current().pending !== request) return;
+      if (receipt) settle(request, receipt); else update(before => ({ ...before, checkedMissing: true }));
+    } finally {
+      if (alive.current && current().pending === request) update(before => ({ ...before, checking: false }));
+    }
+  }
   async function dispatch(request: CandidateDecisionRequest, recovering = false) {
-    try { const receipt = await translationCommands.decideCandidate(request); if (alive.current) settle(request, receipt); }
+    let writeFailure: CommandFailure | null = null;
+    try { const receipt = await translationCommands.decideCandidate(request); if (alive.current) settle(request, receipt); return; }
     catch (error) {
       if (!alive.current || current().pending !== request) return;
-      const unknown = recovering || hasUnknownOutcome(error);
-      update(before => ({ ...before, pending: unknown ? request : null, checkedMissing: false, failure: commandFailure(error) }));
-      if (!unknown) release();
+      const unknown = hasUnknownOutcome(error);
+      writeFailure = commandFailure(error);
+      update(before => ({ ...before, pending: recovering || unknown ? request : null, checkedMissing: false,
+        failure: unknown ? null : writeFailure }));
+      if (!unknown) { if (!recovering) release(); return; }
     }
+    // Read once within the original reservation. A failed read cannot re-enter the write catch.
+    try {
+      await lookup(request);
+      if (alive.current && current().pending === request) update(before => ({ ...before, failure: writeFailure }));
+    }
+    catch (error) { if (alive.current && current().pending === request) update(before => ({ ...before, failure: commandFailure(error) })); }
   }
   async function decide(revision: TranslationRevision, disposition: CandidateDisposition, proof: () => boolean = () => true, readBasis: () => CandidateBasis | null = () => ownerRef.current.current()) {
     const draft = readBasis(), before = current(), metadata = projectRef.current.metadata;
@@ -67,18 +88,14 @@ export function useCandidateDecisionSession(project: ProjectView, owner: {
   async function check() {
     const request = current().pending; if (!request || current().busy || !alive.current) return;
     update(value => ({ ...value, busy: true, failure: null, checkedMissing: false }));
-    try {
-      const { actionId, unitId, locale } = request.decision;
-      const receipt = await translationCommands.candidateAction({ ...session, actionId, unitId, locale });
-      if (!alive.current || current().pending !== request) return;
-      if (receipt) settle(request, receipt); else update(value => ({ ...value, checkedMissing: true }));
-    } catch (error) { update(value => ({ ...value, failure: commandFailure(error) })); }
+    try { await lookup(request); }
+    catch (error) { if (alive.current && current().pending === request) update(value => ({ ...value, failure: commandFailure(error) })); }
     finally { update(value => ({ ...value, busy: false })); }
   }
   async function retry() {
     const request = current().pending;
     if (!request || !current().checkedMissing || current().busy || !alive.current) return;
-    update(value => ({ ...value, busy: true }));
+    update(value => ({ ...value, busy: true, failure: null, checkedMissing: false }));
     try { await dispatch(request, true); } finally { update(value => ({ ...value, busy: false })); }
   }
   function discardInputs() {

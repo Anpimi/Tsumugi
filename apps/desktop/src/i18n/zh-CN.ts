@@ -1819,6 +1819,7 @@ ai: {
       actor: "决定执行者", reason: "本次候选处置的理由", reject: "拒绝 AI 候选", restore: "恢复 AI 候选",
       rejected: "已针对该源依据拒绝", restored: "已明确恢复", rejectedRecorded: "已记录候选拒绝决定，您的编辑仍已保留。", restoredRecorded: "已追加恢复决定，此候选可重新选择。",
       failed: "尚未确认本次决定。您的文本和原请求仍已保留，请刷新历史或核对原决定后再继续。",
+      checking: "正在核对已保存的候选决定…",
       unknown: "{{locale}} 的原候选决定尚未确认，请先核对，再进行其他译文写入。", check: "核对原候选决定", retry: "重试同一候选决定",
     },
     translation: {

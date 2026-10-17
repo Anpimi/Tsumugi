@@ -47,6 +47,11 @@ function Harness({ consumer = true, project: current = project, handle }: { cons
 }
 function calls(name: string) { return invoke.mock.calls.filter(([command]) => command === name); }
 function requests(name: string) { return calls(name).map(([, args]) => args.request); }
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 function editor() {
   return { target: reviewTargetFixture({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId, sourceSnapshotId: sourceSnapshot,
     locale: "zh-CN", selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText }),
@@ -164,14 +169,14 @@ it.each(["source", "selection", "history", "retire"])("refuses an identity conti
 
 it("settles A after consumer removal without replacing newer reason B or the manual draft", async () => {
   const { user, rendered, handle } = await inspect(), original = invoke.getMockImplementation()!;
-  let recorded: CandidateDecision | null = null;
+  let recorded: CandidateDecision | null = null, lookups = 0;
   invoke.mockImplementation(async (command, args) => {
     if (command === "decide_translation_candidate") { recorded = record(args.request); throw new Error("Reply lost"); }
-    if (command === "read_translation_candidate_action") return recorded;
+    if (command === "read_translation_candidate_action") { if (lookups++ === 0) throw new Error("Saved decision temporarily unavailable"); return recorded; }
     return original(command, args);
   });
   await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.reject") }));
-  await screen.findByRole("button", { name: i18n.t("candidateDecisions.check") });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") })).toBeEnabled());
   await user.clear(screen.getByRole("textbox", { name: i18n.t("candidateDecisions.reason") }));
   await user.type(screen.getByRole("textbox", { name: i18n.t("candidateDecisions.reason") }), "Reason B");
   rendered.rerender(<Harness consumer={false} project={project} handle={handle} />);
@@ -181,33 +186,84 @@ it("settles A after consumer removal without replacing newer reason B or the man
   await screen.findByText(i18n.t("candidateDecisions.rejectedRecorded"));
   expect(drafts.candidates.current().reason).toBe("Reason B"); expect(drafts.candidates.hasDraft()).toBe(true);
   expect(drafts.current()?.text).toBe("Manual B 👩🏽‍💻"); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("decide_translation_candidate")).toHaveLength(1); expect(calls("read_translation_candidate_action")).toHaveLength(2);
   expect(requests("read_translation_candidate_action")[0]).toMatchObject({ actionId: requests("decide_translation_candidate")[0].decision.actionId, unitId: item.unitId, locale: "zh-CN" });
+});
+
+it.each(["en-US", "zh-CN"])("shows only the actual automatic and manual saved-decision read phases and preserves B (%s)", async language => {
+  await i18n.changeLanguage(language); const { user, rendered, handle } = await inspect(), original = invoke.getMockImplementation()!;
+  const write = deferred<CandidateDecision>(), automatic = deferred<CandidateDecision | null>(), manual = deferred<CandidateDecision | null>();
+  let written!: CandidateDecisionRequest, lookups = 0;
+  invoke.mockImplementation((command, args) => {
+    if (command === "decide_translation_candidate") { written = args.request; return write.promise; }
+    if (command === "read_translation_candidate_action") return ++lookups === 1 ? automatic.promise : manual.promise;
+    return original(command, args);
+  });
+  await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.reject") }));
+  await waitFor(() => expect(calls("decide_translation_candidate")).toHaveLength(1));
+  expect(drafts.candidates.current()).toMatchObject({ busy: true, checking: false, pending: written });
+  expect(screen.queryByText(i18n.t("candidateDecisions.checking"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") })).toBeDisabled();
+  expect(lookups).toBe(0);
+  await user.clear(screen.getByRole("textbox", { name: i18n.t("candidateDecisions.actor") }));
+  await user.type(screen.getByRole("textbox", { name: i18n.t("candidateDecisions.actor") }), "Reviewer B");
+  await user.clear(screen.getByRole("textbox", { name: i18n.t("candidateDecisions.reason") }));
+  await user.type(screen.getByRole("textbox", { name: i18n.t("candidateDecisions.reason") }), "Reason B");
+  await act(async () => { write.reject(new Error("Decision acknowledgement lost")); });
+  await screen.findByText(i18n.t("candidateDecisions.checking"));
+  expect(screen.queryByText(i18n.t("candidateDecisions.unknown", { locale: "zh-CN" }))).not.toBeInTheDocument();
+  expect(drafts.candidates.current()).toMatchObject({ busy: true, checking: true, pending: written, actor: "Reviewer B", reason: "Reason B" });
+  expect(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: i18n.t("candidateDecisions.retry") })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") }));
+  expect(lookups).toBe(1); expect(calls("decide_translation_candidate")).toHaveLength(1);
+  await act(async () => { automatic.reject(new Error("Saved decision temporarily unavailable")); });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") })).toBeEnabled());
+  expect(screen.queryByText(i18n.t("candidateDecisions.checking"))).not.toBeInTheDocument();
+  expect(drafts.candidates.current()).toMatchObject({ pending: written, busy: false, checking: false, checkedMissing: false });
+  await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") }));
+  await screen.findByText(i18n.t("candidateDecisions.checking"));
+  expect(lookups).toBe(2); expect(drafts.mutationReserved).toBe(true);
+  rendered.rerender(<Harness consumer={false} project={project} handle={handle} />);
+  await act(async () => { manual.resolve(record(written)); });
+  await waitFor(() => expect(drafts.candidates.current().pending).toBeNull());
+  rendered.rerender(<Harness project={project} handle={handle} />);
+  await screen.findByText(i18n.t("candidateDecisions.rejectedRecorded"));
+  expect(drafts.candidates.current()).toMatchObject({ actor: "Reviewer B", reason: "Reason B", busy: false, checking: false, failure: null });
+  expect(drafts.candidates.hasDraft()).toBe(true); expect(drafts.current()?.text).toBe("Manual B 👩🏽‍💻"); expect(drafts.mutationReserved).toBe(false);
+  expect(written.decision).toMatchObject({ actor: "Reviewer A", reason: "Reason A" });
+  expect(requests("read_translation_candidate_action")).toEqual(Array(2).fill({ projectId: project.metadata.projectId,
+    sessionToken: project.sessionToken, actionId: written.decision.actionId, unitId: item.unitId, locale: "zh-CN" }));
+  expect(calls("create_execution_identity")).toHaveLength(1); expect(calls("decide_translation_candidate")).toHaveLength(1);
+  expect(calls("save_translation_revision")).toHaveLength(0); expect(calls("select_translation_revision")).toHaveLength(0);
+  expect(calls("start_ai_translation")).toHaveLength(0);
 });
 
 it("checks absence before retrying the exact original request and keeps B after a later rejection", async () => {
   const { user } = await inspect(), original = invoke.getMockImplementation()!;
-  let tries = 0;
+  let tries = 0, lookups = 0;
   invoke.mockImplementation(async (command, args) => {
     if (command === "decide_translation_candidate") {
       tries++; if (tries === 1) throw new Error("Reply lost");
-      if (tries === 2) throw { code: "dependency-conflict", stage: "execution-write", outcome: "rejected", recoveryRequired: false, reason: "candidate-decision" };
+      if (tries === 2) throw { code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "candidate-decision" };
       return record(args.request);
     }
-    if (command === "read_translation_candidate_action") return null;
+    if (command === "read_translation_candidate_action") { if (lookups++ === 0) throw new Error("Saved decision temporarily unavailable"); return null; }
     return original(command, args);
   });
   await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.reject") }));
-  await screen.findByRole("button", { name: i18n.t("candidateDecisions.check") });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") })).toBeEnabled());
   expect(screen.queryByRole("button", { name: i18n.t("candidateDecisions.retry") })).not.toBeInTheDocument();
   await user.type(screen.getByRole("textbox", { name: i18n.t("candidateDecisions.reason") }), " B");
   for (let n = 0; n < 2; n++) {
     await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") }));
     await user.click(await screen.findByRole("button", { name: i18n.t("candidateDecisions.retry") }));
-    if (n === 0) await waitFor(() => expect(tries).toBe(2));
+    if (n === 0) { await waitFor(() => expect(tries).toBe(2)); expect(lookups).toBe(2); }
   }
   await screen.findByText(i18n.t("candidateDecisions.rejectedRecorded"));
   const actions = requests("decide_translation_candidate"); expect(actions).toHaveLength(3);
   expect(actions[1]).toEqual(actions[0]); expect(actions[2]).toEqual(actions[0]); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(lookups).toBe(3);
   expect(drafts.candidates.current().reason).toBe("Reason A B"); expect(drafts.candidates.hasDraft()).toBe(true);
 });
 
@@ -308,15 +364,15 @@ async function openProduction(manual = false) {
 }
 
 it("keeps original recovery visible through real session navigation and project exit with no manual draft", async () => {
-  const original = invoke.getMockImplementation()!; let receipt: CandidateDecision | null = null;
+  const original = invoke.getMockImplementation()!; let receipt: CandidateDecision | null = null, lookups = 0;
   invoke.mockImplementation(async (command, args) => {
     if (command === "decide_translation_candidate") { receipt = record(args.request); throw new Error("Reply lost"); }
-    if (command === "read_translation_candidate_action") return receipt;
+    if (command === "read_translation_candidate_action") { if (lookups++ === 0) throw new Error("Saved decision temporarily unavailable"); return receipt; }
     return original(command, args);
   });
   const { handle, user } = await openProduction();
   await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.reject") }));
-  await screen.findByRole("button", { name: i18n.t("candidateDecisions.check") });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") })).toBeEnabled());
   await user.type(screen.getByRole("textbox", { name: i18n.t("candidateDecisions.reason") }), " B");
   await act(async () => { expect(await handle.current!.navigate({ kind: "area", area: "overview" })).toBe(false); });
   expect(screen.getByRole("heading", { level: 1, name: i18n.t("ai.title") })).toBeInTheDocument();
@@ -333,6 +389,7 @@ it("keeps original recovery visible through real session navigation and project 
   let permit!: SessionExitPermit | null; await act(async () => { permit = await closing; });
   expect(permit).not.toBeNull(); expect(permit!.current()).toBe(true); act(() => permit!.release());
   expect(calls("decide_translation_candidate")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("read_translation_candidate_action")).toHaveLength(2);
 });
 
 it("discards only candidate details before separately protecting manual B through the production exit coordinator", async () => {
@@ -355,19 +412,20 @@ it("discards only candidate details before separately protecting manual B throug
 });
 
 it("retains the exact request when a structurally valid acknowledgement names the wrong target", async () => {
-  const { user } = await inspect(), original = invoke.getMockImplementation()!; let receipt: CandidateDecision | null = null;
+  const { user } = await inspect(), original = invoke.getMockImplementation()!; let receipt: CandidateDecision | null = null, lookups = 0;
   invoke.mockImplementation(async (command, args) => {
     if (command === "decide_translation_candidate") { receipt = record(args.request); return { ...receipt, request: { ...receipt.request, unitId: fixtureIdentity(1111) } }; }
-    if (command === "read_translation_candidate_action") return receipt;
+    if (command === "read_translation_candidate_action") return lookups++ === 0 && receipt ? { ...receipt, request: { ...receipt.request, unitId: fixtureIdentity(1111) } } : receipt;
     return original(command, args);
   });
   await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.reject") }));
-  await screen.findByRole("button", { name: i18n.t("candidateDecisions.check") });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") })).toBeEnabled());
   expect(drafts.candidates.current().pending?.decision.unitId).toBe(item.unitId);
   expect(drafts.candidates.current().failure).toBe("invalid-candidate-decision-receipt");
   await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.check") }));
   await screen.findByText(i18n.t("candidateDecisions.rejectedRecorded"));
   expect(calls("decide_translation_candidate")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("read_translation_candidate_action")).toHaveLength(2);
 });
 
 it("opens the exact saved AI revision in offline Arena and preserves the separate manual B draft", async () => {

@@ -326,10 +326,10 @@ it("records and restores an AI candidate while preserving manual text and the im
 
 it("checks the original lost candidate-decision receipt after consumer removal without losing newer inputs",async()=>{
   candidate.originKind="ai";candidate.attemptId=fixture.start.attemptId;candidate.resultId=preview.rows[0].resultId;candidate.itemId=preview.rows[0].itemId;
-  const original=invoke.getMockImplementation()!;let recorded:unknown;
+  const original=invoke.getMockImplementation()!;let recorded:unknown,lookups=0;
   invoke.mockImplementation((command:string,args)=>{
     if(command==="decide_translation_candidate"){recorded={request:args.request.decision,sourceSnapshotId:preview.currentSourceSnapshotId};return Promise.reject(new Error("Reply lost"));}
-    if(command==="read_translation_candidate_action")return Promise.resolve(recorded);
+    if(command==="read_translation_candidate_action")return lookups++===0?Promise.reject(new Error("Saved decision temporarily unavailable")):Promise.resolve(recorded);
     return original(command,args);
   });
   const {user,view}=await readyEditor();
@@ -338,7 +338,7 @@ it("checks the original lost candidate-decision receipt after consumer removal w
   expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")})).toBeEnabled();
   await user.click(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")}));
   await waitFor(()=>expect(calls("decide_translation_candidate")).toHaveLength(1));
-  await screen.findByRole("button",{name:i18n.t("candidateDecisions.check")});
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.check")})).toBeEnabled());
   expect(drafts.candidates.current().pending?.decision.reason).toBe("Reason A");
   act(()=>{drafts.edit("Text B");drafts.candidates.edit("reason","Reason B");});
   expect(drafts.mutationReserved).toBe(true);
@@ -348,6 +348,7 @@ it("checks the original lost candidate-decision receipt after consumer removal w
   expect(drafts.candidates.hasDraft()).toBe(true);
   expect(drafts.current()?.text).toBe("Text B");expect(drafts.mutationReserved).toBe(false);
   expect(calls("decide_translation_candidate")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("read_translation_candidate_action")).toHaveLength(2);
   expect(originalRequests("read_translation_candidate_action")[0]).toMatchObject({actionId:originalRequests("decide_translation_candidate")[0].decision.actionId,unitId:candidate.unitId,locale:"zh-CN"});
 });
 
