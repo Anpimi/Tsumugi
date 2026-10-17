@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -26,6 +27,34 @@ def test_output(name, *, passed=1, failed=0, ignored=0, filtered=1):
         f"test result: {summary}. {passed} passed; {failed} failed; {ignored} ignored; "
         f"0 measured; {filtered} filtered out; finished in 0.03s\n"
     )
+
+
+def consumer_graph(checkout):
+    consumer = "path-consumer"
+    core = "path-core"
+    host = "path-host"
+    sdk = "path-sdk"
+    return {
+        "version": 1,
+        "workspace_root": str(checkout / "crates/plugin-host/compatibility"),
+        "workspace_members": [consumer],
+        "packages": [
+            {"id": consumer, "name": "tsumugi-plugin-host-compatibility", "source": None,
+             "manifest_path": str(checkout / "crates/plugin-host/compatibility/Cargo.toml")},
+            {"id": core, "name": "tsumugi-core", "source": None,
+             "manifest_path": str(checkout / "crates/core/Cargo.toml")},
+            {"id": host, "name": "tsumugi-plugin-host", "source": None,
+             "manifest_path": str(checkout / "crates/plugin-host/Cargo.toml")},
+            {"id": sdk, "name": "tsumugi-plugin-sdk", "source": None,
+             "manifest_path": str(checkout / "crates/plugin-sdk/Cargo.toml")},
+        ],
+        "resolve": {"root": consumer, "nodes": [
+            {"id": consumer, "features": ["core-adapter", "javascript-conformance"], "dependencies": [core, host, sdk]},
+            {"id": core, "features": [], "dependencies": [sdk]},
+            {"id": host, "features": ["core-adapter"], "dependencies": [core, sdk]},
+            {"id": sdk, "features": ["default"], "dependencies": []},
+        ]},
+    }
 
 
 class FakeCommands:
@@ -82,10 +111,18 @@ class SelectionTests(unittest.TestCase):
         for _, _, target, name in compatibility.CASES:
             command = compatibility.test_command(target, name, True)
             self.assertEqual(command[:3], ["cargo", "--offline", "test"])
+            self.assertEqual(command[command.index("--manifest-path") + 1], "crates/plugin-host/compatibility/Cargo.toml")
             self.assertEqual(command[command.index("--features") + 1], "core-adapter,javascript-conformance")
             self.assertEqual(command[command.index("--test") + 1], target)
             self.assertEqual(command[-5:], [name, "--", "--exact", "--nocapture", "--test-threads=1"])
             self.assertNotIn("--ignored", command)
+            self.assertNotIn("-p", command)
+            metadata = compatibility.metadata_command(True)
+            self.assertEqual(metadata[:3], ["cargo", "--offline", "metadata"])
+            for flag in ("--manifest-path", "--features"):
+                self.assertEqual(metadata[metadata.index(flag) + 1], command[command.index(flag) + 1])
+            self.assertIn("--locked", metadata)
+            self.assertEqual(metadata[-2:], ["--format-version", "1"])
 
     def test_termination_uses_the_owned_command_interruption_cleanup(self):
         with self.assertRaises(KeyboardInterrupt):
@@ -106,8 +143,82 @@ class SelectionTests(unittest.TestCase):
             self.assertTrue((directory / commands.records[0]["stderr"]).is_file())
 
 
+class ConsumerGraphTests(unittest.TestCase):
+    def test_exact_normal_core_owner_accepts_normal_transitive_features(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary)
+            graph = consumer_graph(checkout)
+            graph["packages"].append({
+                "id": "registry-dependency", "name": "ordinary-dependency",
+                "source": "registry+https://example.invalid/index",
+                "manifest_path": str(checkout / "cache/ordinary-dependency/Cargo.toml"),
+            })
+            graph["resolve"]["nodes"].append({"id": "registry-dependency", "features": ["default", "std"], "dependencies": []})
+            graph["resolve"]["nodes"][1]["dependencies"].append("registry-dependency")
+            verified = compatibility.verify_consumer_graph(graph, checkout)
+            owners = verified["owners"]
+            self.assertEqual(verified["workspaceRoot"], str((checkout / "crates/plugin-host/compatibility").resolve()))
+            self.assertEqual(owners["tsumugi-core"]["features"], [])
+            self.assertEqual(owners["tsumugi-core"]["manifestPath"], str((checkout / "crates/core/Cargo.toml").resolve()))
+            self.assertEqual(owners["tsumugi-plugin-sdk"]["features"], ["default"])
+
+    def test_missing_or_malformed_resolve_never_proves_normal_core(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary)
+            original = consumer_graph(checkout)
+            changes = [
+                lambda value: value.update(version=True),
+                lambda value: value.update(packages=None),
+                lambda value: value.update(resolve=None),
+                lambda value: value.pop("resolve"),
+                lambda value: value["resolve"].update(nodes=[]),
+                lambda value: value["resolve"].update(nodes=[None]),
+                lambda value: value["resolve"]["nodes"].pop(1),
+                lambda value: value["resolve"]["nodes"][1].pop("features"),
+                lambda value: value["resolve"]["nodes"][1].update(features="[]"),
+                lambda value: value["resolve"]["nodes"][1].update(features=[False]),
+                lambda value: value["resolve"]["nodes"][1].update(dependencies=[[]]),
+                lambda value: value["resolve"]["nodes"][1].update(dependencies=["unresolved"]),
+                lambda value: value["resolve"]["nodes"].append(copy.deepcopy(value["resolve"]["nodes"][1])),
+            ]
+            for change in changes:
+                graph = copy.deepcopy(original)
+                change(graph)
+                with self.subTest(graph=graph), self.assertRaises(compatibility.HarnessError):
+                    compatibility.verify_consumer_graph(graph, checkout)
+
+    def test_fixture_features_wrong_owners_and_disconnected_dependencies_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary)
+            original = consumer_graph(checkout)
+            changes = [
+                lambda value: value["resolve"]["nodes"][1].update(features=["execution-test-host"]),
+                lambda value: value["resolve"]["nodes"][1].update(features=["wire-schema"]),
+                lambda value: value["packages"][1].update(manifest_path=str(checkout / "other/core/Cargo.toml")),
+                lambda value: value["packages"][1].update(manifest_path="crates/core/Cargo.toml"),
+                lambda value: value["packages"][1].update(source="registry+https://example.invalid/index"),
+                lambda value: value["packages"].pop(1),
+                lambda value: value["packages"].append(dict(value["packages"][1], id="another-core")),
+                lambda value: value["packages"][2].update(manifest_path=str(checkout / "other/host/Cargo.toml")),
+                lambda value: value["packages"][3].update(manifest_path=str(checkout / "other/sdk/Cargo.toml")),
+                lambda value: value.update(workspace_root=str(checkout)),
+                lambda value: value.update(workspace_members=["path-host"]),
+                lambda value: value["resolve"].update(root="path-host"),
+                lambda value: value["resolve"]["nodes"][0].update(features=["core-adapter"]),
+                lambda value: value["resolve"]["nodes"][2].update(features=["core-adapter", "javascript-conformance"]),
+                lambda value: value["resolve"]["nodes"][0]["dependencies"].remove("path-core"),
+                lambda value: value["resolve"]["nodes"][2]["dependencies"].remove("path-core"),
+            ]
+            for change in changes:
+                graph = copy.deepcopy(original)
+                change(graph)
+                with self.subTest(graph=graph), self.assertRaises(compatibility.HarnessError):
+                    compatibility.verify_consumer_graph(graph, checkout)
+
+
 class HarnessTests(unittest.TestCase):
-    def exercise(self, *, webvtt_exit=0, webvtt_output=None, webvtt_digest=None, runtime_matches=True):
+    def exercise(self, *, webvtt_exit=0, webvtt_output=None, webvtt_digest=None,
+                 runtime_matches=True, metadata_exit=0, metadata_output=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             output = root / "results"
@@ -126,6 +237,9 @@ class HarnessTests(unittest.TestCase):
             webvtt = compatibility.CASES[0][3]
             smapi = compatibility.CASES[1][3]
             responses = {
+                "consumer-metadata": (metadata_exit, metadata_output if metadata_output is not None else json.dumps(
+                    consumer_graph(Path(compatibility.__file__).resolve().parents[3]),
+                )),
                 "inspect-webvtt": (0, json.dumps({"packageDigest": "a" * 64, "plugin": {"id": "webvtt"}})),
                 "inspect-stardew-smapi": (0, json.dumps({"packageDigest": "b" * 64, "plugin": {"id": "stardew-smapi"}})),
                 "inspect-runtime": (0, json.dumps({"environment": observed, "environmentDigest": "e" * 64})),
@@ -165,6 +279,9 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["schemaVersion"], 1)
         self.assertEqual(report["host"]["commit"], "checkout-identity")
+        self.assertEqual(report["consumer"]["status"], "passed")
+        self.assertEqual(report["consumer"]["owners"]["tsumugi-core"]["features"], [])
+        self.assertEqual(commands.records[0]["label"], "consumer-metadata")
         self.assertEqual([case["status"] for case in report["cases"]], ["passed", "passed"])
         for case in report["cases"]:
             self.assertEqual(case["executionCounts"]["passed"], 1)
@@ -176,6 +293,29 @@ class HarnessTests(unittest.TestCase):
                 "TSUMUGI_TEST_PLUGIN_PACKAGE", "TSUMUGI_TEST_PLUGIN_DIGEST",
                 "TSUMUGI_TEST_RUNTIME_TOOL", "TSUMUGI_TEST_RUNTIME_HOST", "TSUMUGI_TEST_RUNTIME_APPROVAL",
             })
+
+    def test_metadata_failure_stops_before_inspection_or_any_consumer(self):
+        result, report, commands = self.exercise(metadata_exit=101, metadata_output="Cargo metadata failed")
+        self.assertEqual(result, 1)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["consumer"]["status"], "failed")
+        self.assertEqual(report["consumer"]["command"]["exitCode"], 101)
+        self.assertIn("consumer-metadata", report["error"])
+        self.assertEqual([case["status"] for case in report["cases"]], ["not-run", "not-run"])
+        self.assertEqual([record["label"] for record in commands.records], ["consumer-metadata"])
+
+    def test_invalid_json_and_fixture_features_cannot_fall_back_to_host_tests(self):
+        graph = consumer_graph(Path(compatibility.__file__).resolve().parents[3])
+        graph["resolve"]["nodes"][1]["features"] = ["execution-test-host"]
+        for output in ["not JSON", "[]", json.dumps(graph)]:
+            with self.subTest(output=output):
+                result, report, commands = self.exercise(metadata_output=output)
+                self.assertEqual(result, 1)
+                self.assertEqual(report["status"], "failed")
+                self.assertEqual(report["consumer"]["status"], "failed")
+                self.assertTrue(report["error"])
+                self.assertEqual([case["status"] for case in report["cases"]], ["not-run", "not-run"])
+                self.assertEqual([record["label"] for record in commands.records], ["consumer-metadata"])
 
     def test_failed_consumer_retains_actual_counts_logs_and_the_other_result(self):
         name = compatibility.CASES[0][3]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run two public, prebuilt-package Host/Core conformance consumers."""
+"""Run two public, prebuilt-package conformance consumers with normal Core."""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ CASES = (
     ),
 )
 FEATURES = "core-adapter,javascript-conformance"
+CONSUMER_MANIFEST = "crates/plugin-host/compatibility/Cargo.toml"
 COMMAND_TIMEOUT_SECONDS = 1800
 
 
@@ -56,9 +57,9 @@ def unique_object(pairs: list[tuple[str, object]]) -> dict:
     return value
 
 
-def read_json(path: Path) -> dict:
-    if path.stat().st_size > 1024 * 1024:
-        raise HarnessError(f"JSON document exceeds one MiB: {path.name}")
+def read_json(path: Path, maximum: int = 1024 * 1024) -> dict:
+    if path.stat().st_size > maximum:
+        raise HarnessError(f"JSON document exceeds {maximum} bytes: {path.name}")
     value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
     if not isinstance(value, dict):
         raise HarnessError(f"expected a JSON object: {path.name}")
@@ -156,9 +157,104 @@ def inspection_command(binary: str, arguments: list[str], offline: bool) -> list
 
 def test_command(target: str, name: str, offline: bool) -> list[str]:
     return cargo_prefix(offline) + [
-        "test", "--locked", "-p", "tsumugi-plugin-host", "--features", FEATURES,
+        "test", "--locked", "--manifest-path", CONSUMER_MANIFEST, "--features", FEATURES,
         "--test", target, name, "--", "--exact", "--nocapture", "--test-threads=1",
     ]
+
+
+def metadata_command(offline: bool) -> list[str]:
+    return cargo_prefix(offline) + [
+        "metadata", "--locked", "--manifest-path", CONSUMER_MANIFEST,
+        "--features", FEATURES, "--format-version", "1",
+    ]
+
+
+def verify_consumer_graph(metadata: dict, checkout: Path) -> dict:
+    """Require the same isolated dependency selection used by both test commands."""
+    expected = {
+        "tsumugi-plugin-host-compatibility": (CONSUMER_MANIFEST, sorted(FEATURES.split(","))),
+        "tsumugi-core": ("crates/core/Cargo.toml", []),
+        "tsumugi-plugin-host": ("crates/plugin-host/Cargo.toml", ["core-adapter"]),
+        "tsumugi-plugin-sdk": ("crates/plugin-sdk/Cargo.toml", None),
+    }
+    workspace = (checkout / CONSUMER_MANIFEST).parent.resolve()
+    workspace_root = metadata.get("workspace_root")
+    packages = metadata.get("packages")
+    resolve = metadata.get("resolve")
+    if (type(metadata.get("version")) is not int or metadata["version"] != 1
+            or not isinstance(workspace_root, str) or not Path(workspace_root).is_absolute()
+            or Path(workspace_root).resolve() != workspace
+            or not isinstance(packages, list) or not packages or not isinstance(resolve, dict)):
+        raise HarnessError("invalid isolated consumer metadata or workspace")
+    by_id = {}
+    selected = {}
+    for package in packages:
+        if (not isinstance(package, dict) or not isinstance(package.get("id"), str)
+                or not package["id"] or package["id"] in by_id
+                or not isinstance(package.get("name"), str) or not package["name"]):
+            raise HarnessError("invalid consumer package metadata")
+        by_id[package["id"]] = package
+        name = package["name"]
+        if name in expected:
+            manifest = package.get("manifest_path")
+            if (name in selected or not isinstance(manifest, str)
+                    or not Path(manifest).is_absolute()
+                    or Path(manifest).resolve() != (checkout / expected[name][0]).resolve()
+                    or "source" not in package or package["source"] is not None):
+                raise HarnessError(f"consumer must use the selected checkout's {name} owner")
+            selected[name] = package
+    if set(selected) != set(expected):
+        raise HarnessError("consumer metadata is missing an exact Core, Host, SDK or harness owner")
+    root = selected["tsumugi-plugin-host-compatibility"]["id"]
+    if resolve.get("root") != root or metadata.get("workspace_members") != [root]:
+        raise HarnessError("consumer metadata resolved another workspace or root package")
+    nodes = resolve.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        raise HarnessError("consumer metadata is missing the resolved feature graph")
+    resolved = {}
+    for node in nodes:
+        if (not isinstance(node, dict) or not isinstance(node.get("id"), str)
+                or node["id"] not in by_id or node["id"] in resolved):
+            raise HarnessError("invalid resolved consumer package")
+        for field in ("features", "dependencies"):
+            values = node.get(field)
+            if (not isinstance(values, list)
+                    or any(not isinstance(value, str) or not value for value in values)
+                    or len(set(values)) != len(values)):
+                raise HarnessError(f"invalid resolved consumer {field}")
+        resolved[node["id"]] = node
+    if any(dependency not in resolved for node in nodes for dependency in node["dependencies"]):
+        raise HarnessError("consumer metadata has an unresolved dependency")
+    owners = {}
+    for name, (path, features) in expected.items():
+        package_id = selected[name]["id"]
+        node = resolved.get(package_id)
+        if node is None:
+            raise HarnessError(f"consumer metadata did not resolve {name}")
+        if features is not None and sorted(node["features"]) != features:
+            raise HarnessError(f"consumer resolved unexpected {name} features: {node['features']}")
+        owners[name] = {
+            "packageId": package_id, "manifestPath": str((checkout / path).resolve()),
+            "features": node["features"],
+        }
+    core = owners["tsumugi-core"]["packageId"]
+    host = owners["tsumugi-plugin-host"]["packageId"]
+    sdk = owners["tsumugi-plugin-sdk"]["packageId"]
+    if (not {core, host, sdk}.issubset(resolved[root]["dependencies"])
+            or not {core, sdk}.issubset(resolved[host]["dependencies"])
+            or sdk not in resolved[core]["dependencies"]):
+        raise HarnessError("consumer dependency graph does not bind the selected Core, Host and SDK")
+    return {"workspaceRoot": str(workspace), "owners": owners}
+
+
+def inspect_consumer(commands: Commands, consumer: dict, offline: bool) -> None:
+    record = commands.run("consumer-metadata", metadata_command(offline))
+    consumer["command"] = record
+    require_success(record)
+    # Full Cargo metadata is larger than the bounded package/runtime descriptors.
+    metadata = read_json(commands.output / record["stdout"], 16 * 1024 * 1024)
+    consumer.update(verify_consumer_graph(metadata, commands.checkout))
+    consumer["status"] = "passed"
 
 
 def summary_counts(output: str) -> dict:
@@ -333,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "schemaVersion": 1, "status": "failed", "cases": cases, "commands": commands.records,
         "offline": args.offline, "commandTimeoutSeconds": COMMAND_TIMEOUT_SECONDS,
-        "coverage": "Two existing Host/Core conformance consumers using PackageImage, RunnerProxy, real Workers and Core grants/adoption/reopen; not PackageStore installation, Desktop IPC/GUI, a sandbox, source authentication, model execution or complete platform compatibility.",
+        "coverage": "Two existing conformance consumers in an independent workspace with verified normal Core features=[], using PackageImage, RunnerProxy, real Workers and Core grants/adoption/reopen; not PackageStore installation, Desktop IPC/GUI, a sandbox, source authentication, model execution or complete platform compatibility.",
     }
     previous_terminate = signal.signal(signal.SIGTERM, interrupt_signal)
     try:
@@ -347,6 +443,8 @@ def main(argv: list[str] | None = None) -> int:
             if not re.fullmatch(r"[0-9a-f]{64}", case["expectedPackageDigest"]):
                 raise HarnessError(f"invalid independently supplied {case['domain']} package digest")
         report["host"] = checkout_identity(commands)
+        report["consumer"] = {"manifestPath": str(commands.checkout / CONSUMER_MANIFEST), "status": "failed"}
+        inspect_consumer(commands, report["consumer"], args.offline)
         for case in cases:
             try:
                 inspect_package(commands, case, args.offline)

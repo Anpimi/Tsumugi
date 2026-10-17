@@ -410,9 +410,12 @@ approval does not authenticate a publisher or authorize a subsequent execution.
 For both domains' actual Core adoption boundaries, use the
 [prebuilt-package compatibility runner](../crates/plugin-host/scripts/README.md).
 It inspects independently pinned WebVTT and SMAPI packages and the approved
-runtime, then selects the existing source-adoption and translation-adoption
-tests exactly once each. Its separate report preserves actual counts and
-failure logs; it does not install packages or establish Desktop GUI acceptance.
+runtime, then selects the original source-adoption and translation-adoption
+tests exactly once each from an isolated consumer workspace. Locked Cargo
+metadata must identify the exact Core owner with no enabled Core features before
+execution; the package-level commands above retain their own test profiles.
+Its separate report preserves actual counts and failure logs; it does not
+install packages or establish Desktop GUI acceptance.
 
 Neither these recipes nor this document claim that your chosen combination has
 passed. Record the actual source revisions/dirty changes, SDK selector, target,

@@ -30,6 +30,15 @@ optional and applies to every Cargo invocation. All Cargo commands use
 only its owned process session. Each integration test also retains its original
 bounded Worker and temporary-project cleanup.
 
+The two test targets belong to the independent
+[`compatibility/Cargo.toml`](../compatibility/Cargo.toml) workspace, which refers
+to the original test files and their support modules without copying them. It
+depends on the normal Core and the Host's `core-adapter` feature. Before dispatch,
+locked Cargo metadata must identify this checkout's exact Core, SDK and Host
+manifests and show **no enabled Core features**. Missing or inconsistent metadata
+refuses dispatch; neither case is marked as executed. This isolates the Host
+package's own development dependency on `execution-test-host`.
+
 Before starting either test, the runner calls this checkout's public
 `tsumugi-plugin-package inspect` for both packages and checks each observed
 `packageDigest` against its supplied pin. It calls `tsumugi-plugin-runtime
@@ -38,7 +47,9 @@ requires the complete observed descriptor to equal that approval. The original
 Rust capture owners perform the package/runtime byte checks. Inspection itself
 is not Worker evidence or distribution approval.
 
-The two fixed selections run with `core-adapter,javascript-conformance`:
+The two fixed selections use the consumer workspace's local
+`core-adapter,javascript-conformance` cfg features; these do not enable the Core
+test feature:
 
 | Domain | Integration target | Exact test |
 | --- | --- | --- |
@@ -56,6 +67,8 @@ does not hide the other runnable case's result.
 `compatibility.json` has `schemaVersion: 1`, an overall `status`, the actual
 `host.commit`/`host.dirty`, SDK Cargo/source declarations, the approved and
 observed runtime descriptor, both `cases` and every attempted `commands` entry.
+The `consumer` entry records its metadata command, resolved workspace root,
+exact owner manifest paths, enabled features and validation status.
 Each case records `domain`, `test` (the exact function name), `status`, the real
 package `inspection` and, when libtest ran, `executionCounts`. `execution`
 retains its command and five explicit fixture selectors. Complete stdout and

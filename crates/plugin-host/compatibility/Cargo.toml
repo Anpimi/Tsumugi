@@ -1,0 +1,34 @@
+[package]
+name = "tsumugi-plugin-host-compatibility"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+license = "MIT"
+description = "Public prebuilt-package conformance consumers with normal Core dependencies"
+
+# A separate workspace keeps plugin-host's fixture dev-dependencies out of these consumers.
+[workspace]
+resolver = "2"
+
+[patch.crates-io]
+tough = { path = "../../../third_party/tough" }
+
+[features]
+core-adapter = []
+javascript-conformance = []
+
+[dependencies]
+serde_json = "=1.0.151"
+tempfile = "=3.27.0"
+tsumugi-core = { path = "../../core", default-features = false }
+tsumugi-plugin-sdk = { path = "../../plugin-sdk", default-features = false }
+tsumugi-plugin-host = { path = "..", default-features = false, features = ["core-adapter"] }
+
+[[test]]
+name = "source_adoption"
+path = "../tests/source_adoption.rs"
+
+[[test]]
+name = "translation_validation"
+path = "../tests/translation_validation.rs"
