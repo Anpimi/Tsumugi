@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Open a recorded current AI meaning or style finding at its exact source or
+  selected-translation range, then return to the original review or work queue.
+  Changed model or execution evidence, a newer review and newer editor drafts
+  preserve the original work and prevent an outdated location from being applied.
+
 - Review the current saved translation or an explicit bounded entry/language
   batch for meaning and style, with its own exact preview and sharing consent.
   Typed model findings retain task and model provenance and can be explicitly

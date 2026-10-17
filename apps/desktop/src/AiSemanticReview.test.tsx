@@ -15,6 +15,11 @@ import { connectionFixture } from "./testSupport/connectionFixture";
 import { executionCommands, type PrepareRequest, type Receipt } from "./executionCommands";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import execution from "../test/fixtures/executionCommands.contract.json";
+import { ReviewFindings } from "./ReviewFindings";
+import { reviewCommands } from "./reviewCommands";
+import { semanticDiagnosticFixture } from "./testSupport/semanticDiagnosticFixture";
+import { useSessionReads } from "./SessionReadProvider";
+import { semanticReviewKey } from "./aiSemanticReviewQueries";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -22,8 +27,9 @@ const project: ProjectView = { sessionToken: "semantic-review-session", locator:
   metadata: { projectId: fixtureIdentity(2400), displayName: "Synthetic semantic review", sourceLocale: "en", targetLocales: ["zh-CN", "ja"], metadataRevision: "1" } };
 let review!: ReturnType<typeof useReviewDraftSession>;
 let tasks!: ReturnType<typeof useExecutionTaskSession>;
+let reads!: ReturnType<typeof useSessionReads>;
 let target = semanticTargetFixture();
-function Probe() { const owner = useReviewDraftSession(), taskOwner = useExecutionTaskSession(); useLayoutEffect(() => { review = owner; tasks = taskOwner; }); return null; }
+function Probe() { const owner = useReviewDraftSession(), taskOwner = useExecutionTaskSession(), readOwner = useSessionReads(); useLayoutEffect(() => { review = owner; tasks = taskOwner; reads = readOwner; }); return null; }
 function Harness() { return <><Probe /><AiSemanticReview project={project} active disabled={false} currentTarget={() => target} /></>; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 async function setup(expanded = true) {
@@ -50,6 +56,25 @@ it("keeps the discoverable review entry collapsed without preparing or starting 
   expect(screen.getByRole("button", { name: "AI meaning and style review" })).toHaveAttribute("aria-expanded", "false");
   expect(aiSemanticReviewCommands.prepare).not.toHaveBeenCalled(); expect(aiSemanticReviewCommands.start).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Send this exact review" })).toBeNull();
+});
+
+it("keeps a shared current findings witness fresh when the known-attempt model panel is collapsed", async () => {
+  const value = semanticDiagnosticFixture(), locate = vi.fn(async () => true); target = value.target;
+  vi.spyOn(reviewCommands, "findings").mockResolvedValue(value.findings);
+  vi.mocked(aiSemanticReviewCommands.prepare).mockResolvedValue({ attemptId: value.view.detail.attemptId, preview: value.view.preview });
+  vi.mocked(aiSemanticReviewCommands.read).mockResolvedValue({ attemptId: value.view.detail.attemptId, view: value.view });
+  render(<><Harness /><ReviewFindings project={project} target={target} active available={() => ({ enabled: true })} currentTarget={() => target}
+    freshReadProof={() => () => true} onOpenTranslation={() => true} onLocateDiagnostic={locate} /></>, project);
+  act(() => { review.setSelected(target); review.semantic.setConfig(semanticConfig); review.semantic.setExpanded(true); });
+  await act(async () => { await review.semantic.prepare(); }); act(() => review.semantic.setConsent(true));
+  await act(async () => { await review.semantic.start(); });
+  const button = await within(screen.getByRole("region", { name: "Advisory findings" })).findByRole("button", { name: "Locate in translation" });
+  await waitFor(() => expect(reads.client.getQueryState(reads.key(semanticReviewKey(value.view.detail.attemptId)))?.fetchStatus).toBe("idle"));
+  const submitted = vi.mocked(aiSemanticReviewCommands.start).mock.calls.length, user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "AI meaning and style review" }));
+  expect(reads.client.getQueryState(reads.key(semanticReviewKey(value.view.detail.attemptId)))?.isInvalidated).toBe(false);
+  await user.click(button); expect(locate).toHaveBeenCalledWith(target, expect.objectContaining({ runId: value.run.runId, source: value.source }), 0);
+  expect(aiSemanticReviewCommands.start).toHaveBeenCalledTimes(submitted);
 });
 
 it("shows the selected saved translation and requires independent fresh consent", async () => {

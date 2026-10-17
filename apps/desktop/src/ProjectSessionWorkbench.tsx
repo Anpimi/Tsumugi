@@ -25,7 +25,7 @@ import { TaskDock } from "./TaskDock";
 import { useWorkspaceView, useWorkspaceViewChanges, type WorkspaceArea } from "./WorkbenchFrame";
 import { executionContext } from "./executionCommands";
 import { isCommandError, type ProjectView } from "./projectCommands";
-import { reviewCommands, type ReviewEditorSnapshot, type ReviewTarget } from "./reviewCommands";
+import { reviewCommands, type ReviewEditorSnapshot, type ReviewTarget, type ReviewFindingView } from "./reviewCommands";
 import type { AiView } from "./aiCommands";
 import { translationCommands, type TranslationHistory, type TranslationRevision } from "./translationCommands";
 import { sourceKeys, sourceReads } from "./sourceQueries";
@@ -38,7 +38,10 @@ import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCom
 import { sourceMaintenanceHookCommands } from "./sourceMaintenanceHookCommands";
 import { sourceHookKey } from "./SourceMaintenanceHook";
 import { StrategyDraftSession, useStrategyDraftSession } from "./StrategyDraftSession";
-import { diagnosticMatchesTarget, sameReviewBasis, type ReviewDiagnosticAnchor, type ReviewEditorHandoff, type ReviewEditorReturn } from "./reviewDiagnosticNavigation";
+import { diagnosticLocationMatchesTarget, sameReviewBasis, type ReviewDiagnosticAnchor, type ReviewEditorHandoff, type ReviewEditorReturn } from "./reviewDiagnosticNavigation";
+import { semanticReviewRead } from "./aiSemanticReviewQueries";
+import { reviewFindingsRead } from "./reviewQueries";
+import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
 
 /** The same project owners are shared by production assembly and isolated consumer tests. */
 export function ProjectSessionOwners({ project, children, bridge = true }: { project: ProjectView; children: ReactNode; bridge?: boolean }) {
@@ -260,6 +263,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       const source = sourceReads.scope(scope), sourceKey = reads.key(source.key);
       const diagnostic = capture.diagnostic;
       const locationKey = reads.key(["review-diagnostic-location", destination.target.unitId, destination.locale, diagnostic?.runId, diagnostic?.diagnostic]);
+      const semantic = diagnostic?.source.purpose === "ai-semantic" ? semanticReviewRead(scope, diagnostic.source.origin.attemptId) : null;
+      const findings = semantic ? reviewFindingsRead(scope, destination.target.unitId, destination.locale) : null;
       let changed = false;
       const stop = reads.subscribeChanges(scopes => { if (scopes.some(value => ["project", "source", "translation", "resources", "review"].includes(value))) changed = true; });
       try {
@@ -271,10 +276,14 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
           reads.client.fetchQuery({ queryKey: sourceKey, staleTime: 0, meta: { scopes: ["project", "source"] }, queryFn: source.read }),
           diagnostic ? reads.client.fetchQuery({ queryKey: locationKey, staleTime: 0, meta: { scopes: ["project", "source", "translation", "resources", "review"] },
             queryFn: () => reviewCommands.diagnosticLocation({ ...scope, unitId: destination.target.unitId, locale: destination.locale, runId: diagnostic.runId, diagnostic: diagnostic.diagnostic }) }) : Promise.resolve(null),
+          semantic ? reads.client.fetchQuery({ queryKey: reads.key(semantic.key), staleTime: 0, meta: { scopes: semantic.scopes }, queryFn: semantic.read }) : Promise.resolve(null),
+          findings ? reads.client.fetchQuery({ queryKey: reads.key(findings.key), staleTime: 0, meta: { scopes: findings.scopes }, queryFn: findings.read }) : Promise.resolve(null),
         ]);
         const snapshot = reads.client.getQueryData<ReviewEditorSnapshot>(editorKey), sourceValue = reads.client.getQueryData<ContentScope>(sourceKey);
         const location = diagnostic ? reads.client.getQueryData<Awaited<ReturnType<typeof reviewCommands.diagnosticLocation>>>(locationKey) : null;
-        const witnesses = [editorKey, sourceKey, ...(diagnostic ? [locationKey] : [])].map(key => ({ key, query: reads.client.getQueryCache().find({ queryKey: key, exact: true }), version: reads.client.getQueryState(key)?.dataUpdateCount }));
+        const semanticFacts = { view: semantic ? reads.client.getQueryData<AiSemanticReviewView | null>(reads.key(semantic.key)) : null,
+          findings: findings ? reads.client.getQueryData<ReviewFindingView>(reads.key(findings.key)) : null };
+        const witnesses = [editorKey, sourceKey, ...(diagnostic ? [locationKey] : []), ...(semantic ? [reads.key(semantic.key)] : []), ...(findings ? [reads.key(findings.key)] : [])].map(key => ({ key, query: reads.client.getQueryCache().find({ queryKey: key, exact: true }), version: reads.client.getQueryState(key)?.dataUpdateCount }));
         const confirmed = () => ownersCurrent() && !changed && witnesses.every(({ key, query, version }) => {
           const latest = reads.client.getQueryCache().find({ queryKey: key, exact: true });
           return latest === query && latest?.state.status === "success" && latest.state.fetchStatus === "idle" && latest.state.error === null
@@ -284,7 +293,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
           || snapshot.translations.unitId !== destination.target.unitId || snapshot.translations.locale !== destination.locale
           || snapshot.target.sourceSnapshotId !== sourceValue.currentSnapshot) return fail("diagnostic-location-changed");
         const target = snapshot.target;
-        if (diagnostic && (!location || !diagnosticMatchesTarget(location, target) || location.basis !== diagnostic.basis
+        if (diagnostic && (!location || !diagnosticLocationMatchesTarget(location, diagnostic, target, semanticFacts) || location.basis !== diagnostic.basis
           || !sameReviewBasis(location.basisEvidence, diagnostic.basisEvidence) || target.sourceRevisionId !== destination.target.sourceRevisionId
           || target.sourceText !== destination.target.sourceText || target.translationText !== diagnostic.translationText
           || snapshot.translations.currentText !== diagnostic.translationText
@@ -294,7 +303,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
           if (!confirmed()) return fail("diagnostic-location-changed");
           if (!translation.begin({ unitId: target.unitId, locale: target.locale, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, snapshot.translations.current, snapshot.translations.currentText)) return fail("diagnostic-editor-blocked");
           const memory = committed.current.view.memory;
-          const anchor: ReviewDiagnosticAnchor | null = location ? { ...scope, value: location, sourceText: target.sourceText, translationText: target.translationText, editSeq: translation.current()!.editSeq } : null;
+          const anchor: ReviewDiagnosticAnchor | null = location && diagnostic ? { ...scope, value: location,
+            diagnostic: { runId: diagnostic.runId, source: diagnostic.source, diagnostic: diagnostic.diagnostic }, sourceText: target.sourceText, translationText: target.translationText, editSeq: translation.current()!.editSeq } : null;
           memory.write("translation", "tab", "edit"); memory.write("translation", "targetLocale", destination.locale);
           memory.write("translation", "returnToAi", false); memory.write("translation", "reviewReturn", capture.returnTo);
           memory.write("translation", "diagnosticAnchor", anchor); return true;

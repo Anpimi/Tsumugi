@@ -31,6 +31,8 @@ import type { ChangeScope } from "./sessionReads";
 import type { QueryKey } from "@tanstack/react-query";
 import type { WorkspaceDestination } from "./sessionNavigation";
 import { diagnosticMatchesEditor, diagnosticTextareaSelection, textareaDisplayText, type ReviewDiagnosticAnchor } from "./reviewDiagnosticNavigation";
+import { semanticReviewRead } from "./aiSemanticReviewQueries";
+import { reviewFindingsRead } from "./reviewQueries";
 
 export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
 type EditorReadIntent = { id: number; unitId: string; locale: string };
@@ -184,6 +186,13 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const currentLocale = (locale: string) => selectedLocale.current === locale && localeAvailable(locale);
   const targetAvailable = targetLocale !== "" && project.metadata.targetLocales.includes(targetLocale);
   const targetUnavailable = targetLocale !== "" && !targetAvailable;
+  const semanticDiagnostic = diagnosticAnchor?.diagnostic.source.purpose === "ai-semantic" ? diagnosticAnchor : null;
+  const diagnosticReadsActive = open && tab === "edit" && targetAvailable && !!semanticDiagnostic
+    && semanticDiagnostic.projectId === context.projectId && semanticDiagnostic.sessionToken === context.sessionToken;
+  const diagnosticReviewOptions = semanticReviewRead(context, semanticDiagnostic?.diagnostic.source.purpose === "ai-semantic" ? semanticDiagnostic.diagnostic.source.origin.attemptId : null);
+  const diagnosticFindingsOptions = reviewFindingsRead(context, semanticDiagnostic?.value.unitId ?? "", semanticDiagnostic?.value.locale ?? "");
+  const diagnosticReview = useSessionQuery({ ...diagnosticReviewOptions, enabled: diagnosticReadsActive });
+  const diagnosticFindings = useSessionQuery({ ...diagnosticFindingsOptions, enabled: diagnosticReadsActive });
   useLayoutEffect(() => { saveNextViewEpoch.current++; readRunning.current = false; readFlight.current = null; setReadBusy(false); if (!open || !targetAvailable) setReadyListRead(null); }, [open, tab, targetLocale, targetAvailable]);
   useLayoutEffect(() => { if (!open || tab !== "edit" || !targetAvailable) { setReadyEditorRead(null); setEditorIntent(null); setEditorActivation(null); } }, [open, tab, targetAvailable]);
   const canRebaseTarget = !dirty && !busy && !pendingSave && !pendingSelection && !protectionBlocked && !importSession.hasPending() && !importSession.hasActive() && !attempt && !importState.extractionAttempt
@@ -283,12 +292,16 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   }
   function diagnosticCurrent(anchor: ReviewDiagnosticAnchor) {
     const current = draftSession.current();
+    const semantic = anchor.diagnostic.source.purpose === "ai-semantic" ? {
+      view: diagnosticReview.data && checkedRead(diagnosticReviewOptions.key, diagnosticReview.data) ? diagnosticReview.data : null,
+      findings: diagnosticFindings.data && checkedRead(diagnosticFindingsOptions.key, diagnosticFindings.data) ? diagnosticFindings.data : null,
+    } : undefined;
     return anchor.projectId === context.projectId && anchor.sessionToken === context.sessionToken && !!snapshot && !!current
       && anchor.value.unitId === current.unitId && anchor.value.locale === current.locale && current.locale === targetLocale
       && current.sourceRevisionId === anchor.value.basisEvidence.sourceRevisionId
       && current.baseSelectionId === anchor.value.basisEvidence.selectionId && current.baseRevisionId === anchor.value.basisEvidence.revisionId
       && current.editSeq === anchor.editSeq && current.text === (anchor.translationText ?? "") && current.baseText === anchor.translationText
-      && diagnosticMatchesEditor(anchor, snapshot) && readyEditorRead === editorIntent?.id
+      && diagnosticMatchesEditor(anchor, snapshot, semantic) && readyEditorRead === editorIntent?.id
       && checkedRead(editorKey(editorIntent), snapshot) && sourceReady(anchor.value.basisEvidence.sourceSnapshotId);
   }
   useEffect(() => {
@@ -305,7 +318,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     if (!selection || !field || field.value !== selection.text) { setLocationStatus("invalid"); return; }
     field.focus(); field.setSelectionRange(selection.start, selection.end);
     setLocationStatus("located");
-  }, [diagnosticAnchor, open, tab, disabled, composing, readBusy, editorRead.isFetching, sourceRead.isFetching, snapshot, readyEditorRead, editorIntent, editorDraft]);
+  }, [diagnosticAnchor, open, tab, disabled, composing, readBusy, editorRead.isFetching, sourceRead.isFetching, snapshot, readyEditorRead, editorIntent, editorDraft,
+    diagnosticReview.data, diagnosticReview.isFetching, diagnosticReview.error, diagnosticFindings.data, diagnosticFindings.isFetching, diagnosticFindings.error]);
   const retainedSourceChanged = !!editorDraft && !!source && !!draftSourceBasis.current
     && draftSourceBasis.current.projectId === context.projectId && draftSourceBasis.current.sessionToken === context.sessionToken
     && draftSourceBasis.current.unitId === editorDraft.unitId && draftSourceBasis.current.locale === editorDraft.locale
@@ -1139,10 +1153,12 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
           {onReturnToReview ? <button type="button" className="secondary-button" disabled={disabled || composing || draftSession.protection.blocked()}
             onClick={() => { void onReturnToReview().then(accepted => { if (mounted.current && !accepted) setReturnBlocked(true); }); }}>{t("review.diagnosticNavigation.returnToQueue")}</button> : null}
           {returnBlocked ? <p role="status">{t("review.diagnosticNavigation.returnBlocked")}</p> : null}
-          {diagnosticAnchor ? <p role="status">{t(editorRead.error ? "review.diagnosticNavigation.readFailed"
+          {diagnosticAnchor ? <p role="status">{t(editorRead.error || diagnosticReview.error || diagnosticFindings.error ? "review.diagnosticNavigation.readFailed"
+            : semanticDiagnostic && (diagnosticReview.isFetching || diagnosticFindings.isFetching) ? "review.diagnosticNavigation.waiting"
             : snapshot && readyEditorRead === editorIntent?.id && !diagnosticCurrent(diagnosticAnchor) ? "review.diagnosticNavigation.stale"
             : locatedAnchor.current === diagnosticAnchor && locationStatus === "invalid" ? "review.diagnosticNavigation.invalid"
             : locatedAnchor.current === diagnosticAnchor && locationStatus === "located" ? "review.diagnosticNavigation.located" : "review.diagnosticNavigation.waiting")}</p> : null}
+          {semanticDiagnostic && (diagnosticReview.error || diagnosticFindings.error) ? <button type="button" className="secondary-button" disabled={diagnosticReview.isFetching || diagnosticFindings.isFetching || !diagnosticReadsActive} onClick={() => { void diagnosticReview.refetch(); void diagnosticFindings.refetch(); }}>{t("review.diagnosticNavigation.semanticRetry")}</button> : null}
           {(history?.rows.some(revision=>revision.originKind === "ai") || candidates.blocked() || candidates.hasDraft() || candidates.state.recorded) ? <section aria-label={t("candidateDecisions.title")}>
                 <h4>{t("candidateDecisions.title")}</h4><p>{t("candidateDecisions.help")}</p>
                 <TranslationCandidateDecisionFields canCheck={candidatePendingAvailability(candidatePendingPayload()).enabled} canRetry={candidatePendingAvailability(candidatePendingPayload(),true).enabled}

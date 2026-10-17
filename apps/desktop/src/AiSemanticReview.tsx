@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AiConnectionFields } from "./AiConnectionFields";
-import { aiSemanticReviewCommands, type AiSemanticReviewView } from "./aiSemanticReviewCommands";
+import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
+import { semanticReviewRead } from "./aiSemanticReviewQueries";
 import { CommandFailureDetails, commandFailure, failureReason } from "./CommandFailure";
 import { executionContext } from "./executionCommands";
 import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
@@ -19,10 +20,10 @@ export function AiSemanticReview({ project, active, disabled, currentTarget, onO
   const { t } = useTranslation(), review = useReviewDraftSession(), tasks = useExecutionTaskSession(), reads = useSessionReads();
   const owner = review.semantic, state = owner.state, session = executionContext(project);
   const [connectionOpen, setConnectionOpen] = useState(false);
-  const queryKey = ["ai-semantic-review", state.attemptId] as const;
-  const query = useSessionQuery<AiSemanticReviewView | null>({ key: queryKey, scopes: ["execution", "source", "translation", "resources", "review"],
-    enabled: active && state.expanded && !!state.attemptId,
-    read: async () => (await aiSemanticReviewCommands.read({ ...session, attemptId: state.attemptId! })).view });
+  const options = semanticReviewRead(session, state.attemptId), queryKey = options.key;
+  // A collapsed result panel must not invalidate the same attempt's active
+  // findings observer. This remains a local read of an already known attempt.
+  const query = useSessionQuery({ ...options, enabled: active && !!state.attemptId });
   function currentView() {
     const query = reads.client.getQueryState<AiSemanticReviewView | null>(reads.key(queryKey));
     return active && state.expanded && !reads.retired && query?.status === "success" && query.fetchStatus === "idle" && !query.error && !query.isInvalidated

@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Exact navigation from recorded current AI semantic findings reuses the existing
+read-only Review location command, Unicode conversion and editor/navigation
+owners. QA and AI keep separate current-run evidence; newer drafts and
+unavailable reads retain their existing recovery guards. This changes no IPC,
+schema 52, SDK/Process3, WorkPlan3, dependency or package metadata. It stays in the
+same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+synchronized bilingual Unreleased entries and no additional version bump.
+
 Typed AI meaning/style review adds a separate operation within the existing
 Provider and Task owners. Review rows distinguish mechanical QA and AI advisory
 purposes, retaining the frozen model, recipe, input/result and human disposition

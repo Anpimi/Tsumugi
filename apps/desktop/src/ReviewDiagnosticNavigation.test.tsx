@@ -10,7 +10,7 @@ import * as translationOwner from "./TranslationDraftSession";
 import * as reviewOwner from "./ReviewDraftSession";
 import * as readOwner from "./SessionReadProvider";
 import type { ProjectView } from "./projectCommands";
-import type { ReviewEditorSnapshot, ReviewFindingDecision, ReviewDiagnosticLocation } from "./reviewCommands";
+import type { ReviewEditorSnapshot, ReviewFindingDecision, ReviewDiagnosticLocation, ReviewFindingView } from "./reviewCommands";
 import type { TranslationSaveReceipt, TranslationSaveRequest } from "./translationCommands";
 import type { WorkspaceDestination } from "./sessionNavigation";
 import { reviewDiagnosticFixture } from "./testSupport/reviewDiagnosticFixture";
@@ -22,6 +22,9 @@ import * as reviewValidation from "./generated/review.validators";
 import { validateRequestSave } from "./generated/translation.validators";
 import { i18n } from "./i18n";
 import wire from "../test/fixtures/reviewCommands.contract.json";
+import { semanticDiagnosticFixture } from "./testSupport/semanticDiagnosticFixture";
+import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
+import { reviewFindingsKey } from "./reviewQueries";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -34,6 +37,9 @@ let manual: ReturnType<typeof actualDraft>, review: ReturnType<typeof actualRevi
 let fixture: ReturnType<typeof reviewDiagnosticFixture>, memory: WorkspaceViewMemory, area: WorkspaceArea;
 let holdLocation: Promise<ReviewDiagnosticLocation> | null, holdEditor: Promise<ReviewEditorSnapshot> | null, holdSave: Promise<void> | null;
 let failLocation: boolean, failSummary: boolean, loseSave: boolean, snapshotReads: number, serial: number, unexpected: string[], repairs: ReviewFindingDecision[];
+let semantic: ReturnType<typeof semanticDiagnosticFixture> | null, semanticViews: Map<string, AiSemanticReviewView>, failSemantic: boolean;
+let holdSemantic: Promise<AiSemanticReviewView> | null;
+let pagedSemanticFindings: boolean;
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
 function Harness({ value = project }: { value?: ProjectView }) {
   const [current, setArea] = useState<WorkspaceArea>("overview"), [, setVersion] = useState(0);
@@ -50,11 +56,27 @@ function originalDestination(): Extract<WorkspaceDestination, { kind: "review-ed
   const { target, run, diagnostic } = fixture;
   return { kind: "review-edit", target: { unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, locale: target.locale,
     handoff: { returnTo: { ...reads.context, locale: target.locale, unitId: target.unitId, tab: "work", summaryScope: null, pageAfter: 0, workOffset: 50 },
-      diagnostic: { runId: run.runId, diagnostic, basis: target.basis, basisEvidence: target.basisEvidence, translationText: target.translationText } } };
+      diagnostic: { runId: run.runId, source: { purpose: "qa" }, diagnostic, basis: target.basis, basisEvidence: target.basisEvidence, translationText: target.translationText } } };
+}
+function modelDestination(): Extract<WorkspaceDestination, { kind: "review-edit" }> {
+  if (!semantic) throw new Error("Model fixture required");
+  const destination = originalDestination();
+  destination.handoff.diagnostic = { runId: semantic.run.runId, source: structuredClone(semantic.source), diagnostic: structuredClone(semantic.diagnostic),
+    basis: semantic.target.basis, basisEvidence: semantic.target.basisEvidence, translationText: semantic.target.translationText };
+  return destination;
 }
 function noWrites() {
   expect(invoke.mock.calls.map(([name]) => name).filter(name => !name.startsWith("read_") && !name.startsWith("list_"))).toEqual([]);
   expect(unexpected).toEqual([]);
+}
+function installSemantic(value = semanticDiagnosticFixture()) {
+  semantic = value; fixture = value.qa; semanticViews.set(value.view.detail.attemptId, value.view); return value;
+}
+function modelFinding() {
+  const panel = within(screen.getByRole("region", { name: i18n.t("review.advisoryFindings.title") }));
+  const article = panel.getAllByText("Synthetic model diagnostic", { exact: false })[0].closest("article");
+  if (!article) throw new Error("Model finding article required");
+  return within(article);
 }
 function saveReceipt(request: TranslationSaveRequest): TranslationSaveReceipt {
   const { target, editor } = fixture, previous = editor.translations.current;
@@ -74,6 +96,7 @@ function saveReceipt(request: TranslationSaveRequest): TranslationSaveReceipt {
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); vi.restoreAllMocks(); fixture = reviewDiagnosticFixture();
   holdLocation = null; holdEditor = null; holdSave = null; failLocation = false; failSummary = false; loseSave = false; snapshotReads = 0; serial = 3800; unexpected = []; repairs = [];
+  semantic = null; semanticViews = new Map(); failSemantic = false; holdSemantic = null; pagedSemanticFindings = false;
   vi.spyOn(translationOwner, "useTranslationDraftSession").mockImplementation(() => { const value = actualDraft(); manual = value; return value; });
   vi.spyOn(reviewOwner, "useReviewDraftSession").mockImplementation(() => { const value = actualReview(); review = value; return value; });
   vi.spyOn(readOwner, "useSessionReads").mockImplementation(() => { const value = actualReads(); reads = value; return value; });
@@ -90,14 +113,28 @@ beforeEach(async () => {
     if (command === "read_review_history") return { decisions: [], checks: [fixture.run], waivers: [], fallbacks: [], nextOffset: null };
     if (command === "read_review_work") return { total: 51, nextOffset: request.offset === 0 ? 50 : null, coverage: "synthetic finite queue",
       items: [{ unitId: request.offset === 0 ? fixtureIdentity(3798) : target.unitId, locale: target.locale, nativeKey: request.offset === 0 ? "Earlier window" : target.nativeKey, basis: target.basis, reasons: ["qa-findings"] }] };
-    if (command === "read_review_findings") return { ...reviewFindingViewFixture(target), findings: target.currentCheck ? [{ runId: target.currentCheck.runId, purpose: "qa", aiOrigin: null, finding: fixture.finding, requirement: fixture.requirement, decision: repairs[0] ?? null }] : [], history: repairs };
+    if (command === "read_review_findings") {
+      if (semantic && pagedSemanticFindings && request.offset === 0) {
+        const page: ReviewFindingView = { ...semantic.findings, findings: Array.from({ length: 20 }, (_, index) => ({
+          runId: fixture.run.runId, purpose: "qa", aiOrigin: null, requirement: fixture.requirement, decision: null,
+          finding: { ...fixture.finding, issueId: (index + 1).toString(16).padStart(64, "0") },
+        })), nextOffset: 20 };
+        return structuredClone(page);
+      }
+      return semantic ? structuredClone({ ...semantic.findings, history: repairs }) : { ...reviewFindingViewFixture(target), findings: target.currentCheck ? [{ runId: target.currentCheck.runId, purpose: "qa", aiOrigin: null, finding: fixture.finding, requirement: fixture.requirement, decision: repairs[0] ?? null }] : [], history: repairs };
+    }
+    if (command === "read_ai_semantic_review") {
+      if (failSemantic) throw new Error("Original semantic read unavailable");
+      return { attemptId: request.attemptId, view: structuredClone(holdSemantic ? await holdSemantic : semanticViews.get(String(request.attemptId)) ?? null) };
+    }
     if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [] };
     if (command === "read_review_editor_snapshot") { snapshotReads++; return snapshotReads > 1 && holdEditor ? await holdEditor : structuredClone(editor); }
     if (command === "read_review_diagnostic_location") {
+      const original = semantic && request.runId === semantic.run.runId ? semantic : fixture;
       expect(reviewValidation.validateRequestDiagnosticLocation(request)).toBe(true);
-      expect(request).toMatchObject({ unitId: target.unitId, locale: target.locale, runId: fixture.run.runId, diagnostic: fixture.diagnostic });
+      expect(request).toMatchObject({ unitId: target.unitId, locale: target.locale, runId: original.run.runId, diagnostic: original.diagnostic });
       if (failLocation) throw { code: "dependency-conflict", stage: "execution-read", outcome: "rejected", recoveryRequired: false, reason: "review-diagnostic-current" };
-      return holdLocation ? await holdLocation : structuredClone(fixture.location);
+      return holdLocation ? await holdLocation : structuredClone(original.location);
     }
     if (command === "read_translation_history") return structuredClone(editor.translations);
     if (command === "read_work_protection") return { unitId: target.unitId, locale: target.locale, revision: "1", protected: true };
@@ -131,6 +168,152 @@ async function locate(user: ReturnType<typeof userEvent.setup>) {
   const input = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t(fixture.diagnostic.location!.field === "source" ? "review.diagnosticNavigation.sourceText" : "translation.draft") });
   await waitFor(() => expect(input.selectionStart).toBe(1)); expect(input.selectionEnd).toBe(8); expect(input).toHaveFocus(); return input;
 }
+async function locateModel(user: ReturnType<typeof userEvent.setup>, start = 1, end = 8) {
+  if (!semantic?.diagnostic.location) throw new Error("Located semantic fixture required");
+  const field = semantic.diagnostic.location.field;
+  await user.click(await modelFinding().findByRole("button", { name: i18n.t(field === "source" ? "review.diagnosticNavigation.locateSource" : "review.diagnosticNavigation.locateTranslation") }));
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t(field === "source" ? "review.diagnosticNavigation.sourceText" : "translation.draft") });
+  await waitFor(() => expect(input.selectionStart).toBe(start)); expect(input.selectionEnd).toBe(end); expect(input).toHaveFocus(); return input;
+}
+
+it.each([
+  { encoding: "utf8-byte" as const, field: "source" as const },
+  { encoding: "utf16" as const, field: "translation" as const },
+  { encoding: "grapheme" as const, field: "translation" as const },
+])("locates the actual $encoding model $field diagnostic through the original CRLF editor and queue return", async ({ encoding, field }) => {
+  const value = installSemantic(semanticDiagnosticFixture(encoding, field, true)), qaRun = value.target.currentCheck;
+  const { user } = await openQueue(), input = await locateModel(user, 2, 9);
+  expect(input.value.slice(2, 9)).toBe("👩🏽‍💻"); expect(manual.current()?.text).toContain("\r\n");
+  expect(memory.read("translation", "diagnosticAnchor")).toMatchObject({ diagnostic: { runId: value.run.runId, source: { purpose: "ai-semantic", origin: value.run.evidence } } });
+  input.setSelectionRange(0, 0); await user.click(screen.getByRole("button", { name: "Rerender workspace" })); expect(input.selectionStart).toBe(0);
+  await user.click(screen.getByRole("button", { name: "Return to original review queue" }));
+  const row = await screen.findByRole("button", { name: value.target.nativeKey }); await waitFor(() => expect(row).toHaveFocus());
+  expect(memory.read("review", "workCursor")).toEqual({ locale: value.target.locale, offset: 50 });
+  expect(value.target.currentCheck).toBe(qaRun); expect(calls("read_review_diagnostic_location")[0][1].request.runId).toBe(value.run.runId); noWrites();
+});
+
+it("keeps the original mechanical QA journey precise when a separate model run is current", async () => {
+  const value = installSemantic(), { user } = await openQueue(); await locate(user);
+  expect(calls("read_review_diagnostic_location")[0][1].request.runId).toBe(value.qa.run.runId);
+  expect(value.findings.semanticRunId).toBe(value.run.runId); expect(value.target.currentCheck?.runId).toBe(value.qa.run.runId); noWrites();
+});
+
+it("locates a current model finding on a refreshed later page while the first page remains invalidated, then returns to the original queue", async () => {
+  const value = installSemantic(); pagedSemanticFindings = true;
+  const { user } = await openQueue(), panel = within(screen.getByRole("region", { name: i18n.t("review.advisoryFindings.title") }));
+  await user.click(panel.getByText(i18n.t("review.advisoryFindings.history")));
+  await user.click(panel.getByRole("button", { name: i18n.t("review.advisoryFindings.moreHistory") }));
+  await panel.findByRole("button", { name: "Locate in translation" });
+  const firstKey = reads.key(reviewFindingsKey(value.target.unitId, value.target.locale));
+  const laterKey = reads.key(reviewFindingsKey(value.target.unitId, value.target.locale, 20));
+  expect(reads.client.getQueryData<ReviewFindingView>(firstKey)?.findings.every(item => item.purpose === "qa")).toBe(true);
+  await act(async () => { reads.invalidate(["review"]); });
+  await waitFor(() => {
+    const later = reads.client.getQueryState<ReviewFindingView>(laterKey);
+    expect(later?.status).toBe("success"); expect(later?.fetchStatus).toBe("idle"); expect(later?.isInvalidated).toBe(false);
+  });
+  expect(reads.client.getQueryState(firstKey)?.isInvalidated).toBe(true);
+  expect(reads.client.getQueryData<ReviewFindingView>(laterKey)?.findings[0].runId).toBe(value.run.runId);
+  const firstReads = calls("read_review_findings").filter(([, args]) => args.request.offset === 0).length;
+  await user.click(await panel.findByRole("button", { name: "Locate in translation" }));
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "Your draft" });
+  await waitFor(() => expect(input.selectionStart).toBe(1)); expect(input.selectionEnd).toBe(8);
+  expect(calls("read_review_findings").filter(([, args]) => args.request.offset === 0).length).toBeGreaterThan(firstReads);
+  expect(calls("read_review_diagnostic_location")[0][1].request.runId).toBe(value.run.runId);
+  await user.click(screen.getByRole("button", { name: "Return to original review queue" }));
+  const row = await screen.findByRole("button", { name: value.target.nativeKey }); await waitFor(() => expect(row).toHaveFocus());
+  expect(memory.read("review", "workCursor")).toEqual({ locale: value.target.locale, offset: 50 });
+  expect(screen.getByRole("tab", { name: i18n.t("review.workTab") })).toHaveAttribute("aria-selected", "true"); noWrites();
+});
+
+it("revokes an old model anchor when another semantic run becomes current on the same basis", async () => {
+  const old = installSemantic(), { user } = await openQueue(), input = await locateModel(user);
+  const newer = installSemantic(semanticDiagnosticFixture("utf16", "translation", false, 3950));
+  expect(newer.target.basis).toBe(old.target.basis); expect(newer.run.runId).not.toBe(old.run.runId);
+  input.setSelectionRange(0, 0);
+  await act(async () => { reads.invalidate(["review"]); });
+  await screen.findByText(i18n.t("review.diagnosticNavigation.stale"));
+  expect(input.selectionStart).toBe(0); expect(manual.current()?.text).toBe(old.target.translationText);
+  expect(memory.read("translation", "diagnosticAnchor")).toMatchObject({ diagnostic: { runId: old.run.runId } }); noWrites();
+});
+
+it("keeps model findings and ordinary editor recovery available when the original diagnostic read fails", async () => {
+  installSemantic(); failSemantic = true; const { user } = await openQueue();
+  await screen.findByText(i18n.t("review.diagnosticNavigation.semanticUnavailable"));
+  expect(modelFinding().queryByRole("button", { name: "Locate in translation" })).not.toBeInTheDocument();
+  failSemantic = false; await user.click(screen.getByRole("button", { name: i18n.t("review.diagnosticNavigation.semanticRetry") }));
+  await modelFinding().findByRole("button", { name: "Locate in translation" });
+  failLocation = true; await user.click(modelFinding().getByRole("button", { name: "Locate in translation" }));
+  await screen.findByText(i18n.t("review.diagnosticNavigation.stale")); expect(area).toBe("review");
+  await user.click(screen.getByRole("button", { name: i18n.t("review.openTranslation") }));
+  await screen.findByRole("textbox", { name: "Your draft" }); expect(memory.read("translation", "diagnosticAnchor")).toBeNull(); noWrites();
+});
+
+it("offers ordinary editing for a model finding with no location without requesting one", async () => {
+  const value = installSemantic(); value.diagnostic.location = null; value.view.rows[0].output!.rules[0].findings[0].location = null;
+  const { user } = await openQueue(); await modelFinding().findByText(i18n.t("review.diagnosticNavigation.semanticNoLocation"));
+  expect(modelFinding().queryByRole("button", { name: "Locate in translation" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: i18n.t("review.openTranslation") }));
+  await screen.findByRole("textbox", { name: "Your draft" }); expect(calls("read_review_diagnostic_location")).toHaveLength(0); noWrites();
+});
+
+it("keeps manual B and reason B when the original model location arrives late", async () => {
+  const value = installSemantic(), { user } = await openQueue(), response = deferred<ReviewDiagnosticLocation>(); holdLocation = response.promise;
+  await user.click(await modelFinding().findByRole("button", { name: "Locate in translation" }));
+  await waitFor(() => expect(calls("read_review_diagnostic_location")).toHaveLength(1));
+  act(() => { review.editReason(value.target, "Reason B"); manual.begin({ unitId: fixtureIdentity(3890), locale: "zh-CN", sourceRevisionId: fixtureIdentity(3891), key: "Retained B", sourceText: "Other source" }, null, null, "Manual B"); });
+  await act(async () => { response.resolve(structuredClone(value.location)); });
+  await screen.findByText(i18n.t("review.diagnosticNavigation.stale")); expect(area).toBe("review");
+  expect(manual.current()?.text).toBe("Manual B"); expect(review.current().drafts[`${value.target.locale}:${value.target.unitId}`]).toBe("Reason B"); noWrites();
+});
+
+it("does not apply the original model location after replacing the project session", async () => {
+  const value = installSemantic(), { ui, user } = await openQueue(), response = deferred<ReviewDiagnosticLocation>(); holdLocation = response.promise;
+  await user.click(await modelFinding().findByRole("button", { name: "Locate in translation" }));
+  await waitFor(() => expect(calls("read_review_diagnostic_location")).toHaveLength(1));
+  ui.rerender(<Harness value={{ ...project, sessionToken: "new-semantic-session" }} />);
+  await act(async () => { response.resolve(structuredClone(value.location)); });
+  expect(manual.current()).toBeNull(); expect(screen.queryByRole("textbox", { name: "Your draft" })).not.toBeInTheDocument(); noWrites();
+});
+
+it.each(["model", "attempt", "result"] as const)("rejects a model handoff with a mismatched original %s at the real session navigation owner", async mismatch => {
+  installSemantic(); await openQueue(); const destination = modelDestination(), source = destination.handoff.diagnostic!.source;
+  if (source.purpose !== "ai-semantic") throw new Error("Model source required");
+  if (mismatch === "model") source.origin.model = "Different model";
+  if (mismatch === "attempt") source.origin.attemptId = fixtureIdentity(3999);
+  if (mismatch === "result") source.origin.resultId = fixtureIdentity(3999);
+  await act(async () => { expect(await session.current!.navigate(destination)).toBe(false); });
+  expect(manual.current()).toBeNull(); expect(area).toBe("review"); noWrites();
+});
+
+it("does not use a late original model read after related project facts invalidate navigation", async () => {
+  const value = installSemantic(); await openQueue(); await modelFinding().findByRole("button", { name: "Locate in translation" });
+  const response = deferred<AiSemanticReviewView>(); holdSemantic = response.promise;
+  let moving!: Promise<boolean>; act(() => { moving = session.current!.navigate(modelDestination()); });
+  await waitFor(() => expect(calls("read_review_diagnostic_location")).toHaveLength(1));
+  await act(async () => { reads.invalidate(["review"]); });
+  await act(async () => { response.resolve(structuredClone(value.view)); expect(await moving).toBe(false); });
+  expect(manual.current()).toBeNull(); expect(area).toBe("review"); noWrites();
+});
+
+it("does not select the model range over newer composition input", async () => {
+  const value = installSemantic(), response = deferred<ReviewEditorSnapshot>(); holdEditor = response.promise;
+  const { user } = await openQueue(); await user.click(await modelFinding().findByRole("button", { name: "Locate in translation" }));
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "Your draft" });
+  fireEvent.compositionStart(input); act(() => manual.edit(`${manual.current()!.text} 新`));
+  await act(async () => { response.resolve(structuredClone(value.editor)); }); fireEvent.compositionEnd(input);
+  await screen.findByText(i18n.t("review.diagnosticNavigation.stale")); expect(input).toHaveValue(`${value.target.translationText} 新`); noWrites();
+});
+
+it("retains the exact unknown manual save after a model location instead of saving or rerunning on return", async () => {
+  installSemantic(); const { user } = await openQueue(), input = await locateModel(user); loseSave = true;
+  await user.type(input, " edited"); await user.click(screen.getByRole("button", { name: i18n.t("translation.save") }));
+  await waitFor(() => expect(manual.current()?.pending).not.toBeNull()); await waitFor(() => expect(manual.current()?.saving).toBe(false));
+  const pending = manual.current()!.pending;
+  await user.click(screen.getByRole("button", { name: "Return to original review queue" })); await screen.findByText(i18n.t("review.diagnosticNavigation.returnBlocked"));
+  expect(manual.current()?.pending).toBe(pending); expect(calls("save_translation_revision")).toHaveLength(1);
+  expect(calls("start_ai_semantic_review")).toHaveLength(0); expect(calls("write_review_finding")).toHaveLength(0); expect(calls("write_review_decision")).toHaveLength(0); expect(unexpected).toEqual([]);
+});
 
 it.each(["utf8-byte", "utf16", "grapheme"] as const)("locates the Host-normalized %s diagnostic and returns to the original work window without writes", async encoding => {
   fixture = reviewDiagnosticFixture(encoding); const { user } = await openQueue(), input = await locate(user);

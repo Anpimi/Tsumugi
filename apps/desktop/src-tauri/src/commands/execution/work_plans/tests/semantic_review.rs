@@ -47,7 +47,7 @@ fn registered_semantic_review_records_advisory_evidence_through_original_task_an
             Some(
                 json!({"unitId":item["unitId"],"targetLocale":item["targetLocale"],"rules":[
             {"rule":"meaning","findings":[{"code":"meaning-shift","detail":"Synthetic review concern",
-                "severity":"warning","location":null,"suggestion":"Inspect the meaning"}]},
+                "severity":"warning","location":{"field":"translation","range":{"encoding":"utf8-byte","start":0,"end":9}},"suggestion":"Inspect the meaning"}]},
             {"rule":"style","findings":[]}]}),
             )
         },
@@ -122,6 +122,34 @@ fn registered_semantic_review_records_advisory_evidence_through_original_task_an
     assert_eq!(run["evidence"]["attemptId"], prepared["attemptId"]);
     assert_eq!(run["evidence"]["model"], json!(config.model));
     assert_eq!(run["evidence"]["endpoint"], json!(config.endpoint));
+    let diagnostic = run["diagnostics"][0].clone();
+    let location_request = json!({"unitId":fixture.unit,"locale":"zh-CN","runId":run["runId"],"diagnostic":diagnostic});
+    let before_location = fixture.bytes();
+    let location = fixture
+        .call("read_review_diagnostic_location", location_request.clone())
+        .unwrap();
+    assert_eq!(location["runId"], run["runId"]);
+    assert_eq!(location["basis"], run["basis"]);
+    assert_eq!(
+        location["basisEvidence"]["selectionId"],
+        selection["selection"]["eventId"]
+    );
+    assert_eq!(
+        location["location"],
+        json!({"field":"translation","range":{"encoding":"utf16","start":0,"end":9}})
+    );
+    assert_eq!(
+        fixture.bytes(),
+        before_location,
+        "locating advice must remain read-only"
+    );
+    let mut substituted = location_request.clone();
+    substituted["diagnostic"]["detail"] = json!("Substituted model explanation");
+    assert!(
+        fixture
+            .call("read_review_diagnostic_location", substituted)
+            .is_err()
+    );
     let current = findings(&fixture);
     assert!(current["runId"].is_null(), "AI never supplies a QA run");
     assert_eq!(current["semanticRunId"], run["runId"]);
@@ -165,6 +193,22 @@ fn registered_semantic_review_records_advisory_evidence_through_original_task_an
         count + 1,
         "replay must never dispatch a second task"
     );
+    fixture
+        .call(
+            "save_translation_revision",
+            json!({"actionId":ExecutionId::new(),"unitId":fixture.unit,
+        "locale":"zh-CN","sourceRevisionId":fixture.source_revision,
+        "expectedSelectionId":selection["selection"]["eventId"],"text":"A newer human revision"}),
+        )
+        .unwrap();
+    assert!(
+        fixture
+            .call("read_review_diagnostic_location", location_request)
+            .is_err()
+    );
+    let historical = lookup(&fixture, &prepared["attemptId"]);
+    assert_eq!(historical["view"]["rows"][0]["run"], *run);
+    assert_eq!(historical["view"]["rows"][0]["current"], false);
 }
 
 #[test]

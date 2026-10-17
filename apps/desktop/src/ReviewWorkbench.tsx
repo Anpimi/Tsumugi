@@ -19,8 +19,11 @@ import { useWorkbenchCommands, type ReviewFallbackCommandPayload, type ReviewWai
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { ChangeScope } from "./sessionReads";
 import type { ReviewHandoffPresentation } from "./sessionNavigation";
-import { currentDiagnosticRun, reviewDiagnostics, type ReviewEditorHandoff, type ReviewEditorReturn } from "./reviewDiagnosticNavigation";
-import type { TextReviewDiagnostic } from "./generated/review.responses";
+import { currentDiagnosticRun, diagnosticIntentMatchesTarget, type ReviewDiagnosticIntent, type ReviewEditorHandoff, type ReviewEditorReturn } from "./reviewDiagnosticNavigation";
+import { semanticReviewKey } from "./aiSemanticReviewQueries";
+import { reviewFindingsKey } from "./reviewQueries";
+import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
+import type { ReviewFindingView } from "./reviewCommands";
 
 type Tab = "review" | "work" | "eligibility";
 const MAX_BATCH = 100;
@@ -218,12 +221,19 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
     if (tab === "review" && editorOrigin?.locale === locale && editorOrigin.unitId === unitId) return editorOrigin;
     return { ...session, locale, unitId, tab: tab === "work" ? "work" : "review", summaryScope, pageAfter, workOffset };
   }
-  async function openEditor(target: ReviewTarget, diagnostic?: { runId: string; diagnostic: TextReviewDiagnostic }) {
+  async function openEditor(target: ReviewTarget, diagnostic?: ReviewDiagnosticIntent, findingsOffset = 0) {
     if (!alive.current || reads.retired || disabled || !targetAvailable || owner.inFlight() || owner.current().pending) return false;
     if (diagnostic) {
-      const latest = owner.current().selected, run = target.currentCheck;
-      if (!latest || !sameTargetBasis(target, latest) || !run || run.runId !== diagnostic.runId || !currentDiagnosticRun(target, run)
-        || !run.rules.some(rule => reviewDiagnostics(run, rule, diagnostic.diagnostic.code).some(value => JSON.stringify(value) === JSON.stringify(diagnostic.diagnostic)))) {
+      const latest = owner.current().selected;
+      const semantic = diagnostic.source.purpose === "ai-semantic" ? (() => {
+        const view = reads.client.getQueryState<AiSemanticReviewView | null>(reads.key(semanticReviewKey(diagnostic.source.origin.attemptId)));
+        // Preflight belongs to the clicked page. Navigation acceptance still
+        // rereads the first-page current-run identity before opening the editor.
+        const findings = reads.client.getQueryState<ReviewFindingView>(reads.key(reviewFindingsKey(target.unitId, target.locale, findingsOffset)));
+        const ready = (state: typeof view | typeof findings) => state?.status === "success" && state.fetchStatus === "idle" && !state.error && !state.isInvalidated;
+        return { view: ready(view) ? view?.data : null, findings: ready(findings) ? findings?.data : null };
+      })() : undefined;
+      if (!latest || !sameTargetBasis(target, latest) || !diagnosticIntentMatchesTarget(diagnostic, target, semantic)) {
         setNotice("error"); setReason("diagnostic-stale"); return false;
       }
     }
@@ -751,13 +761,13 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
                     const waiver = checkTarget.currentWaivers.find(value => value.issueId === finding.issueId);
                     const payload = waiverPayload(selected, finding.issueId, waiver?.waiverId ?? null);
                     return <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.detail ? `: ${finding.detail}` : ""}</p><ReviewDiagnosticDetails run={displayedCheck} rule={rule} code={finding.code}
-                      onLocate={currentTarget() && currentDiagnosticRun(displayTarget, displayedCheck) ? diagnostic => { void openEditor(displayTarget, { runId: displayedCheck.runId, diagnostic }); } : undefined} />
+                      onLocate={currentTarget() && currentDiagnosticRun(displayTarget, displayedCheck) ? diagnostic => { void openEditor(displayTarget, { runId: displayedCheck.runId, source: { purpose: "qa" }, diagnostic }); } : undefined} />
                       {waiver ? <><p>{t("review.waived")}</p><button className="text-button" disabled={!waiverAvailability(payload, false).enabled} onClick={() => commandRegistry.dispatch("review.revoke-waiver", commandScope, payload)}>{t("review.revokeWaiver")}</button></> : finding.waivable ? <button className="text-button" disabled={!waiverAvailability(payload, true).enabled} onClick={() => commandRegistry.dispatch("review.grant-waiver", commandScope, payload)}>{t("review.waive")}</button> : null}</div>;
                   })}
                 </div>)}
                 <ReviewFindings project={project} target={displayTarget} active={open && tab === "review" && targetAvailable}
                   available={() => reviewActionAvailability(false)} currentTarget={currentTarget} freshReadProof={freshReadProof}
-                  onOpenTranslation={() => openEditor(displayTarget)} onLocateDiagnostic={(target, runId, diagnostic) => openEditor(target, { runId, diagnostic })} />
+                  onOpenTranslation={() => openEditor(displayTarget)} onLocateDiagnostic={(target, intent, offset) => openEditor(target, intent, offset)} />
                 <details><summary>{t("review.history")}</summary>
                   {historyLoading ? <p role="status">{t("review.historyLoading")}</p> : null}
                   {historyFailure && !historyRead.isFetching ? <div role="alert">{t("review.historyUnavailable")}

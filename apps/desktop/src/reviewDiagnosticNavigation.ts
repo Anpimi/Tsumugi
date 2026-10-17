@@ -1,6 +1,13 @@
 import type { CheckRun, CheckRuleResult, TextReviewDiagnostic } from "./generated/review.responses";
 import type { ReviewTarget, ReviewBasis, ReviewEditorSnapshot, ReviewDiagnosticLocation } from "./reviewCommands";
 import { ruleIdentity } from "./reviewIdentity";
+import { sameAiOrigin, type AdvisoryFinding, type ReviewFindingView } from "./reviewCommands";
+import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
+
+export type SemanticDiagnosticRun = NonNullable<AiSemanticReviewView["rows"][number]["run"]>;
+export type ReviewDiagnosticSource = { purpose: "qa" } | { purpose: "ai-semantic"; origin: NonNullable<AdvisoryFinding["aiOrigin"]> };
+export interface ReviewDiagnosticIntent { runId: string; source: ReviewDiagnosticSource; diagnostic: TextReviewDiagnostic }
+export interface SemanticDiagnosticFacts { view: AiSemanticReviewView | null | undefined; findings: ReviewFindingView | null | undefined }
 
 /** View inputs for returning to the same queue, never a captured write scope. */
 export interface ReviewEditorReturn {
@@ -10,10 +17,11 @@ export interface ReviewEditorReturn {
 }
 export interface ReviewEditorHandoff {
   returnTo: ReviewEditorReturn;
-  diagnostic?: { runId: string; diagnostic: TextReviewDiagnostic; basis: string; basisEvidence: ReviewBasis; translationText: string | null };
+  diagnostic?: ReviewDiagnosticIntent & { basis: string; basisEvidence: ReviewBasis; translationText: string | null };
 }
 export interface ReviewDiagnosticAnchor {
-  projectId: string; sessionToken: string; value: ReviewDiagnosticLocation; sourceText: string; translationText: string | null; editSeq: number;
+  projectId: string; sessionToken: string; value: ReviewDiagnosticLocation; diagnostic: ReviewDiagnosticIntent;
+  sourceText: string; translationText: string | null; editSeq: number;
 }
 export function sameReviewBasis(left: ReviewBasis, right: ReviewBasis) {
   return left.sourceSnapshotId === right.sourceSnapshotId && left.sourceRevisionId === right.sourceRevisionId
@@ -25,11 +33,52 @@ export function diagnosticMatchesTarget(value: ReviewDiagnosticLocation, target:
     && value.runId === target.currentCheck.runId && sameReviewBasis(value.basisEvidence, target.basisEvidence)
     && currentDiagnosticRun(target, target.currentCheck);
 }
-export function diagnosticMatchesEditor(anchor: ReviewDiagnosticAnchor, snapshot: ReviewEditorSnapshot) {
+export function diagnosticMatchesEditor(anchor: ReviewDiagnosticAnchor, snapshot: ReviewEditorSnapshot, semantic?: SemanticDiagnosticFacts) {
   const selection = snapshot.translations.current;
-  return diagnosticMatchesTarget(anchor.value, snapshot.target) && snapshot.target.sourceText === anchor.sourceText
+  return diagnosticIntentMatchesTarget(anchor.diagnostic, snapshot.target, semantic)
+    && diagnosticLocationMatchesTarget(anchor.value, anchor.diagnostic, snapshot.target, semantic) && snapshot.target.sourceText === anchor.sourceText
     && snapshot.target.translationText === anchor.translationText && snapshot.translations.currentText === anchor.translationText
     && (selection?.eventId ?? null) === anchor.value.basisEvidence.selectionId && (selection?.revisionId ?? null) === anchor.value.basisEvidence.revisionId;
+}
+
+/** QA keeps its existing currentCheck guard. AI proves a separate current run and complete original origin. */
+export function currentSemanticDiagnosticRun(target: ReviewTarget, runId: string, origin: NonNullable<AdvisoryFinding["aiOrigin"]>, facts?: SemanticDiagnosticFacts) {
+  const { view, findings } = facts ?? {};
+  if (!view || !findings || findings.unitId !== target.unitId || findings.locale !== target.locale || findings.basis !== target.basis
+    || findings.semanticRunId !== runId || view.detail.attemptId !== origin.attemptId) return null;
+  const row = view.rows.find(row => row.itemId === origin.itemId), run = row?.run;
+  const ledger = view.detail.items.find(item => item.status.itemId === origin.itemId);
+  return row?.current && row.output && run && run.purpose === "ai-semantic" && run.runId === runId
+    && run.unitId === target.unitId && run.locale === target.locale && run.basis === target.basis
+    && run.basisEvidence.sourceSnapshotId === target.sourceSnapshotId && run.basisEvidence.sourceRevisionId === target.sourceRevisionId
+    && run.basisEvidence.selectionId === target.selectionId && run.basisEvidence.revisionId === target.revisionId
+    && sameReviewBasis(run.basisEvidence, target.basisEvidence) && sameAiOrigin(run.evidence, origin)
+    && ledger?.resultId === origin.resultId && row.item.source.unitId === target.unitId && row.item.source.targetLocale === target.locale
+    && row.item.source.sourceText === target.sourceText && row.item.translationText === target.translationText
+    && row.item.source.sourceRevisionId === target.sourceRevisionId && row.item.selectionId === target.selectionId
+    && row.item.translationRevisionId === target.revisionId ? run : null;
+}
+
+export function semanticReviewDiagnostics(run: SemanticDiagnosticRun, rule: CheckRuleResult, code: string) {
+  const identity = ruleIdentity(rule.key);
+  return run.diagnostics.filter(diagnostic => ruleIdentity(diagnostic.key) === identity && diagnostic.code === code && diagnostic.target === run.unitId);
+}
+
+export function diagnosticIntentMatchesTarget(intent: ReviewDiagnosticIntent, target: ReviewTarget, semantic?: SemanticDiagnosticFacts) {
+  if (!intent.diagnostic.location) return false;
+  if (intent.source.purpose === "qa") {
+    const run = target.currentCheck;
+    return !!run && run.runId === intent.runId && currentDiagnosticRun(target, run)
+      && run.rules.some(rule => reviewDiagnostics(run, rule, intent.diagnostic.code).some(value => JSON.stringify(value) === JSON.stringify(intent.diagnostic)));
+  }
+  const run = currentSemanticDiagnosticRun(target, intent.runId, intent.source.origin, semantic);
+  return !!run && run.rules.some(rule => semanticReviewDiagnostics(run, rule, intent.diagnostic.code).some(value => JSON.stringify(value) === JSON.stringify(intent.diagnostic)));
+}
+
+export function diagnosticLocationMatchesTarget(value: ReviewDiagnosticLocation, intent: ReviewDiagnosticIntent, target: ReviewTarget, semantic?: SemanticDiagnosticFacts) {
+  return value.runId === intent.runId && value.unitId === target.unitId && value.locale === target.locale && value.basis === target.basis
+    && sameReviewBasis(value.basisEvidence, target.basisEvidence)
+    && (intent.source.purpose === "qa" ? diagnosticMatchesTarget(value, target) : diagnosticIntentMatchesTarget(intent, target, semantic));
 }
 /** Host owns encoding conversion. DOM selection still requires this exact string and scalar boundaries. */
 export function validDiagnosticSelection(text: string, range: ReviewDiagnosticLocation["location"]["range"]) {

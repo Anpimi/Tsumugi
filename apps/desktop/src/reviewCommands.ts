@@ -39,7 +39,7 @@ export function confirmReviewFindingBasis(receipt: ReviewFindingDecision, expect
     || actual.termRevisionIds.some((id, index) => id !== expected.termRevisionIds[index])) throw invalidFindingReceipt();
 }
 
-function sameAiOrigin(left: AdvisoryFinding["aiOrigin"], right: AdvisoryFinding["aiOrigin"]) {
+export function sameAiOrigin(left: AdvisoryFinding["aiOrigin"], right: AdvisoryFinding["aiOrigin"]) {
   if (left === null || right === null) return left === right;
   return left.endpoint === right.endpoint && left.model === right.model && left.recipe === right.recipe
     && left.attemptId === right.attemptId && left.itemId === right.itemId && left.inputDigest === right.inputDigest

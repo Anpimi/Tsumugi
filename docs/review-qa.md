@@ -97,3 +97,12 @@ a different model or changed prompt does not inherit them. A repair needs a real
 current semantic recheck of the same rule; a saved edit or a completed repair
 task cannot close it. Mechanical QA, human approval and build readiness keep
 their existing independent requirements.
+
+A recorded current semantic finding with an exact location can open that source
+or selected-translation passage in the existing editor, then return to the same
+review or pending-work queue. The location is checked against its complete saved
+diagnostic, original model and execution evidence, current semantic run and
+selected revision. A newer review on the same text still replaces the old run.
+Changed evidence, unavailable reads, missing ranges or newer editor drafts keep
+the original work available for refresh or recovery. Locating a finding is
+read-only and does not record a repair request or approve a translation.

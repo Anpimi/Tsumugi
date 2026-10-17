@@ -41,10 +41,15 @@ export function ReviewCheckerDetails({ view }: { view: ReviewCheckerView }) {
 
 export function ReviewDiagnosticDetails({ run, rule, code, onLocate }: { run: CheckRun; rule: CheckRuleResult; code: string;
   onLocate?: (diagnostic: TextReviewDiagnostic) => void }) {
-  const { t } = useTranslation();
   // SDK diagnostics retain the input's operation unit IDs. The owning Core
   // UUID is separate; join only this exact rule's captured target scope.
   const diagnostics = reviewDiagnostics(run, rule, code);
+  return <ReviewDiagnosticList diagnostics={diagnostics} onLocate={onLocate} />;
+}
+
+export function ReviewDiagnosticList({ diagnostics, onLocate }: { diagnostics: readonly TextReviewDiagnostic[];
+  onLocate?: (diagnostic: TextReviewDiagnostic) => void }) {
+  const { t } = useTranslation();
   return <>{diagnostics.map((diagnostic, index) => <div key={JSON.stringify([ruleIdentity(diagnostic.key), diagnostic.code, diagnostic.target, diagnostic.location, index])}>
     {diagnostic.detail ? <p>{diagnostic.detail}</p> : null}
     {diagnostic.suggestion ? <p>{t("review.advisorySuggestion", { suggestion: diagnostic.suggestion })}</p> : null}

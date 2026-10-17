@@ -1543,6 +1543,10 @@ ai: {
       advisorySuggestion: "Suggested wording: {{suggestion}}",
       diagnosticRange: "{{field}} · {{encoding}} range {{rangeStart}}–{{rangeEnd}}",
       diagnosticNavigation: {
+        semanticLoading: "Reading the original model diagnostics…",
+        semanticUnavailable: "The original model diagnostics could not be read. The finding and your input are kept. Retry this read or open the current entry without a range.",
+        semanticRetry: "Read original model diagnostics again",
+        semanticNoLocation: "No current model range is available for this finding. Open the current entry to inspect or repair it without a range; this does not run a model.",
         locateSource: "Locate in source text", locateTranslation: "Locate in translation",
         historical: "Historical range. Open the current entry and run checks again before locating it.",
         waiting: "Confirming the checked text before selecting the diagnostic range…",

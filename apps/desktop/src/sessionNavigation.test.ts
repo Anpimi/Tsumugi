@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SessionNavigation, type ExitDisposition, type SessionNavigationPorts, type WorkspaceDestination } from "./sessionNavigation";
 import type { WorkspaceArea } from "./WorkbenchFrame";
 import { reviewDiagnosticFixture } from "./testSupport/reviewDiagnosticFixture";
+import { semanticDiagnosticFixture } from "./testSupport/semanticDiagnosticFixture";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
@@ -11,7 +12,7 @@ it("freezes a diagnostic and its queue return inputs through both navigation gua
   const destination: Extract<WorkspaceDestination, { kind: "review-edit" }> = { kind: "review-edit", locale: target.locale,
     target: { unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, handoff: {
       returnTo: { projectId: "project", sessionToken: "session", locale: target.locale, unitId: target.unitId, tab: "work", summaryScope: null, pageAfter: 0, workOffset: 50 },
-      diagnostic: { runId: run.runId, diagnostic, basis: target.basis, basisEvidence: target.basisEvidence, translationText: target.translationText },
+      diagnostic: { runId: run.runId, source: { purpose: "qa" }, diagnostic, basis: target.basis, basisEvidence: target.basisEvidence, translationText: target.translationText },
     } };
   const moving = test.navigation.navigate(destination);
   destination.handoff.returnTo.workOffset = 100; destination.handoff.diagnostic!.diagnostic.location!.range.end = 9;
@@ -19,6 +20,21 @@ it("freezes a diagnostic and its queue return inputs through both navigation gua
   expect(test.ports.accept).toHaveBeenCalledWith(expect.objectContaining({ handoff: expect.objectContaining({
     returnTo: expect.objectContaining({ tab: "work", workOffset: 50 }), diagnostic: expect.objectContaining({ diagnostic: expect.objectContaining({ location: expect.objectContaining({ range: expect.objectContaining({ end: 8 }) }) }) }),
   }) }), expect.any(Function));
+});
+it("freezes the separate model origin and diagnostic without restoring model authority", async () => {
+  const test = setup(), answer = deferred<boolean>(), value = semanticDiagnosticFixture();
+  test.setArea("review"); test.presentation.allowNavigate.mockImplementationOnce(() => answer.promise);
+  const destination: Extract<WorkspaceDestination, { kind: "review-edit" }> = { kind: "review-edit", locale: value.target.locale,
+    target: { unitId: value.target.unitId, sourceRevisionId: value.target.sourceRevisionId, key: value.target.nativeKey, sourceText: value.target.sourceText }, handoff: {
+      returnTo: { projectId: "project", sessionToken: "session", locale: value.target.locale, unitId: value.target.unitId, tab: "work", summaryScope: null, pageAfter: 0, workOffset: 50 },
+      diagnostic: { runId: value.run.runId, source: structuredClone(value.source), diagnostic: structuredClone(value.diagnostic), basis: value.target.basis, basisEvidence: value.target.basisEvidence, translationText: value.target.translationText },
+    } };
+  const moving = test.navigation.navigate(destination), source = destination.handoff.diagnostic!.source;
+  if (source.purpose !== "ai-semantic") throw new Error("Model origin required"); source.origin.model = "Changed after click"; source.origin.resultDigest = "9".repeat(64);
+  answer.resolve(true); expect(await moving).toBe(true);
+  expect(test.ports.accept).toHaveBeenCalledWith(expect.objectContaining({ handoff: expect.objectContaining({ diagnostic: expect.objectContaining({
+    source: { purpose: "ai-semantic", origin: value.run.evidence },
+  }) }) }), expect.any(Function));
 });
 function setup() {
   let live = true, area: WorkspaceArea = "overview";

@@ -1534,6 +1534,10 @@ ai: {
       advisorySuggestion: "建议用语：{{suggestion}}",
       diagnosticRange: "{{field}} · {{encoding}} 区间 {{rangeStart}}–{{rangeEnd}}",
       diagnosticNavigation: {
+        semanticLoading: "正在读取原模型诊断…",
+        semanticUnavailable: "无法读取原模型诊断，发现与当前输入已保留。请重试读取，或不带范围打开当前条目。",
+        semanticRetry: "重新读取原模型诊断",
+        semanticNoLocation: "此发现没有可用的当前模型范围。可不带范围打开当前条目检查或修复，不会运行模型。",
         locateSource: "定位原文范围", locateTranslation: "定位译文范围",
         historical: "这是历史范围。请打开当前条目并重新检查后再定位。",
         waiting: "正在核对本次检查的原文与译文，再选择诊断范围……",

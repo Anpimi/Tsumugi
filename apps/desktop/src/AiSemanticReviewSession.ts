@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import { defaultAiConfig, editedAiConfig, sameAiConfig, type AiConfig } from "./aiCommands";
 import { aiSemanticReviewCommands, type AiSemanticReviewPrepared, type AiSemanticReviewRule, type AiSemanticReviewTarget } from "./aiSemanticReviewCommands";
+import { semanticReviewKey } from "./aiSemanticReviewQueries";
 import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
 import type { ConnectionReadView } from "./connectionCommands";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
@@ -119,7 +120,7 @@ export function useAiSemanticReviewSession(project: ProjectView, target: ReviewT
       const lookup = await aiSemanticReviewCommands.read({ ...session, attemptId: pending.request.attemptId });
       if (!live() || stateRef.current.pending !== pending) return;
       if (lookup.view) {
-        reads.client.setQueryData(reads.key(["ai-semantic-review", lookup.attemptId]), lookup.view);
+        reads.client.setQueryData(reads.key(semanticReviewKey(lookup.attemptId)), lookup.view);
         update(value => ({ ...value, pending: null, prepared: null, attemptId: lookup.attemptId,
           attempts: value.attempts.includes(lookup.attemptId) ? value.attempts : [...value.attempts, lookup.attemptId], notice: "started" }));
       } else update(value => ({ ...value, pending: { ...pending, absent: true }, notice: "absent" }));
