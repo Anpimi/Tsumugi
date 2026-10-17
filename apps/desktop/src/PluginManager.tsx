@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useApplicationQueryClient } from "./ApplicationReadProvider";
+import { useQuery, type QueryClient, type QueryKey } from "@tanstack/react-query";
+import { pluginInventoryReadKey as inventoryKey, pluginRepositoriesReadKey as repositoriesKey, useApplicationQueryClient, usePluginReadReservation } from "./ApplicationReadProvider";
 import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
@@ -16,8 +16,21 @@ import type { PluginRepositorySelectionView, PluginRepositoryVerifiedView, Plugi
 import type { TranslationKey } from "./i18n/types";
 import { validateRequestPackInstall, validateRequestRepositoryInstall } from "./generated/plugins.validators";
 
-const inventoryKey = ["application", "plugins", "inventory"] as const;
-const repositoriesKey = ["application", "plugins", "repositories"] as const;
+function usePluginReadVisibility(client: QueryClient, queryKey: QueryKey, visible: boolean) {
+  useEffect(() => {
+    const hide = () => {
+      const filter = { queryKey, exact: true }, cache = client.getQueryCache(), query = cache.find(filter);
+      if (!query || query.isActive()) return;
+      void client.cancelQueries(filter).then(() => {
+        // Reopening or another observer may have taken over while cancellation
+        // finished. A retired visibility effect cannot invalidate that read.
+        if (cache.find(filter) === query && !query.isActive()) void client.invalidateQueries({ ...filter, refetchType: "none" });
+      });
+    };
+    if (!visible) hide();
+    return visible ? hide : undefined;
+  }, [client, queryKey, visible]);
+}
 type CleanupIntent = { kind: "approval-removal"; request: PluginApprovalRemovalRequest } | { kind: "uninstall"; request: PluginUninstallRequest };
 type RepositoryIntent = { kind: "repository-refresh"; request: PluginRepositoryRefreshRequest; selection: PluginRepositorySelectionView }
   | { kind: "repository-resume"; request: PluginRepositoryResumeRequest }
@@ -70,6 +83,7 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   useImperativeHandle(ref, () => ({ open: () => setOpen(true) }));
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
+  usePluginReadReservation(running);
   const mounted = useRef(true);
   const [candidate, setCandidate] = useState<PluginCandidateView | null>(null);
   const [consent, setConsent] = useState(false);
@@ -114,6 +128,8 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
     if (signal.aborted) throw new Error("Repository read cancelled");
     return result;
   } }, client);
+  usePluginReadVisibility(client, inventoryKey, open);
+  usePluginReadVisibility(client, repositoriesKey, open && repositoriesVisible);
   useEffect(() => { onBusyChange(busy || originalRequired); }, [busy, originalRequired, onBusyChange]);
   const cleanupIntent = cleanupSelection?.intent;
   useEffect(() => {
@@ -146,7 +162,7 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   async function submit(next: Intent) {
     await operation(async () => {
       setIntent(next);
-      await Promise.all([client.cancelQueries({ queryKey: inventoryKey }), client.cancelQueries({ queryKey: repositoriesKey })]);
+      await Promise.all([client.cancelQueries({ queryKey: inventoryKey, exact: true }), client.cancelQueries({ queryKey: repositoriesKey, exact: true })]);
       try {
         if (next.kind === "repository-refresh" || next.kind === "repository-resume") {
           const result = next.kind === "repository-refresh" ? await pluginCommands.refreshRepository(next.request, next.selection) : await pluginCommands.resumeRepository(next.request);

@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+Extensions current reads now use the existing Application query owner for
+visibility and focus cancellation while respecting the original synchronous
+operation reservation. This changes no IPC, schema 52, SDK/Process3, WorkPlan3,
+dependency or package metadata. It remains in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with synchronized bilingual Unreleased
+entries and no additional version bump.
+
 On-demand inspection of captured source blocks adds descriptors to the existing
 read-only source-context page and an experimental Desktop detail command. The
 original source result and mappings remain authoritative; fact selection and AI

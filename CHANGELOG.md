@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Recheck installed extensions and configured repositories when reopening
+  Extensions or returning to the window. Closing the panel cancels its old
+  read wait; late results cannot replace the new check or a confirmed change.
+  In-progress changes and original-action recovery retain their existing guards.
+
 - Inspect additional captured source records, including original cue settings,
   from the translation editor's references. Records load individually on request
   and retain their exact stored text and current source identity.

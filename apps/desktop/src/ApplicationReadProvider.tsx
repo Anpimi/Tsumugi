@@ -1,10 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { QueryClient, matchQuery } from "@tanstack/react-query";
 import { connectionCommands, sameConnection, sameConnectionReference, type ConnectionReadView } from "./connectionCommands";
 import type { AiConfig } from "./aiCommands";
 
-const ApplicationReads = createContext<QueryClient | null>(null);
+const ApplicationReads = createContext<{ client: QueryClient; pluginReadReservations: Set<() => boolean> } | null>(null);
 export const connectionReadKey = ["application", "connections", "current"] as const;
+export const pluginInventoryReadKey = ["application", "plugins", "inventory"] as const;
+export const pluginRepositoriesReadKey = ["application", "plugins", "repositories"] as const;
 export function connectionReadOptions() {
   return { queryKey: connectionReadKey, staleTime: 0, queryFn: async ({ signal }: { signal: AbortSignal }) => {
     const view = await connectionCommands.read();
@@ -14,31 +16,47 @@ export function connectionReadOptions() {
 }
 /** Application facts outlive a settings panel and individual project sessions. */
 export function ApplicationReadProvider({ children }: { children: ReactNode }) {
-  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: {
+  const [owner] = useState(() => ({ client: new QueryClient({ defaultOptions: { queries: {
     networkMode: "always", retry: false, staleTime: 0, gcTime: 60_000,
     refetchOnWindowFocus: false, refetchOnReconnect: false,
-  } } }));
+  } } }), pluginReadReservations: new Set<() => boolean>() }));
+  const { client, pluginReadReservations } = owner;
   useEffect(() => {
     let alive = true;
-    const filter = { queryKey: connectionReadKey, exact: true };
+    const pluginReadReserved = () => [...pluginReadReservations].some(reserved => reserved());
     const focus = () => {
-      // Invalidate immediately, then cancel even a first read with no data.
-      // Query otherwise reuses that pending promise during refetch, allowing a
-      // response captured before this focus check to clear the invalidation.
-      void client.invalidateQueries({ ...filter, refetchType: "none" });
-      void client.cancelQueries(filter, { revert: false }).then(() => {
-        if (alive) return client.refetchQueries({ ...filter, type: "active" });
-      });
+      for (const queryKey of [connectionReadKey, pluginInventoryReadKey, pluginRepositoriesReadKey]) {
+        const pluginRead = queryKey !== connectionReadKey;
+        if (pluginRead && pluginReadReserved()) continue;
+        const filter = { queryKey, exact: true };
+        // Cancel even a first read with no data so its pre-focus response
+        // cannot confirm the facts requested by this focus check.
+        void client.invalidateQueries({ ...filter, refetchType: "none" });
+        void client.cancelQueries(filter, { revert: false }).then(() => {
+          // A write may reserve the owner before cancellation finishes.
+          if (alive && (!pluginRead || !pluginReadReserved())) return client.refetchQueries({ ...filter, type: "active" });
+        });
+      }
     };
     window.addEventListener("focus", focus);
     return () => { alive = false; window.removeEventListener("focus", focus); client.clear(); };
-  }, [client]);
-  return <ApplicationReads.Provider value={client}>{children}</ApplicationReads.Provider>;
+  }, [client, pluginReadReservations]);
+  return <ApplicationReads.Provider value={owner}>{children}</ApplicationReads.Provider>;
 }
 export function useApplicationQueryClient() {
-  const client = useContext(ApplicationReads);
-  if (!client) throw new Error("ApplicationReadProvider is required");
-  return client;
+  const owner = useContext(ApplicationReads);
+  if (!owner) throw new Error("ApplicationReadProvider is required");
+  return owner.client;
+}
+/** Focus consults the original Extensions reservation, including before busy renders. */
+export function usePluginReadReservation(running: RefObject<boolean>) {
+  const owner = useContext(ApplicationReads);
+  if (!owner) throw new Error("ApplicationReadProvider is required");
+  useEffect(() => {
+    const reserved = () => running.current;
+    owner.pluginReadReservations.add(reserved);
+    return () => { owner.pluginReadReservations.delete(reserved); };
+  }, [owner, running]);
 }
 export function currentConnections(client: QueryClient): ConnectionReadView | undefined {
   const value = client.getQueryState<ConnectionReadView>(connectionReadKey);
