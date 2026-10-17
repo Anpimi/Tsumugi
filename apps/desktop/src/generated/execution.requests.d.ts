@@ -20,6 +20,7 @@ export interface Requests {
   applicationShutdown: ApplicationShutdownRequest;
   attempt: AttemptRequest;
   cancel: CancelRequest;
+  cancellationAction: CancelRequest;
   continuation: ContinuationRequest;
   continuationList: ContinuationListRequest;
   continuationRead: ContinuationReadRequest;

@@ -116,10 +116,10 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
     const allowed = gate(true); if (!allowed.enabled) return allowed;
     return payload && task && same(payload, cancellation()) && tasks.canCancel(payload) ? { enabled: true } : no;
   }
-  function retryAvailability(payload?: ExecutionCancellationRetryCommandPayload): CommandAvailability {
+  function retryAvailability(payload?: ExecutionCancellationRetryCommandPayload,retry=true): CommandAvailability {
     const allowed = gate(true); if (!allowed.enabled) return allowed;
     const value = payload && tasks.current(payload.taskId);
-    return payload && value?.phase === "unknown" && value.target.origin === "release" && value.target.attemptId === payload.attemptId
+    return payload && value?.phase === "unknown" && (!retry || value.retryAllowed) && value.target.origin === "release" && value.target.attemptId === payload.attemptId
       && value.request.requestId === payload.requestId && task?.taskId === payload.taskId && task.attemptId === payload.attemptId ? { enabled: true } : no;
   }
   useLayoutEffect(() => {
@@ -141,6 +141,8 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
         availability: cancelAvailability, handler: payload => { void tasks.cancel(payload); } }),
       registry.register({ ...meta, id: "release.retry-workflow-cancellation", nameKey: "execution.retryCancellation", risk: "retries-execution-action", payloadKind: "execution-cancellation-retry",
         availability: retryAvailability, handler: payload => { void tasks.retry(payload.taskId); } }),
+      registry.register({ ...meta, id: "release.check-workflow-cancellation", nameKey: "execution.checkCancellation", risk: "reads-execution", payloadKind: "execution-cancellation-retry",
+        availability: payload => retryAvailability(payload,false), handler: payload => { void tasks.checkCancellation(payload.taskId); } }),
     ];
     return () => remove.forEach(dispose => dispose());
   });
@@ -190,7 +192,8 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
       <p>{t("releaseWorkflow.stopHelp")}</p>
       {task ? <section aria-label={t("releaseWorkflow.currentTask")}><p>{t("releaseWorkflow.currentTask")} · {view?.steps.find(item => item.step.attemptId === task.attemptId)?.step.locale}</p><details><summary>{t("execution.diagnostic")}</summary><code>{task.taskId}</code></details><button disabled={!cancelAvailability(cancellation()).enabled} onClick={() => { const payload = cancellation(); if (payload) registry.dispatch("release.cancel-workflow-task", scope, payload); }}>{t("execution.cancel")}</button>
         <TaskCancellationFeedback origin="release" taskId={task.taskId} visible={open} disabled={owner.busy} retryCommand={{ available: intent => retryAvailability({ ...intent, kind: "execution-cancellation-retry" }).enabled,
-          dispatch: intent => { registry.dispatch("release.retry-workflow-cancellation", scope, { ...intent, kind: "execution-cancellation-retry" }); } }}/></section> : null}
+          dispatch: intent => { registry.dispatch("release.retry-workflow-cancellation", scope, { ...intent, kind: "execution-cancellation-retry" }); } }} checkCommand={{available:intent=>retryAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,
+            dispatch:intent=>{registry.dispatch("release.check-workflow-cancellation",scope,{...intent,kind:"execution-cancellation-retry"});}}}/></section> : null}
       {capture.safety?.admissionClosed && !capture.safety.callbacksDrained ? <p role="status">{t("releaseWorkflow.draining")}</p> : null}
       <button className="secondary-button" disabled={!controlAvailability(controlPayload()).enabled} onClick={() => dispatchControl("release.check-check-workflow")}>{t("releaseWorkflow.refresh")}</button>
       <button className="text-button" disabled={!controlAvailability(controlPayload(), "close").enabled} onClick={() => dispatchControl("release.close-check-workflow")}>{t("releaseWorkflow.close")}</button>

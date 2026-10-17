@@ -76,6 +76,7 @@ beforeEach(async () => {
       case "read_project": return project;
       case "cancel_plugin_build_preparation": return false;
       case "cancel_execution_task": if (build) { build.items.forEach(item => { item.status.cancellationRequested = true; }); } return "1";
+      case "read_execution_cancellation_action": return null;
       default: throw new Error(command);
     }
   });
@@ -543,8 +544,11 @@ it("ignores an environment response from the previous project session", async ()
 it("cancels a queued task with the original cancellation request after a lost response", async () => {
   const { user } = await ready();
   const original = invoke.getMockImplementation()!;
-  let cancellations = 0;
+  let cancellations = 0,lookups = 0;
   invoke.mockImplementation(async (command, args) => {
+    if(command==="read_execution_cancellation_action"){
+      if(++lookups===1)throw new Error("Automatic check unavailable");return null;
+    }
     const value = await original(command, args);
     if (command === "start_plugin_build") {
       build!.items.forEach(item => { item.status.execution = "queued"; item.resultId = null; });
@@ -560,6 +564,9 @@ it("cancels a queued task with the original cancellation request after a lost re
   await start(user);
   await user.click(await screen.findByRole("button", { name: i18n.t("execution.cancel") }));
   await screen.findByText(i18n.t("execution.cancelUnknown"));
+  expect(screen.queryByRole("button",{name:i18n.t("execution.retryCancellation")})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:i18n.t("execution.checkCancellation")}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("execution.retryCancellation")})).toBeEnabled());
   await user.click(screen.getByRole("button", { name: i18n.t("execution.retryCancellation") }));
   await screen.findByText(i18n.t("releasePlugin.cancelled"));
   const calls = invoke.mock.calls.filter(([command]) => command === "cancel_execution_task");

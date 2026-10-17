@@ -9,6 +9,7 @@ export declare function validateRequestApplicationInstanceStop(value: unknown): 
 export declare function validateRequestApplicationShutdown(value: unknown): value is Requests["applicationShutdown"];
 export declare function validateRequestAttempt(value: unknown): value is Requests["attempt"];
 export declare function validateRequestCancel(value: unknown): value is Requests["cancel"];
+export declare function validateRequestCancellationAction(value: unknown): value is Requests["cancellationAction"];
 export declare function validateRequestContinuation(value: unknown): value is Requests["continuation"];
 export declare function validateRequestContinuationList(value: unknown): value is Requests["continuationList"];
 export declare function validateRequestContinuationRead(value: unknown): value is Requests["continuationRead"];
@@ -31,6 +32,7 @@ export declare function validateResponseApplicationShutdown(value: unknown): val
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
 export declare function validateResponseAttempts(value: unknown): value is Responses["attempts"];
 export declare function validateResponseCancellation(value: unknown): value is Responses["cancellation"];
+export declare function validateResponseCancellationAction(value: unknown): value is Responses["cancellationAction"];
 export declare function validateResponseContinuation(value: unknown): value is Responses["continuation"];
 export declare function validateResponseContinuationReceipt(value: unknown): value is Responses["continuationReceipt"];
 export declare function validateResponseContinuations(value: unknown): value is Responses["continuations"];

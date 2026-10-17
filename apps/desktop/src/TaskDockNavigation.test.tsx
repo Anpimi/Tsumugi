@@ -97,6 +97,7 @@ beforeEach(async () => {
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, payload?: { request: Record<string, unknown> }) => {
     if (command === "read_context_strategy_default") return null;
+    if (command === "read_execution_cancellation_action") return null;
     const request = payload?.request ?? {};
     const selected = [first, second].find(value => value.attemptId === request.attemptId || value.taskId === request.taskId);
     if (command === "read_project_changes") return { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
@@ -168,6 +169,20 @@ it("keeps an unknown cancellation in its real session owner when Dock navigation
   await overview(session); await refuseDockRetargeting();
   expect(calls("cancel_execution_task")).toHaveLength(1);
   expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it("routes blocked project exit to the exact cancellation while its automatic result check is still pending",async()=>{
+  const session=await openFirst(),original=invoke.getMockImplementation()!;let finish!:(value:unknown)=>void;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_execution_cancellation_action"?new Promise(resolve=>{finish=resolve;}):original(command,args));
+  await userEvent.click(taskPanel().getByRole("button",{name:"Cancel remaining work"}));
+  const dialog=screen.getByRole("dialog",{name:"Cancel remaining work"});await userEvent.click(within(dialog).getByRole("button",{name:"Cancel remaining work"}));
+  await within(dialog).findByText("Checking the saved cancellation result…");
+  await overview(session);
+  act(()=>{memory.write("tasks","taskId",second.taskId);memory.write("tasks","attemptId",second.attemptId);});
+  await act(async()=>{expect(await session.current!.prepareExit()).toBeNull();});
+  expect(memory.read("tasks","taskId")).toBe(first.taskId);expect(memory.read("tasks","attemptId")).toBe(first.attemptId);
+  expect(currentArea).toBe("tasks");expect(await screen.findByText("Checking the saved cancellation result…")).toBeInTheDocument();
+  await act(async()=>{finish(null);});expect(calls("cancel_execution_task")).toHaveLength(1);expect(calls("read_execution_cancellation_action")).toHaveLength(1);
 });
 
 it("preserves the actual confirming task decision across workspaces and refuses Dock retargeting", async () => {

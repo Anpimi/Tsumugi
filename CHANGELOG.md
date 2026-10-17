@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check an uncertain cancellation request or Task continuation against its
+  original saved record before offering a retry. Checking sends no replacement
+  cancellation or continuation. A recorded cancellation does not confirm that
+  workers have stopped.
+
 - Confirm uncertain Task, AI, comparison-candidate and translation-import adoption
   from the complete original saved action and receipt. Result checks no longer
   prepare adoption again; newer input and partial import counts are retained.

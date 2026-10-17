@@ -212,6 +212,7 @@ export interface Responses {
   attempt: AttemptDetail;
   attempts: AttemptSummary[];
   cancellation: Revision;
+  cancellationAction: CancellationReceipt | null;
   continuation: ContinuationReceipt;
   continuationReceipt: ContinuationReceipt | null;
   continuations: ContinuationPage;
@@ -341,6 +342,15 @@ export interface RecoveryUnit {
 export interface AttemptSummary {
   attemptId: ExecutionId;
   sequence: Revision;
+}
+/**
+ * The durable original cancellation request, independently of worker shutdown.
+ */
+export interface CancellationReceipt {
+  projectId: ExecutionId;
+  requestId: ExecutionId;
+  revision: Revision;
+  taskId: ExecutionId;
 }
 /**
  * Complete immutable evidence associating the original intent with one attempt.

@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/executionCommands.contract.json";
 import sdkResult from "../../../crates/plugin-sdk/tests/fixtures/invocation.result.json";
-import { executionCommands, confirmExecutionAction, confirmExecutionReceipt, type ContinuationRequest, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
+import { executionCommands, confirmCancellationReceipt, confirmExecutionAction, confirmExecutionReceipt, type ContinuationRequest, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
 import * as validators from "./generated/execution.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 const invoke = vi.hoisted(() => vi.fn());
@@ -11,6 +11,19 @@ const list: ListRequest = fixture.list;
 const prepare: PrepareRequest = fixture.prepare;
 const receipt: Receipt = fixture.receipt;
 beforeEach(() => invoke.mockReset());
+it("reads the exact original cancellation with a positive decimal revision and no cancellation replay",async()=>{
+  const request=fixture.cancel,receipt={projectId:request.projectId,taskId:request.taskId,requestId:request.requestId,revision:"9007199254740993"};
+  expect(validators.validateRequestCancellationAction(request)).toBe(true);
+  invoke.mockResolvedValueOnce(receipt).mockResolvedValueOnce(null);
+  expect(await executionCommands.cancellationAction(request)).toEqual(receipt);expect(await executionCommands.cancellationAction(request)).toBeNull();
+  expect(invoke.mock.calls).toEqual(Array(2).fill(["read_execution_cancellation_action",{request}]));
+  for(const value of [undefined,{...receipt,projectId:fixture.prepare.unitId},{...receipt,taskId:fixture.prepare.unitId},
+    {...receipt,requestId:fixture.prepare.unitId},{...receipt,revision:"0"},{...receipt,revision:9007199254740992},{...receipt,extra:true}]){
+    invoke.mockResolvedValueOnce(value);expect(hasUnknownOutcome(await executionCommands.cancellationAction(request).catch(error=>error))).toBe(true);
+    expect(()=>confirmCancellationReceipt(request,value)).toThrow();
+  }
+  expect(()=>confirmCancellationReceipt(request,null)).toThrow();expect(invoke.mock.calls.every(([name])=>name==="read_execution_cancellation_action")).toBe(true);
+});
 it("reads complete original adoption records with required nullable receipts without a write", async () => {
   const action = {...fixture.action,parameters:null};
   for (const result of [null,{action,receipt:null},{action,receipt}]) {

@@ -42,6 +42,7 @@ beforeEach(async () => {
       return { action: sourceActionFixture(args.request.adoption, args.request.unitId), receipt: sourceReceiptFixture(args.request.adoption, args.request.unitId) };
     }
     if (command === "cancel_source_capture") return null;
+    if (command === "read_execution_cancellation_action") return null;
     if (command === "adopt_execution" || command === "read_execution_receipt") return sourceReceiptFixture(prepared!);
     if (command === "read_source_content") return { ...preview, snapshotId: fixtureIdentity(100), scope: { revision: "2", currentSnapshot: fixtureIdentity(100) },
       rows: preview.rows.map(row => ({ ...row, occurrenceId: fixtureIdentity(151), unitId: fixtureIdentity(152), sourceRevisionId: fixtureIdentity(153) })),
@@ -249,7 +250,7 @@ it("discovers multiple enabled source packages without competing for the install
 it("dispatches captured cancellation after Source hides during identity and recovers it even when current task reads fail", async () => {
   const user = userEvent.setup(), ref = createRef<SourceHandle>();
   const original = invoke.getMockImplementation()!;
-  let cancellations = 0, readsFail = false, failedTaskReads = 0, identify!: (value: unknown) => void;
+  let cancellations = 0, cancellationReads = 0, readsFail = false, failedTaskReads = 0, identify!: (value: unknown) => void;
   invoke.mockImplementation(async (command: string, payload: { request?: Record<string, unknown> }) => {
     if (command === "read_execution_attempt") {
       if (readsFail) { failedTaskReads++; throw new Error("Task read unavailable"); }
@@ -259,6 +260,7 @@ it("dispatches captured cancellation after Source hides during identity and reco
     }
     if (command === "create_execution_identity") return new Promise(resolve => { identify = resolve; });
     if (command === "cancel_execution_task") { if (++cancellations === 1) throw new Error("Disconnected"); return "6"; }
+    if (command === "read_execution_cancellation_action") {if(++cancellationReads===1)throw new Error("Automatic check unavailable");return null;}
     return original(command, payload);
   });
   const view = render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
@@ -271,12 +273,14 @@ it("dispatches captured cancellation after Source hides during identity and reco
   await act(async () => { identify(fixtureIdentity(204)); });
   expect(invoke.mock.calls.filter(([name]) => name === "cancel_execution_task")).toHaveLength(1);
   view.rerender(<SourceWorkbench ref={ref} project={project} disabled={false} />);
-  await screen.findByRole("button", { name: "Retry the original cancellation" });
+  await screen.findByRole("button", { name: i18n.t("execution.checkCancellation") });
+  expect(screen.queryByRole("button",{name:i18n.t("execution.retryCancellation")})).not.toBeInTheDocument();
   readsFail = true;
   view.rerender(null, project);
   view.rerender(<SourceWorkbench ref={ref} project={project} disabled={false} />);
   await refreshWorkbenchReads(["execution"]);
   await waitFor(() => expect(failedTaskReads).toBeGreaterThan(0));
+  await user.click(screen.getByRole("button",{name:i18n.t("execution.checkCancellation")}));
   await user.click(await screen.findByRole("button", { name: "Retry the original cancellation" }));
   await screen.findByText(/Cancellation request recorded/);
   const requests = invoke.mock.calls.filter(([name]) => name === "cancel_execution_task").map(([, payload]) => payload.request);

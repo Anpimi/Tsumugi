@@ -209,10 +209,10 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     return payload && payload.origin === "resources" && payload.taskId === taskId && payload.attemptId === attemptId
       && session.tasks.canCancel(payload, cancellationProof) ? { enabled: true } : { enabled: false, reason: "unavailable" };
   }
-  function retryCancelAvailability(payload?: ExecutionCancellationRetryCommandPayload): CommandAvailability {
+  function retryCancelAvailability(payload?: ExecutionCancellationRetryCommandPayload,retry=true): CommandAvailability {
     const base = baseAvailability(); if (!base.enabled) return base;
     const value = payload && session.tasks.current(payload.taskId);
-    return value?.phase === "unknown" && payload?.origin === "resources" && value.target.origin === payload.origin
+    return value?.phase === "unknown" && (!retry || value.retryAllowed) && payload?.origin === "resources" && value.target.origin === payload.origin
       && value.target.attemptId === payload.attemptId && value.request.requestId === payload.requestId
       ? { enabled: true } : { enabled: false, reason: "unavailable" };
   }
@@ -233,6 +233,8 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
         availability: cancelAvailability, handler: payload => { void session.tasks.cancel(payload, cancellationProof); } }),
       registry.register({ ...metadata, id: "resource.retry-tool-cancellation", payloadKind: "execution-cancellation-retry", nameKey: "execution.retryCancellation", risk: "retries-execution-action",
         availability: retryCancelAvailability, handler: payload => { void session.tasks.retry(payload.taskId); } }),
+      registry.register({ ...metadata, id: "resource.check-tool-cancellation", payloadKind: "execution-cancellation-retry", nameKey: "execution.checkCancellation", risk: "reads-execution",
+        availability: payload => retryCancelAvailability(payload,false), handler: payload => { void session.tasks.checkCancellation(payload.taskId); } }),
     ];
     return () => removals.forEach(remove => remove());
   });
@@ -246,7 +248,8 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
   return <>
     <section hidden={!open} aria-label={t("toolQuery.title")} aria-busy={busy || inventory.isFetching || environment.isFetching}>
       <TaskCancellationFeedback origin="resources" taskId={taskId} disabled={disabled} visible={open} retryCommand={{ available: intent => retryCancelAvailability({ ...intent, kind: "execution-cancellation-retry" }).enabled,
-        dispatch: intent => { registry.dispatch("resource.retry-tool-cancellation", commandScope, { ...intent, kind: "execution-cancellation-retry" }); } }} />
+        dispatch: intent => { registry.dispatch("resource.retry-tool-cancellation", commandScope, { ...intent, kind: "execution-cancellation-retry" }); } }} checkCommand={{available:intent=>retryCancelAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,
+          dispatch:intent=>{registry.dispatch("resource.check-tool-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
       <h3>{t("toolQuery.title")}</h3><p>{t("toolQuery.help")}</p>
       {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("toolQuery.failed")}</p><CommandFailureDetails failure={failure} /></div> : null}
       {detail.error ? <div role="alert"><p>{t("toolQuery.recordReadFailed")}</p><CommandFailureDetails failure={commandFailure(detail.error)} />

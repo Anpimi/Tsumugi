@@ -108,7 +108,7 @@ async function exportReady() {
 it("registers thirty-one scoped Release commands and routes readiness and build through the same buttons and captured mapping",async()=>{
   const {user}=await prepared(),dispatch=vi.spyOn(registry,"dispatch"),payload=preparation();
   expect(registry.list(scope).filter(value=>value.category==="release").map(value=>value.id).sort()).toEqual([
-    "release.assess-build","release.cancel-task","release.cancel-workflow-task","release.check-build","release.check-check-workflow","release.check-export","release.choose-destination","release.choose-release","release.close-check-workflow",
+    "release.assess-build","release.cancel-task","release.cancel-workflow-task","release.check-build","release.check-cancellation","release.check-check-workflow","release.check-export","release.check-workflow-cancellation","release.choose-destination","release.choose-release","release.close-check-workflow",
     "release.confirm-builder","release.confirm-checker","release.confirm-overwrite","release.confirm-workflow-checker","release.discard-build","release.export","release.finish-artifact-check",
     "release.open-blocker","release.prepare-artifact-check","release.prepare-build","release.prepare-check-workflow","release.preview-destination","release.reauthorize-destination",
     "release.reconcile-delivery","release.record-build","release.retry-build","release.retry-cancellation","release.retry-workflow-cancellation","release.run-check-workflow","release.start-artifact-check","release.start-build","release.stop-check-workflow",

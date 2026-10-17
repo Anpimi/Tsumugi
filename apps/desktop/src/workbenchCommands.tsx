@@ -259,6 +259,7 @@ interface WorkbenchCommandPayloads {
   "resource.retry-tool": ResourceToolPendingCommandPayload;
   "resource.cancel-tool": ExecutionCancellationCommandPayload;
   "resource.retry-tool-cancellation": ExecutionCancellationRetryCommandPayload;
+  "resource.check-tool-cancellation": ExecutionCancellationRetryCommandPayload;
   "translation.prepare-import-check": TranslationPluginCommandPayload;
   "translation.start-import-check": TranslationPluginCommandPayload;
   "translation.finish-import-check": TranslationPluginCommandPayload;
@@ -301,6 +302,7 @@ interface WorkbenchCommandPayloads {
   "release.close-check-workflow": ReleaseWorkflowCommandPayload;
   "release.cancel-workflow-task": ExecutionCancellationCommandPayload;
   "release.retry-workflow-cancellation": ExecutionCancellationRetryCommandPayload;
+  "release.check-workflow-cancellation": ExecutionCancellationRetryCommandPayload;
 
   "project.metadata.reconcile": ProjectMetadataReconcileCommandPayload;
   "translation.choose-import-folder": TranslationImportSetupCommandPayload;
@@ -328,6 +330,7 @@ interface WorkbenchCommandPayloads {
   "release.prepare-build": ReleasePreparationCommandPayload;
   "release.cancel-task": ExecutionCancellationCommandPayload;
   "release.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "release.check-cancellation": ExecutionCancellationRetryCommandPayload;
   "release.check-build": ReleaseBuildPendingCommandPayload;
   "release.retry-build": ReleaseBuildPendingCommandPayload;
   "release.choose-release": ReleaseRecordCommandPayload;
@@ -348,6 +351,7 @@ interface WorkbenchCommandPayloads {
   "tasks.confirm-cancellation": ExecutionCancellationCommandPayload;
   "tasks.cancel-task": ExecutionCancellationCommandPayload;
   "tasks.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "tasks.check-cancellation": ExecutionCancellationRetryCommandPayload;
   "tasks.reconcile-adoption": TaskPendingCommandPayload;
   "tasks.retry-adoption": TaskPendingCommandPayload;
   "tasks.reconcile-continuation": TaskPendingCommandPayload;
@@ -372,6 +376,7 @@ interface WorkbenchCommandPayloads {
   "arena.retry-pending": ArenaPendingCommandPayload;
   "arena.cancel-task": ExecutionCancellationCommandPayload;
   "arena.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "arena.check-cancellation": ExecutionCancellationRetryCommandPayload;
   "arena.open-translation": ArenaTranslationCommandPayload;
   "ai.preview": AiPreparationCommandPayload;
   "ai.start": AiStartCommandPayload;
@@ -382,6 +387,7 @@ interface WorkbenchCommandPayloads {
   "ai.retry-adoption": AiAdoptionPendingCommandPayload;
   "ai.cancel-task": ExecutionCancellationCommandPayload;
   "ai.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "ai.check-cancellation": ExecutionCancellationRetryCommandPayload;
   "ai.open-translation": AiTranslationCommandPayload;
   "ai.open-review": AiTranslationCommandPayload;
   "ai.rewrite-translation": AiTranslationCommandPayload;
@@ -559,7 +565,8 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"ai-start-pending", "ai.reconcile-start" | "ai.retry-start">
   | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
   | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task" | "release.cancel-task" | "release.cancel-workflow-task" | "resource.cancel-tool">
-  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "release.retry-cancellation" | "release.retry-workflow-cancellation" | "resource.retry-tool-cancellation">
+  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "release.retry-cancellation" | "release.retry-workflow-cancellation" | "resource.retry-tool-cancellation"
+    | "ai.check-cancellation" | "arena.check-cancellation" | "tasks.check-cancellation" | "release.check-cancellation" | "release.check-workflow-cancellation" | "resource.check-tool-cancellation">
   | ResourceCommand<"ai-saved-candidate", "ai.inspect-candidate" | "ai.open-comparison">
   | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation" | "ai.open-review">
   | ResourceCommand<"resource-tool-preparation", "resource.prepare-tool">

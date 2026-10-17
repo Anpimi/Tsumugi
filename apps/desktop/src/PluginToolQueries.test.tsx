@@ -86,6 +86,7 @@ beforeEach(async () => {
       case "read_execution_attempt": return structuredClone(detail);
       case "read_execution_output": return structuredClone(outputs.get(String(request.resultId)) ?? null);
       case "discard_plugin_tool_preflight": prepared = null; return true;
+      case "read_execution_cancellation_action": return null;
       case "cancel_execution_task": {
         if (!detail) throw new Error("Missing synthetic task");
         detail.items.forEach(item => { item.status.cancellationRequested = true; item.status.execution = "cancelled-before-dispatch"; });
@@ -450,6 +451,23 @@ it("rejects a changed task association for the same tool attempt and keeps cance
   const request = invoke.mock.calls.find(([command]) => command === "cancel_execution_task")![1].request;
   expect(request.taskId).toBe(fixtureIdentity(1200)); expect(request.taskId).not.toBe(detail.taskId);
   expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+});
+
+it("checks an original tool cancellation through the shared feedback before an explicit retry",async()=>{
+  const {user}=await open();queued=true;
+  await user.type(screen.getByRole("textbox",{name:"Query text 1"}),"preserved query");await review(user);await start(user);
+  const original=invoke.getMockImplementation()!;let writes=0,reads=0;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="cancel_execution_task"&&++writes===1?Promise.reject(new Error("Lost ACK"))
+    :command==="read_execution_cancellation_action"?++reads===1?Promise.reject(new Error("Automatic check unavailable")):Promise.resolve(null):original(command,args));
+  await user.click(await screen.findByRole("button",{name:"Request cancellation"}));
+  await screen.findByText(i18n.t("execution.cancelUnknown"));expect(screen.queryByRole("button",{name:i18n.t("execution.retryCancellation")})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:i18n.t("execution.checkCancellation")}));
+  await user.click(await screen.findByRole("button",{name:i18n.t("execution.retryCancellation")}));
+  await screen.findByText(i18n.t("execution.cancelRecorded"));
+  const requests=invoke.mock.calls.filter(([name])=>name==="cancel_execution_task").map(([,args])=>args.request);
+  expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);
+  expect(invoke.mock.calls.filter(([name])=>name==="read_execution_cancellation_action").map(([,args])=>args.request)).toEqual([requests[0],requests[0]]);
+  expect(screen.getByRole("textbox",{name:"Query text 1"})).toHaveValue("preserved query");
 });
 
 

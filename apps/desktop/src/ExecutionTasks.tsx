@@ -151,7 +151,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     selectedContinuation.error, historySelection, active, busy, pendingAction, detail?.attemptId, detail?.taskId, detail?.operation]);
   const cancelTarget: CancellationTarget | null = detail ? { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } : null;
   const cancellation = confirmation?.cancellation ? cancellations.current(confirmation.cancellation.taskId) : undefined;
-  const cancelling = cancellation?.phase === "preparing" || cancellation?.phase === "pending";
+  const cancelling = cancellation?.phase === "preparing" || cancellation?.phase === "pending" || cancellation?.phase === "checking";
   useEffect(() => { if (cancellation?.phase === "recorded" || cancellation?.phase === "rejected") setConfirmation(null); }, [cancellation]);
   const loading = projection.isPending && active && !busy;
   const savedOutputRead = useSessionQuery({ key: ["saved-plugin-build-output", savedOutput?.attemptId ?? null, savedOutput?.itemId ?? null, savedOutput?.resultId ?? null],
@@ -278,11 +278,11 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     return target && ("origin" in target ? sameCancellation(payload,target) : payload.taskId === target.taskId && payload.attemptId === target.attemptId)
       && cancellations.canCancel(payload) ? {enabled:true} : unavailable;
   }
-  function cancellationRetryAvailability(payload?: ExecutionCancellationRetryCommandPayload): CommandAvailability {
+  function cancellationRetryAvailability(payload?: ExecutionCancellationRetryCommandPayload,retry=true): CommandAvailability {
     const allowed = gate(true); if (!allowed.enabled) return allowed; const value = payload && cancellations.current(payload.taskId);
     const activity = cancellations.currentActivity();
     if (activity && activity.intent.taskId === payload?.taskId && activity.phase !== "recorded" && activity.phase !== "rejected") return unavailable;
-    return payload && value?.phase === "unknown" && sameCancellation(payload,value.target) && payload.requestId === value.request.requestId ? {enabled:true} : unavailable;
+    return payload && value?.phase === "unknown" && (!retry || value.retryAllowed) && sameCancellation(payload,value.target) && payload.requestId === value.request.requestId ? {enabled:true} : unavailable;
   }
   function pendingPayload(): TaskPendingCommandPayload | undefined {
     const value = cancellations.currentActivity(); if (!value) return undefined;
@@ -376,9 +376,10 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       registry.register({...metadata,id:"tasks.confirm-cancellation",nameKey:"execution.cancel",risk:"cancels-execution-task",payloadKind:"execution-cancellation",availability:payload=>cancellationAvailability(payload),handler:payload=>{rememberTrigger();setConfirmation({action:"cancel",cancellation:{taskId:payload.taskId,attemptId:payload.attemptId,origin:payload.origin}});}}),
       registry.register({...metadata,id:"tasks.cancel-task",nameKey:"execution.cancel",risk:"cancels-execution-task",confirmation:"required",payloadKind:"execution-cancellation",availability:payload=>cancellationAvailability(payload,true),handler:({taskId,attemptId,origin})=>{void cancellations.cancel({taskId,attemptId,origin});}}),
       registry.register({...metadata,id:"tasks.retry-cancellation",nameKey:"execution.retryCancellation",risk:"retries-execution-action",payloadKind:"execution-cancellation-retry",availability:cancellationRetryAvailability,handler:payload=>{void cancellations.retry(payload.taskId);}}),
+      registry.register({...metadata,id:"tasks.check-cancellation",nameKey:"execution.checkCancellation",risk:"reads-execution",payloadKind:"execution-cancellation-retry",availability:payload=>cancellationRetryAvailability(payload,false),handler:payload=>{void cancellations.checkCancellation(payload.taskId);}}),
       registry.register({...metadata,id:"tasks.reconcile-adoption",nameKey:"execution.checkReceipt",risk:"reads-execution",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"adoption"),handler:()=>{void cancellations.checkAdoption();}}),
       registry.register({...metadata,id:"tasks.retry-adoption",nameKey:"execution.retryAdoption",risk:"retries-execution-action",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"adoption",true),handler:()=>{void cancellations.retryAdoption();}}),
-      registry.register({...metadata,id:"tasks.reconcile-continuation",nameKey:"execution.checkContinuation",risk:"reconciles-execution-action",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"continuation"),handler:()=>{void cancellations.checkContinuation();}}),
+      registry.register({...metadata,id:"tasks.reconcile-continuation",nameKey:"execution.checkContinuation",risk:"reads-execution",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"continuation"),handler:()=>{void cancellations.checkContinuation();}}),
       registry.register({...metadata,id:"tasks.retry-continuation",nameKey:"execution.retryContinuation",risk:"retries-execution-action",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"continuation",true),handler:()=>{void cancellations.retryContinuation();}}),
       registry.register({...metadata,id:"tasks.view-continuation",nameKey:"execution.viewContinuation",risk:"reads-execution",payloadKind:"task-history",availability:historyAvailability,handler:payload=>{const record=historyRecord(payload);if(record){setFailure(null);setHistorySelection({id:++historyIntent.current,record:structuredClone(record)});}}}),
       registry.register({...metadata,id:"tasks.view-receipt",nameKey:"execution.actions.view-receipt",risk:"reads-execution",payloadKind:"task-receipt",availability:receiptAvailability,handler:payload=>{setReceipt({attemptId:payload.attemptId,unitId:payload.unitId,actionId:payload.actionId});}}),
@@ -393,7 +394,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const feedback = <><TaskCancellationFeedback origin="tasks" taskId={taskId ?? undefined} disabled={busy} visible={active} retryCommand={{
     available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,
     dispatch:intent=>{registry.dispatch("tasks.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});},
-  }} />
+  }} checkCommand={{available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,
+    dispatch:intent=>{registry.dispatch("tasks.check-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
     {Object.values(cancellations.state).some(value=>value.phase === "unknown") ? <>
       <p role="status">{t("execution.cancellationUnconfirmed")}</p>
       {confirmation?.action === "cancel" ? <button className="text-button" onClick={closeConfirmation}>{t("execution.deferContinuation")}</button> : null}
@@ -401,6 +403,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     {displayedFailure ? <div role="alert" tabIndex={-1} ref={errorRegion}><p>{t(`execution.errors.${errorKey}`)}</p><CommandFailureDetails failure={displayedFailure} /></div> : null}
     {activity?.phase === "capturing" ? <p role="status">{t("execution.capturing")}</p> : null}
     {activity?.phase === "checking" && activity.prepare ? <p role="status">{t("execution.checkingAdoption")}</p> : null}
+    {activity?.phase === "checking" && activity.continuationRequest ? <p role="status">{t("execution.checkingContinuation")}</p> : null}
     {activity?.phase === "unknown" ? <section aria-label={t("execution.originalAction")}>
       <p role="status">{t(activity.continuationRequest ? "execution.continuationUnconfirmed" : activity.intent.action === "adopt-result"
         ? activity.uncertain && typeof activity.failure === "object" && activity.failure?.outcome === "rejected" ? "execution.adoptionUnconfirmed" : "execution.adoptionUnknown"

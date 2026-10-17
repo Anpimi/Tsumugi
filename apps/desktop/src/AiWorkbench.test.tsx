@@ -92,6 +92,7 @@ beforeEach(async()=>{
    view.detail.attemptId=String(request.attemptId);view.detail.recovery.attemptId=String(request.attemptId);return view;
   }
   if(command==="create_execution_identity")return fixtureIdentity(identity++);
+  if(command==="read_execution_cancellation_action")return null;
   if(command==="prepare_execution_adoption"){if(!validateRequestPrepare(request))throw new Error("Invalid adoption fixture request");originalAction=actionFor(request);return originalAction;}
   if(command==="adopt_execution"||command==="read_execution_receipt")return receiptFor();
   throw new Error(command);

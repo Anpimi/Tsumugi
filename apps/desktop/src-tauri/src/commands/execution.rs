@@ -52,7 +52,7 @@ macro_rules! handlers {
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
         super::plugins::runtimes::set_plugin_native_host_approval,
         list_execution_tasks,read_execution_task_activity,read_execution_task,read_execution_attempt,read_execution_output,
-        cancel_execution_task,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,read_execution_adoption_action,adopt_execution,
+        cancel_execution_task,read_execution_cancellation_action,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,read_execution_adoption_action,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         crate::commands::plugins::application::read_application_plugin_instance,
@@ -1305,6 +1305,17 @@ pub async fn read_execution_output(
         .await
 }
 #[tauri::command]
+pub async fn read_execution_cancellation_action(
+    state: State<'_, AppState>,
+    request: CancelRequest,
+) -> Result<Option<CancellationReceipt>, CommandError> {
+    state.sessions.run("read_execution_cancellation_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.cancellation_action_read(request.project_id, request.task_id, request.request_id)
+            .map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn cancel_execution_task(
     state: State<'_, AppState>,
     request: CancelRequest,
@@ -1373,7 +1384,7 @@ pub async fn read_execution_continuation(
                 )?;
                 active
                     .store
-                    .execution_continuation(request.action_id)
+                    .read_execution_continuation(request.action_id)
                     .map_err(map_read)
             },
         )

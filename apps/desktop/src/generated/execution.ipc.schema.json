@@ -663,6 +663,9 @@
       "cancel": {
         "$ref": "#/definitions/CancelRequest"
       },
+      "cancellationAction": {
+        "$ref": "#/definitions/CancelRequest"
+      },
       "continuation": {
         "$ref": "#/definitions/ContinuationRequest"
       },
@@ -711,6 +714,7 @@
       "attempt",
       "output",
       "cancel",
+      "cancellationAction",
       "recovery",
       "continuation",
       "continuationRead",
@@ -969,6 +973,31 @@
         "required": [
           "attemptId",
           "sequence"
+        ],
+        "type": "object"
+      },
+      "CancellationReceipt": {
+        "additionalProperties": false,
+        "description": "The durable original cancellation request, independently of worker shutdown.",
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "requestId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "requestId",
+          "revision"
         ],
         "type": "object"
       },
@@ -3331,6 +3360,16 @@
       "cancellation": {
         "$ref": "#/definitions/Revision"
       },
+      "cancellationAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/CancellationReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "continuation": {
         "$ref": "#/definitions/ContinuationReceipt"
       },
@@ -3394,6 +3433,7 @@
       "attempt",
       "output",
       "cancellation",
+      "cancellationAction",
       "recovery",
       "continuation",
       "continuationReceipt",

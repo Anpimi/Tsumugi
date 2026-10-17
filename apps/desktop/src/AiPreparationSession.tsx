@@ -549,7 +549,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }
   function cancellationPending(taskId: string) {
     const value = tasks.current(taskId);
-    return value?.phase === "preparing" || value?.phase === "pending" || value?.phase === "unknown";
+    return value?.phase === "preparing" || value?.phase === "pending" || value?.phase === "checking" || value?.phase === "unknown";
   }
   function canAdopt(view: AiView, resultId: string) {
     const value = candidate(view,resultId);

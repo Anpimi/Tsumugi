@@ -73,7 +73,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   const failure=failureReason(failureValue);
   const active=!!attempt&&(!view||view.detail.progress.queued>0||view.detail.progress.running>0||view.rows.some(row=>row.automation&&["waiting","saving-candidate","checking"].includes(row.automation.phase)));
   const cancelUnresolved = Object.values(tasks.state).some(value => (value.target.origin === "ai" || value.target.taskId === view?.detail.taskId)
-    && (value.phase === "preparing" || value.phase === "pending" || value.phase === "unknown"));
+    && (value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown"));
   const locked=disabled||preparation.reserved()||active||cancelUnresolved;
   const planBlocked=!!preparation.planControl.state.pending||!!preparation.planControl.state.ready;
   useEffect(()=>()=>{leaveResolve.current?.(false);},[]);
@@ -236,11 +236,11 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     return payload?.origin==="ai"&&value&&payload.taskId===value.detail.taskId&&payload.attemptId===value.detail.attemptId
       &&(value.detail.progress.queued>0||value.detail.progress.running>0)&&tasks.canCancel(payload)?{enabled:true}:unavailable;
   }
-  function cancellationRetryAvailability(payload?:ExecutionCancellationRetryCommandPayload):CommandAvailability {
+  function cancellationRetryAvailability(payload?:ExecutionCancellationRetryCommandPayload,retry=true):CommandAvailability {
     const allowed=gate(true);if(!allowed.enabled)return allowed;
     const original=payload&&tasks.current(payload.taskId),activity=tasks.currentActivity();
     if(activity&&activity.intent.taskId===payload?.taskId&&["capturing","identifying","preparing","adopting","recovering","checking","unknown"].includes(activity.phase))return unavailable;
-    return original?.phase==="unknown"&&payload&&original.target.attemptId===payload.attemptId&&original.target.origin===payload.origin
+    return original?.phase==="unknown"&&(!retry||original.retryAllowed)&&payload&&original.target.attemptId===payload.attemptId&&original.target.origin===payload.origin
       &&original.request.requestId===payload.requestId?{enabled:true}:unavailable;
   }
   function translationAvailability(payload?:AiTranslationCommandPayload,rewrite=false):CommandAvailability {
@@ -285,6 +285,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       registry.register({...metadata,id:"ai.cancel-task",nameKey:"ai.cancel",risk:"cancels-execution-task",payloadKind:"execution-cancellation",availability:cancellationAvailability,
         handler:({taskId,attemptId,origin})=>{void tasks.cancel({taskId,attemptId,origin});}}),
       registry.register({...metadata,id:"ai.retry-cancellation",nameKey:"execution.retryCancellation",risk:"retries-execution-action",payloadKind:"execution-cancellation-retry",availability:cancellationRetryAvailability,handler:payload=>{void tasks.retry(payload.taskId);}}),
+      registry.register({...metadata,id:"ai.check-cancellation",nameKey:"execution.checkCancellation",risk:"reads-execution",payloadKind:"execution-cancellation-retry",availability:payload=>cancellationRetryAvailability(payload,false),handler:payload=>{void tasks.checkCancellation(payload.taskId);}}),
       registry.register({...metadata,id:"ai.open-translation",nameKey:"ai.openEditor",risk:"opens-translation",payloadKind:"ai-translation-target",availability:translationAvailability,handler:payload=>{void openTranslation(payload);}}),
       registry.register({...metadata,id:"ai.open-review",nameKey:"ai.reviewHandoff.open",risk:"opens-review",payloadKind:"ai-translation-target",availability:reviewAvailability,handler:payload=>{void openReview(payload);}}),
       registry.register({...metadata,id:"ai.rewrite-translation",nameKey:"ai.workspace.rewrite",risk:"opens-translation",payloadKind:"ai-translation-target",availability:payload=>translationAvailability(payload,true),handler:payload=>{void openTranslation(payload,true);}}),
@@ -303,7 +304,8 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     <TaskCancellationFeedback origin="ai" taskId={view?.detail.taskId} disabled={busy} retryCommand={{
       available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,
       dispatch:intent=>{registry.dispatch("ai.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});},
-    }} />
+    }} checkCommand={{available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,
+      dispatch:intent=>{registry.dispatch("ai.check-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
     {preparation.notice?<p role="status">{t(preparation.notice==="started"?"ai.startRecorded":preparation.notice==="saved"?"ai.candidateRecorded":preparation.notice==="maintenance"?"sourceHook.captured":"ai.newerInput")}</p>:null}
     {open&&(scopeRead.isFetching||contentRead.isFetching&&!!scopeRead.data?.currentSnapshot||viewRead.isFetching&&!!attempt||planRead.isFetching&&!!planId)?<p role="status">{t("ai.readLoading")}</p>:null}
     {failure?<div role="alert" tabIndex={-1} ref={errorRef}><p>{t(`ai.errors.${failure}`,{defaultValue:t("ai.errors.failed")})}</p><CommandFailureDetails failure={failureValue} /><button className="secondary-button" onClick={refreshReads} disabled={busy}>{t("ai.refresh")}</button></div>:null}

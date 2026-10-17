@@ -2273,6 +2273,20 @@ impl ProjectStore {
     ) -> Result<Option<ContinuationReceipt>, ExecutionError> {
         read_continuation(self.execution_connection()?, action_id)
     }
+    /// Explicit result confirmation may reconcile an uncertain commit. Internal
+    /// write admission continues to use the raw idempotence lookup above.
+    pub fn read_execution_continuation(
+        &self,
+        action_id: ExecutionId,
+    ) -> Result<Option<ContinuationReceipt>, ExecutionError> {
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            read_continuation(connection, action_id)
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
     pub fn execution_continuation_page(
         &self,
         source: ExecutionId,
@@ -3168,6 +3182,41 @@ impl ProjectStore {
         load_input(&tx, attempt)?;
         tx.execute("UPDATE execution_items SET execution='unknown',diagnostic='result-missing' WHERE attempt_id=?1 AND execution='dispatched'",[attempt.to_string()]).map_err(sql_error)?;
         commit(tx)
+    }
+    /// Read only the exact cancellation request, never the latest task revision.
+    pub fn cancellation_action_read(
+        &self,
+        project: ExecutionId,
+        task: ExecutionId,
+        request: ExecutionId,
+    ) -> Result<Option<CancellationReceipt>, ExecutionError> {
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            let row: Option<(String, i64, Option<String>)> = connection.query_row(
+                "SELECT c.task_id,c.revision,t.project_id FROM execution_cancellations c
+                 LEFT JOIN execution_tasks t ON t.task_id=c.task_id WHERE c.request_id=?1",
+                [request.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional().map_err(sql_error)?;
+            let Some((saved_task, revision, saved_project)) = row else { return Ok(None); };
+            let saved_project = saved_project.ok_or_else(|| error(ErrorCode::CorruptLedger, "cancellation-task"))?;
+            let saved_task = parse_id(saved_task)?;
+            let saved_project = parse_id(saved_project)?;
+            if revision <= 0 {
+                return Err(error(ErrorCode::CorruptLedger, "cancellation-revision"));
+            }
+            if saved_task != task || saved_project != project {
+                return Err(error(ErrorCode::ResultMismatch, "cancellation-request"));
+            }
+            let revision = Revision::new(revision as u64)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "cancellation-revision"))?;
+            Ok(Some(CancellationReceipt {
+                project_id: saved_project, task_id: saved_task, request_id: request, revision,
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
     }
     pub fn cancel_execution(
         &mut self,

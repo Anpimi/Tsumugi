@@ -108,6 +108,7 @@ beforeEach(async () => {
     if (command === "create_execution_identity") return fixtureIdentity(identity++);
     if (command === "prepare_execution_adoption") { action = actionFor(request as unknown as PrepareRequest); return action; }
     if (command === "adopt_execution" || command === "read_execution_receipt") return receiptFor();
+    if (command === "read_execution_cancellation_action") return null;
     if (command === "cancel_execution_task") return "5";
     throw new Error(command);
   });
@@ -134,10 +135,10 @@ async function compare() {
   await waitFor(() => expect(registry.describe("arena.begin-merge", scope, comparisonPayload())?.availability.enabled).toBe(true));
 }
 
-it("registers seventeen scoped Arena commands and routes the visible generation and editor actions", async () => {
+it("registers scoped Arena commands and routes the visible generation and editor actions", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry, "dispatch");
   expect(registry.list(scope).filter(command => command.category === "arena").map(command => command.id).sort()).toEqual([
-    "arena.adopt-result", "arena.begin-merge", "arena.cancel-task", "arena.create-comparison", "arena.discard-merge", "arena.new-round", "arena.open-comparison",
+    "arena.adopt-result", "arena.begin-merge", "arena.cancel-task", "arena.check-cancellation", "arena.create-comparison", "arena.discard-merge", "arena.new-round", "arena.open-comparison",
     "arena.open-translation", "arena.preview", "arena.reconcile-pending", "arena.refresh-merge-basis", "arena.retry-cancellation", "arena.retry-pending",
     "arena.reveal-identities", "arena.save-merge", "arena.select-candidate", "arena.start",
   ]);
@@ -335,13 +336,21 @@ it("recovers an unknown merge using its original request despite changed source,
 
 it("bridges cancellation feedback using the original cross-origin request and refuses an unrelated replay", async () => {
   const { user } = await open(); await start(); const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, payload: unknown) => command === "cancel_execution_task" ? Promise.reject({ code: "outcome-unknown" }) : original(command, payload));
+  let lookups=0;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "cancel_execution_task" ? Promise.reject({ code: "outcome-unknown" })
+    :command==="read_execution_cancellation_action"?++lookups===1?Promise.reject(new Error("Automatic lookup unavailable")):Promise.resolve(null):original(command, payload));
   await act(async () => { await tasks.cancel({ taskId: aiTask, attemptId: aiAttempt, origin: "tasks" }); });
   const entry = tasks.current(aiTask)!;
   expect(entry.phase).toBe("unknown");
   if (entry.phase !== "unknown") throw new Error("The original cancellation must remain unknown");
   const payload = { kind: "execution-cancellation-retry" as const, ...entry.target, requestId: entry.request.requestId };
   expect(payload.origin).toBe("tasks");
+  expect(registry.dispatch("arena.retry-cancellation",scope,payload)).toBe(false);
+  expect(registry.dispatch("arena.check-cancellation",scope,{...payload,attemptId:fixtureIdentity(998)})).toBe(false);
+  const checkDispatch=vi.spyOn(registry,"dispatch");
+  await user.click(screen.getByRole("button",{name:i18n.t("execution.checkCancellation")}));
+  await waitFor(()=>expect(tasks.current(aiTask)).toMatchObject({phase:"unknown",retryAllowed:true}));
+  expect(checkDispatch).toHaveBeenCalledWith("arena.check-cancellation",scope,payload);expect(calls("cancel_execution_task")).toHaveLength(1);
   expect(registry.dispatch("arena.retry-cancellation", scope, { ...payload, requestId: fixtureIdentity(999) })).toBe(false);
   const dispatch = vi.spyOn(registry, "dispatch");
   invoke.mockImplementation((command: string, args: unknown) => command === "cancel_execution_task" ? Promise.resolve("5") : original(command, args));

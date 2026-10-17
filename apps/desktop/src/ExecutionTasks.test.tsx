@@ -36,6 +36,7 @@ async function openSavedBuild(options: { saved?: SavedPluginBuildView; onSavedBu
     if (command === "read_execution_task_view") return { ...task, taskId: saved.taskId, operation: "locale-build" };
     if (command === "read_execution_continuations") return { receipts: [], next: null };
     if (command === "read_saved_plugin_build") return options.read ? options.read() : saved;
+    if (command === "read_execution_cancellation_action") return null;
     throw new Error(`Unexpected command: ${command}`);
   });
   const user = userEvent.setup();
@@ -62,6 +63,7 @@ it("retains the original cancellation after a complete Tasks remount and blocks 
     if (command === "read_execution_attempt") return detail();
     if (command === "create_execution_identity") return fixtureIdentity(201);
     if (command === "cancel_execution_task") { if (++cancelCount === 1) throw new Error("Disconnected"); return "4"; }
+    if (command === "read_execution_cancellation_action") return null;
     throw new Error(command);
   });
   const view = render(<ExecutionTasks ref={ref} project={project} disabled={false} />);
@@ -96,6 +98,7 @@ it("opens previously unvisited Tasks when another workspace has an unknown cance
     if (command === "list_execution_tasks") return [];
     if (command === "create_execution_identity") return fixtureIdentity(202);
     if (command === "cancel_execution_task") { if (++cancelCount === 1) throw new Error("Disconnected"); return "5"; }
+    if (command === "read_execution_cancellation_action") return null;
     throw new Error(command);
   });
   render(<UnvisitedTasks />, project);
@@ -122,6 +125,7 @@ async function mountTasks(value = detail(), ref?: RefObject<TasksHandle | null>)
       return { ...captured, attemptId: args.request.attemptId, recovery: { ...captured.recovery, attemptId: args.request.attemptId } };
     }
     if (command === "read_execution_task_view") return { ...task, taskId: value.taskId, operation: value.operation };
+    if (command === "read_execution_cancellation_action") return null;
     if (command === "read_execution_continuations") return { receipts: [], next: null };
     throw new Error(`Unexpected command: ${command}`);
   });
@@ -135,7 +139,7 @@ async function mountTasks(value = detail(), ref?: RefObject<TasksHandle | null>)
 async function openTasks(value = detail(), ref?: RefObject<TasksHandle | null>) { return (await mountTasks(value,ref)).user; }
 function taskReplies(replies: Record<string, () => unknown>) {
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, payload: unknown) => replies[command] ? replies[command]() : original(command, payload));
+  invoke.mockImplementation((command: string, payload: unknown) => replies[command] ? replies[command]() : command === "read_execution_cancellation_action" ? Promise.resolve(null) : original(command, payload));
 }
 it("offers only evidence-backed actions for an unknown result and confirms the exact item", async () => {
   const user = await openTasks();
@@ -390,6 +394,8 @@ it("retains saved Plugin build evidence while recovering the exact original unkn
   expect(navigate).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: i18n.t("execution.retryCancellation") }));
   await waitFor(() => expect(sent).toBe(2));
+  expect(screen.queryByRole("button",{name:i18n.t("execution.retryCancellation")})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:i18n.t("execution.checkCancellation")}));
   await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("execution.retryCancellation") })).toBeEnabled());
   expect(screen.getByText(i18n.t("execution.cancellationUnconfirmed"))).toBeInTheDocument();
   expect(screen.getByRole("button", { name: i18n.t("execution.allTasks") })).toBeDisabled();
@@ -642,7 +648,7 @@ it("resets replay permission after a second unknown and keeps deferred request o
   await user.click(within(screen.getByRole("dialog", { name: "Continue remaining work" })).getByRole("button", { name: "Continue remaining work" }));
   taskReplies({ read_execution_continuation: () => null });
   await user.click(await screen.findByRole("button", { name: "Check original recovery request" }));
-  taskReplies({ continue_execution: () => Promise.reject(new Error("second ACK lost")) });
+  taskReplies({ continue_execution: () => Promise.reject(new Error("second ACK lost")), read_execution_continuation: () => Promise.reject(new Error("Automatic lookup unavailable")) });
   await user.click(await screen.findByRole("button", { name: "Retry the same recovery request" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument());
   await user.click(screen.getByRole("button", { name: "Keep request and return" }));
@@ -835,7 +841,10 @@ it("keeps a plugin continuation pending across deferral and rejects saved-build 
     if (command === "read_saved_plugin_build") return saved;
     if (command === "create_execution_identity") return fixtureIdentity(919);
     if (command === "continue_execution") { pending = args.request; throw new Error("lost ACK"); }
-    if (command === "read_execution_continuation") return { ...continuationResult(pending!), attemptId: next, taskId: saved.taskId, operation: "locale-build" };
+    if (command === "read_execution_continuation") {
+      if(invoke.mock.calls.filter(([name])=>name==="read_execution_continuation").length===1)throw new Error("Automatic lookup unavailable");
+      return { ...continuationResult(pending!), attemptId: next, taskId: saved.taskId, operation: "locale-build" };
+    }
     throw new Error(`Unexpected command: ${command}`);
   });
   const user = userEvent.setup(); const handle = createRef<TasksHandle>();
@@ -1062,7 +1071,9 @@ it("preserves the original unknown cancellation through malformed ACK and later 
   await waitFor(()=>expect(sent).toBe(2));await waitFor(()=>expect(screen.getByRole("button",{name:"Retry the original cancellation"})).toBeEnabled());
   expect(screen.getByText(i18n.t("execution.cancellationUnconfirmed"))).toBeInTheDocument();
   await user.click(screen.getByRole("button",{name:"Retry the original cancellation"}));
-  await waitFor(()=>expect(sent).toBe(3));await waitFor(()=>expect(screen.getByRole("button",{name:"Retry the original cancellation"})).toBeEnabled());
+  await waitFor(()=>expect(sent).toBe(3));expect(screen.queryByRole("button",{name:"Retry the original cancellation"})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:i18n.t("execution.checkCancellation")}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:"Retry the original cancellation"})).toBeEnabled());
   expect(await handle.current!.allowLeave()).toBe(false);expect(screen.getByRole("button",{name:"Cancel remaining work"})).toBeDisabled();
   await user.click(screen.getByRole("button",{name:"Retry the original cancellation"}));
   await waitFor(()=>expect(screen.queryByRole("button",{name:"Retry the original cancellation"})).not.toBeInTheDocument());

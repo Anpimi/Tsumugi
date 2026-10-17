@@ -339,6 +339,52 @@ fn historical_adoption_action_reads_keep_original_proof_after_cancel_and_reopen(
 }
 
 #[test]
+fn cancellation_action_reads_confirm_original_requests_without_writes() {
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let project = input.envelope().project_id;
+    let task = input.envelope().task_id;
+    let request = ExecutionId::new();
+    let before = store.changes_since(Revision::new(0).unwrap()).sequence;
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), None);
+    assert_eq!(store.changes_since(before).sequence, before);
+    let first = store.cancel_execution(task, request).unwrap();
+    let next = store.cancel_execution(task, ExecutionId::new()).unwrap();
+    assert!(next > first);
+    let receipt = Some(CancellationReceipt { project_id: project, task_id: task, request_id: request, revision: first });
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), receipt);
+    assert_eq!(store.cancellation_action_read(project, ExecutionId::new(), request).unwrap_err().code, ErrorCode::ResultMismatch);
+    assert_eq!(store.cancellation_action_read(ExecutionId::new(), task, request).unwrap_err().code, ErrorCode::ResultMismatch);
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.cancel_execution(task, request).unwrap_err().code, ErrorCode::OutcomeUnknown);
+    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let count: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| row.get(0)).unwrap();
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), receipt);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| row.get::<_, i64>(0)).unwrap(), count);
+
+    let connection = store.execution_connection().unwrap();
+    connection.pragma_update(None, "ignore_check_constraints", "ON").unwrap();
+    connection.execute("UPDATE execution_cancellations SET revision=0 WHERE request_id=?1", [request.to_string()]).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert!(store.is_reconciling());
+    connection.execute("UPDATE execution_cancellations SET revision=?2 WHERE request_id=?1", params![request.to_string(), first.get() as i64]).unwrap();
+    connection.pragma_update(None, "ignore_check_constraints", "OFF").unwrap();
+    assert_eq!(store.cancellation_action_read(project, task, ExecutionId::new()).unwrap(), None);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert!(store.cancel_execution(task, ExecutionId::new()).unwrap() > next);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.cancellation_action_read(project, task, request).unwrap(), receipt);
+}
+
+#[test]
 fn durable_inputs_results_and_reads_preserve_metadata_and_do_not_regenerate() {
     let parent = tempfile::tempdir().unwrap();
     let path = parent.path().join("project");
@@ -1299,6 +1345,19 @@ fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
         .enqueue_continuation(&continuation, &retry, RecoveryPolicy::ReadOnly)
         .unwrap();
 
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.execution_continuation(continuation.action_id).unwrap(), Some(continuation_receipt.clone()));
+    assert!(store.is_reconciling(), "raw mutation idempotence must not reconcile admission");
+    let before_read = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let attempts: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| row.get(0)).unwrap();
+    assert_eq!(store.read_execution_continuation(continuation.action_id).unwrap(), Some(continuation_receipt.clone()));
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(before_read).sequence, before_read);
+    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| row.get::<_, i64>(0)).unwrap(), attempts);
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.read_execution_continuation(ExecutionId::new()).unwrap(), None);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(before_read).sequence, before_read);
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();
     assert_eq!(

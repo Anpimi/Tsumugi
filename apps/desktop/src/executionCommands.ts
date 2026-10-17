@@ -5,6 +5,7 @@ import type { SessionRequest, ListRequest, TaskActivityRequest, TaskRequest, Att
 import { validateResponseIdentity, validateResponseStatus, validateResponseTasks, validateResponseActivity, validateResponseAttempts, validateResponseAttempt, validateResponseOutput, validateResponseCancellation, validateResponseRecovery, validateResponseContinuation, validateResponseContinuationReceipt, validateResponseContinuations, validateResponseTaskView, validateResponseAction, validateResponseAdoption, validateResponseReceipt, validateResponseToolPreflight, validateResponseToolDiscarded, validateResponseApplicationInstance, validateResponseApplicationShutdown } from "./generated/execution.validators";
 import type { AdoptionAction, AdoptionReceipt, ApplicationInstanceView, ApplicationShutdownView, Responses } from "./generated/execution.responses";
 import { validateResponseAdoptionAction } from "./generated/execution.validators";
+import { validateResponseCancellationAction } from "./generated/execution.validators";
 
 export type { SessionRequest, ListRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest, PluginToolPrepareRequest, PluginToolStartRequest, ApplicationInstanceRequest, StopApplicationInstanceRequest, ApplicationShutdownRequest, PluginToolDiscardRequest } from "./generated/execution.requests";
 export type { TaskView as Task, AdoptionReceipt as Receipt, AttemptSummary, ExecutionState, ItemStatus, Scope, ItemView, Progress, RecoveryUnit, AttemptDetail, RuntimeStatus, RecoveryView, AdoptionAction, ExecutionOutputView, RecoveryAction, ContinuationAction, ContinuationReceipt, ContinuationPage, PluginToolPreflight, PluginToolItem, ApplicationScopeBasis, ApplicationInstanceView, ApplicationShutdownView } from "./generated/execution.responses";
@@ -93,6 +94,18 @@ async function cancelExecution(request: CancelRequest) {
   return revision;
 }
 
+export function confirmCancellationReceipt(request: CancelRequest, value: unknown) {
+  if (!validateResponseCancellationAction(value) || value === null || value.projectId !== request.projectId
+    || value.taskId !== request.taskId || value.requestId !== request.requestId || value.revision === "0") {
+    throw new Error("Invalid original cancellation receipt");
+  }
+  return value;
+}
+async function readCancellationAction(request: CancelRequest): Promise<Responses["cancellationAction"]> {
+  const receipt = await checkedInvoke("read_execution_cancellation_action", request, validateResponseCancellationAction);
+  return receipt === null ? null : confirmCancellationReceipt(request,receipt);
+}
+
 export const executionCommands = {
   identity: (request: SessionRequest) => checkedInvoke("create_execution_identity", request, validateResponseIdentity),
   status: (request: SessionRequest) => checkedInvoke("execution_status", request, validateResponseStatus),
@@ -102,6 +115,7 @@ export const executionCommands = {
   attempt: (request: AttemptRequest) => checkedInvoke("read_execution_attempt", request, validateResponseAttempt),
   output: (request: OutputRequest) => checkedInvoke("read_execution_output", request, validateResponseOutput),
   cancel: cancelExecution,
+  cancellationAction: readCancellationAction,
   continue: continueExecution,
   continuation: readContinuation,
   continuations: readContinuations,

@@ -491,7 +491,7 @@ function useArenaOwner(project: ProjectView) {
   }
   function cancellationPending(taskId: string) {
     const value = tasksRef.current.current(taskId);
-    return !!value && (value.phase === "preparing" || value.phase === "pending" || value.phase === "unknown");
+    return !!value && (value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown");
   }
   function candidateCurrent(view: ArenaView, value: Candidate) {
     const key = reads.key(["arena",view.detail.attemptId]), query = reads.client.getQueryState(key);

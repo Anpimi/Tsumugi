@@ -61,7 +61,7 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation,onOpenCon
   enabled:open&&!!attempt&&!busy,read:()=>owner.readView(attempt!)});
  const view=viewRead.data??null;
  const cancelUnresolved=Object.values(tasks.state).some(value=>(value.target.origin==="arena"||value.target.taskId===view?.detail.taskId)
-  &&(value.phase==="preparing"||value.phase==="pending"||value.phase==="unknown"));
+  &&(value.phase==="preparing"||value.phase==="pending"||value.phase==="checking"||value.phase==="unknown"));
  const active=!!attempt&&(!view||view.detail.progress.queued>0||view.detail.progress.running>0),locked=disabled||busy||!!pending||active||cancelUnresolved;
  const readError=viewRead.error??comparisonRead.error??historyRead.error??pageRead.error??scopeRead.error??listRead.error;
  const displayedFailureValue=owner.failure??(readError?commandFailure(notice&&["saved","merged","selected","reconciled"].includes(notice)?{field:"arena-refresh"}:readError,"outcome-unknown"):null);
@@ -100,8 +100,8 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation,onOpenCon
  function preparedSourceCurrent(){const current=owner.current(),scope=currentRead<NonNullable<typeof scopeRead.data>>(["arena-source-scope",current.sourceGeneration]);
   return !!scope?.currentSnapshot&&!!current.prepared&&current.prepared.preview.items.every(row=>row.item.sourceSnapshotId===scope.currentSnapshot);}
  function cancellationUnresolved(){const taskId=owner.current().started?.taskId??currentView()?.detail.taskId,own=taskId?tasks.current(taskId):undefined;
-  return !!own&&["preparing","pending","unknown"].includes(own.phase)||Object.values(tasks.state).some(value=>{
-   const current=tasks.current(value.target.taskId);return current&&(current.target.origin==="arena"||current.target.taskId===taskId)&&["preparing","pending","unknown"].includes(current.phase);
+  return !!own&&["preparing","pending","checking","unknown"].includes(own.phase)||Object.values(tasks.state).some(value=>{
+   const current=tasks.current(value.target.taskId);return current&&(current.target.origin==="arena"||current.target.taskId===taskId)&&["preparing","pending","checking","unknown"].includes(current.phase);
   });}
  function generationActive(){const current=owner.current(),value=currentView();return !!current.attempt&&(!value||value.detail.progress.queued>0||value.detail.progress.running>0);}
  function preparationPayload():ArenaPreparationCommandPayload {const current=owner.current();return{kind:"arena-preparation",editSeq:current.editSeq,locale:current.locale,unitIds:[...current.selected]};}
@@ -207,10 +207,10 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation,onOpenCon
    &&value.detail.recovery.attemptId===current.attempt&&value.detail.operation==="arena-translation"&&(!original?.taskId||original.taskId===value.detail.taskId)
    &&payload.taskId===value.detail.taskId&&payload.attemptId===value.detail.attemptId&&(value.detail.progress.queued>0||value.detail.progress.running>0)&&tasks.canCancel(payload)?{enabled:true}:unavailable;
  }
- function cancellationRetryAvailability(payload?:ExecutionCancellationRetryCommandPayload):CommandAvailability {
+ function cancellationRetryAvailability(payload?:ExecutionCancellationRetryCommandPayload,retry=true):CommandAvailability {
   const allowed=gate(true);if(!allowed.enabled)return allowed;const original=payload&&tasks.current(payload.taskId),activity=tasks.currentActivity();
   if(activity&&activity.intent.taskId===payload?.taskId&&["capturing","identifying","preparing","adopting","recovering","checking","unknown"].includes(activity.phase))return unavailable;
-  return original?.phase==="unknown"&&payload&&original.target.attemptId===payload.attemptId&&original.target.origin===payload.origin&&original.request.requestId===payload.requestId?{enabled:true}:unavailable;
+  return original?.phase==="unknown"&&(!retry||original.retryAllowed)&&payload&&original.target.attemptId===payload.attemptId&&original.target.origin===payload.origin&&original.request.requestId===payload.requestId?{enabled:true}:unavailable;
  }
  function translationAvailability(payload?:ArenaTranslationCommandPayload):CommandAvailability {
   const allowed=gate();if(!allowed.enabled)return allowed;return payload&&project.metadata.targetLocales.includes(payload.locale)&&targetRow(payload)?{enabled:true}:unavailable;
@@ -249,6 +249,7 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation,onOpenCon
    registry.register({...metadata,id:"arena.retry-pending",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"arena-pending",availability:payload=>recoveryAvailability(payload,true),handler:()=>{void owner.retryPending();}}),
    registry.register({...metadata,id:"arena.cancel-task",nameKey:"ai.cancel",risk:"cancels-execution-task",payloadKind:"execution-cancellation",availability:cancellationAvailability,handler:({taskId,attemptId,origin})=>{void tasks.cancel({taskId,attemptId,origin});}}),
    registry.register({...metadata,id:"arena.retry-cancellation",nameKey:"execution.retryCancellation",risk:"retries-execution-action",payloadKind:"execution-cancellation-retry",availability:cancellationRetryAvailability,handler:payload=>{void tasks.retry(payload.taskId);}}),
+   registry.register({...metadata,id:"arena.check-cancellation",nameKey:"execution.checkCancellation",risk:"reads-execution",payloadKind:"execution-cancellation-retry",availability:payload=>cancellationRetryAvailability(payload,false),handler:payload=>{void tasks.checkCancellation(payload.taskId);}}),
    registry.register({...metadata,id:"arena.open-translation",nameKey:"ai.openEditor",risk:"opens-translation",payloadKind:"arena-translation-target",availability:translationAvailability,handler:payload=>{void openTranslation(payload);}}),
   ];return()=>remove.forEach(dispose=>dispose());
  });
@@ -256,7 +257,7 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation,onOpenCon
  return <><WorkbenchPanel open={open} title={t("arena.title")} description={t("arena.description")} className="arena-dialog" onBack={()=>void allowLeave().then(ok=>{if(ok)setOpen(false);})} backDisabled={disabled || busy || !!pending || cancelUnresolved}>
  {onReturn ? <button className="secondary-button" disabled={busy || !!pending || !!draft || cancelUnresolved} onClick={onReturn}>{t("arena.returnToEntry")}</button> : null}
  <StrategyWorkbench project={project} active={open} disabled={disabled || owner.reserved()} config={config.variants[0]} onOpenConnections={onOpenConnections}/>
- <TaskCancellationFeedback origin="arena" taskId={view?.detail.taskId} disabled={busy} visible={open} retryCommand={{available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,dispatch:intent=>{registry.dispatch("arena.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
+ <TaskCancellationFeedback origin="arena" taskId={view?.detail.taskId} disabled={busy} visible={open} retryCommand={{available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,dispatch:intent=>{registry.dispatch("arena.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} checkCommand={{available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,dispatch:intent=>{registry.dispatch("arena.check-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
  {open&&(scopeRead.isFetching||pageRead.isFetching||listRead.isFetching||historyRead.isFetching||comparisonRead.isFetching||viewRead.isFetching)?<p role="status">{t("ai.readLoading")}</p>:null}
  {displayedFailure?<div role="alert" tabIndex={-1} ref={errorRef}><p>{t(`arena.errors.${displayedFailure}`,{defaultValue:t(`ai.errors.${displayedFailure}`,{defaultValue:t("arena.errors.failed")})})}</p><CommandFailureDetails failure={displayedFailureValue} /><button disabled={busy||!!pending} onClick={()=>void refreshReads()}>{t("ai.refresh")}</button></div>:null}
  {notice?<p role="status">{t(`arena.${notice}`,{defaultValue:t("arena.reconciled")})}</p>:null}

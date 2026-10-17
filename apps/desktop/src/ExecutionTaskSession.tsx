@@ -1,7 +1,7 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { executionCommands, executionContext, confirmExecutionAction, confirmExecutionReceipt, matchesContinuation, sameExecutionIds, type CancelRequest, type AttemptDetail, type RecoveryAction, type RecoveryUnit, type ItemView, type PrepareRequest, type AdoptionAction, type Receipt, type RecoveryRequest, type RecoveryView, type ContinuationRequest, type ContinuationReceipt } from "./executionCommands";
+import { executionCommands, executionContext, confirmCancellationReceipt, confirmExecutionAction, confirmExecutionReceipt, matchesContinuation, sameExecutionIds, type CancelRequest, type AttemptDetail, type RecoveryAction, type RecoveryUnit, type ItemView, type PrepareRequest, type AdoptionAction, type Receipt, type RecoveryRequest, type RecoveryView, type ContinuationRequest, type ContinuationReceipt } from "./executionCommands";
 import { validateRequestCancel, validateRequestPrepare, validateRequestRecovery, validateRequestContinuation, validateResponseIdentity, validateResponseAttempt } from "./generated/execution.validators";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
@@ -15,7 +15,8 @@ export interface CancellationRetryIntent extends CancellationTarget { readonly r
 type Cancellation = { target: CancellationTarget } & (
   | { phase: "preparing"; request: null; revision: null; failure: null }
   | { phase: "pending"; request: CancelRequest; revision: null; failure: null }
-  | { phase: "unknown"; request: CancelRequest; revision: null; failure: CommandFailure }
+  | { phase: "checking"; request: CancelRequest; revision: null; failure: null }
+  | { phase: "unknown"; request: CancelRequest; revision: null; failure: CommandFailure; retryAllowed: boolean }
   | { phase: "recorded"; request: CancelRequest; revision: string; failure: null }
   | { phase: "rejected"; request: CancelRequest | null; revision: null; failure: CommandFailure }
 );
@@ -66,6 +67,7 @@ interface TaskSession {
   canCancel: (target: CancellationTarget, proof?: () => boolean) => boolean;
   cancel: (target: CancellationTarget, proof?: () => boolean) => Promise<void>;
   retry: (taskId: string) => Promise<void>;
+  checkCancellation: (taskId: string) => Promise<void>;
   unresolved: () => boolean;
   activity: TaskActivity | null;
   currentActivity: () => TaskActivity | null;
@@ -87,7 +89,7 @@ export function useExecutionTaskSession() {
   if (!owner) throw new Error("Task cancellation requires a project session owner");
   return owner;
 }
-const unresolved = (value: Cancellation) => value.phase === "preparing" || value.phase === "pending" || value.phase === "unknown";
+const unresolved = (value: Cancellation) => value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown";
 
 /** Own fixed task decisions and original requests independently of their consumers. */
 export function ExecutionTaskSession({ project, children }: { project: ProjectView; children: ReactNode }) {
@@ -132,14 +134,39 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     } catch (error) {
       if (live() && current(taskId) === value) {
         const failure = commandFailure(error, "outcome-unknown");
+        if (hasUnknownOutcome(error)) { await lookupCancellation(value,failure); return; }
         // Rejecting a replay cannot disprove the earlier uncertain invocation.
-        replace(taskId, retryingUnknown || hasUnknownOutcome(error)
-          ? { target: value.target, phase: "unknown", request: value.request, revision: null, failure }
+        replace(taskId, retryingUnknown
+          ? { target: value.target, phase: "unknown", request: value.request, revision: null, failure, retryAllowed: false }
           : { target: value.target, phase: "rejected", request: value.request, revision: null, failure });
       }
     } finally {
       if (live()) reads.invalidate(["execution"]);
     }
+  }
+  async function lookupCancellation(original: PendingCancellation | Extract<Cancellation,{phase:"unknown"}>, originalFailure: CommandFailure) {
+    const {taskId} = original.request;
+    if (!live() || current(taskId) !== original) return;
+    const checking: Extract<Cancellation,{phase:"checking"}> = {target:original.target,phase:"checking",request:original.request,revision:null,failure:null};
+    replace(taskId,checking);
+    try {
+      const result = await executionCommands.cancellationAction(checking.request);
+      if (!live() || current(taskId) !== checking) return;
+      if (result === null) replace(taskId,{target:checking.target,phase:"unknown",request:checking.request,revision:null,failure:originalFailure,retryAllowed:true});
+      else {
+        const receipt = confirmCancellationReceipt(checking.request,result);
+        replace(taskId,{target:checking.target,phase:"recorded",request:checking.request,revision:receipt.revision,failure:null});
+      }
+    } catch (error) {
+      if (live() && current(taskId) === checking) replace(taskId,{target:checking.target,phase:"unknown",request:checking.request,revision:null,
+        failure:commandFailure(error,"outcome-unknown"),retryAllowed:false});
+    }
+  }
+  async function checkCancellation(taskId: string) {
+    const original = current(taskId);
+    if (!live() || original?.phase !== "unknown") return;
+    await lookupCancellation(original,original.failure);
+    if (live()) reads.invalidate(["execution"]);
   }
   async function cancel(target: CancellationTarget, proof: () => boolean = live) {
     if (!canCancel(target, proof)) return;
@@ -163,7 +190,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
   }
   async function retry(taskId: string) {
     const original = current(taskId);
-    if (!live() || original?.phase !== "unknown" || !validateRequestCancel(original.request)
+    if (!live() || original?.phase !== "unknown" || !original.retryAllowed || !validateRequestCancel(original.request)
       || (activityRef.current?.intent.taskId === taskId && activityUnresolved(activityRef.current))) return;
     const pending: PendingCancellation = { target: original.target, phase: "pending", request: original.request, revision: null, failure: null };
     replace(taskId, pending);
@@ -379,7 +406,11 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     try {
       const receipt = await executionCommands.continue(value.continuationRequest!);
       if (holds(value)) settleContinuation(value, receipt);
-    } catch (error) { fail(value, error, true); }
+    } catch (error) {
+      if (!holds(value)) return;
+      if (hasUnknownOutcome(error)) await lookupContinuation(value,commandFailure(error,"outcome-unknown"));
+      else fail(value,error,true);
+    }
   }
   async function submit(continueCaptured: () => boolean = () => true) {
     const start = activityRef.current;
@@ -452,13 +483,17 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
   async function checkContinuation() {
     const start = activityRef.current;
     if (!live() || start?.phase !== "unknown" || !start.continuationRequest) return;
-    const value = change(start, { phase: "checking", retryAllowed: false, failure: null });
+    await lookupContinuation(start,start.failure);
+  }
+  async function lookupContinuation(start: TaskActivity, originalFailure: CommandFailure | null) {
+    if (!holds(start) || !start.continuationRequest) return;
+    const value = change(start, { phase: "checking", uncertain: true, retryAllowed: false, failure: null });
     try {
       const receipt = await executionCommands.continuation(freeze({ ...session, actionId: value.continuationRequest!.action.actionId }));
       if (!holds(value)) return;
       if (receipt === null) {
         if (value.continuation) throw new Error("Previously recorded continuation is missing");
-        change(value, { phase: "unknown", retryAllowed: true });
+        change(value, { phase: "unknown", retryAllowed: true, failure: originalFailure });
         return;
       }
       settleContinuation(value, receipt);
@@ -470,15 +505,16 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     await dispatchContinuation(value);
   }
 
-  return <TaskContext.Provider value={{ state, current, canCancel, cancel, retry, activity, currentActivity: () => activityRef.current,
+  return <TaskContext.Provider value={{ state, current, canCancel, cancel, retry, checkCancellation, activity, currentActivity: () => activityRef.current,
     begin, beginFromQuery, canBegin, canSubmit, submit, checkAdoption, retryAdoption, checkContinuation, retryContinuation, dismiss, busy: activityBusy(activity),
     unresolved: () => Object.values(stateRef.current).some(unresolved) || activityUnresolved(activityRef.current) }}>{children}</TaskContext.Provider>;
 }
 
 /** All recovery buttons use the owner's original request, never the current projection. */
-export function TaskCancellationFeedback({ origin, taskId, disabled = false, visible = true, retryCommand }: {
+export function TaskCancellationFeedback({ origin, taskId, disabled = false, visible = true, retryCommand, checkCommand }: {
   origin: Origin; taskId?: string; disabled?: boolean; visible?: boolean;
   retryCommand?: { available: (intent: CancellationRetryIntent) => boolean; dispatch: (intent: CancellationRetryIntent) => void };
+  checkCommand?: { available: (intent: CancellationRetryIntent) => boolean; dispatch: (intent: CancellationRetryIntent) => void };
 }) {
   const owner = useExecutionTaskSession(), { t } = useTranslation(), errorRegion = useRef<HTMLDivElement>(null);
   const entries = Object.values(owner.state).filter(value => origin === "tasks" || unresolved(value) || value.target.taskId === taskId || value.target.origin === origin);
@@ -493,10 +529,12 @@ export function TaskCancellationFeedback({ origin, taskId, disabled = false, vis
       {value.failure ? <div role="alert" tabIndex={-1} ref={value === failure ? errorRegion : undefined}>
         <p>{t(reason === "busy" && (value.target.origin === "ai" || value.target.origin === "arena") ? "ai.errors.busy" : `execution.errors.${errorKey}`)}</p><CommandFailureDetails failure={value.failure} />
       </div> : null}
-      <p role="status">{t(value.phase === "recorded" ? "execution.cancelRecorded" : value.phase === "unknown" ? "execution.cancelUnknown"
+      <p role="status">{t(value.phase === "recorded" ? "execution.cancelRecorded" : value.phase === "checking" ? "execution.checkingCancellation" : value.phase === "unknown" ? "execution.cancelUnknown"
         : value.phase === "rejected" ? value.request ? "execution.cancelRejected" : "execution.cancelPreparationFailed" : "execution.cancelPending")}</p>
-      {retryIntent ? <button className="secondary-button" disabled={disabled || (!!retryCommand && !retryCommand.available(retryIntent))}
-        onClick={() => { if (retryCommand) retryCommand.dispatch(retryIntent); else void owner.retry(retryIntent.taskId); }}>{t("execution.retryCancellation")}</button> : null}
+      {retryIntent ? <><button className="secondary-button" disabled={disabled || (!!checkCommand && !checkCommand.available(retryIntent))}
+        onClick={() => { if (checkCommand) checkCommand.dispatch(retryIntent); else void owner.checkCancellation(retryIntent.taskId); }}>{t("execution.checkCancellation")}</button>
+        {value.phase === "unknown" && value.retryAllowed ? <><p>{t("execution.noCancellation")}</p><button className="secondary-button" disabled={disabled || (!!retryCommand && !retryCommand.available(retryIntent))}
+          onClick={() => { if (retryCommand) retryCommand.dispatch(retryIntent); else void owner.retry(retryIntent.taskId); }}>{t("execution.retryCancellation")}</button></> : null}</> : null}
       <details><summary>{t("execution.diagnostic")}</summary>
         <p>{t("execution.cancelTaskIdentity")} <code>{value.target.taskId}</code></p>
         {value.request ? <p>{t("execution.cancelRequestIdentity")} <code>{value.request.requestId}</code></p> : null}
