@@ -85,6 +85,12 @@ async function readyExport() {
   return { user, ref, view };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 function historicalBuild(): SavedPluginBuildView { return { ...structuredClone(savedPluginBuild), projectId: project.metadata.projectId }; }
 function savedBuildReads(read: (attemptId: string) => Promise<SavedPluginBuildView>) {
   const original = invoke.getMockImplementation()!;
@@ -216,7 +222,7 @@ it("preserves a confirmed export and refreshes only its history after a read fai
   expect(invoke.mock.calls.filter(([c]) => c === "export_release")).toHaveLength(1);
 });
 
-it("retains the original export after a lost ACK even when history also fails", async () => {
+it("automatically recovers the original export after a lost ACK even when history also fails", async () => {
   const { user, ref } = await readyExport();
   const original = invoke.getMockImplementation()!;
   const delivery = await original("export_release");
@@ -224,13 +230,13 @@ it("retains the original export after a lost ACK even when history also fails", 
     : command === "list_deliveries" ? Promise.reject({ code: "storage-failed" })
     : command === "read_delivery_action" ? Promise.resolve(delivery) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Export these files" }));
-  await screen.findByText(/These files may have been exported/);
-  expect(await ref.current!.allowLeave()).toBe(false);
-  expect(screen.getByRole("alert")).toHaveTextContent("The action may have completed");
-  await user.click(screen.getByRole("button", { name: "Check this export" }));
   expect(await screen.findByText("Export verified")).toBeInTheDocument();
+  await screen.findByText(/Export history could not refresh/);
+  expect(screen.getByRole("alert")).toHaveTextContent("Export history could not refresh");
+  expect(screen.getByRole("alert")).not.toHaveTextContent("The action may have completed");
   expect(await ref.current!.allowLeave()).toBe(true);
   expect(invoke.mock.calls.filter(([c]) => c === "export_release")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([c]) => c === "read_delivery_action")).toHaveLength(1);
   expect(invoke.mock.calls.find(([c]) => c === "read_delivery_action")![1].request).toMatchObject({ actionId: fixtureIdentity(1), selectionId: fixtureIdentity(704) });
 });
 
@@ -240,12 +246,12 @@ it("requires a fresh destination preview after an exact export lookup finds no a
   invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject(new Error("Disconnected"))
     : command === "read_delivery_action" ? Promise.resolve(null) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Export these files" }));
-  await user.click(await screen.findByRole("button", { name: "Check this export" }));
   await screen.findByText(/This export did not start/);
   expect(await ref.current!.allowLeave()).toBe(true);
   expect(screen.queryByRole("button", { name: "Export these files" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Check destination" })).toBeEnabled();
   expect(invoke.mock.calls.filter(([c]) => c === "export_release")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([c]) => c === "read_delivery_action")).toHaveLength(1);
 });
 
 it("preserves a rejected export error when its history refresh also fails", async () => {
@@ -259,6 +265,7 @@ it("preserves a rejected export error when its history refresh also fails", asyn
   expect(alert).toHaveTextContent("Export history could not refresh");
   expect(await ref.current!.allowLeave()).toBe(true);
   expect(screen.queryByText(/These files may have been exported/)).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([c]) => c === "read_delivery_action")).toHaveLength(0);
 });
 
 it("keeps an uncertain export locked when the exact action lookup fails", async () => {
@@ -267,12 +274,52 @@ it("keeps an uncertain export locked when the exact action lookup fails", async 
   invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject({ code: "outcome-unknown" })
     : command === "read_delivery_action" ? Promise.reject({ code: "storage-failed" }) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Export these files" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check this export" })).toBeEnabled());
+  expect(invoke.mock.calls.filter(([c]) => c === "read_delivery_action")).toHaveLength(1);
   await user.click(await screen.findByRole("button", { name: "Check this export" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Check this export" })).toBeEnabled());
   expect(await ref.current!.allowLeave()).toBe(false);
   expect(screen.queryByText(/This export did not start/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Export these files" })).not.toBeInTheDocument();
   expect(invoke.mock.calls.filter(([c]) => c === "export_release")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([c]) => c === "read_delivery_action")).toHaveLength(2);
+});
+
+it.each(["en-US", "zh-CN"])("shows the actual automatic and manual read phases without relabelling the export write in %s", async language => {
+  const { user } = await readyExport();
+  await act(async () => { await i18n.changeLanguage(language); });
+  const original = invoke.getMockImplementation()!, receipt: DeliveryView = await original("export_release");
+  const write = deferred<DeliveryView>(), automatic = deferred<DeliveryView | null>(), manual = deferred<DeliveryView | null>();
+  let lookups = 0;
+  invoke.mockImplementation((command: string, args) => command === "export_release" ? write.promise
+    : command === "read_delivery_action" ? ++lookups === 1 ? automatic.promise : manual.promise : original(command, args));
+  await user.click(screen.getByRole("button", { name: i18n.t("release.export") }));
+  expect(screen.queryByText(i18n.t("release.checkingDelivery"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: i18n.t("release.checkExport") })).toBeDisabled();
+  expect(lookups).toBe(0);
+  await act(async () => { write.reject(new Error("Lost export acknowledgement")); });
+  expect(await screen.findByText(i18n.t("release.checkingDelivery"))).toBeVisible();
+  expect(screen.queryByText(i18n.t("release.exportUnknown"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: i18n.t("release.checkExport") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("release.reauthorizeFolder") })).toBeDisabled();
+  await act(async () => { automatic.reject(new Error("Saved result temporarily unavailable")); });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("release.checkExport") })).toBeEnabled());
+  expect(screen.queryByText(i18n.t("release.checkingDelivery"))).not.toBeInTheDocument();
+  expect(screen.getByText(i18n.t("release.exportUnknown"))).toBeVisible(); expect(lookups).toBe(1);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.checkExport") }));
+  expect(await screen.findByText(i18n.t("release.checkingDelivery"))).toBeVisible();
+  expect(screen.getByRole("button", { name: i18n.t("release.checkExport") })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: i18n.t("workbench.backOverview") }));
+  await act(async () => { manual.resolve(receipt); });
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  expect(await screen.findByText(i18n.t("release.deliveryState.succeeded"))).toBeVisible();
+  expect(screen.queryByText(i18n.t("release.checkingDelivery"))).not.toBeInTheDocument();
+  expect(screen.queryByText(i18n.t("release.exportUnknown"))).not.toBeInTheDocument();
+  expect(lookups).toBe(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "reconcile_delivery")).toHaveLength(0);
+  expect(invoke.mock.calls.filter(([command]) => command === "choose_delivery_folder")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "preview_delivery")).toHaveLength(1);
 });
 
 it.each([
@@ -285,17 +332,15 @@ it.each([
   invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject(failure)
     : command === "read_delivery_action" ? Promise.resolve(delivery) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Export these files" }));
-  await screen.findByText(/These files may have been exported/);
-  expect(await ref.current!.allowLeave()).toBe(false);
-  expect(screen.getByRole("alert")).toHaveTextContent("The action may have completed");
+  expect(await screen.findByText("Export verified")).toBeInTheDocument();
+  expect(screen.queryByText(/These files may have been exported/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Back to overview" })).toBeEnabled();
   expect(await ref.current!.allowNavigate()).toBe(true);
   const originalRequest = invoke.mock.calls.find(([command]) => command === "export_release")![1].request;
-  await user.click(screen.getByRole("button", { name: "Check this export" }));
-  expect(await screen.findByText("Export verified")).toBeInTheDocument();
   expect(await ref.current!.allowLeave()).toBe(true);
   expect(invoke.mock.calls.find(([command]) => command === "read_delivery_action")![1].request.actionId).toBe(originalRequest.actionId);
   expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_delivery_action")).toHaveLength(1);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
 });
 afterEach(() => {
@@ -471,10 +516,12 @@ it.each(["en-US", "zh-CN"])("keeps an original unknown export when a newly autho
   await user.click(await screen.findByRole("button", { name: i18n.t("release.preview") }));
   await user.click(screen.getByRole("checkbox", { name: i18n.t("release.overwrite") }));
   const original = invoke.getMockImplementation()!;
+  let lookups = 0;
   invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject(new Error("Lost ACK"))
     : command === "choose_delivery_folder" ? Promise.resolve({ selectionId: fixtureIdentity(799), folderName: "export" })
-    : command === "read_delivery_action" ? Promise.resolve(null) : original(command, args));
+    : command === "read_delivery_action" ? lookups++ === 0 ? Promise.reject(new Error("Original directory lease unavailable")) : Promise.resolve(null) : original(command, args));
   await user.click(screen.getByRole("button", { name: i18n.t("release.export") }));
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("release.reauthorizeFolder") })).toBeEnabled());
   await user.click(await screen.findByRole("button", { name: i18n.t("release.reauthorizeFolder") }));
   await screen.findByText(i18n.t("release.reauthorizationLimit"));
   await user.click(screen.getByRole("button", { name: i18n.t("release.checkExport") }));
@@ -482,7 +529,7 @@ it.each(["en-US", "zh-CN"])("keeps an original unknown export when a newly autho
   expect(await ref.current!.allowLeave()).toBe(false);
   expect(screen.queryByText(i18n.t("release.exportMissing"))).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: i18n.t("release.export") })).not.toBeInTheDocument();
-  expect(invoke.mock.calls.find(([command]) => command === "read_delivery_action")![1].request.selectionId).toBe(fixtureIdentity(799));
+  expect(invoke.mock.calls.filter(([command]) => command === "read_delivery_action").map(([,args]) => args.request.selectionId)).toEqual([fixtureIdentity(704), fixtureIdentity(799)]);
   expect(invoke.mock.calls.find(([command]) => command === "export_release")![1].request.selectionId).toBe(fixtureIdentity(704));
   expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(1);
 });

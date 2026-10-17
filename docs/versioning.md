@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Delivery recovery performs one bounded read of the original saved export action
+following a lost or uncertain acknowledgement. Explicit folder selection, previews,
+exports and reconciliation retain their existing authority; the original receipt
+and complete file-set monotonicity checks remain unchanged. No IPC, schema 52,
+SDK/Process3, WorkPlan3, dependency or package metadata changes are required. This
+remains in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1`
+batch, with synchronized bilingual Unreleased entries and no additional version bump.
+
 The content workbench adds pointer and keyboard pane sizing, project-session
 view preferences per layout mode and narrow-container pane switching. Existing
 draft, selection, query and command owners retain their authority. Opening an

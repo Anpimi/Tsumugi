@@ -1413,6 +1413,7 @@ ai: {
       checkBuild: "核对已保存构建任务",
       retryBuild: "重试同一次构建",
       exportUnknown: "这些文件可能已导出。请先核对这次导出，再重新导出或离开；必要时重新选择原文件夹。",
+      checkingDelivery: "正在核对保存结果…",
       checkExport: "核对这次导出",
       reauthorizeFolder: "重新选择原目录以核对这次导出",
       reauthorizationLimit: "这次目录选择仅授权核对原导出。此处没有记录不代表原导出未开始；在能够确认之前，仍保留原结果待核对状态。",

@@ -1422,6 +1422,7 @@ ai: {
       checkBuild: "Check saved build task",
       retryBuild: "Retry the same build",
       exportUnknown: "These files may have been exported. Check this export before exporting again or leaving. If needed, select the original folder again.",
+      checkingDelivery: "Checking the saved export result…",
       checkExport: "Check this export",
       reauthorizeFolder: "Select the original folder to check this export",
       reauthorizationLimit: "This folder selection only authorizes checking the original export. A missing record here does not prove that the original export did not start. Keep the original result unresolved until it can be confirmed.",

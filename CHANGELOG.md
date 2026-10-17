@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check the original saved export result once after a lost or uncertain
+  acknowledgement, then retain manual recovery if it remains unconfirmed.
+  This read does not repeat the export or alter verified file results.
+
 - Resize the content list and references with the pointer or keyboard. Sizes
   are remembered separately for wide and compact layouts within the project
   session and stay within the available space. Narrow content areas can switch

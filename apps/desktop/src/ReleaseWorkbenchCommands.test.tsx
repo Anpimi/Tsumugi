@@ -206,9 +206,11 @@ it("revokes the prior overwrite command immediately when a replacement preview i
 
 it("recovers an original export through explicit directory reauthorization without recapturing or exporting another release",async()=>{
   await exportReady();const original=invoke.getMockImplementation()!;
-  invoke.mockImplementation((command:string,args)=>command==="export_release"?Promise.reject(new Error("Export ACK lost")):original(command,args));
+  invoke.mockImplementation((command:string,args)=>command==="export_release"?Promise.reject(new Error("Export ACK lost"))
+    :command==="read_delivery_action"?Promise.reject(new Error("Original directory lease unavailable")):original(command,args));
   await act(async()=>{registry.dispatch("release.confirm-overwrite",scope,preview(true));registry.dispatch("release.export",scope,preview());});
-  await waitFor(()=>expect(owner.current().pending?.kind).toBe("export"));const pending=exportPending(),request=requests("export_release")[0];
+  await waitFor(()=>expect(owner.current().pending?.kind).toBe("export"));await waitFor(()=>expect(owner.current().busy).toBe(false));
+  const pending=exportPending(),request=requests("export_release")[0];
   expect(registry.dispatch("release.check-export",scope,{...pending,actionId:fixtureIdentity(999)})).toBe(false);
   expect(registry.dispatch("release.choose-release",scope,record())).toBe(false);
   invoke.mockImplementation((command:string,args)=>command==="choose_delivery_folder"?Promise.resolve({...fixture.responses.selection,selectionId:fixtureIdentity(998)}):original(command,args));
@@ -217,7 +219,9 @@ it("recovers an original export through explicit directory reauthorization witho
   expect(registry.dispatch("release.check-export",scope,pending)).toBe(false);
   await act(async()=>{expect(registry.dispatch("release.check-export",scope,recovered)).toBe(true);});
   expect(owner.current().pending).toBeNull();expect(owner.current().result?.actionId).toBe(request.actionId);
-  expect(requests("read_delivery_action")).toEqual([{...fixture.requests.session,actionId:request.actionId,selectionId:fixtureIdentity(998)}]);
+  expect(requests("read_delivery_action")).toEqual([
+    {...fixture.requests.session,actionId:request.actionId,selectionId:fixture.responses.selection.selectionId},
+    {...fixture.requests.session,actionId:request.actionId,selectionId:fixtureIdentity(998)}]);
   expect(calls("export_release")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
 });
 

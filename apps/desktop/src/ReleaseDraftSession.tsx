@@ -52,7 +52,7 @@ interface State {
   savedAttempt: string | null; buildReceipt: Receipt | null;
   workflow: WorkflowCapture | null; workflowControlBusy: boolean; workflowStopBusy: boolean;
   chosen: ReleaseView | null; selection: DeliverySelection | null; preview: DeliveryPreview | null; overwrite: boolean;
-  attempt: string | null; result: DeliveryView | null; pending: Pending | null; busy: boolean;
+  attempt: string | null; result: DeliveryView | null; pending: Pending | null; busy: boolean; checkingDelivery: boolean;
   failure: CommandFailure | null; failureArea: "build" | "delivery" | null; exportMissing: boolean; earlierBuild: boolean;
 }
 function freeze<T>(value: T): T {
@@ -64,7 +64,7 @@ function initial(): State {
   return { languages: [], names: {}, configuration: {}, choiceKey: "", runtimeDigest: "", buildChoice: null,
     editSeq: 0, buildDirty: false, deliveryDirty: false, stale: false, eligibility: null, assessment: null,
     prepared: null, buildConsent: null, checkReview: null, checkConsent: null, checkAttempt: null, savedAttempt: null, buildReceipt: null, workflow: null, workflowControlBusy: false, workflowStopBusy: false,
-    chosen: null, selection: null, preview: null, overwrite: false, attempt: null, result: null, pending: null, busy: false,
+    chosen: null, selection: null, preview: null, overwrite: false, attempt: null, result: null, pending: null, busy: false, checkingDelivery: false,
     failure: null, failureArea: null, exportMissing: false, earlierBuild: false };
 }
 const sameScope = (a: ContentScope, b: ContentScope) => a.revision === b.revision && a.currentSnapshot === b.currentSnapshot;
@@ -555,37 +555,78 @@ function useReleaseOwner(project: ProjectView) {
     update(before => ({ ...before, result: fixed(delivery), pending: unresolved ? { ...pending, receipt: fixed(delivery) } : null,
       deliveryDirty: unresolved, exportMissing: false }));
   }
+  async function lookupDelivery(pending: ExportPending | ReconcilePending) {
+    const ticket = flight.current;
+    const original = () => {
+      const value = current().pending;
+      if (!live() || ticket === null || flight.current !== ticket || !value || value.kind === "build"
+        || value.request !== pending.request) return null;
+      return value;
+    };
+    if (!original()) return false;
+    update(before => ({ ...before, checkingDelivery: true }));
+    try {
+      const selection = pending.recoverySelection ?? pending.selection;
+      const saved = await releaseCommands.deliveryAction({ ...session, actionId: pending.request.actionId, selectionId: selection.selectionId });
+      const latest = original();
+      if (!latest) return false;
+      if (saved) {
+        settleDelivery(latest, saved);
+        return saved.state !== "pending" && saved.state !== "unknown";
+      }
+      // A new picker lease cannot prove that an absent action belongs to the original directory.
+      if (latest.receipt || latest.recoverySelection) invalidAck();
+      update(before => ({ ...before, pending: null, result: null, exportMissing: true, deliveryDirty: false }));
+      return true;
+    } finally {
+      if (live() && flight.current === ticket) update(before => ({ ...before, checkingDelivery: false }));
+    }
+  }
   async function exportFiles() {
     const before = current();
     if (!before.chosen || !before.selection || !before.preview || (before.preview.files.some(file => file.state === "conflict") && !before.overwrite)) return;
     await run(async () => {
+      const ticket = flight.current;
       const actionId = await executionCommands.identity(session);
-      if (!live() || current().chosen !== before.chosen || current().selection !== before.selection
+      if (!live() || flight.current !== ticket || current().chosen !== before.chosen || current().selection !== before.selection
         || current().preview !== before.preview || current().overwrite !== before.overwrite) return;
       confirmReleasePreview(before.preview!, before.chosen!, before.selection!.selectionId);
       const pending: ExportPending = fixed({ kind: "export", request: { ...session, actionId, releaseId: before.chosen!.releaseId,
         selectionId: before.selection!.selectionId, previewId: before.preview!.previewId, overwriteConflicts: before.overwrite },
         preview: before.preview!, selection: before.selection!, recoverySelection: null, receipt: null });
       update(value => ({ ...value, pending, preview: null, overwrite: false, exportMissing: false }));
-      try { settleDelivery(pending, await releaseCommands.export(pending.request)); }
-      catch (failure) { if (live() && !hasUnknownOutcome(failure)) update(value => ({ ...value, pending: null, deliveryDirty: false })); throw failure; }
-      finally { if (live()) reads.invalidate(["release"], false); }
+      try {
+        let needsLookup = false, uncertain = false;
+        let writeFailure: unknown;
+        try {
+          const delivery = await releaseCommands.export(pending.request);
+          if (!live() || flight.current !== ticket) return;
+          settleDelivery(pending, delivery);
+          needsLookup = delivery.state === "unknown";
+        } catch (failure) {
+          if (!live() || flight.current !== ticket) return;
+          if (!hasUnknownOutcome(failure)) {
+            update(value => ({ ...value, pending: null, deliveryDirty: false }));
+            throw failure;
+          }
+          needsLookup = uncertain = true; writeFailure = failure;
+        }
+        // The one read is outside the write catch: a failed lookup must not start another lookup.
+        const latest = current().pending;
+        if (needsLookup && latest?.kind === "export" && latest.request === pending.request) {
+          const resolved = await lookupDelivery(latest);
+          if (!resolved && uncertain && live() && flight.current === ticket) throw writeFailure;
+        }
+      } finally { if (live() && flight.current === ticket) reads.invalidate(["release"], false); }
     });
   }
   async function checkExport() {
     const pending = current().pending;
     if (!pending || pending.kind === "build") return;
     await run(async () => {
-      const selection = pending.recoverySelection ?? pending.selection;
-      const saved = await releaseCommands.deliveryAction({ ...session, actionId: pending.request.actionId, selectionId: selection.selectionId });
-      if (!live()) return;
-      if (saved) settleDelivery(pending, saved);
-      else {
-        // A new picker lease cannot prove that an absent action belongs to the original directory.
-        if (pending.receipt || pending.recoverySelection) invalidAck();
-        update(before => ({ ...before, pending: null, result: null, exportMissing: true, deliveryDirty: false }));
-      }
-      reads.invalidate(["release"], false);
+      const ticket = flight.current;
+      await lookupDelivery(pending);
+      if (live() && flight.current === ticket) reads.invalidate(["release"], false);
     }, true);
   }
   async function reconcile(delivery: DeliveryView) {
@@ -596,12 +637,32 @@ function useReleaseOwner(project: ProjectView) {
       recoverySelection: null, receipt: delivery });
     if (delivery.releaseId !== before.chosen.releaseId) { reportFailure("outcome-unknown","delivery"); return; }
     await run(async () => {
+      const ticket = flight.current;
       confirmReleaseDelivery(delivery, delivery, before.chosen!.artifacts.map(file => ({ ...file, expectedSha256: file.sha256 })));
       update(value => ({ ...value, pending }));
       const selection = pending.recoverySelection ?? pending.selection;
-      try { settleDelivery(pending, await releaseCommands.reconcile({ ...session, actionId: pending.request.actionId, selectionId: selection.selectionId })); }
-      catch (failure) { if (live() && !existing && !hasUnknownOutcome(failure)) update(value => ({ ...value, pending: null })); throw failure; }
-      finally { if (live()) reads.invalidate(["release"], false); }
+      try {
+        let needsLookup = false, uncertain = false;
+        let writeFailure: unknown;
+        try {
+          const saved = await releaseCommands.reconcile({ ...session, actionId: pending.request.actionId, selectionId: selection.selectionId });
+          if (!live() || flight.current !== ticket) return;
+          settleDelivery(pending, saved);
+          needsLookup = saved.state === "unknown";
+        } catch (failure) {
+          if (!live() || flight.current !== ticket) return;
+          if (!hasUnknownOutcome(failure)) {
+            if (!existing) update(value => ({ ...value, pending: null }));
+            throw failure;
+          }
+          needsLookup = uncertain = true; writeFailure = failure;
+        }
+        const latest = current().pending;
+        if (needsLookup && latest && latest.kind !== "build" && latest.request === pending.request) {
+          const resolved = await lookupDelivery(latest);
+          if (!resolved && uncertain && live() && flight.current === ticket) throw writeFailure;
+        }
+      } finally { if (live() && flight.current === ticket) reads.invalidate(["release"], false); }
     }, true);
   }
   function reset() {
