@@ -50,9 +50,30 @@ The existing AI workbench still requires its own plan, preview, sharing choices
 and execution consent. The notice does not run a model, plugin or worker, select
 translations, grant approval or publish a release.
 
+## Inspect original source records
+
+In the translation editor, expand **Terms, context and history** to read source
+facts, neighboring text and additional captured source information. Choose
+**View original record** for an additional record to load its complete stored
+text, such as the original settings associated with a subtitle cue. Source
+details identify its scope and captured format. This advanced reference is
+read-only; viewing remains local under the existing separate AI sharing controls.
+
+Each record is checked against the current source snapshot and entry before it
+is read. Changing the source or selected entry keeps newer translation drafts
+and prevents an earlier response from appearing under the new entry. Unavailable
+records offer a retry in place. Ordinary reference pages contain descriptions;
+the full text is loaded only when a record is opened and is never truncated to
+fit a page. Existing source capture and format limits still apply.
+
 ## Materials and limits
 
-Supported format semantics and material paths come from the selected package. Native capture rejects links, path traversal, observed replacement and duplicate physical inputs; files must meet their declared byte limits and the shared encoded capture budget. Unsupported or incomplete inputs fail as a whole. Source and content payloads each have a 2 MiB encoded ceiling, the complete fixed check input a 4 MiB ceiling, and the stored execution result an 8 MiB ceiling. Metadata and references count toward these limits. Preview pages contain at most 100 rows and 256 KiB without truncating text.
+Supported format semantics and material paths come from the selected package. Native capture rejects links, path traversal, observed replacement and duplicate physical inputs; files must meet their declared byte limits and the shared encoded capture budget. Unsupported or incomplete inputs fail as a whole. Source payloads have a 2 MiB encoded ceiling, content exchanges a 4 MiB ceiling, the complete fixed check input a 4 MiB ceiling, and the stored execution result an 8 MiB ceiling. Metadata and references count toward these limits. Preview pages contain at most 100 rows and 256 KiB without truncating text.
+
+Editor reference pages retain their separate 128 KiB ceiling. One explicitly
+opened source record uses a separate 8 MiB encoded response limit, including its
+source identity; this local read limit does not expand the SDK's 2 MiB raw block
+limit or the original capture limits.
 
 Source details display the original identity label, captured file and half-open range with its explicit UTF-8-byte, UTF-16 or grapheme encoding. Canonical matching values do not replace the original label. Historical details load on demand and offer **Refresh** when unavailable; switching snapshots discards a late response for the earlier source.
 

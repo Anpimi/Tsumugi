@@ -1,12 +1,13 @@
 import type { AdoptionAction, Receipt, SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import { pluginCommands, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
-import type { SourceAdoptRequest, PreviewRequest, ContentRequest, SourceContextReadRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
-import { validateRequestAdopt, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseSourceContext, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
+import type { SourceAdoptRequest, PreviewRequest, ContentRequest, SourceContextReadRequest, SourceContextBlockReadRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
+import type { SourceContextPage, SourceContextBlockBasis, SourceContextBlockDescriptor } from "./generated/source.responses";
+import { validateRequestAdopt, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseSourceContext, validateResponseSourceContextBlock, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
 
 export type { SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
-export type { SourceContextReadRequest } from "./generated/source.requests";
-export type { SourceContextPage, SourceContextPageEntry, SourceContextBlock, SourceContextNeighbor } from "./generated/source.responses";
+export type { SourceContextReadRequest, SourceContextBlockReadRequest } from "./generated/source.requests";
+export type { SourceContextPage, SourceContextPageEntry, SourceContextBlock, SourceContextNeighbor, SourceContextBlockBasis, SourceContextBlockDescriptor, SourceContextBlockDetail } from "./generated/source.responses";
 export type { PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
 export type { PluginSourceSelection, PluginSourcePreflight, SourceCheckReview, PluginSourceSelection as SourceSelection, PluginSourcePreflight as Preflight } from "./generated/source.responses";
 export type { PluginStartRequest as StartRequest } from "./generated/source.requests";
@@ -34,6 +35,15 @@ export const sourceCommands = {
     }
     return page;
   },
+  sourceContextBlock: async (request: SourceContextBlockReadRequest) => {
+    const detail = await checkedInvoke("read_source_context_block", request, validateResponseSourceContextBlock);
+    if (request.projectId !== request.basis.scope.projectId || !sameSourceContextBlockBasis(detail.basis, request.basis)
+      || !sameSourceContextBlockDescriptor(detail.descriptor, request.descriptor)
+      || new TextEncoder().encode(detail.payloadUtf8).byteLength !== detail.descriptor.payloadBytes) {
+      throw new Error("Invalid source context block association");
+    }
+    return detail;
+  },
   compare: (request: Omit<ComparisonRequest, "filter"> & { filter?: string }) => checkedInvoke("read_source_comparison", { base: null, filter: "", ...request }, validateResponseComparison),
   history: (request: HistoryRequest) => checkedInvoke("read_source_history", request, validateResponseHistory),
   historyContent: (request: HistoryContentRequest) => checkedInvoke("read_source_history_content", request, validateResponsePage),
@@ -42,6 +52,25 @@ export const sourceCommands = {
   impact: (request: ImpactRequest) => checkedInvoke("read_source_impact", request, validateResponseImpact),
   prepare: (request: SourceAdoptRequest) => checkedInvoke("prepare_source_adoption", request, validateResponseAction),
 };
+
+/** Metadata pages and explicit record reads use the same captured source identity. */
+export function sourceContextBlockBasis(page: SourceContextPage): SourceContextBlockBasis {
+  return { scope: page.scope, contentRevision: page.contentRevision, sourceAttemptId: page.sourceAttemptId,
+    sourceResultId: page.sourceResultId, sourceResultDigest: page.sourceResultDigest,
+    sourceLocale: page.sourceLocale, localUnitId: page.localUnitId };
+}
+function sameSourceContextBlockBasis(left: SourceContextBlockBasis, right: SourceContextBlockBasis) {
+  return left.scope.projectId === right.scope.projectId && left.scope.sourceSnapshotId === right.scope.sourceSnapshotId
+    && left.scope.unitId === right.scope.unitId && left.scope.sourceRevisionId === right.scope.sourceRevisionId && left.scope.locale === right.scope.locale
+    && left.contentRevision === right.contentRevision && left.sourceAttemptId === right.sourceAttemptId && left.sourceResultId === right.sourceResultId
+    && left.sourceResultDigest === right.sourceResultDigest && left.sourceLocale === right.sourceLocale && left.localUnitId === right.localUnitId;
+}
+function sameSourceContextBlockDescriptor(left: SourceContextBlockDescriptor, right: SourceContextBlockDescriptor) {
+  return left.blockIndex === right.blockIndex && left.target.kind === right.target.kind
+    && (left.target.kind === "snapshot" ? right.target.kind === "snapshot" : right.target.kind !== "snapshot" && left.target.id === right.target.id)
+    && left.schema.id === right.schema.id && left.schema.schemaVersion === right.schema.schemaVersion && left.schema.behaviorVersion === right.schema.behaviorVersion
+    && left.handling === right.handling && left.inRevisionBasis === right.inRevisionBasis && left.payloadBytes === right.payloadBytes;
+}
 
 export function sameSourceEnvironment(view: PluginSourceView, request: PluginSourceRequest) {
   return view.resourceId === request.resourceId && view.environmentDigest === request.environmentDigest

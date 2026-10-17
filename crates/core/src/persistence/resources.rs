@@ -32,12 +32,13 @@ pub(super) fn verify_input_fact_decisions(
     input: &crate::execution::FixedInput,
 ) -> Result<(), ExecutionError> {
     if input.envelope().operation == crate::ai::semantic_review::OPERATION {
-        super::ai_semantic_review::verify_input_records(c,input)?;
+        super::ai_semantic_review::verify_input_records(c, input)?;
     }
     context_facts::verify_input_records(c, input)?;
     strategy::verify_input_binding(c, input)
 }
 mod source_context;
+mod source_context_blocks;
 mod source_context_page;
 mod source_context_selection;
 mod tbx_exchange;
@@ -46,6 +47,10 @@ pub(super) use source_context::SourceContextReader;
 pub use source_context::{
     SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
     SourceContextOccurrence, SourceContextRequest, SourceContextView,
+};
+pub use source_context_blocks::{
+    MAX_SOURCE_CONTEXT_BLOCK_DETAIL_BYTES, SourceContextBlockBasis, SourceContextBlockDescriptor,
+    SourceContextBlockDetail, SourceContextBlockRead,
 };
 pub use source_context_page::{
     MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry,

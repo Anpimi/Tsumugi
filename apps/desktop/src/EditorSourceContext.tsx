@@ -1,8 +1,9 @@
 import { ContextFactReferences } from "./ContextFactDecisions";
 import { useTranslation } from "react-i18next";
 import { useSessionInfiniteQuery, useSessionReads } from "./SessionReadProvider";
-import { sourceCommands, type SourceContextBlock, type SourceContextNeighbor, type SourceContextPage } from "./sourceCommands";
+import { sourceCommands, sourceContextBlockBasis, type SourceContextBlock, type SourceContextNeighbor, type SourceContextPage } from "./sourceCommands";
 import type { SessionRequest } from "./executionCommands";
+import { SourceBlockInspection } from "./SourceBlockInspection";
 
 const pageLimit = 4;
 type Scope = SourceContextPage["scope"];
@@ -105,9 +106,13 @@ export function EditorSourceContext({ context, scope, enabled, sourceChanged = f
       {pages[0].observations.unknownBlocks ? <p>{t("sourceContext.unknown", { count: pages[0].observations.unknownBlocks })}</p> : null}
       {pages[0].observations.unknownRequiredBlocks ? <p>{t("sourceContextRead.requiredUnknownCount", { count: pages[0].observations.unknownRequiredBlocks })}</p> : null}
       {pages[0].totalEntries === 0 ? <p>{t("sourceContextRead.noEntries")}</p> : null}
-      {pages.flatMap(page => page.entries).map((entry, index) => <div key={index}>
-        {entry.kind === "block" ? <Block block={entry.value} /> : <Neighbor neighbor={entry.value} />}
-      </div>)}
+      {pages.flatMap(page => page.entries.map((entry, index) => {
+        if (entry.kind === "stored-block") {
+          const basis = sourceContextBlockBasis(page);
+          return <SourceBlockInspection key={JSON.stringify([context.sessionToken, basis, entry.value])} context={context} basis={basis} descriptor={entry.value} />;
+        }
+        return <div key={`${page.after}:${index}`}>{entry.kind === "block" ? <Block block={entry.value} /> : <Neighbor neighbor={entry.value} />}</div>;
+      }))}
       {entryKey!==undefined?<ContextFactReferences context={context} pages={pages} entryKey={entryKey}/>:null}
       {read.hasNextPage ? <button type="button" className="secondary-button" disabled={read.isFetching}
         onClick={() => void read.fetchNextPage()}>{t("sourceContextRead.more")}</button> : <p>{t("sourceContextRead.complete")}</p>}

@@ -99,7 +99,7 @@ fn view() -> SourceContextView {
 #[test]
 fn pages_keep_complete_block_order_then_neighbor_order() {
     let view = view();
-    let first = page_from_view(&view, 0, 2).unwrap();
+    let first = page_from_view(&view, &[], 0, 2).unwrap();
     assert_eq!(first.scope, view.scope);
     assert_eq!(first.content_revision, view.content_revision);
     assert_eq!(first.source_result_digest, view.source_result_digest);
@@ -120,7 +120,7 @@ fn pages_keep_complete_block_order_then_neighbor_order() {
             value: view.blocks[1].clone()
         }
     );
-    let second = page_from_view(&view, first.next_after.unwrap(), 2).unwrap();
+    let second = page_from_view(&view, &[], first.next_after.unwrap(), 2).unwrap();
     assert_eq!(second.after, 2);
     assert_eq!(second.next_after, None);
     assert_eq!(
@@ -135,7 +135,7 @@ fn pages_keep_complete_block_order_then_neighbor_order() {
             value: view.neighbors[0].clone()
         }
     );
-    assert_eq!(page_from_view(&view, 4, 2).unwrap().entries.len(), 0);
+    assert_eq!(page_from_view(&view, &[], 4, 2).unwrap().entries.len(), 0);
     assert_eq!(
         serde_json::to_value(&first.entries[0]).unwrap()["kind"],
         "block"
@@ -149,7 +149,7 @@ fn pages_keep_complete_block_order_then_neighbor_order() {
 #[test]
 fn missing_empty_and_unknown_required_are_observed_without_interpretation() {
     let mut view = view();
-    let page = page_from_view(&view, 0, 20).unwrap();
+    let page = page_from_view(&view, &[], 0, 20).unwrap();
     assert!(!page.observations.missing_blocks);
     assert_eq!(page.observations.empty_blocks, 1);
     assert_eq!(page.observations.unknown_blocks, 1);
@@ -158,7 +158,7 @@ fn missing_empty_and_unknown_required_are_observed_without_interpretation() {
         matches!(&page.entries[2], SourceContextPageEntry::Block { value } if value.facts.is_none())
     );
     view.blocks.clear();
-    let missing = page_from_view(&view, 0, 20).unwrap();
+    let missing = page_from_view(&view, &[], 0, 20).unwrap();
     assert!(missing.observations.missing_blocks);
     assert_eq!(missing.total_entries, 1);
     assert!(matches!(
@@ -195,7 +195,7 @@ fn unicode_page_budget_counts_whole_json_frame_and_never_splits_a_block() {
             facts: Some(facts),
         });
     }
-    let first = page_from_view(&view, 0, 20).unwrap();
+    let first = page_from_view(&view, &[], 0, 20).unwrap();
     assert_eq!(first.entries.len(), 2);
     assert_eq!(first.next_after, Some(2));
     let bytes = serde_json::to_vec(&first).unwrap();
@@ -206,7 +206,7 @@ fn unicode_page_budget_counts_whole_json_frame_and_never_splits_a_block() {
     });
     with_next.next_after = Some(3);
     assert!(serde_json::to_vec(&with_next).unwrap().len() > MAX_SOURCE_CONTEXT_PAGE_BYTES);
-    let second = page_from_view(&view, 2, 20).unwrap();
+    let second = page_from_view(&view, &[], 2, 20).unwrap();
     assert_eq!(second.entries.len(), 2);
     assert_eq!(second.next_after, None);
     assert!(
@@ -218,13 +218,62 @@ fn unicode_page_budget_counts_whole_json_frame_and_never_splits_a_block() {
 fn invalid_offsets_limits_and_unrepresentable_header_fail_explicitly() {
     let view = view();
     for (after, limit) in [(5, 1), (0, 0), (0, 21)] {
-        let error = page_from_view(&view, after, limit).unwrap_err();
+        let error = page_from_view(&view, &[], after, limit).unwrap_err();
         assert_eq!(error.code, ErrorCode::InvalidInput);
         assert_eq!(error.stage, "source-context-page");
     }
     let mut huge_header = view;
     huge_header.local_unit_id = "x".repeat(MAX_SOURCE_CONTEXT_PAGE_BYTES);
-    let error = page_from_view(&huge_header, 0, 1).unwrap_err();
+    let error = page_from_view(&huge_header, &[], 0, 1).unwrap_err();
     assert_eq!(error.code, ErrorCode::LimitExceeded);
     assert_eq!(error.stage, "source-context-page-budget");
+}
+
+#[test]
+fn stored_descriptors_page_in_original_index_order_without_changing_fact_observations() {
+    let view = view();
+    let descriptors = (0..3)
+        .map(|block_index| SourceContextBlockDescriptor {
+            block_index,
+            target: sdk::ContentTarget::Snapshot,
+            schema: sdk::ContractRef {
+                id: "different.opaque".into(),
+                schema_version: 7,
+                behavior_version: 3,
+            },
+            handling: sdk::ExtensionHandling::Required,
+            in_revision_basis: false,
+            payload_bytes: sdk::MAX_EXCHANGE_BYTES as u32,
+        })
+        .collect::<Vec<_>>();
+    let ordinary = page_from_view(&view, &[], 0, 20).unwrap();
+    let first = page_from_view(&view, &descriptors, 0, 4).unwrap();
+    assert_eq!(first.observations, ordinary.observations);
+    assert_eq!(first.total_entries, 7);
+    assert_eq!(first.next_after, Some(4));
+    assert_eq!(
+        first.entries[3],
+        SourceContextPageEntry::StoredBlock {
+            value: descriptors[0].clone()
+        }
+    );
+    let second = page_from_view(&view, &descriptors, 4, 4).unwrap();
+    assert_eq!(second.next_after, None);
+    assert_eq!(
+        second.entries[0],
+        SourceContextPageEntry::StoredBlock {
+            value: descriptors[1].clone()
+        }
+    );
+    assert_eq!(
+        second.entries[1],
+        SourceContextPageEntry::StoredBlock {
+            value: descriptors[2].clone()
+        }
+    );
+    assert!(matches!(
+        second.entries[2],
+        SourceContextPageEntry::Neighbor { .. }
+    ));
+    assert!(codec::encode(&second, MAX_SOURCE_CONTEXT_PAGE_BYTES).is_ok());
 }

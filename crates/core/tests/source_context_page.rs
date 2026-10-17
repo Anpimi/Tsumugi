@@ -77,7 +77,7 @@ fn checked_pages_preserve_whole_entries_and_remain_read_only_after_reopen() {
     assert_eq!(first.source_result_digest, view.source_result_digest);
     assert_eq!(first.occurrence_count, view.occurrences.len() as u32);
     assert_eq!(first.next_after, Some(2));
-    assert_eq!(first.total_entries, 4);
+    assert_eq!(first.total_entries, 7);
     assert_eq!(first.observations.known_facts, 1);
     assert_eq!(first.observations.empty_blocks, 1);
     assert_eq!(first.observations.unknown_required_blocks, 1);
@@ -93,7 +93,7 @@ fn checked_pages_preserve_whole_entries_and_remain_read_only_after_reopen() {
             value: view.blocks[1].clone()
         }
     );
-    let second = store.source_context_page(&request, 2, 2).unwrap();
+    let second = store.source_context_page(&request, 2, 5).unwrap();
     assert_eq!(second.next_after, None);
     assert_eq!(
         second.entries[0],
@@ -102,14 +102,14 @@ fn checked_pages_preserve_whole_entries_and_remain_read_only_after_reopen() {
         }
     );
     assert_eq!(
-        second.entries[1],
+        second.entries[4],
         SourceContextPageEntry::Neighbor {
             value: view.neighbors[0].clone()
         }
     );
     assert!(
         store
-            .source_context_page(&request, 4, 2)
+            .source_context_page(&request, 7, 2)
             .unwrap()
             .entries
             .is_empty()
@@ -119,7 +119,7 @@ fn checked_pages_preserve_whole_entries_and_remain_read_only_after_reopen() {
     let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
     assert_eq!(reopened.source_context_page(&request, 0, 2).unwrap(), first);
     assert_eq!(
-        reopened.source_context_page(&request, 2, 2).unwrap(),
+        reopened.source_context_page(&request, 2, 5).unwrap(),
         second
     );
 }
@@ -130,7 +130,7 @@ fn page_parameters_and_current_scope_are_checked_without_writes() {
     let request = request(&store, &rows[0]);
     let path = directory.path().join("project/project.sqlite3");
     let before = std::fs::read(&path).unwrap();
-    for (after, limit) in [(5, 1), (0, 0), (0, 21)] {
+    for (after, limit) in [(8, 1), (0, 0), (0, 21)] {
         let error = store
             .source_context_page(&request, after, limit)
             .unwrap_err();

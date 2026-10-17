@@ -4,11 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { EditorSourceContext } from "./EditorSourceContext";
 import { SessionReadProvider } from "./SessionReadProvider";
-import { sourceCommands, type SourceContextBlock, type SourceContextNeighbor, type SourceContextPage } from "./sourceCommands";
+import { sourceCommands, sourceContextBlockBasis, type SourceContextBlock, type SourceContextBlockDetail, type SourceContextNeighbor, type SourceContextPage } from "./sourceCommands";
 import { i18n } from "./i18n";
 
-vi.mock("./sourceCommands", () => ({ sourceCommands: { sourceContext: vi.fn() } }));
+vi.mock("./sourceCommands", async () => {
+  const actual = await vi.importActual<typeof import("./sourceCommands")>("./sourceCommands");
+  return { ...actual, sourceCommands: { ...actual.sourceCommands, sourceContext: vi.fn(), sourceContextBlock: vi.fn() } };
+});
 const read = vi.mocked(sourceCommands.sourceContext);
+const readBlock = vi.mocked(sourceCommands.sourceContextBlock);
 const id = (number: number) => `60000000-0000-4000-8000-${number.toString().padStart(12, "0")}`;
 const context = { projectId: id(1), sessionToken: "isolated-source-reference" };
 type Scope = NonNullable<ComponentProps<typeof EditorSourceContext>["scope"]>;
@@ -25,6 +29,11 @@ function neighbor(): SourceContextPage["entries"][number] {
     adjacentTo: [{ occurrenceId: id(8), direction: "before" }, { occurrenceId: id(9), direction: "after" }] };
   return { kind: "neighbor", value };
 }
+function storedBlock(index: number, payloadUtf8: string): Extract<SourceContextPage["entries"][number], { kind: "stored-block" }> {
+  return { kind: "stored-block", value: { blockIndex: index, target: { kind: "occurrence", id: "original-occurrence" },
+    schema: { id: "synthetic.original-record", schemaVersion: 1, behaviorVersion: 1 }, handling: "preserve", inRevisionBasis: false,
+    payloadBytes: new TextEncoder().encode(payloadUtf8).byteLength } };
+}
 function page(entries: SourceContextPage["entries"], after = 0, totalEntries = entries.length,
   nextAfter: number | null = null, currentScope = scope): SourceContextPage {
   return { scope: currentScope, contentRevision: "7", sourceAttemptId: id(10), sourceResultId: id(11),
@@ -38,7 +47,7 @@ function view(currentScope: Scope | null = scope, enabled = true, sourceChanged 
     <EditorSourceContext context={context} scope={currentScope} enabled={enabled} sourceChanged={sourceChanged} />
   </SessionReadProvider>;
 }
-beforeEach(async () => { await i18n.changeLanguage("en-US"); read.mockReset(); });
+beforeEach(async () => { await i18n.changeLanguage("en-US"); read.mockReset(); readBlock.mockReset(); });
 afterEach(cleanup);
 
 it("reads only after the parent enables the current editor reference", async () => {
@@ -143,4 +152,142 @@ it("keeps a late response for another editor target out of the current view", as
   expect(await screen.findByText("Source-fact block 10")).toBeInTheDocument();
   await act(async () => finish(page([block(0)])));
   expect(screen.queryByText("Source-fact block 1")).not.toBeInTheDocument();
+});
+
+it("reads only the explicitly opened original record and preserves its literal text", async () => {
+  const payloadUtf8 = '{\r\n "tick":18446744073709551615, "settings":"line:90% 世界", "literal":"<script>record</script>"\r\n}';
+  const first = storedBlock(2, payloadUtf8), second = storedBlock(3, "unopened record"), result = page([block(0), first, second, neighbor()]);
+  read.mockResolvedValue(result);
+  readBlock.mockResolvedValue({ basis: sourceContextBlockBasis(result), descriptor: first.value, payloadUtf8 });
+  const user = userEvent.setup(), rendered = render(view());
+  await screen.findByText("Additional source information 3");
+  expect(readBlock).not.toHaveBeenCalled();
+  expect(screen.getByText("Previous original line")).toBeInTheDocument();
+  expect(screen.getByText("Source-fact block 1")).toBeInTheDocument();
+  await user.click(screen.getAllByRole("button", { name: "View original record" })[0]);
+  const record = await screen.findByRole("region", { name: "Read-only original record" });
+  await waitFor(() => expect(record.querySelector("pre")?.textContent).toBe(payloadUtf8));
+  expect(record.querySelector("pre")?.childNodes).toHaveLength(1);
+  expect(rendered.container.querySelector("script")).toBeNull();
+  expect(readBlock).toHaveBeenCalledExactlyOnceWith({ ...context, basis: sourceContextBlockBasis(result), descriptor: first.value });
+  expect(screen.queryByText("unopened record")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close original record" })).toHaveAttribute("aria-expanded", "true");
+  await user.click(screen.getByRole("button", { name: "Close original record" }));
+  expect(screen.queryByRole("region", { name: "Read-only original record" })).not.toBeInTheDocument();
+});
+
+it("retries a failed record independently at its exact basis and descriptor", async () => {
+  const first = storedBlock(0, "first original"), second = storedBlock(1, "second original"), result = page([first, second]);
+  read.mockResolvedValue(result);
+  readBlock.mockImplementation(async request => {
+    if (request.descriptor.blockIndex === 0) throw new Error("record unavailable");
+    return { basis: request.basis, descriptor: request.descriptor, payloadUtf8: "second original" };
+  });
+  const user = userEvent.setup(); render(view());
+  await screen.findByText("Additional source information 1");
+  const [openFirst, openSecond] = screen.getAllByRole("button", { name: "View original record" });
+  await user.click(openFirst);
+  expect(await screen.findByText(/The original record could not be read/)).toBeInTheDocument();
+  await user.click(openSecond);
+  expect(await screen.findByText("second original")).toBeInTheDocument();
+  readBlock.mockResolvedValueOnce({ basis: sourceContextBlockBasis(result), descriptor: first.value, payloadUtf8: "first original" });
+  await user.click(screen.getByRole("button", { name: "Retry original record read" }));
+  expect(await screen.findByText("first original")).toBeInTheDocument();
+  expect(screen.getByText("second original")).toBeInTheDocument();
+  expect(readBlock.mock.calls[2][0]).toEqual(readBlock.mock.calls[0][0]);
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+it("renders a complete two MiB original record as one plain text node", async () => {
+  const payloadUtf8 = `"${"x".repeat(2 * 1024 * 1024 - 2)}"`, entry = storedBlock(0, payloadUtf8), result = page([entry]);
+  read.mockResolvedValue(result);
+  readBlock.mockResolvedValue({ basis: sourceContextBlockBasis(result), descriptor: entry.value, payloadUtf8 });
+  const user = userEvent.setup(); render(view());
+  await user.click(await screen.findByRole("button", { name: "View original record" }));
+  const record = await screen.findByRole("region", { name: "Read-only original record" });
+  await waitFor(() => expect(record.querySelector("pre")?.textContent).toBe(payloadUtf8));
+  expect(record.querySelector("pre")?.childNodes).toHaveLength(1);
+  expect(entry.value.payloadBytes).toBe(2 * 1024 * 1024);
+});
+
+it("keeps a pending record closed when its late read finishes and rereads only on reopening", async () => {
+  const entry = storedBlock(0, "late original"), result = page([entry]);
+  let finish!: (value: SourceContextBlockDetail) => void;
+  read.mockResolvedValue(result);
+  readBlock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const user = userEvent.setup(); render(view());
+  await user.click(await screen.findByRole("button", { name: "View original record" }));
+  await screen.findByText("Reading the original record…");
+  await user.click(screen.getByRole("button", { name: "Close original record" }));
+  const detail = { basis: sourceContextBlockBasis(result), descriptor: entry.value, payloadUtf8: "late original" };
+  await act(async () => finish(detail));
+  expect(screen.queryByText("late original")).not.toBeInTheDocument();
+  readBlock.mockResolvedValueOnce(detail);
+  await user.click(screen.getByRole("button", { name: "View original record" }));
+  expect(await screen.findByText("late original")).toBeInTheDocument();
+  expect(readBlock).toHaveBeenCalledTimes(2);
+});
+
+it("keeps stored records on their original metadata page until explicitly opened", async () => {
+  const payloadUtf8 = "paged original record", entry = storedBlock(4, payloadUtf8);
+  const first = page([block(0), block(1), block(2), block(3)], 0, 5, 4), second = page([entry], 4, 5);
+  read.mockImplementation(async request => request.after === 0 ? first : second);
+  readBlock.mockResolvedValue({ basis: sourceContextBlockBasis(second), descriptor: entry.value, payloadUtf8 });
+  const user = userEvent.setup(); render(view());
+  await user.click(await screen.findByRole("button", { name: "Load more source observations" }));
+  await screen.findByText("Additional source information 5");
+  expect(readBlock).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "View original record" }));
+  expect(await screen.findByText(payloadUtf8)).toBeInTheDocument();
+  expect(readBlock).toHaveBeenCalledWith({ ...context, basis: sourceContextBlockBasis(second), descriptor: entry.value });
+});
+
+it("closes old record details on source refresh and rejects the old pending display", async () => {
+  const oldEntry = storedBlock(0, "old result record"), oldPage = page([oldEntry]);
+  let finish!: (value: SourceContextBlockDetail) => void;
+  read.mockResolvedValueOnce(oldPage);
+  readBlock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const user = userEvent.setup(); render(view());
+  await user.click(await screen.findByRole("button", { name: "View original record" }));
+  await screen.findByText("Reading the original record…");
+  const newEntry = storedBlock(0, "new result record"), newPage = { ...page([newEntry]), sourceResultId: id(30), sourceResultDigest: "b".repeat(64) };
+  read.mockResolvedValue(newPage);
+  await user.click(screen.getByRole("button", { name: "Refresh source observations" }));
+  await screen.findByRole("button", { name: "View original record" });
+  await act(async () => finish({ basis: sourceContextBlockBasis(oldPage), descriptor: oldEntry.value, payloadUtf8: "old result record" }));
+  expect(screen.queryByText("old result record")).not.toBeInTheDocument();
+  expect(readBlock).toHaveBeenCalledTimes(1);
+  readBlock.mockResolvedValueOnce({ basis: sourceContextBlockBasis(newPage), descriptor: newEntry.value, payloadUtf8: "new result record" });
+  await user.click(screen.getByRole("button", { name: "View original record" }));
+  expect(await screen.findByText("new result record")).toBeInTheDocument();
+  expect(readBlock.mock.calls[1][0].basis.sourceResultId).toBe(id(30));
+});
+
+it("isolates late original records across cue changes and replacement project sessions", async () => {
+  const oldEntry = storedBlock(0, "old cue original"), oldPage = page([oldEntry]);
+  const nextScope = { ...scope, unitId: id(20), sourceRevisionId: id(21) }, nextEntry = storedBlock(1, "new cue original");
+  const nextPage = page([nextEntry], 0, 1, null, nextScope);
+  let finishOld!: (value: SourceContextBlockDetail) => void, finishCue!: (value: SourceContextBlockDetail) => void;
+  read.mockImplementation(async request => request.unitId === scope.unitId ? oldPage : nextPage);
+  readBlock.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }))
+    .mockImplementationOnce(() => new Promise(resolve => { finishCue = resolve; }));
+  const user = userEvent.setup(), rendered = render(view());
+  await user.click(await screen.findByRole("button", { name: "View original record" }));
+  await waitFor(() => expect(readBlock).toHaveBeenCalledTimes(1));
+  rendered.rerender(view(nextScope));
+  await user.click(await screen.findByRole("button", { name: "View original record" }));
+  await waitFor(() => expect(readBlock).toHaveBeenCalledTimes(2));
+  await act(async () => finishOld({ basis: sourceContextBlockBasis(oldPage), descriptor: oldEntry.value, payloadUtf8: "old cue original" }));
+  expect(screen.queryByText("old cue original")).not.toBeInTheDocument();
+  const replacement = { ...context, sessionToken: "replacement-source-session" };
+  rendered.rerender(<SessionReadProvider key={replacement.sessionToken} context={replacement} bridge={false}>
+    <EditorSourceContext context={replacement} scope={nextScope} enabled />
+  </SessionReadProvider>);
+  await screen.findByRole("button", { name: "View original record" });
+  await act(async () => finishCue({ basis: sourceContextBlockBasis(nextPage), descriptor: nextEntry.value, payloadUtf8: "new cue original" }));
+  expect(screen.queryByText("new cue original")).not.toBeInTheDocument();
+  readBlock.mockResolvedValueOnce({ basis: sourceContextBlockBasis(nextPage), descriptor: nextEntry.value, payloadUtf8: "new cue original" });
+  await user.click(screen.getByRole("button", { name: "View original record" }));
+  expect(await screen.findByText("new cue original")).toBeInTheDocument();
+  expect(readBlock.mock.calls[2][0].sessionToken).toBe(replacement.sessionToken);
 });

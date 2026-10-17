@@ -59,6 +59,10 @@ pub use persistence::{
     AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
     ComparisonView, MergeBasis,
 };
+pub use persistence::{
+    MAX_SOURCE_CONTEXT_BLOCK_DETAIL_BYTES, SourceContextBlockBasis, SourceContextBlockDescriptor,
+    SourceContextBlockDetail, SourceContextBlockRead,
+};
 pub use persistence::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
 pub use persistence::{
     MAX_TBX_INPUT_BYTES, MAX_TBX_REPORT_BYTES, MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES,

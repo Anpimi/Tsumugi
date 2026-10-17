@@ -19,6 +19,7 @@ export declare function validateRequestPluginStart(value: unknown): value is Req
 export declare function validateRequestPreview(value: unknown): value is Requests["preview"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateRequestSourceContext(value: unknown): value is Requests["sourceContext"];
+export declare function validateRequestSourceContextBlock(value: unknown): value is Requests["sourceContextBlock"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
 export declare function validateResponseCancelled(value: unknown): value is Responses["cancelled"];
@@ -36,3 +37,4 @@ export declare function validateResponsePluginPreflight(value: unknown): value i
 export declare function validateResponsePluginSelection(value: unknown): value is Responses["pluginSelection"];
 export declare function validateResponseScope(value: unknown): value is Responses["scope"];
 export declare function validateResponseSourceContext(value: unknown): value is Responses["sourceContext"];
+export declare function validateResponseSourceContextBlock(value: unknown): value is Responses["sourceContextBlock"];

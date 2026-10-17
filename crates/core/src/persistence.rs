@@ -73,6 +73,10 @@ pub use resources::{
     TermResolutionEntry, TermRevision, TmMatchKind, TmSuggestion, UnknownSourceBlockSample,
     select_source_context,
 };
+pub use resources::{
+    MAX_SOURCE_CONTEXT_BLOCK_DETAIL_BYTES, SourceContextBlockBasis, SourceContextBlockDescriptor,
+    SourceContextBlockDetail, SourceContextBlockRead,
+};
 pub use resources::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
 pub use resources::{
     MAX_TBX_INPUT_BYTES, MAX_TBX_REPORT_BYTES, MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES,

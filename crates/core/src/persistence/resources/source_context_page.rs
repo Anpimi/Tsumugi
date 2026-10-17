@@ -5,6 +5,7 @@ use super::ProjectStore;
 use super::source_context::{
     SourceContextBlock, SourceContextNeighbor, SourceContextRequest, SourceContextView,
 };
+use super::source_context_blocks::SourceContextBlockDescriptor;
 use super::source_context_selection::{SourceContextObservations, observe_source_context};
 use crate::execution::{ErrorCode, ExecutionError, ExecutionId, Revision, codec};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,7 @@ fn page_budget() -> ExecutionError {
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum SourceContextPageEntry {
     Block { value: SourceContextBlock },
+    StoredBlock { value: SourceContextBlockDescriptor },
     Neighbor { value: SourceContextNeighbor },
 }
 
@@ -52,14 +54,24 @@ pub struct SourceContextPage {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum BorrowedEntry<'a> {
-    Block { value: &'a SourceContextBlock },
-    Neighbor { value: &'a SourceContextNeighbor },
+    Block {
+        value: &'a SourceContextBlock,
+    },
+    StoredBlock {
+        value: &'a SourceContextBlockDescriptor,
+    },
+    Neighbor {
+        value: &'a SourceContextNeighbor,
+    },
 }
 
 impl BorrowedEntry<'_> {
     fn owned(&self) -> SourceContextPageEntry {
         match self {
             Self::Block { value } => SourceContextPageEntry::Block {
+                value: (**value).clone(),
+            },
+            Self::StoredBlock { value } => SourceContextPageEntry::StoredBlock {
                 value: (**value).clone(),
             },
             Self::Neighbor { value } => SourceContextPageEntry::Neighbor {
@@ -74,6 +86,7 @@ impl BorrowedEntry<'_> {
 /// source text; it only chooses complete local read entries.
 pub(super) fn page_from_view(
     view: &SourceContextView,
+    stored_blocks: &[SourceContextBlockDescriptor],
     after: u32,
     limit: u32,
 ) -> Result<SourceContextPage, ExecutionError> {
@@ -83,7 +96,8 @@ pub(super) fn page_from_view(
     let total = view
         .blocks
         .len()
-        .checked_add(view.neighbors.len())
+        .checked_add(stored_blocks.len())
+        .and_then(|count| count.checked_add(view.neighbors.len()))
         .and_then(|count| u32::try_from(count).ok())
         .ok_or_else(invalid_page)?;
     if after > total {
@@ -114,9 +128,13 @@ pub(super) fn page_from_view(
             BorrowedEntry::Block {
                 value: &view.blocks[offset as usize],
             }
+        } else if (offset as usize) < view.blocks.len() + stored_blocks.len() {
+            BorrowedEntry::StoredBlock {
+                value: &stored_blocks[offset as usize - view.blocks.len()],
+            }
         } else {
             BorrowedEntry::Neighbor {
-                value: &view.neighbors[offset as usize - view.blocks.len()],
+                value: &view.neighbors[offset as usize - view.blocks.len() - stored_blocks.len()],
             }
         };
         let encoded_entry = match codec::encode(&entry, MAX_SOURCE_CONTEXT_PAGE_BYTES) {
@@ -160,8 +178,19 @@ impl ProjectStore {
         if !(1..=MAX_PAGE_ENTRIES).contains(&limit) {
             return Err(invalid_page());
         }
-        let view = self.source_context(request)?;
-        page_from_view(&view, after, limit)
+        let connection = self
+            .connection()
+            .map_err(|_| super::failure(ErrorCode::StorageFailed, "source-context-read"))?;
+        super::super::review::read_snapshot(connection, |connection| {
+            let reader = super::source_context::SourceContextReader::read_in(
+                connection,
+                request.project_id,
+                &request.locale,
+            )?;
+            let view = reader.project(request)?;
+            let stored_blocks = reader.stored_blocks(&view)?;
+            page_from_view(&view, &stored_blocks, after, limit)
+        })
     }
 }
 

@@ -422,6 +422,11 @@ sourceContext: {
     "note": "Source note"
   }
 },
+sourceBlockRead: {
+  title: "Additional source information {{number}}", open: "View original record", close: "Close original record", record: "Read-only original record",
+  loading: "Reading the original record…", failed: "The original record could not be read. Your translation draft is kept. Retry this read, or refresh source observations and open the record again.", retry: "Retry original record read", bytes: "Original record bytes",
+  applies: { snapshot: "Applies to this saved source snapshot.", unit: "Applies to this source entry.", occurrence: "Applies to an occurrence of this entry in the source." },
+},
 sourceContextRead: {
   "title": "Original source observations",
   "help": "Read-only source facts and adjacent originals for this entry. Inferences remain hypotheses. Reading here does not share them with a model.",

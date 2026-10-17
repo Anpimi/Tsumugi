@@ -105,6 +105,18 @@ fn occurrence(row: &crate::content::ContentRow) -> Result<SourceContextOccurrenc
     })
 }
 
+fn applies_to(
+    target: &sdk::ContentTarget,
+    local_unit_id: &str,
+    local_occurrences: &BTreeSet<&str>,
+) -> bool {
+    match target {
+        sdk::ContentTarget::Snapshot => true,
+        sdk::ContentTarget::Unit { id } => id == local_unit_id,
+        sdk::ContentTarget::Occurrence { id } => local_occurrences.contains(id.as_str()),
+    }
+}
+
 /// A checked, immutable observation owned by one preparation read transaction.
 /// Reuse it across units and variants instead of revalidating the source ledger
 /// for each projection. It is never a cache or an authorization receipt.
@@ -243,13 +255,7 @@ impl SourceContextReader {
             .enumerate()
             .filter(|(_, block)| {
                 block.schema.id == sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID
-                    && match &block.target {
-                        sdk::ContentTarget::Snapshot => true,
-                        sdk::ContentTarget::Unit { id } => id == &local_unit_id,
-                        sdk::ContentTarget::Occurrence { id } => {
-                            local_occurrences.contains(id.as_str())
-                        }
-                    }
+                    && applies_to(&block.target, &local_unit_id, &local_occurrences)
             })
             .map(|(index, block)| {
                 Ok(SourceContextBlock {
@@ -321,6 +327,51 @@ impl SourceContextReader {
             blocks,
             neighbors: neighbors.into_values().collect(),
         })
+    }
+
+    /// The checked view supplies exact local mappings. All schemas use the same
+    /// applicability rule; no domain interpreter or live plugin is consulted.
+    pub(super) fn stored_blocks(
+        &self,
+        view: &SourceContextView,
+    ) -> Result<Vec<super::source_context_blocks::SourceContextBlockDescriptor>, ExecutionError>
+    {
+        let local_occurrences = view
+            .occurrences
+            .iter()
+            .map(|occurrence| occurrence.local_occurrence_id.as_str())
+            .collect();
+        self.output
+            .exchange
+            .domain_blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| applies_to(&block.target, &view.local_unit_id, &local_occurrences))
+            .map(|(index, block)| {
+                Ok(super::source_context_blocks::SourceContextBlockDescriptor {
+                    block_index: u32::try_from(index).map_err(|_| corrupt())?,
+                    target: block.target.clone(),
+                    schema: block.schema.clone(),
+                    handling: block.handling,
+                    in_revision_basis: self
+                        .output
+                        .revision_policy
+                        .revision_basis
+                        .contains(&block.schema),
+                    payload_bytes: u32::try_from(block.payload_utf8.len())
+                        .map_err(|_| corrupt())?,
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn block_payload(&self, index: u32) -> Result<&str, ExecutionError> {
+        self.output
+            .exchange
+            .domain_blocks
+            .get(index as usize)
+            .map(|block| block.payload_utf8.as_str())
+            .ok_or_else(corrupt)
     }
 }
 

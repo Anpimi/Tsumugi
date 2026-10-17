@@ -214,6 +214,10 @@ export type SourceContextPageEntry =
       value: SourceContextBlock;
     }
   | {
+      kind: "stored-block";
+      value: SourceContextBlockDescriptor;
+    }
+  | {
       kind: "neighbor";
       value: SourceContextNeighbor;
     };
@@ -327,6 +331,7 @@ export interface Responses {
   pluginSelection: PluginSourceSelection | null;
   scope: ContentScope;
   sourceContext: SourceContextPage;
+  sourceContextBlock: SourceContextBlockDetail;
 }
 export interface AdoptionAction {
   actionId: ExecutionId;
@@ -883,6 +888,14 @@ export interface SourceContextFact {
   origin: SourceContextFactOrigin;
   text: string;
 }
+export interface SourceContextBlockDescriptor {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  payloadBytes: number;
+  schema: ContractRef;
+  target: ContentTarget;
+}
 export interface SourceContextNeighbor {
   adjacentTo: SourceContextAdjacency[];
   occurrence: SourceContextOccurrence;
@@ -927,4 +940,21 @@ export interface SourceContextRequest {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
+}
+export interface SourceContextBlockDetail {
+  basis: SourceContextBlockBasis;
+  descriptor: SourceContextBlockDescriptor;
+  /**
+   * Original UTF-8 text, without parsing, normalization or reserialization.
+   */
+  payloadUtf8: string;
+}
+export interface SourceContextBlockBasis {
+  contentRevision: Revision;
+  localUnitId: string;
+  scope: SourceContextRequest;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
 }

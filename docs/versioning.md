@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+On-demand inspection of captured source blocks adds descriptors to the existing
+read-only source-context page and an experimental Desktop detail command. The
+original source result and mappings remain authoritative; fact selection and AI
+capture retain their existing meanings. SDK/Process3, WorkPlan3, schema 52,
+plugin packages and dependencies are unchanged. This stays in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+synchronized bilingual Unreleased entries and no additional version bump.
+Direct consumers of the experimental source-context page must handle its new
+`stored-block` entry variant, including exhaustive Rust matches and wire readers.
+
 Exact navigation from recorded current AI semantic findings reuses the existing
 read-only Review location command, Unicode conversion and editor/navigation
 owners. QA and AI keep separate current-run evidence; newer drafts and

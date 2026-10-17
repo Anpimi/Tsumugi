@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Inspect additional captured source records, including original cue settings,
+  from the translation editor's references. Records load individually on request
+  and retain their exact stored text and current source identity.
+  Direct API consumers must handle the experimental source-context page's new
+  `stored-block` entry variant.
+
 - Open a recorded current AI meaning or style finding at its exact source or
   selected-translation range, then return to the original review or work queue.
   Changed model or execution evidence, a newer review and newer editor drafts

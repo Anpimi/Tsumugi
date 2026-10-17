@@ -3,6 +3,9 @@ use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::content::{
     self, ContentPage, ContentScope, SourceChangePage, SourceConfirmation,
 };
+#[cfg(test)]
+#[path = "source/block_tests.rs"]
+mod block_tests;
 pub(super) mod capture;
 pub mod plugin;
 pub mod plugin_translation;
@@ -118,6 +121,13 @@ request!(
         locale: String,
         after: u32,
         limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SourceContextBlockReadRequest {
+        basis: tsumugi_core::SourceContextBlockBasis,
+        descriptor: tsumugi_core::SourceContextBlockDescriptor
     }
 );
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ComparisonRequest {
@@ -694,6 +704,40 @@ pub async fn read_source_context(
                     request.limit,
                 )
                 .map_err(map_source)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_source_context_block(
+    state: State<'_, AppState>,
+    request: SourceContextBlockReadRequest,
+) -> Result<tsumugi_core::SourceContextBlockDetail, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_source_context_block",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let session = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                if request.project_id != request.basis.scope.project_id {
+                    return Err(map_source(ExecutionError::new(
+                        ErrorCode::DependencyConflict,
+                        "source-context-scope",
+                    )));
+                }
+                session
+                    .store
+                    .source_context_block(&tsumugi_core::SourceContextBlockRead {
+                        basis: request.basis,
+                        descriptor: request.descriptor,
+                    })
+                    .map_err(map_source)
             },
         )
         .await

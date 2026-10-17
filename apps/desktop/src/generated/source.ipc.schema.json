@@ -88,8 +88,103 @@
         ],
         "type": "object"
       },
+      "ContentTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "type": "string"
+      },
+      "ExtensionHandling": {
+        "oneOf": [
+          {
+            "const": "required",
+            "description": "An operation that needs this block must have the exact interpreter.",
+            "type": "string"
+          },
+          {
+            "const": "preserve",
+            "description": "Preserve the payload exactly, including when its schema is understood.",
+            "type": "string"
+          },
+          {
+            "const": "optional",
+            "description": "Interpretation is optional; an unknown payload is still preserved.",
+            "type": "string"
+          }
+        ]
       },
       "HistoryContentRequest": {
         "additionalProperties": false,
@@ -616,6 +711,104 @@
         ],
         "type": "object"
       },
+      "SourceContextBlockBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "localUnitId": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "contentRevision",
+          "sourceAttemptId",
+          "sourceResultId",
+          "sourceResultDigest",
+          "sourceLocale",
+          "localUnitId"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "payloadBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "payloadBytes"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/SourceContextBlockBasis"
+          },
+          "descriptor": {
+            "$ref": "#/definitions/SourceContextBlockDescriptor"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "basis",
+          "descriptor"
+        ],
+        "type": "object"
+      },
       "SourceContextReadRequest": {
         "additionalProperties": false,
         "properties": {
@@ -659,6 +852,34 @@
           "locale",
           "after",
           "limit"
+        ],
+        "type": "object"
+      },
+      "SourceContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "unitId",
+          "sourceRevisionId",
+          "locale"
         ],
         "type": "object"
       },
@@ -825,6 +1046,9 @@
       },
       "sourceContext": {
         "$ref": "#/definitions/SourceContextReadRequest"
+      },
+      "sourceContextBlock": {
+        "$ref": "#/definitions/SourceContextBlockReadRequest"
       }
     },
     "required": [
@@ -835,6 +1059,7 @@
       "preview",
       "content",
       "sourceContext",
+      "sourceContextBlock",
       "comparison",
       "history",
       "historyContent",
@@ -3046,6 +3271,101 @@
         ],
         "type": "object"
       },
+      "SourceContextBlockBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "localUnitId": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "contentRevision",
+          "sourceAttemptId",
+          "sourceResultId",
+          "sourceResultDigest",
+          "sourceLocale",
+          "localUnitId"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "payloadBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "payloadBytes"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/SourceContextBlockBasis"
+          },
+          "descriptor": {
+            "$ref": "#/definitions/SourceContextBlockDescriptor"
+          },
+          "payloadUtf8": {
+            "description": "Original UTF-8 text, without parsing, normalization or reserialization.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "descriptor",
+          "payloadUtf8"
+        ],
+        "type": "object"
+      },
       "SourceContextDirection": {
         "enum": [
           "before",
@@ -3365,6 +3685,23 @@
               },
               "value": {
                 "$ref": "#/definitions/SourceContextBlock"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "stored-block",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/definitions/SourceContextBlockDescriptor"
               }
             },
             "required": [
@@ -4410,6 +4747,9 @@
       },
       "sourceContext": {
         "$ref": "#/definitions/SourceContextPage"
+      },
+      "sourceContextBlock": {
+        "$ref": "#/definitions/SourceContextBlockDetail"
       }
     },
     "required": [
@@ -4421,6 +4761,7 @@
       "scope",
       "page",
       "sourceContext",
+      "sourceContextBlock",
       "comparison",
       "history",
       "lineage",

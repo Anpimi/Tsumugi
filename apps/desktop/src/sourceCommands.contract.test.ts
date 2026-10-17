@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/sourceCommands.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import unicodeFixture from "../../../crates/core/tests/fixtures/source-unicode.contract.json";
-import { sourceCommands, confirmSourceAction, confirmSourceReceipt, type SourceAdoptRequest } from "./sourceCommands";
+import { sourceCommands, sourceContextBlockBasis, confirmSourceAction, confirmSourceReceipt, type SourceAdoptRequest, type SourceContextBlockDetail, type SourceContextBlockReadRequest } from "./sourceCommands";
 import type { AdoptionAction, Receipt } from "./executionCommands";
 import * as validators from "./generated/source.validators";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -254,4 +254,61 @@ it("rejects nonprogressing, overlapping and prematurely terminal source-context 
   const page = {...fixture.sourceContext,entries:fixture.sourceContext.entries.slice(0,1),nextAfter:1};
   invoke.mockResolvedValueOnce(page);
   expect(await sourceCommands.sourceContext({...fixture.sourceContextRequest,limit:1})).toEqual(page);
+});
+
+function originalRecord() {
+  const payloadUtf8 = '{\r\n  "tick": 18446744073709551615, "settings": "line:90% 世界", "literal": "<script>record</script>"\r\n}';
+  const page: unknown = { ...fixture.sourceContext, entries: [] };
+  if (!validators.validateResponseSourceContext(page)) throw new Error("Invalid source-context fixture");
+  const basis = sourceContextBlockBasis(page);
+  const detail: SourceContextBlockDetail = { basis, descriptor: { blockIndex: 3, target: { kind: "occurrence", id: "original-cue" },
+    schema: { id: "synthetic.original-record", schemaVersion: 1, behaviorVersion: 1 }, handling: "preserve", inRevisionBasis: true,
+    payloadBytes: new TextEncoder().encode(payloadUtf8).byteLength }, payloadUtf8 };
+  const request: SourceContextBlockReadRequest = { ...fixture.session, basis, descriptor: detail.descriptor };
+  return { request, detail };
+}
+
+it("reads one exact original record without parsing or rewriting its payload", async () => {
+  const { request, detail } = originalRecord();
+  expect(validators.validateRequestSourceContextBlock(request)).toBe(true);
+  expect(validators.validateResponseSourceContextBlock(detail)).toBe(true);
+  invoke.mockResolvedValueOnce(detail);
+  expect((await sourceCommands.sourceContextBlock(request)).payloadUtf8).toBe(detail.payloadUtf8);
+  expect(invoke).toHaveBeenLastCalledWith("read_source_context_block", { request });
+  expect(detail.basis.contentRevision).toBe("9007199254740993");
+});
+
+it.each([
+  ["project", value => { value.basis.scope.projectId = fixtureIdentity(999); }],
+  ["snapshot", value => { value.basis.scope.sourceSnapshotId = fixtureIdentity(999); }],
+  ["unit", value => { value.basis.scope.unitId = fixtureIdentity(999); }],
+  ["source revision", value => { value.basis.scope.sourceRevisionId = fixtureIdentity(999); }],
+  ["locale", value => { value.basis.scope.locale = "ja"; }],
+  ["content revision", value => { value.basis.contentRevision = "9007199254740994"; }],
+  ["attempt", value => { value.basis.sourceAttemptId = fixtureIdentity(999); }],
+  ["result", value => { value.basis.sourceResultId = fixtureIdentity(999); }],
+  ["result digest", value => { value.basis.sourceResultDigest = "b".repeat(64); }],
+  ["source locale", value => { value.basis.sourceLocale = "ja"; }],
+  ["local unit", value => { value.basis.localUnitId = "other-cue"; }],
+  ["block index", value => { value.descriptor.blockIndex = 4; }],
+  ["target kind", value => { value.descriptor.target = { kind: "unit", id: "original-cue" }; }],
+  ["target identity", value => { value.descriptor.target = { kind: "occurrence", id: "other-cue" }; }],
+  ["schema", value => { value.descriptor.schema.id = "synthetic.other-record"; }],
+  ["schema version", value => { value.descriptor.schema.schemaVersion = 2; }],
+  ["behavior version", value => { value.descriptor.schema.behaviorVersion = 2; }],
+  ["handling", value => { value.descriptor.handling = "required"; }],
+  ["revision basis", value => { value.descriptor.inRevisionBasis = false; }],
+  ["payload size", value => { value.descriptor.payloadBytes += 1; }],
+] satisfies [string, (value: SourceContextBlockDetail) => void][])("rejects a schema-valid original record with another %s", async (_name, change) => {
+  const { request, detail } = originalRecord(), response = structuredClone(detail);
+  change(response);
+  expect(validators.validateResponseSourceContextBlock(response)).toBe(true);
+  invoke.mockResolvedValueOnce(response);
+  await expect(sourceCommands.sourceContextBlock(request)).rejects.toThrow("source context block association");
+});
+
+it("rejects a truncated original record even when its returned identity is unchanged", async () => {
+  const { request, detail } = originalRecord();
+  invoke.mockResolvedValueOnce({ ...detail, payloadUtf8: detail.payloadUtf8.slice(0, -1) });
+  await expect(sourceCommands.sourceContextBlock(request)).rejects.toThrow("source context block association");
 });

@@ -7,7 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
 import type { ProjectView } from "./projectCommands";
-import type { SourceContextPage } from "./sourceCommands";
+import { sourceContextBlockBasis, type SourceContextBlockDetail, type SourceContextBlockDescriptor, type SourceContextPage } from "./sourceCommands";
 import type { TranslationHistory, TranslationPreview } from "./translationCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
@@ -2195,6 +2195,57 @@ it("refreshes resource and translation projections on semantic invalidation with
   expect(editor).toHaveValue("Saved base local B"); expect(owner.current()).toBe(originalDraft);
   expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
   expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision")).toBe(false);
+});
+
+it("keeps the same editable translation draft while explicitly reading and closing its original source record", async () => {
+  seedSelectedTranslation();
+  const original = invoke.getMockImplementation()!;
+  const payloadUtf8 = '{ "start": 18446744073709551615, "settings": "line:90%" }';
+  const descriptor: SourceContextBlockDescriptor = { blockIndex: 0, target: { kind: "occurrence", id: "original-cue" },
+    schema: { id: "synthetic.original-record", schemaVersion: 1, behaviorVersion: 1 }, handling: "preserve", inRevisionBasis: false,
+    payloadBytes: new TextEncoder().encode(payloadUtf8).byteLength };
+  let result!: SourceContextPage, finish!: (value: SourceContextBlockDetail) => void;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_source_context") {
+      const captured: SourceContextPage = await original(command, args);
+      result = { ...captured, entries: [{ kind: "stored-block", value: descriptor }], totalEntries: 1 };
+      return result;
+    }
+    if (command === "read_source_context_block") {
+      expect(args.request).toEqual({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+        basis: sourceContextBlockBasis(result), descriptor });
+      return new Promise(resolve => { finish = resolve; });
+    }
+    return original(command, args);
+  });
+  let owner!: ReturnType<typeof useTranslationDraftSession>;
+  const user = userEvent.setup();
+  render(<><QueryProbe capture={(_reads, draft) => { owner = draft; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, " local B");
+  const capturedDraft = owner.current();
+  await user.click(screen.getByText("Terms, context and history"));
+  await screen.findByRole("button", { name: "View original record" });
+  expect(invoke.mock.calls.some(([name]) => name === "read_source_context_block")).toBe(false);
+  await user.click(screen.getByRole("button", { name: "View original record" }));
+  await screen.findByText("Reading the original record…");
+  expect(owner.current()).toBe(capturedDraft);
+  await user.type(editor, " newer C");
+  const newerDraft = owner.current();
+  expect(newerDraft?.editSeq).toBeGreaterThan(capturedDraft!.editSeq);
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+  await act(async () => finish({ basis: sourceContextBlockBasis(result), descriptor, payloadUtf8 }));
+  expect(await screen.findByText(payloadUtf8)).toBeVisible();
+  expect(editor).toHaveValue("Saved base local B newer C");
+  expect(owner.current()).toBe(newerDraft);
+  await user.click(screen.getByRole("button", { name: "Close original record" }));
+  expect(screen.queryByText(payloadUtf8)).not.toBeInTheDocument();
+  expect(editor).toHaveValue("Saved base local B newer C");
+  expect(owner.current()).toBe(newerDraft);
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision"
+    || name === "select_translation_revision" || name === "enqueue_ai_translation" || name === "start_ai_semantic_review")).toBe(false);
 });
 
 it("keeps the fixed list scope and draft through a hidden semantic source change until an explicit recapture", async () => {

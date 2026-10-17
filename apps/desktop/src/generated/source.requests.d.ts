@@ -4,6 +4,19 @@ export type ExecutionId = string;
 export type Revision = string;
 export type LineageDecision = "continue" | "reject";
 export type UnsignedDecimal = string;
+export type ExtensionHandling = "required" | "preserve" | "optional";
+export type ContentTarget =
+  | {
+      kind: "snapshot";
+    }
+  | {
+      id: string;
+      kind: "unit";
+    }
+  | {
+      id: string;
+      kind: "occurrence";
+    };
 
 export interface Requests {
   adopt: SourceAdoptRequest;
@@ -24,6 +37,7 @@ export interface Requests {
   preview: PreviewRequest;
   session: SessionRequest;
   sourceContext: SourceContextReadRequest;
+  sourceContextBlock: SourceContextBlockReadRequest;
 }
 export interface SourceAdoptRequest {
   actionId: ExecutionId;
@@ -192,4 +206,43 @@ export interface SourceContextReadRequest {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
+}
+export interface SourceContextBlockReadRequest {
+  basis: SourceContextBlockBasis;
+  descriptor: SourceContextBlockDescriptor;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface SourceContextBlockBasis {
+  contentRevision: Revision;
+  localUnitId: string;
+  scope: SourceContextRequest;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface SourceContextBlockDescriptor {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  payloadBytes: number;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
 }

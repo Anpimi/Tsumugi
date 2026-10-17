@@ -424,6 +424,11 @@ sourceContext: {
     "note": "源说明"
   }
 },
+sourceBlockRead: {
+  title: "来源附加信息 {{number}}", open: "查看原始记录", close: "关闭原始记录", record: "只读原始记录",
+  loading: "正在读取原始记录…", failed: "无法读取原始记录，译文草稿已保留。请重试读取，或刷新来源信息后重新打开记录。", retry: "重试读取原始记录", bytes: "原始记录字节数",
+  applies: { snapshot: "适用于此已保存的来源快照。", unit: "适用于此来源条目。", occurrence: "适用于此条目在来源中的一次出现。" },
+},
 sourceContextRead: {
   "title": "原始源资料观察",
   "help": "只读查看此条目的源事实与相邻原文。推断仍是假设；在此阅读不会将资料分享给模型。",

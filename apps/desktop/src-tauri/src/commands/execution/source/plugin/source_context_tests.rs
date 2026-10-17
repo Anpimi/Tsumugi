@@ -216,6 +216,30 @@ fn context_request(context: &Value, scope: &Value, row: &Value) -> Value {
     )
 }
 
+fn block_request(context: &Value, page: &Value, descriptor: &Value) -> Value {
+    scoped(
+        context,
+        json!({
+            "basis": {
+                "scope": page["scope"], "contentRevision": page["contentRevision"],
+                "sourceAttemptId": page["sourceAttemptId"], "sourceResultId": page["sourceResultId"],
+                "sourceResultDigest": page["sourceResultDigest"], "sourceLocale": page["sourceLocale"],
+                "localUnitId": page["localUnitId"]
+            },
+            "descriptor": descriptor
+        }),
+    )
+}
+
+fn neighbor(page: &Value) -> &Value {
+    &page["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["kind"] == "neighbor")
+        .unwrap()["value"]
+}
+
 fn assert_time_fact(page: &Value, source: &str, time: &str, artifact_id: &Value) {
     let blocks: Vec<_> = page["entries"]
         .as_array()
@@ -305,8 +329,14 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
     std::fs::create_dir(&source_directory).unwrap();
     let first_time = "00:00:01.000 --> 00:00:02.000";
     let second_time = "00:00:03.000 --> 00:00:04.000";
-    let original =
-        format!("WEBVTT\n\nCueA\n{first_time}\nCaptured 👩🏽‍💻\n\nCueB\n{second_time}\nNext café\n\n");
+    // The official 128 KiB source profile can legally preserve a long REGION
+    // name. Repetition and JSON escaping make the cue basis exceed a read page.
+    let region_id = "\\\"".repeat(20_000);
+    let first_settings = format!("region:{region_id} align:start");
+    let original = format!(
+        "WEBVTT\n\nREGION\nid:{region_id}\n\nCueA\n{first_time} {first_settings}\nCaptured 👩🏽‍💻\n\nCueB\n{second_time}\nNext café\n\n"
+    );
+    assert!(original.len() <= 128 * 1024);
     std::fs::write(source_directory.join("source.vtt"), &original).unwrap();
 
     let (first_attempt, first_result, first_preview) =
@@ -343,10 +373,9 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
     assert_eq!(first_page["localUnitId"], "cue-0");
     assert_eq!(first_page["occurrenceCount"], 1);
     assert_time_fact(&first_page, &original, first_time, artifact_id);
-    assert_eq!(first_page["totalEntries"], 2);
+    assert_eq!(first_page["totalEntries"], 4);
     assert_eq!(first_page["nextAfter"], Value::Null);
-    let first_neighbor = &first_page["entries"][1]["value"];
-    assert_eq!(first_page["entries"][1]["kind"], "neighbor");
+    let first_neighbor = neighbor(&first_page);
     assert_eq!(first_neighbor["unitId"], rows[1]["unitId"]);
     assert_eq!(
         first_neighbor["sourceRevisionId"],
@@ -359,6 +388,93 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
     );
     assert_eq!(first_neighbor["adjacentTo"][0]["direction"], "after");
 
+    let descriptor = first_page["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["kind"] == "stored-block" && entry["value"]["schema"]["id"] == "webvtt.cue-basis"
+        })
+        .unwrap()["value"]
+        .clone();
+    assert!(
+        descriptor["payloadBytes"].as_u64().unwrap()
+            > tsumugi_core::MAX_SOURCE_CONTEXT_PAGE_BYTES as u64
+    );
+    assert!(
+        serde_json::to_vec(&first_page).unwrap().len()
+            <= tsumugi_core::MAX_SOURCE_CONTEXT_PAGE_BYTES
+    );
+    let detail_request = block_request(&context, &first_page, &descriptor);
+    let database = root.join("project/project.sqlite3");
+    let bytes_before_read = std::fs::read(&database).unwrap();
+    let detail = call(&window, "read_source_context_block", detail_request.clone()).unwrap();
+    assert_eq!(detail["basis"], detail_request["basis"]);
+    assert_eq!(detail["descriptor"], descriptor);
+    let payload = detail["payloadUtf8"].as_str().unwrap();
+    assert_eq!(
+        payload.len() as u64,
+        descriptor["payloadBytes"].as_u64().unwrap()
+    );
+    let producer = call(
+        &window,
+        "read_execution_output",
+        scoped(
+            &context,
+            json!({"attemptId":first_attempt,"resultId":first_result}),
+        ),
+    )
+    .unwrap();
+    let block_index = descriptor["blockIndex"].as_u64().unwrap() as usize;
+    let producer: ResultEnvelope = serde_json::from_value(producer).unwrap();
+    let tsumugi_plugin_sdk::InvocationOutcome::Succeeded { output } =
+        producer.plugin.unwrap().result.outcome
+    else {
+        panic!("expected the installed extractor's successful SDK result");
+    };
+    let captured_exchange =
+        tsumugi_plugin_sdk::parse_content_exchange(output.utf8.as_bytes()).unwrap();
+    assert_eq!(
+        captured_exchange.domain_blocks[block_index]
+            .payload_utf8
+            .as_bytes(),
+        payload.as_bytes()
+    );
+    let interpreted_for_assertions: Value = serde_json::from_str(payload).unwrap();
+    assert_eq!(
+        interpreted_for_assertions["timing"],
+        format!("{first_time} {first_settings}")
+    );
+    assert_eq!(
+        interpreted_for_assertions["settings"],
+        json!([format!("region:{region_id}"), "align:start"])
+    );
+    for field in ["sessionToken", "projectId"] {
+        let mut foreign = detail_request.clone();
+        foreign[field] = if field == "sessionToken" {
+            json!("wrong-session")
+        } else {
+            json!(ExecutionId::new())
+        };
+        assert_eq!(
+            call(&window, "read_source_context_block", foreign).unwrap_err()["code"],
+            "session-invalid"
+        );
+    }
+    let mut foreign_basis = detail_request.clone();
+    foreign_basis["basis"]["scope"]["projectId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&window, "read_source_context_block", foreign_basis).unwrap_err()["reason"],
+        "source-context-scope"
+    );
+    let mut wrong_target = detail_request.clone();
+    wrong_target["descriptor"]["target"] = json!({"kind":"snapshot"});
+    assert_eq!(
+        call(&window, "read_source_context_block", wrong_target).unwrap_err()["reason"],
+        "source-context-block-descriptor"
+    );
+    assert_eq!(std::fs::read(&database).unwrap(), bytes_before_read);
+
     let second_request = context_request(&context, &first_scope, &rows[1]);
     let second_page = call(&window, "read_source_context", second_request).unwrap();
     assert_eq!(second_page["localUnitId"], "cue-1");
@@ -369,7 +485,7 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
             .count()
             < original.find(second_time).unwrap()
     );
-    let second_neighbor = &second_page["entries"][1]["value"];
+    let second_neighbor = neighbor(&second_page);
     assert_eq!(second_neighbor["text"], "Captured 👩🏽‍💻");
     assert_eq!(
         second_neighbor["adjacentTo"][0]["occurrenceId"],
@@ -422,6 +538,10 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
     adopt(&window, &context, &next_attempt, &next_result, confirmation);
     let stale = call(&window, "read_source_context", first_request).unwrap_err();
     assert_eq!(stale["reason"], "source-context-snapshot");
+    assert_eq!(
+        call(&window, "read_source_context_block", detail_request).unwrap_err()["reason"],
+        "source-context-snapshot"
+    );
 
     let (next_scope, next_content) = content(&window, &context);
     let next_rows = next_content["rows"].as_array().unwrap();
@@ -451,6 +571,22 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
         changed_time,
         &next_content["coverage"][0]["artifactId"],
     );
+    let next_descriptor = next_page["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["kind"] == "stored-block" && entry["value"]["schema"]["id"] == "webvtt.cue-basis"
+        })
+        .unwrap()["value"]
+        .clone();
+    let mut next_detail_request = block_request(&context, &next_page, &next_descriptor);
+    let next_detail = call(
+        &window,
+        "read_source_context_block",
+        next_detail_request.clone(),
+    )
+    .unwrap();
 
     call(
         &window,
@@ -472,6 +608,11 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
     assert_eq!(reopened_scope, next_scope);
     let mut reopened_request = next_request;
     reopened_request["sessionToken"] = reopened_context["sessionToken"].clone();
+    next_detail_request["sessionToken"] = reopened_context["sessionToken"].clone();
+    assert_eq!(
+        call(&window, "read_source_context_block", next_detail_request).unwrap(),
+        next_detail
+    );
     assert_eq!(
         call(&window, "read_source_context", reopened_request).unwrap(),
         next_page
@@ -835,10 +976,9 @@ fn installed_smapi_manifest_name_context_tracks_snapshot_basis_and_reopen() {
             .count()
             < manifest.find(&format!("\"{first_name}\"")).unwrap()
     );
-    assert_eq!(first_page["totalEntries"], 2);
+    assert_eq!(first_page["totalEntries"], 4);
     assert_eq!(first_page["nextAfter"], Value::Null);
-    let first_neighbor = &first_page["entries"][1]["value"];
-    assert_eq!(first_page["entries"][1]["kind"], "neighbor");
+    let first_neighbor = neighbor(&first_page);
     assert_eq!(first_neighbor["unitId"], rows[1]["unitId"]);
     assert_eq!(
         first_neighbor["sourceRevisionId"],
@@ -870,7 +1010,7 @@ fn installed_smapi_manifest_name_context_tracks_snapshot_basis_and_reopen() {
         first_name,
         &manifest_coverage["artifactId"],
     );
-    let second_neighbor = &second_page["entries"][1]["value"];
+    let second_neighbor = neighbor(&second_page);
     assert_eq!(second_neighbor["text"], "Hello 👩🏽‍💻");
     assert_eq!(
         second_neighbor["adjacentTo"][0]["occurrenceId"],
@@ -959,9 +1099,9 @@ fn installed_smapi_manifest_name_context_tracks_snapshot_basis_and_reopen() {
         next_name,
         &next_coverage["artifactId"],
     );
-    assert_eq!(next_page["entries"][1]["value"]["text"], "Next café");
+    assert_eq!(neighbor(&next_page)["text"], "Next café");
     assert_eq!(
-        next_page["entries"][1]["value"]["sourceRevisionId"],
+        neighbor(&next_page)["sourceRevisionId"],
         next_rows[1]["sourceRevisionId"]
     );
 
