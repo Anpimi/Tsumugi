@@ -104,7 +104,7 @@ beforeEach(async()=>{
   prepared=p;prepared.attemptId=aiAttempt;comparison=c;
   let identity=910;
   let checkedWrites=-1;
-  invoke.mockReset();invoke.mockImplementation(async(command:string,payload:{request:PrepareRequest & {config:ArenaConfig;unitIds:string[];locale:string;revisionIds:string[];blind:boolean;expectedSelectionId:string|null;revisionId:string}})=>{
+  invoke.mockReset();invoke.mockImplementation(async(command:string,payload:{request:PrepareRequest & {config:ArenaConfig;unitIds:string[];locale:string;revisionIds:string[];blind:boolean;expectedSelectionId:string|null;revisionId:string;comparisonId:string}})=>{
     const request=payload.request;
     if(command==="create_execution_identity")return fixtureIdentity(identity++);
     if(command==="preview_arena_translation"){
@@ -124,6 +124,9 @@ beforeEach(async()=>{
     if(command==="read_arena_comparison_action"||command==="read_arena_merge_action"||command==="read_translation_selection_action")return null;
     if(command==="list_arena_comparisons")return [];
     if(command==="reveal_arena_identity")return null;
+    if(command==="read_arena_reveal_target")return {projectId:request.projectId,targetId:request.comparisonId,
+      targetKind:request.comparisonId===prepared.attemptId?"attempt":"comparison",
+      visible:request.comparisonId===prepared.attemptId?!prepared.preview.config.blind:comparison.revealed};
     if(command==="select_translation_revision"||command==="save_arena_merge")return selectionFor(request);
     if(command==="read_translation_action"||command==="read_execution_receipt")return null;
     if(command==="prepare_execution_adoption"){action=actionFor(request);return action;}
@@ -345,6 +348,7 @@ it.each(operations)("releases a fresh definitively rejected %s without discardin
   await act(async()=>{await execute(kind);});expect(owner.pending).toBeNull();
   expect(calls("read_execution_adoption_action")).toHaveLength(0);
   expect(calls("read_arena_comparison_action")).toHaveLength(0);expect(calls("read_arena_merge_action")).toHaveLength(0);expect(calls("read_translation_selection_action")).toHaveLength(0);
+  expect(calls("read_arena_reveal_target")).toHaveLength(0);
   if(kind==="start")expect(calls("read_arena_start_action")).toHaveLength(0);
   if(kind==="start")expect(owner.prepared).not.toBeNull();if(kind==="merge")expect(owner.draft?.text).toBe(comparison.rows[0].text);
   const token=translations.reserveMutation();expect(token).not.toBeNull();act(()=>translations.releaseMutation(token!));
@@ -398,6 +402,94 @@ it("requires an exact null reveal ACK, and a revealed read proves the target goa
   invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?Promise.resolve({}):original(command,payload));
   await act(async()=>{await owner.reveal(comparison.comparisonId!,"comparison");});expect(owner.pending?.uncertain).toBe(true);
   comparison={...comparison,revealed:true};await act(async()=>{await owner.checkPending();});expect(owner.pending).toBeNull();expect(calls("reveal_arena_identity")).toHaveLength(1);
+  expect(owner.notice).toBe("identitiesVisible");
+  const request=payloads("reveal_arena_identity")[0],{actionId:_action,...target}=request;
+  expect(payloads("read_arena_reveal_target")).toEqual([target,target]);
+});
+
+async function prepareRevealTarget(targetKind:"comparison"|"attempt") {
+  if(targetKind==="comparison"){
+    await compare();return comparison.comparisonId!;
+  }
+  prepared={...prepared,preview:{...prepared.preview,config:{...prepared.preview.config,blind:true}}};
+  const view=await start();act(()=>reads.client.setQueryData(reads.key(["arena",view.detail.attemptId]),view));
+  return view.detail.attemptId;
+}
+const unknownReveal:CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-adopt",reason:"reveal-ack-lost",recoveryRequired:true};
+it.each([["comparison","lost"],["comparison","invalid"],["attempt","lost"],["attempt","invalid"]] as const)("checks the %s visibility goal after a %s reveal ACK without another write or a current View",async(targetKind,ack)=>{
+  render(<Harness/>,project);const targetId=await prepareRevealTarget(targetKind),original=invoke.getMockImplementation()!;
+  const identities=calls("create_execution_identity").length,viewReads=calls("read_arena_comparison").length+calls("read_arena_translation").length;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?ack==="lost"?Promise.reject(unknownReveal):Promise.resolve({})
+    :command==="read_arena_reveal_target"?Promise.resolve({projectId:project.metadata.projectId,targetId,targetKind,visible:true})
+    :command==="read_arena_comparison"||command==="read_arena_translation"?Promise.reject(new Error("Current view unavailable")):original(command,payload));
+  await act(async()=>owner.reveal(targetId,targetKind));
+  expect(owner.pending).toBeNull();expect(owner.notice).toBe("identitiesVisible");expect(owner.failure).toBeNull();
+  expect(calls("reveal_arena_identity")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(identities+1);
+  expect(payloads("read_arena_reveal_target")).toEqual([{sessionToken:project.sessionToken,projectId:project.metadata.projectId,comparisonId:targetId}]);
+  expect(calls("read_arena_comparison").length+calls("read_arena_translation").length).toBe(viewReads);
+  await act(async()=>owner.checkPending());expect(calls("read_arena_reveal_target")).toHaveLength(1);
+});
+
+it.each(["comparison","attempt"] as const)("distinguishes a missing %s from a hidden target and keeps the original unknown after a rejected explicit retry",async targetKind=>{
+  render(<Harness/>,project);const targetId=await prepareRevealTarget(targetKind),original=invoke.getMockImplementation()!;let visible:boolean|null=null,writes=0;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?Promise.reject(++writes===1?unknownReveal:rejected)
+    :command==="read_arena_reveal_target"?Promise.resolve(visible===null?null:{projectId:project.metadata.projectId,targetId,targetKind,visible}):original(command,payload));
+  await act(async()=>owner.reveal(targetId,targetKind));const entry=owner.pending!;
+  expect(entry).toMatchObject({kind:"reveal",targetMissing:true,checking:false,retryAllowed:false});expect(owner.failure).toEqual(unknownReveal);
+  await act(async()=>owner.retryPending());expect(calls("reveal_arena_identity")).toHaveLength(1);
+  visible=false;await act(async()=>owner.checkPending());
+  expect(owner.pending).toMatchObject({targetMissing:false,retryAllowed:true});expect(owner.pending?.request).toBe(entry.request);
+  await act(async()=>owner.retryPending());expect(owner.pending).toMatchObject({uncertain:true,retryAllowed:false});expect(owner.pending?.request).toBe(entry.request);
+  expect(calls("read_arena_reveal_target")).toHaveLength(2);await act(async()=>owner.retryPending());expect(calls("reveal_arena_identity")).toHaveLength(2);
+  visible=true;await act(async()=>owner.checkPending());
+  expect(owner.pending).toBeNull();expect(owner.notice).toBe("identitiesVisible");expect(owner.failure).toBeNull();
+  expect(payloads("reveal_arena_identity")).toEqual([entry.request,entry.request]);
+});
+
+it("retains reveal recovery after failed, malformed or differently bound target facts",async()=>{
+  render(<Harness/>,project);const targetId=await prepareRevealTarget("comparison"),original=invoke.getMockImplementation()!;
+  const readError:CommandError={...unknownReveal,stage:"execution-read",reason:"target-read-unavailable"};let fail=true,result:unknown;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?Promise.reject(unknownReveal)
+    :command==="read_arena_reveal_target"?fail?Promise.reject(readError):Promise.resolve(result):original(command,payload));
+  await act(async()=>owner.reveal(targetId,"comparison"));const request=owner.pending!.request;
+  expect(owner.failure).toEqual(readError);expect(owner.pending?.retryAllowed).toBe(false);fail=false;
+  const fact={projectId:project.metadata.projectId,targetId,targetKind:"comparison",visible:true};
+  for(const wrong of [undefined,{}, {...fact,projectId:fixtureIdentity(993)}, {...fact,targetId:fixtureIdentity(994)},
+    {...fact,targetKind:"attempt"}, {...fact,visible:null}]){
+    result=wrong;await act(async()=>owner.checkPending());await act(async()=>owner.retryPending());
+    expect(owner.pending).toMatchObject({kind:"reveal",checking:false,targetMissing:false,retryAllowed:false});expect(owner.pending?.request).toBe(request);
+    expect(calls("reveal_arena_identity")).toHaveLength(1);
+  }
+  result=fact;await act(async()=>owner.checkPending());expect(owner.pending).toBeNull();expect(owner.notice).toBe("identitiesVisible");expect(owner.failure).toBeNull();
+});
+
+it("continues one reveal target read after consumer removal, preserves newer settings and leaves another owner's token held",async()=>{
+  const rendered=render(<Harness/>,project);const targetId=await prepareRevealTarget("comparison"),original=invoke.getMockImplementation()!,read=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?Promise.reject(unknownReveal)
+    :command==="read_arena_reveal_target"?read.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=owner.reveal(targetId,"comparison");void owner.reveal(targetId,"comparison");void owner.checkPending();});
+  await waitFor(()=>expect(calls("read_arena_reveal_target")).toHaveLength(1));
+  expect(owner.current().pending).toMatchObject({checking:true,retryAllowed:false,targetMissing:false});expect(owner.current().busy).toBe(true);expect(owner.current().failure).toBeNull();
+  let token!:symbol;act(()=>{token=translations.reserveMutation()!;owner.setComparisonBlind(false);reads.invalidate(["source","resources"]);});expect(token).not.toBeNull();
+  const removed={...project,metadata:{...project.metadata,targetLocales:[]}};
+  rendered.rerender(<Harness mounted={false}/>,removed);
+  await act(async()=>{read.resolve({projectId:project.metadata.projectId,targetId,targetKind:"comparison",visible:true});await flight;});
+  rendered.rerender(<Harness/>,removed);expect(owner.pending).toBeNull();expect(owner.comparisonBlind).toBe(false);expect(owner.dirty).toBe(true);expect(owner.targetAvailable).toBe(false);
+  expect(owner.notice).toBe("identitiesVisible");expect(calls("reveal_arena_identity")).toHaveLength(1);expect(calls("read_arena_reveal_target")).toHaveLength(1);
+  expect(translations.reserveMutation()).toBeNull();act(()=>translations.releaseMutation(token));
+});
+
+it.each(["before-read","during-read"] as const)("does not send or accept a reveal target lookup after retirement %s",async phase=>{
+  const rendered=render(<Harness/>,project);const targetId=await prepareRevealTarget("comparison"),original=invoke.getMockImplementation()!,write=deferred<unknown>(),read=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?write.promise
+    :command==="read_arena_reveal_target"?read.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=owner.reveal(targetId,"comparison");});await waitFor(()=>expect(calls("reveal_arena_identity")).toHaveLength(1));
+  if(phase==="during-read"){
+    await act(async()=>{write.reject(unknownReveal);});await waitFor(()=>expect(calls("read_arena_reveal_target")).toHaveLength(1));
+  }
+  const before=owner.current();rendered.unmount();
+  await act(async()=>{if(phase==="before-read")write.reject(unknownReveal);else read.resolve({projectId:project.metadata.projectId,targetId,targetKind:"comparison",visible:true});await flight;});
+  expect(owner.current()).toBe(before);expect(calls("read_arena_reveal_target")).toHaveLength(phase==="before-read"?0:1);
 });
 
 it("settles the original adoption receipt after a lost prepare ACK without adopting again",async()=>{

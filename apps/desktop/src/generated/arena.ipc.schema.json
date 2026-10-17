@@ -512,6 +512,9 @@
       "reveal": {
         "$ref": "#/definitions/RevealRequest"
       },
+      "revealTarget": {
+        "$ref": "#/definitions/ComparisonRead"
+      },
       "session": {
         "$ref": "#/definitions/SessionRequest"
       },
@@ -532,6 +535,7 @@
       "comparison",
       "session",
       "reveal",
+      "revealTarget",
       "merge",
       "mergeAction"
     ],
@@ -903,6 +907,38 @@
           "digest"
         ],
         "type": "object"
+      },
+      "ArenaRevealTarget": {
+        "additionalProperties": false,
+        "description": "Visibility is a target fact, not a receipt for a particular reveal action.",
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetKind": {
+            "$ref": "#/definitions/ArenaRevealTargetKind"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "projectId",
+          "targetId",
+          "targetKind",
+          "visible"
+        ],
+        "type": "object"
+      },
+      "ArenaRevealTargetKind": {
+        "enum": [
+          "comparison",
+          "attempt"
+        ],
+        "type": "string"
       },
       "ArenaStartReceipt": {
         "additionalProperties": false,
@@ -2809,6 +2845,16 @@
       "reveal": {
         "type": "null"
       },
+      "revealTarget": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ArenaRevealTarget"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "selection": {
         "$ref": "#/definitions/TranslationSelection"
       },
@@ -2836,6 +2882,7 @@
       "mergeAction",
       "comparisons",
       "reveal",
+      "revealTarget",
       "selection"
     ],
     "title": "Responses",

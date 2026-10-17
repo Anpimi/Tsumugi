@@ -532,6 +532,7 @@ struct ArenaRequests {
     comparison: execution::arena::ComparisonRead,
     session: execution::SessionRequest,
     reveal: execution::arena::RevealRequest,
+    reveal_target: execution::arena::ComparisonRead,
     merge: execution::arena::MergeRequest,
     merge_action: execution::arena::MergeRequest,
 }
@@ -548,6 +549,7 @@ struct ArenaResponses {
     merge_action: Option<tsumugi_core::ArenaMergeActionRead>,
     comparisons: Vec<tsumugi_core::ComparisonSummary>,
     reveal: (),
+    reveal_target: Option<tsumugi_core::ArenaRevealTarget>,
     selection: tsumugi_core::TranslationSelection,
 }
 

@@ -145,6 +145,7 @@ export type SourceContextOmissionSample =
       reason: SourceContextOmissionReason;
     };
 export type SourceContextOmissionReason = "not-selected" | "byte-budget" | "item-limit";
+export type ArenaRevealTargetKind = "comparison" | "attempt";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
@@ -159,6 +160,7 @@ export interface Responses {
   mergeAction: ArenaMergeActionRead | null;
   prepared: Prepared;
   reveal: null;
+  revealTarget: ArenaRevealTarget | null;
   selection: TranslationSelection;
   startAction: ArenaStartReceipt | null;
   view: View;
@@ -451,6 +453,15 @@ export interface SharedTerm {
   revisionId: ExecutionId;
   source: string;
   target: string;
+}
+/**
+ * Visibility is a target fact, not a receipt for a particular reveal action.
+ */
+export interface ArenaRevealTarget {
+  projectId: ExecutionId;
+  targetId: ExecutionId;
+  targetKind: ArenaRevealTargetKind;
+  visible: boolean;
 }
 /**
  * The recorded start input, independently of provider or worker progress.

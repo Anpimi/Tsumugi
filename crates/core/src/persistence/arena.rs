@@ -149,6 +149,49 @@ fn sql(e: rusqlite::Error) -> ExecutionError {
 fn id(s: String) -> Result<ExecutionId, ExecutionError> {
     ExecutionId::parse(&s)
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ArenaRevealTargetKind { Comparison, Attempt }
+
+/// Visibility is a target fact, not a receipt for a particular reveal action.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ArenaRevealTarget {
+    pub project_id: ExecutionId,
+    pub target_id: ExecutionId,
+    pub target_kind: ArenaRevealTargetKind,
+    pub visible: bool,
+}
+
+fn reveal_target_in(
+    c: &Connection, project: ExecutionId, target: ExecutionId,
+) -> Result<Option<(ArenaRevealTargetKind, bool)>, ExecutionError> {
+    // Preserve the mutation's existing comparison-before-attempt routing.
+    let comparison: Option<(String,String,i64)> = c.query_row(
+        "SELECT project_id,unit_id,blind FROM arena_comparisons WHERE comparison_id=?1",
+        [target.to_string()], |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+    ).optional().map_err(sql)?;
+    if let Some((owner,unit,blind))=comparison {
+        if owner!=project.to_string() {return Err(error(ErrorCode::Unauthorized,"arena-project"));}
+        if !(0..=1).contains(&blind) || !super::content::unit_owned_by_project(c,project,id(unit)?)? {
+            return Err(error(ErrorCode::CorruptLedger,"arena-reveal-target"));
+        }
+        return Ok(Some((ArenaRevealTargetKind::Comparison,blind==1)));
+    }
+    let orphan:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM arena_entries WHERE comparison_id=?1)",
+        [target.to_string()],|row|row.get(0)).map_err(sql)?;
+    if orphan {return Err(error(ErrorCode::CorruptLedger,"arena-reveal-target"));}
+    let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+        [target.to_string()],|row|row.get(0)).map_err(sql)?;
+    if !exists {return Ok(None);}
+    let input=super::ledger::load_input(c,target)?;
+    let settings=settings(&input)?;
+    if input.envelope().project_id!=project {return Err(error(ErrorCode::Unauthorized,"arena-project"));}
+    Ok(Some((ArenaRevealTargetKind::Attempt,settings.config.blind)))
+}
+
 fn checked_ids(ids: &[ExecutionId]) -> Result<(), ExecutionError> {
     if !(2..=4).contains(&ids.len()) || ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
         Err(error(ErrorCode::InvalidInput, "arena-candidates"))
@@ -299,6 +342,31 @@ impl ProjectStore {
             digest,
         })
     }
+    pub fn arena_reveal_target_read(
+        &self, project: ExecutionId, target: ExecutionId,
+    ) -> Result<Option<ArenaRevealTarget>, ExecutionError> {
+        let found=super::review::read_snapshot(
+            self.connection().map_err(|_|error(ErrorCode::StorageFailed,"arena-read"))?,|c| {
+            let resolved=reveal_target_in(c,project,target)?;
+            let row:Option<(String,String,String)>=c.query_row(
+                "SELECT project_id,action_id,request_digest FROM arena_reveals WHERE comparison_id=?1",
+                [target.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+            ).optional().map_err(sql)?;
+            let revealed=if let Some((owner,action,digest))=row {
+                let action=id(action).map_err(|_|error(ErrorCode::CorruptLedger,"arena-reveal-record"))?;
+                if resolved.is_none() || owner!=project.to_string()
+                    || digest!=codec::digest(&codec::encode(&(project,target,action),MAX_INPUT_BYTES)?) {
+                    return Err(error(ErrorCode::CorruptLedger,"arena-reveal-record"));
+                }
+                true
+            } else {false};
+            Ok(resolved.map(|(target_kind,blind)|ArenaRevealTarget {
+                project_id:project,target_id:target,target_kind,visible:!blind||revealed,
+            }))
+        })?;
+        if self.is_reconciling() {self.reconcile_execution()?;}
+        Ok(found)
+    }
     pub fn arena_revealed(
         &self,
         project: ExecutionId,
@@ -330,24 +398,8 @@ impl ProjectStore {
         let c = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "arena-read"))?;
-        let owner: Option<String> = c
-            .query_row(
-                "SELECT project_id FROM arena_comparisons WHERE comparison_id=?1",
-                [comparison.to_string()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(sql)?;
-        if let Some(owner) = owner {
-            if owner != project.to_string() {
-                return Err(error(ErrorCode::Unauthorized, "arena-project"));
-            }
-        } else {
-            let input = self.execution_input(comparison)?;
-            settings(&input)?;
-            if input.envelope().project_id != project {
-                return Err(error(ErrorCode::Unauthorized, "arena-project"));
-            }
+        if reveal_target_in(c,project,comparison)?.is_none() {
+            return Err(error(ErrorCode::InvalidInput,"execution-storage"));
         }
         let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();

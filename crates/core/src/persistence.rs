@@ -39,7 +39,7 @@ pub use application::{
     WorkPlanToolServiceReceipt,
 };
 pub use arena::{
-    ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
+    ArenaRevealTarget, ArenaRevealTargetKind, ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
 };
 pub use ledger::{
     AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskActivity, TaskActivityPhase,

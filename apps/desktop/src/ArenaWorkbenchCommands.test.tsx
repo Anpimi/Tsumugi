@@ -103,6 +103,9 @@ beforeEach(async () => {
     if (command === "create_arena_comparison") { comparison = { ...comparison, comparisonId: String(request.actionId), blind: Boolean(request.blind), revealed: !request.blind }; return structuredClone(comparison); }
     if (command === "read_arena_comparison") return structuredClone(comparison);
     if (command === "reveal_arena_identity") { comparison = { ...comparison, revealed: true }; view = { ...view, revealed: true, variants: prepared.preview.config.variants }; return null; }
+    if (command === "read_arena_reveal_target") return {projectId:request.projectId,targetId:request.comparisonId,
+      targetKind:request.comparisonId===view.detail.attemptId?"attempt":"comparison",
+      visible:request.comparisonId===view.detail.attemptId?view.revealed:comparison.revealed};
     if (command === "select_translation_revision" || command === "save_arena_merge") return selectionFor(request);
     if (command === "read_translation_action") return null;
     if (command === "read_arena_comparison_action" || command === "read_arena_merge_action" || command === "read_translation_selection_action") return null;
@@ -135,6 +138,43 @@ async function compare() {
   await act(async () => { expect(registry.dispatch("arena.create-comparison", scope, comparePayload())).toBe(true); });
   await waitFor(() => expect(registry.describe("arena.begin-merge", scope, comparisonPayload())?.availability.enabled).toBe(true));
 }
+
+it.each(["en-US","zh-CN"] as const)("checks reveal target facts in %s and distinguishes missing, hidden and visible without an action receipt",async language=>{
+  await open();await compare();const original=invoke.getMockImplementation()!,write=deferred<unknown>(),read=deferred<unknown>();
+  const targetId=comparison.comparisonId!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="reveal_arena_identity"?write.promise
+    :command==="read_arena_reveal_target"?read.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("arena.reveal-identities",scope,{kind:"arena-reveal",targetKind:"comparison",targetId})).toBe(true);});
+  await waitFor(()=>expect(calls("reveal_arena_identity")).toHaveLength(1));
+  const pending=owner.current().pending;if(pending?.kind!=="reveal")throw new Error("Expected original reveal");
+  const payload={kind:"arena-pending" as const,pendingKind:"reveal" as const,actionId:pending.request.actionId,targetKind:pending.targetKind,targetId};
+  await act(async()=>{await i18n.changeLanguage(language);});
+  const checking=language==="en-US"?"Checking whether candidate identities are visible…":"正在核对候选身份是否已可见…";
+  expect(screen.queryByText(checking)).not.toBeInTheDocument();
+  await act(async()=>{write.resolve({});});await screen.findByText(checking);
+  expect(owner.current().pending).toMatchObject({checking:true,retryAllowed:false});expect(owner.current().failure).toBeNull();
+  act(()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(false);expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);});
+  await act(async()=>{read.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(screen.queryByText(checking)).not.toBeInTheDocument();
+  await screen.findByText(language==="en-US"?"The original comparison or round could not be found. Your reveal request is kept; check the target again before retrying.":"找不到原比较或轮次。已保留揭盲请求，请重新核对目标后再重试。");
+  expect(owner.current().pending).toMatchObject({targetMissing:true,retryAllowed:false});
+  expect(screen.queryByRole("button",{name:i18n.t("ai.retrySame")})).not.toBeInTheDocument();
+  expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);
+  expect(registry.describe("arena.reconcile-pending",scope,payload)?.risk).toBe("reads-arena");
+  let visible=false;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_arena_reveal_target"?Promise.resolve({projectId:project.metadata.projectId,targetId,targetKind:"comparison",visible})
+    :command==="read_arena_comparison"?Promise.reject(new Error("Current view unavailable")):original(command,args));
+  expect(registry.dispatch("arena.reconcile-pending",scope,{...payload,targetId:fixtureIdentity(999)})).toBe(false);
+  await act(async()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));expect(owner.current().pending).toMatchObject({targetMissing:false,retryAllowed:true});
+  expect(registry.describe("arena.retry-pending",scope,payload)?.availability.enabled).toBe(true);
+  visible=true;await act(async()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(true);});
+  await screen.findByText(language==="en-US"?"Candidate identities are visible.":"候选身份已可见。");
+  expect(owner.current().pending).toBeNull();expect(owner.current().failure).toBeNull();expect(owner.current().notice).toBe("identitiesVisible");
+  expect(screen.queryByText(i18n.t("arena.reconciled"))).not.toBeInTheDocument();
+  expect(payloads("read_arena_reveal_target")).toEqual(Array.from({length:3},()=>({sessionToken:pending.request.sessionToken,projectId:pending.request.projectId,comparisonId:targetId})));
+  expect(calls("reveal_arena_identity")).toHaveLength(1);
+});
 
 it.each([["compare","en-US"],["compare","zh-CN"],["select","en-US"],["select","zh-CN"],["merge","en-US"],["merge","zh-CN"]] as const)("shows the actual %s checking phase in %s and holds the original Registry reservation",async(kind,language)=>{
   await open();

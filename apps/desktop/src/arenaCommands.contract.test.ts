@@ -9,6 +9,25 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
 
+it("reads a reveal target fact without claiming an action receipt",async()=>{
+  const request=fixture.requests.comparison;
+  for(const targetKind of ["comparison","attempt"] as const){
+    for(const visible of [false,true]){
+      const fact={projectId:request.projectId,targetId:request.comparisonId,targetKind,visible};
+      expect(validators.validateResponseRevealTarget(fact)).toBe(true);
+      invoke.mockResolvedValueOnce(fact);expect(await arenaCommands.revealTarget(request)).toEqual(fact);
+      expect(invoke).toHaveBeenLastCalledWith("read_arena_reveal_target",{request});
+    }
+  }
+  invoke.mockResolvedValueOnce(null);expect(await arenaCommands.revealTarget(request)).toBeNull();
+  const fact={projectId:request.projectId,targetId:request.comparisonId,targetKind:"comparison",visible:true};
+  for(const wrong of [undefined,{}, {...fact,projectId:fixtureIdentity(703)}, {...fact,targetId:fixtureIdentity(704)},
+    {...fact,targetKind:"unknown"}, {...fact,visible:null}, {...fact,actionId:fixtureIdentity(705)}]){
+    invoke.mockResolvedValueOnce(wrong);await expect(arenaCommands.revealTarget(request)).rejects.toThrow();
+  }
+  expect(invoke.mock.calls.every(([command])=>command==="read_arena_reveal_target")).toBe(true);
+});
+
 it("reads an exact comparison creation request without accepting a current comparison projection",async()=>{
   const request=fixture.requests.compare;
   const echo={projectId:request.projectId,actionId:request.actionId,unitId:request.unitId,locale:request.locale,

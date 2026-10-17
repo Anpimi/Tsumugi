@@ -447,6 +447,15 @@ pub async fn list_arena_comparisons(
         .await
 }
 #[tauri::command]
+pub async fn read_arena_reveal_target(
+    state: State<'_, AppState>, request: ComparisonRead,
+) -> Result<Option<tsumugi_core::ArenaRevealTarget>, CommandError> {
+    state.sessions.run("read_arena_reveal_target",CommandStage::ExecutionRead,move |sessions| {
+        authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?
+            .store.arena_reveal_target_read(request.project_id,request.comparison_id).map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn reveal_arena_identity(
     state: State<'_, AppState>,
     request: RevealRequest,

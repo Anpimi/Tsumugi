@@ -68,6 +68,11 @@ export const arenaCommands={
  },
  comparisons:(request:SessionRequest)=>checkedInvoke("list_arena_comparisons",request,validators.validateResponseComparisons),
  reveal:async(request:RevealRequest)=>{await checkedInvoke("reveal_arena_identity",request,validators.validateResponseReveal);},
+ revealTarget:async(request:ComparisonRead)=>{
+  const value=await checkedInvoke("read_arena_reveal_target",request,validators.validateResponseRevealTarget);
+  requireConfirmation(value===null||(value.projectId===request.projectId&&value.targetId===request.comparisonId));
+  return value;
+ },
  merge:async(request:MergeRequest)=>{
   const result=await checkedInvoke("save_arena_merge",request,validators.validateResponseSelection);
   return confirmArenaMerge(request,result);

@@ -2556,6 +2556,56 @@ mod tests {
     }
 
     #[test]
+    fn arena_reveal_target_reads_preserve_comparison_facts_and_no_op_semantics() {
+        use crate::{ArenaRevealTarget,ArenaRevealTargetKind,ComparisonRequest};
+        let (temp,mut store,rows)=project_with_source();
+        let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let unit=rows[0].unit_id.unwrap();let source=rows[0].source_revision_id.unwrap();
+        let first=store.save_translation_revision(&SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+            locale:"zh-CN".into(),source_revision_id:source,expected_selection_id:None,text:"First".into()}).unwrap();
+        let second=store.save_translation_revision(&SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+            locale:"zh-CN".into(),source_revision_id:source,expected_selection_id:Some(first.event_id),text:"Second".into()}).unwrap();
+        assert_eq!(store.arena_reveal_target_read(project,ExecutionId::new()).unwrap(),None);
+        let compare=ComparisonRequest {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
+            revision_ids:vec![first.revision_id,second.revision_id],blind:true};
+        store.create_comparison(&compare).unwrap();
+        let target=compare.action_id;
+        let hidden=ArenaRevealTarget {project_id:project,target_id:target,target_kind:ArenaRevealTargetKind::Comparison,visible:false};
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(hidden.clone()));
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert_eq!(store.reveal_arena(project,target,ExecutionId::new()).unwrap_err().code,ErrorCode::OutcomeUnknown);
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(hidden.clone()));assert!(!store.is_reconciling());
+        let other_action=ExecutionId::new();store.reveal_arena(project,target,other_action).unwrap();
+        let original_action=ExecutionId::new();store.reveal_arena(project,target,original_action).unwrap();
+        let count:i64=store.connection().unwrap().query_row("SELECT COUNT(*) FROM arena_reveals WHERE action_id=?1",[original_action.to_string()],|row|row.get(0)).unwrap();
+        assert_eq!(count,0,"successful target no-op does not record this action");
+        let visible=ArenaRevealTarget{visible:true,..hidden};
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(visible.clone()));
+        assert_eq!(store.arena_reveal_target_read(ExecutionId::new(),target).unwrap_err().code,ErrorCode::Unauthorized);
+        let public=ComparisonRequest {action_id:ExecutionId::new(),blind:false,..compare.clone()};store.create_comparison(&public).unwrap();
+        assert_eq!(store.arena_reveal_target_read(project,public.action_id).unwrap().unwrap().visible,true);
+        let c=store.connection().unwrap();
+        let digest:String=c.query_row("SELECT request_digest FROM arena_reveals WHERE comparison_id=?1",[target.to_string()],|row|row.get(0)).unwrap();
+        c.execute("UPDATE arena_reveals SET request_digest=?2 WHERE comparison_id=?1",params![target.to_string(),"0".repeat(64)]).unwrap();
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap_err().code,ErrorCode::CorruptLedger);assert!(store.is_reconciling());
+        c.execute("UPDATE arena_reveals SET request_digest=?2 WHERE comparison_id=?1",params![target.to_string(),digest]).unwrap();
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(visible.clone()));assert!(!store.is_reconciling());
+        let orphan=ExecutionId::new();let action=ExecutionId::new();let digest=codec::digest(&codec::encode(&(project,orphan,action),MAX_INPUT_BYTES).unwrap());
+        let c=store.connection().unwrap();c.execute("INSERT INTO arena_reveals VALUES (?1,?2,?3,?4)",params![orphan.to_string(),project.to_string(),action.to_string(),digest]).unwrap();
+        assert_eq!(store.arena_reveal_target_read(project,orphan).unwrap_err().code,ErrorCode::CorruptLedger);
+        c.execute("DELETE FROM arena_reveals WHERE comparison_id=?1",[orphan.to_string()]).unwrap();
+        adopt_source(&mut store,br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,br#"{"first":"Updated","second":"same"}"#);
+        let revision=store.metadata().unwrap().metadata_revision();store.set_target_locales(revision,&["ja".into()]).unwrap();
+        let sequence=store.changes_since(Revision::new(0).unwrap()).sequence;
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(visible.clone()));
+        assert!(store.arena_reveal_target_read(project,public.action_id).unwrap().unwrap().visible);
+        assert_eq!(store.changes_since(sequence).sequence,sequence);
+        store.close().unwrap();let reopened=ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(reopened.arena_reveal_target_read(project,target).unwrap(),Some(visible));
+    }
+
+    #[test]
     fn arena_action_reads_preserve_comparison_merge_and_selection_history() {
         use crate::{ComparisonRequest,MergeBasis};
         let (temp,mut store,rows)=project_with_source();

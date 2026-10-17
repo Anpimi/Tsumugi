@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check whether the original comparison or run already shows candidate identities
+  after an uncertain reveal response. Confirmation reads do not reveal again; a
+  missing target remains unresolved, and newer input is retained.
+
 - Confirm uncertain comparison creation, revision selection and merged translations
   from their original saved actions. Checks preserve newer input and do not repeat
   writes. A failed view refresh after comparison creation keeps its outcome

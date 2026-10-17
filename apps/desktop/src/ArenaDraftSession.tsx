@@ -4,7 +4,7 @@ import type { StartRequest, RevealRequest } from "./generated/arena.requests";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt } from "./executionCommands";
 import { translationCommands, confirmTranslationSelection, type TranslationSelectRequest, type TranslationSelection } from "./translationCommands";
 import { validateResponseIdentity, validateResponseAction, validateResponseAdoption, validateResponseAdoptionAction } from "./generated/execution.validators";
-import { validateResponsePrepared, validateResponseView, validateResponseComparison, validateResponseStartAction } from "./generated/arena.validators";
+import { validateResponsePrepared, validateResponseView, validateResponseComparison, validateResponseStartAction, validateResponseRevealTarget } from "./generated/arena.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
@@ -26,7 +26,7 @@ interface PendingState { editSeq: number; uncertain: boolean; retryAllowed: bool
 type Pending = PendingState & (
   | { kind: "start"; request: StartRequest; prepared: ArenaPrepared; checking: boolean }
   | { kind: "compare"; request: CompareRequest; checking: boolean }
-  | { kind: "reveal"; request: RevealRequest; targetKind: "attempt" | "comparison" }
+  | { kind: "reveal"; request: RevealRequest; targetKind: "attempt" | "comparison"; checking: boolean; targetMissing: boolean }
   | { kind: "select"; request: TranslationSelectRequest; receipt: TranslationSelection | null; checking: boolean }
   | { kind: "merge"; request: MergeRequest; draftSeq: number; receipt: TranslationSelection | null; checking: boolean }
   | { kind: "adopt"; request: PrepareRequest; candidate: Candidate; action: AdoptionAction | null; receipt: Receipt | null; checking: boolean }
@@ -37,7 +37,7 @@ interface State {
   unit: string; references: string[]; comparisonBlind: boolean; comparisonId: string | null; draft: MergeDraft | null;
   attempt: string | null; started: { prepared: ArenaPrepared; taskId: string | null } | null;
   pending: Pending | null; saved: Record<string, Receipt>; busy: boolean; failure: CommandFailure | null;
-  notice: "saved" | "merged" | "selected" | "reconciled" | "repeatCost" | null;
+  notice: "saved" | "merged" | "selected" | "reconciled" | "repeatCost" | "identitiesVisible" | null;
 }
 const aiLimits = [["maxItems",1,100],["concurrency",1,2],["maxRequests",1,300],["maxOutputTokens",1,16384],["maxRetries",0,2],["timeoutSeconds",1,120]] as const;
 function sameConfig(left: ArenaConfig, right: ArenaConfig) {
@@ -278,7 +278,7 @@ function useArenaOwner(project: ProjectView) {
         confirmArenaComparison(entry.request,result); confirmComparisonRead(result,entry.request.actionId);
         reads.client.setQueryData(reads.key(["arena-comparison",entry.request.actionId]),result);
         settle(entry,null);
-      } else if (entry.kind === "reveal") { await arenaCommands.reveal(entry.request); if (matches(entry)) settle(entry,null); }
+      } else if (entry.kind === "reveal") { await arenaCommands.reveal(entry.request); if (matches(entry)) settle(entry,"identitiesVisible"); }
       else if (entry.kind === "select" || entry.kind === "merge") {
         const result = entry.kind === "select" ? await translationCommands.select(entry.request) : await arenaCommands.merge(entry.request);
         if (!matches(entry)) return;
@@ -307,9 +307,29 @@ function useArenaOwner(project: ProjectView) {
         if (entry.kind === "adopt") { await lookupAdoption(entry,commandFailure(error,"outcome-unknown")); return; }
         if (entry.kind === "start") { await lookupStart(entry,commandFailure(error,"outcome-unknown")); return; }
         if (entry.kind === "compare") { await lookupComparison(entry,commandFailure(error,"outcome-unknown")); return; }
+        if (entry.kind === "reveal") { await lookupReveal(entry,commandFailure(error,"outcome-unknown")); return; }
         if (entry.kind === "select" || entry.kind === "merge") { await lookupSelection(entry,commandFailure(error,"outcome-unknown")); return; }
       }
       throw error;
+    }
+  }
+  async function lookupReveal(entry: Extract<Pending,{kind:"reveal"}>, originalFailure = current().failure) {
+    if (!matches(entry)) return;
+    replace({...entry,checking:true,uncertain:true,retryAllowed:false,targetMissing:false}); update(before => ({...before,failure:null}));
+    try {
+      const result = await arenaCommands.revealTarget({sessionToken:entry.request.sessionToken,
+        projectId:entry.request.projectId,comparisonId:entry.request.comparisonId});
+      if (!matches(entry)) return;
+      if (!validateResponseRevealTarget(result) || result !== null && (result.projectId !== entry.request.projectId
+        || result.targetId !== entry.request.comparisonId || result.targetKind !== entry.targetKind)) invalidAck();
+      // This proves the target goal, including a reveal recorded by another request.
+      if (result?.visible === true) { settle(entry,"identitiesVisible"); return; }
+      replace({...entry,checking:false,uncertain:true,retryAllowed:result !== null,targetMissing:result === null});
+      update(before => ({...before,failure:originalFailure}));
+    } catch (error) {
+      if (!matches(entry)) return;
+      replace({...entry,checking:false,uncertain:true,retryAllowed:false,targetMissing:false});
+      update(before => ({...before,failure:commandFailure(error,"outcome-unknown")}));
     }
   }
   async function lookupComparison(entry: Extract<Pending,{kind:"compare"}>, originalFailure = current().failure) {
@@ -485,7 +505,7 @@ function useArenaOwner(project: ProjectView) {
       view.blind && !view.revealed && ("detail" in view ? view.detail.attemptId === target : view.comparisonId === target), async proof => {
       const actionId = await executionCommands.identity(session);
       if (!live() || ticket !== version.current || !proof() || (targetKind === "attempt" ? current().attempt !== target : current().comparisonId !== target)) return;
-      await dispatch({kind:"reveal",request:fixed({...session,comparisonId:target,actionId}),targetKind,editSeq:before.editSeq,uncertain:false,retryAllowed:false});
+      await dispatch({kind:"reveal",request:fixed({...session,comparisonId:target,actionId}),targetKind,editSeq:before.editSeq,uncertain:false,retryAllowed:false,checking:false,targetMissing:false});
     }));
   }
   function canBeginMerge(view: ComparisonView) {
@@ -589,9 +609,7 @@ function useArenaOwner(project: ProjectView) {
       } else if (entry.kind === "compare") {
         await lookupComparison(entry,originalFailure);
       } else if (entry.kind === "reveal") {
-        const view = entry.targetKind === "comparison" ? await readComparison(entry.request.comparisonId) : await readView(entry.request.comparisonId);
-        if (!matches(entry)) return;
-        if (view.revealed) settle(entry,"reconciled"); else replace({...entry,retryAllowed:true});
+        await lookupReveal(entry,originalFailure);
       } else if (entry.kind === "select" || entry.kind === "merge") {
         await lookupSelection(entry,originalFailure);
       } else {

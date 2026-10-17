@@ -2507,6 +2507,52 @@ mod tests {
     }
 
     #[test]
+    fn registered_arena_reveal_target_reads_distinguish_visibility_from_action_receipts() {
+        let isolated=ProjectFixture::create("en-US");
+        assert_eq!(call(&isolated.webview,"read_arena_reveal_target",request(&isolated.context,json!({"comparisonId":ExecutionId::new()}))).unwrap(),Value::Null);
+        isolated.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+        let mut fixture=Fixture::create();let unit=fixture.unit;let source=fixture.source_revision;
+        let (comparison,attempt,task)=fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let store=&mut sessions.active.as_mut().unwrap().store;
+            let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+            let original=tsumugi_core::SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
+                source_revision_id:source,expected_selection_id:None,text:"First".into()};
+            let first=store.save_translation_revision(&original).unwrap();
+            let second=store.save_translation_revision(&tsumugi_core::SaveTranslationRevision {action_id:ExecutionId::new(),
+                expected_selection_id:Some(first.event_id),text:"Second".into(),..original}).unwrap();
+            let comparison=ExecutionId::new();store.create_comparison(&tsumugi_core::ComparisonRequest {project_id:project,
+                action_id:comparison,unit_id:unit,locale:"zh-CN".into(),revision_ids:vec![first.revision_id,second.revision_id],blind:true}).unwrap();
+            let wire:Value=serde_json::from_str(include_str!("../../../../test/fixtures/arenaCommands.contract.json")).unwrap();
+            let mut config:tsumugi_core::ai::arena::ArenaConfig=serde_json::from_value(wire["requests"]["preview"]["config"].clone()).unwrap();config.blind=true;
+            let input=store.preview_arena(config,"zh-CN",&[unit]).unwrap().fixed_input(store.metadata().unwrap().project_id()).unwrap();
+            store.enqueue_execution(&input).unwrap();(comparison,input.envelope().attempt_id,input.envelope().task_id)
+        });
+        for (target,kind) in [(comparison,"comparison"),(attempt,"attempt")] {
+            let read=json!({"comparisonId":target});
+            let hidden=json!({"projectId":fixture.context["projectId"],"targetId":target,"targetKind":kind,"visible":false});
+            assert_eq!(fixture.call("read_arena_reveal_target",read.clone()).unwrap(),hidden);
+            for _ in 0..2 {assert_eq!(fixture.call("reveal_arena_identity",json!({"comparisonId":target,"actionId":ExecutionId::new()})).unwrap(),Value::Null);}
+            let visible=fixture.call("read_arena_reveal_target",read.clone()).unwrap();assert_eq!(visible["visible"],true);assert_eq!(visible["targetKind"],kind);
+            assert!(visible.get("actionId").is_none());
+            let mut wrong=read.clone();wrong["projectId"]=json!(ExecutionId::new());assert!(fixture.call("read_arena_reveal_target",wrong).is_err());
+            let mut wrong=read.clone();wrong["sessionToken"]=json!("old");assert!(fixture.call("read_arena_reveal_target",wrong).is_err());
+            let mut extra=read;extra["actionId"]=json!(ExecutionId::new());assert!(fixture.call("read_arena_reveal_target",extra).is_err());
+        }
+        let sequence=fixture.app.state::<AppState>().sessions.with(|sessions| {
+            let active=sessions.active.as_mut().unwrap();active.execution.as_mut().unwrap().quiescing=true;active.store.execution_sequence().unwrap()
+        });
+        for target in [comparison,attempt] {assert_eq!(fixture.call("read_arena_reveal_target",json!({"comparisonId":target})).unwrap()["visible"],true);}
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active=sessions.active.as_mut().unwrap();assert_eq!(active.store.execution_sequence().unwrap(),sequence);
+            assert_eq!(active.store.provider_budget(task).unwrap().unwrap().dispatched,0);
+            active.store.cancel_execution(task,ExecutionId::new()).unwrap();active.execution.as_mut().unwrap().quiescing=false;
+        });
+        let old=request(&fixture.context,json!({"comparisonId":comparison}));fixture.reopen();
+        assert!(call(&fixture.webview,"read_arena_reveal_target",old).is_err());
+        for target in [comparison,attempt] {assert_eq!(fixture.call("read_arena_reveal_target",json!({"comparisonId":target})).unwrap()["visible"],true);}
+    }
+
+    #[test]
     fn registered_arena_action_reads_keep_original_creation_merge_and_selection_after_reopen() {
         let isolated=ProjectFixture::create("en-US");
         let scope=json!({"actionId":ExecutionId::new(),"unitId":ExecutionId::new(),"locale":"zh-CN"});

@@ -923,6 +923,9 @@ arena: {
   "checkingComparison": "Checking the saved comparison…",
   "checkingSelection": "Checking the saved selection…",
   "checkingMerge": "Checking the saved merge…",
+  "checkingReveal": "Checking whether candidate identities are visible…",
+  "identitiesVisible": "Candidate identities are visible.",
+  "revealTargetMissing": "The original comparison or round could not be found. Your reveal request is kept; check the target again before retrying.",
   "unsaved": "Keep your Arena draft?",
   "unsavedHelp": "Stay to preserve the settings or merge draft. Discard explicitly to leave.",
   "errors": {

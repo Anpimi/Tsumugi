@@ -103,7 +103,7 @@ macro_rules! handlers {
         release::plugin::workflow::stop_artifact_check_workflow,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_start_action,arena::read_arena_translation,
         arena::create_arena_comparison,arena::read_arena_comparison,arena::read_arena_comparison_action,arena::list_arena_comparisons,
-        arena::reveal_arena_identity,arena::save_arena_merge,arena::read_arena_merge_action,
+        arena::reveal_arena_identity,arena::read_arena_reveal_target,arena::save_arena_merge,arena::read_arena_merge_action,
         strategy::capture_context_strategy,strategy::read_context_strategy,strategy::list_context_strategies,
         strategy::capture_strategy_suite,strategy::prepare_strategy_evaluation,strategy::start_strategy_evaluation,
         strategy::read_strategy_evaluation,strategy::list_strategy_evaluations,

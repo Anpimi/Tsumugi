@@ -914,6 +914,9 @@ arena: {
   "checkingComparison": "正在核对保存的比较…",
   "checkingSelection": "正在核对选择结果…",
   "checkingMerge": "正在核对合并结果…",
+  "checkingReveal": "正在核对候选身份是否已可见…",
+  "identitiesVisible": "候选身份已可见。",
+  "revealTargetMissing": "找不到原比较或轮次。已保留揭盲请求，请重新核对目标后再重试。",
   "unsaved": "保留 Arena 草稿？",
   "unsavedHelp": "留下保留设置或合并草稿，或明确丢弃后离开。",
   "errors": {

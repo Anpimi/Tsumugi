@@ -31,6 +31,8 @@ beforeEach(async()=>{await i18n.changeLanguage("en-US");prepared={attemptId:aiAt
   if(command==="read_translation_action")return null;
   if(command==="read_arena_comparison_action"||command==="read_arena_merge_action"||command==="read_translation_selection_action")return null;
   if(command==="reveal_arena_identity"){comparison={...comparison,revealed:true};return null;}
+  if(command==="read_arena_reveal_target")return {projectId:args.request.projectId,targetId:args.request.comparisonId,
+   targetKind:args.request.comparisonId===aiAttempt?"attempt":"comparison",visible:args.request.comparisonId===aiAttempt?!prepared.preview.config.blind:comparison.revealed};
   if(command==="prepare_execution_adoption"){const request=args.request as unknown as PrepareRequest;adoption={...executionFixture.action,projectId:request.projectId,attemptId:request.attemptId,actionId:request.actionId,unitId:request.unitId,operation:"arena-translation",parameters:null,resultIds:[...request.resultIds]};return adoption;}
   if(command==="adopt_execution")return{...executionFixture.receipt,projectId:adoption.projectId,attemptId:adoption.attemptId,actionId:adoption.actionId,unitId:adoption.unitId,changes:[{kind:"translation-revision",id:fixtureIdentity(990),revision:"1"}]};
   if(command==="save_arena_merge")return{eventId:fixtureIdentity(326),revisionId:fixtureIdentity(327),actionId:args.request.actionId,unitId:args.request.unitId,locale:args.request.locale,sequence:"2",previousEventId:args.request.expectedSelectionId};

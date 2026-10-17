@@ -12,6 +12,7 @@ export interface Requests {
   preview: PreviewRequest;
   read: ReadRequest;
   reveal: RevealRequest;
+  revealTarget: ComparisonRead;
   session: SessionRequest;
   start: StartRequest;
   startAction: StartRequest;
