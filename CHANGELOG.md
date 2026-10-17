@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Let work plans select existing read-only Application tools for generation
+  components and manual Agent queries. Each exact shared instance needs separate
+  lifetime consent; its complete capability set and shared cancellation impact
+  are shown before approval. Required tools complete the real activation
+  handshake before the caller starts. Historical plans cannot restore a stopped
+  instance or its authority. The current-only development project format
+  advances to schema 51; earlier directories are preserved and refused.
+
 - Let an explicitly selected Project JavaScript generation component call frozen
   queries from the work plan's selected read-only Project JavaScript tools.
   The preview shows the exact query content shared with both components; tool

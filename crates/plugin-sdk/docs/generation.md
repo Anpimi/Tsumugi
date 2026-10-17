@@ -92,8 +92,14 @@ the complete JSON encoding, including escaped payload text, is at most 1 MiB.
 An empty array is valid. The old generation-service input keeps exactly its
 original three fields and is not implicitly upgraded.
 
-The Desktop adapter currently supports Project JavaScript callers and selected
-read-only Project JavaScript query tools from the same human-authorized WorkPlan.
+The Desktop adapter supports Project JavaScript callers and selected read-only
+Project JavaScript or supported Application query tools from the same
+human-authorized WorkPlan. Application tools retain their existing JavaScript
+capability roster or Native singleton profile. Their exact instance and complete
+roster need independent lifetime consent; the normal WorkPlan tool grant remains
+separate. The original instance owner finishes the real activation handshake
+before the caller starts. Cancelling an Application query retires that shared
+instance, including its queued calls, rather than replacing it under an old plan.
 It prepares each query for one selected source unit through the original Core
 tool preparation. The preview shows the exact query content shared with both
 components. A caller's process consent cannot replace the tool's independent

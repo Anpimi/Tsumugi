@@ -21,6 +21,13 @@ fn file(bytes: &[u8]) -> PackageFile {
     }
 }
 fn query_package(observer: &Path, pending: bool) -> PackageImage {
+    let (manifest, files) = query_package_parts(observer, pending);
+    image(manifest, files)
+}
+fn query_package_parts(
+    observer: &Path,
+    pending: bool,
+) -> (sdk::PluginManifest, BTreeMap<String, PackageFile>) {
     let mut manifest: sdk::PluginManifest = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../../crates/plugin-sdk/tests/fixtures/tool.manifest.json"
@@ -45,7 +52,7 @@ export default {activate(api) {
   api.onDispose(()=>observe('disposed'));
 }};
 "#;
-    image(
+    (
         manifest,
         BTreeMap::from([
             ("component.mjs".into(), file(worker)),
@@ -126,7 +133,10 @@ impl Setup {
             &fixture.directory.path().join("query-observer.jsonl"),
             pending,
         );
-        let query = query_image.capability_tool("query-tool").unwrap();
+        Self::with_query(fixture, query_image, "query-tool")
+    }
+    fn with_query(fixture: Fixture, query_image: PackageImage, resource_id: &str) -> Self {
+        let query = query_image.capability_tool(resource_id).unwrap();
         let caller = caller_package(
             &query,
             &fixture.directory.path().join("caller-observer.jsonl"),
@@ -159,6 +169,20 @@ impl Setup {
             .configure(installation.0.path().join("application"))
             .unwrap();
         let environment = approval.environment.digest().unwrap();
+        let tool_environment =
+            if query_image.manifest().manifest().components[0].runtime
+                == sdk::RuntimeKind::NativeWorker
+            {
+                let host = tsumugi_plugin_host::CapturedNativeRuntime::inspect_current().unwrap();
+                let inventory = call(&fixture.webview, "read_plugin_inventory", json!({})).unwrap();
+                call(&fixture.webview, "set_plugin_native_host_approval", json!({
+                "environmentDigest":host.digest().unwrap(),"approved":true,
+                "expectedRevision":inventory["settingsRevision"],"actionId":ExecutionId::new()
+            })).unwrap();
+                host.digest().unwrap()
+            } else {
+                environment.clone()
+            };
         let capability = sdk::bind_capability(
             caller.manifest(),
             &caller.manifest().manifest().contributions[0].id,
@@ -168,7 +192,7 @@ impl Setup {
         let component = json!({"provider":capability.provider,"profile":capability.declaration.profiles.first(),"environmentDigest":environment});
         let tool_selection = json!({"maxInvocations":2,"entries":[{"handle":ExecutionId::new(),
             "tool":{"package":{"plugin":query.capability.provider.plugin,"packageDigest":query.capability.provider.package_digest},
-                "resourceId":"query-tool","environmentDigest":environment},"target":"zh-CN","selections":["term"]}]});
+                "resourceId":resource_id,"environmentDigest":tool_environment},"target":"zh-CN","selections":["term"]}]});
         Self {
             fixture,
             _installation: installation,
@@ -178,10 +202,24 @@ impl Setup {
         }
     }
     fn start_plan(&self, config: AiConfig) -> (Value, Value) {
-        let plan = self.fixture.call("prepare_work_plan",json!({"config":config,"locale":"zh-CN",
-            "unitIds":[self.fixture.unit],"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":self.tool_selection})).unwrap();
+        let plan = self.prepare_plan(config);
+        let grant = self.start_prepared_plan(&plan);
+        (plan, grant)
+    }
+    fn prepare_plan(&self, config: AiConfig) -> Value {
+        self.fixture.call("prepare_work_plan",json!({"config":config,"locale":"zh-CN",
+            "unitIds":[self.fixture.unit],"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":self.tool_selection})).unwrap()
+    }
+    fn start_prepared_plan(&self, plan: &Value) -> Value {
+        let mut application_executions: Vec<Value> = Vec::new();
+        for tool in plan["tools"]["entries"].as_array().unwrap() {
+            let basis = &tool["execution"]["applicationScope"];
+            if !basis.is_null() && !application_executions.contains(basis) {
+                application_executions.push(basis.clone());
+            }
+        }
         let grant = self.fixture.call("authorize_work_plan",json!({"planId":plan["planId"],"digest":plan["digest"],
-            "actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":true,
+            "actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":true,"applicationToolExecutions":application_executions,
             "effects":["save-candidate","query-tools"],"expiresAt":expiry()})).unwrap();
         self.fixture
             .call(
@@ -191,7 +229,7 @@ impl Setup {
             )
             .unwrap();
         self.fixture.wait_saved(&plan["attemptId"]);
-        (plan, grant)
+        grant
     }
     fn prepare(&self, grant: &Value) -> (Value, Value, Value) {
         let control_before = self
@@ -319,6 +357,9 @@ impl Setup {
         }
     }
 }
+
+#[path = "prepared_tool_services/application.rs"]
+mod application;
 
 #[test]
 fn prepared_tool_services_real_workers_keep_independent_grants_original_receipts_and_reopen() {

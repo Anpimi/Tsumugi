@@ -1230,6 +1230,13 @@ export interface WorkPlanTools {
  * Captured by the trusted host from an installed package, never model text.
  */
 export interface WorkPlanToolSpec {
+  /**
+   * Complete captured callable membership of an Application instance.
+   * Other scopes carry an explicit empty roster; this data grants no lease.
+   *
+   * @maxItems 128
+   */
+  applicationCapabilities: ProcessCapability[];
   binding: CapabilityToolBinding;
   execution: PluginExecutionBinding;
   handle: ExecutionId;
@@ -1239,6 +1246,13 @@ export interface WorkPlanToolSpec {
   selections: string[];
   settingsRevision: UnsignedDecimal;
   target: string;
+}
+/**
+ * One callable declaration in the Host-captured component roster.
+ */
+export interface ProcessCapability {
+  capability: CapabilityDeclaration;
+  contributionId: string;
 }
 /**
  * A fixed selection, not an execution grant or a trusted model instruction.

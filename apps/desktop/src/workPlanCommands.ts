@@ -16,6 +16,7 @@ import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import { checkerIdentity, contractIdentity } from "./reviewIdentity";
+import { validWorkPlanApplicationTools } from "./workPlanApplicationTools";
 export type {
   WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkProtection,
   MaintenanceAssessment, MaintenanceAction, MaintenanceChoice, MaintenancePlanBasis,
@@ -69,6 +70,7 @@ export const workPlanCommands = {
     if (Boolean(value.tools) !== Boolean(selection)) invalidAcknowledgement();
     if (selection) {
       if (!value.tools || value.tools.maxInvocations !== selection.maxInvocations
+        || !validWorkPlanApplicationTools(value.tools.entries)
         || value.tools.entries.length !== selection.entries.length || tools.length !== selection.entries.length
         || new Set(value.tools.entries.map(tool => tool.handle)).size !== selection.entries.length
         || value.tools.entries.some(tool => {
@@ -81,7 +83,7 @@ export const workPlanCommands = {
             || jsonIdentity(expected.binding.capability.provider.plugin) !== jsonIdentity(entry.tool.package.plugin)
             || jsonIdentity(tool.binding) !== jsonIdentity(expected.binding)
             || jsonIdentity(tool.execution) !== jsonIdentity({ capability: expected.binding.capability,
-              componentScope: expected.componentScope, applicationScope: null, profile: expected.binding.declaration.profile,
+              componentScope: expected.componentScope, applicationScope: tool.execution.applicationScope, profile: expected.binding.declaration.profile,
               environment: expected.environment })
             || tool.settingsRevision !== expected.settingsRevision
             || jsonIdentity(tool.packageOrigin) !== jsonIdentity(expected.packageOrigin)
@@ -104,6 +106,8 @@ export const workPlanCommands = {
     return value;
   },
   authorize: async (request: WorkPlanAuthorizeRequest) => {
+    if (!validators.validateRequestWorkPlanAuthorize(request)
+      || new Set(request.applicationToolExecutions.map(basis => basis.instanceId)).size !== request.applicationToolExecutions.length) throw new Error("Invalid work-plan authorization request");
     const value = await checkedInvoke("authorize_work_plan", request, validators.validateResponseWorkPlanReceipt);
     if (value.actionId !== request.actionId || value.lease.planId !== request.planId
       || value.lease.generation !== "1" || value.state !== "active"
@@ -118,6 +122,9 @@ export const workPlanCommands = {
     return value;
   },
   control: async (request: WorkPlanControlRequest) => {
+    if (!validators.validateRequestWorkPlanControl(request)
+      || request.command !== "continue" && request.applicationToolExecutions.length !== 0
+      || new Set(request.applicationToolExecutions.map(basis => basis.instanceId)).size !== request.applicationToolExecutions.length) throw new Error("Invalid work-plan control request");
     const value = await checkedInvoke("control_work_plan", request, validators.validateResponseWorkPlanReceipt);
     const state = { pause: "paused", stop: "stopped", "take-over": "taken-over", continue: "active" }[request.command];
     if (value.actionId !== request.actionId || value.lease.planId !== request.planId
@@ -132,7 +139,7 @@ export const workPlanCommands = {
       || BigInt(value.lease.generation) === 0n
       || Boolean(value.plan.tools) !== Boolean(value.toolInvocations)
       || (value.plan.tools && (!value.toolInvocations || value.toolInvocations.limit !== value.plan.tools.maxInvocations
-        || value.toolInvocations.reserved > value.toolInvocations.limit))) invalidAcknowledgement();
+        || value.toolInvocations.reserved > value.toolInvocations.limit || !validWorkPlanApplicationTools(value.plan.tools.entries)))) invalidAcknowledgement();
     return value;
   },
   action: async (request: WorkPlanActionRequest) => {

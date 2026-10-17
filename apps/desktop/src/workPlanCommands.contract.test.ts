@@ -64,6 +64,21 @@ it("keeps generations exact and rejects unsupported semantic or raw input fields
   expect(validators.validateRequestWorkPlanStart({ ...requests.workPlanStart, input: {} })).toBe(false);
   expect(validators.validateResponseWorkPlanStatus({ ...fixture.responses.status, expiresAt: 9007199254740993 })).toBe(false);
   expect(validators.validateResponseWorkPlan({ ...fixture.responses.plan, rawInput: {} })).toBe(false);
+  const { applicationToolExecutions: _authorizeInstances, ...missingAuthorizeInstances } = requests.workPlanAuthorize;
+  const { applicationToolExecutions: _controlInstances, ...missingControlInstances } = requests.workPlanControl;
+  expect(validators.validateRequestWorkPlanAuthorize(missingAuthorizeInstances)).toBe(false);
+  expect(validators.validateRequestWorkPlanControl(missingControlInstances)).toBe(false);
+});
+
+it("rejects duplicate or mixed-generation instance consent and keeps revoking controls free of lifetime grants", async () => {
+  const basis = { instanceId: fixtureIdentity(1800), activationGeneration: 1 };
+  for (const applicationToolExecutions of [[basis, basis], [basis, { ...basis, activationGeneration: 2 }]]) {
+    await expect(workPlanCommands.authorize({ ...requests.workPlanAuthorize, applicationToolExecutions })).rejects.toThrow("authorization request");
+    await expect(workPlanCommands.control({ ...requests.workPlanControl, command: "continue", applicationToolExecutions })).rejects.toThrow("control request");
+  }
+  for (const command of ["pause", "stop", "take-over"] as const)
+    await expect(workPlanCommands.control({ ...requests.workPlanControl, command, applicationToolExecutions: [basis] })).rejects.toThrow("control request");
+  expect(invoke).not.toHaveBeenCalled();
 });
 
 it("binds acknowledgements to action, generation, scope, options and attempt", async () => {

@@ -295,7 +295,7 @@ fn shared_knowledge_in_order(reverse: bool) {
     for (i, (_, binding, _)) in choices.iter().enumerate() {
         assert_eq!(plan["tools"]["entries"][i]["binding"], json!(binding));
     }
-    let grant = fixture.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":true,"effects":["save-candidate","query-tools"],"expiresAt":expiry()})).unwrap();
+    let grant = fixture.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":true,"applicationToolExecutions":[],"effects":["save-candidate","query-tools"],"expiresAt":expiry()})).unwrap();
     setup.send(()).unwrap();
     fixture.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap();
     let saved = fixture.wait_saved(&plan["attemptId"]);

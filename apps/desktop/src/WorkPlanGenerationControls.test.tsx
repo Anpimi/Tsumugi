@@ -9,7 +9,7 @@ import { SessionReadProvider, useSessionReads, useSessionAlive } from "./Session
 import type { SessionReads } from "./sessionReads";
 import { i18n } from "./i18n";
 import { generationComponent, generationInventory, generationPackage } from "./testSupport/pluginGenerationFixture";
-import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
+import { applicationWorkPlanTool, workPlanToolStatus } from "./testSupport/workPlanToolFixture";
 import { generationToolFixture } from "./testSupport/generationToolFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import generationFixture from "../test/fixtures/workPlanGenerationComponent.contract.json";
@@ -426,6 +426,39 @@ it("prepares one exact read-only tool query from the selected original entry and
   expect(start.unsandboxedExecution).toBe(true);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(6);
   expect(invoke.mock.calls.some(([command]) => command.startsWith("authorize_"))).toBe(false);
+  expect(failures).toEqual([]);
+});
+
+it.each([false, true])("reviews the exact Application service and blocks a retired instance without replacing it (Native: %s)", async native => {
+  usePreparedToolInput();
+  const status = structuredClone(workPlanToolStatus), tool = applicationWorkPlanTool(undefined, native);
+  status.plan.tools!.entries = [tool];
+  let instanceState: "reserved" | "stopped" = "reserved";
+  const originalInvoke = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_application_plugin_instance") return { basis: structuredClone(args.request.basis), state: instanceState };
+    const response = await originalInvoke(command, args);
+    return command === "prepare_work_plan_generation_component" ? { ...response,
+      preparedTools: [{ ...response.preparedTools[0], tool: structuredClone(tool) }] } : response;
+  });
+  render(controls(status)); const user = await chooseComponent(); await chooseReference(user);
+  await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
+  const review = await screen.findByRole("region", { name: "Prepared reference query" });
+  await within(review).findByText(i18n.t("toolQuery.applicationStates.reserved"));
+  expect(within(review).getByText(i18n.t("toolQuery.applicationCapabilities"))).toBeVisible();
+  if (!native) expect(within(review).getByText("secondary.call")).toBeVisible();
+  expect(within(review).getByText(i18n.t("ai.tools.applicationStopHelp"))).toBeVisible();
+  await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Start component generation" })).toBeEnabled());
+  instanceState = "stopped";
+  await user.click(screen.getByRole("button", { name: i18n.t("toolQuery.applicationRefresh") }));
+  await screen.findByText(i18n.t("ai.tools.applicationRetired"));
+  expect(screen.getByRole("button", { name: "Start component generation" })).toBeDisabled();
+  const instanceReads = invoke.mock.calls.filter(([command]) => command === "read_application_plugin_instance");
+  expect(instanceReads.every(([, args]) => jsonIdentity(args.request.basis) === jsonIdentity(tool.execution.applicationScope))).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Discard this component preparation" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Review component generation" })).toBeNull());
+  expect(invoke.mock.calls.some(([command]) => command.startsWith("start_") || command.startsWith("authorize_"))).toBe(false);
   expect(failures).toEqual([]);
 });
 it("invalidates a registry preparation when its explicit tool or original entry changes", async () => {

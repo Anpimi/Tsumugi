@@ -308,7 +308,7 @@ fn generation_component_package_cleanup_waits_for_its_held_selection_effect() {
         "the actual format checker must be captured"
     );
     let grant = fixture.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,
-        "checkerExecutions":checker_keys(&plan),"toolExecution":false,"effects":["save-candidate","run-checks","select-missing"],"expiresAt":expiry()})).unwrap();
+        "checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],"effects":["save-candidate","run-checks","select-missing"],"expiresAt":expiry()})).unwrap();
     fixture.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap();
     let root = fixture.wait_effect(&plan);
     assert!(root["rows"][0]["savedRevisionId"].is_null());
@@ -441,7 +441,7 @@ fn generation_component_closed_channel_child_obeys_pause_stop_and_takeover() {
         waiting.recv_timeout(Duration::from_secs(15)).unwrap();
         wait_outer_closed(&fixture, &action);
         let controlled = fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],
-            "expectedGeneration":grant["lease"]["generation"],"command":command,"confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
+            "expectedGeneration":grant["lease"]["generation"],"command":command,"confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null})).unwrap();
         assert_eq!(controlled["state"], state);
         assert_eq!(controlled["lease"]["generation"], "2");
         release.send(()).unwrap();

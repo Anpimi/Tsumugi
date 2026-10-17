@@ -7,6 +7,7 @@ import type {
 import type { WorkPlanAgentView, WorkPlanGenerationPreflight, WorkPlanToolSpec } from "./generated/ai.responses";
 import { contractIdentity } from "./reviewIdentity";
 import * as validators from "./generated/ai.validators";
+import { validWorkPlanApplicationTools } from "./workPlanApplicationTools";
 
 function invalidAcknowledgement(): never {
   throw Object.assign(new Error("Invalid generation component acknowledgement"), {
@@ -20,7 +21,8 @@ export function generationSupportsPreparedTools(component: PluginGenerationCompo
     && contractIdentity(component.binding.declaration.inputSchema) === contractIdentity({ id: "tsumugi.generation-component-input", schemaVersion: 1, behaviorVersion: 1 });
 }
 export function compatiblePreparedTool(tool: WorkPlanToolSpec) {
-  return tool.execution.componentScope === "project" && tool.execution.environment.profile === "node-system-libraries-v1"
+  return (tool.execution.componentScope === "project" && tool.execution.environment.profile === "node-system-libraries-v1"
+      || tool.execution.componentScope === "application") && validWorkPlanApplicationTools([tool])
     && tool.binding.capability.declaration.effect === "read-only" && tool.binding.declaration.query !== null && tool.binding.declaration.query !== undefined;
 }
 

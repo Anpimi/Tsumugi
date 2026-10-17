@@ -61,11 +61,18 @@ pub(super) fn prepare(
                 .map(Arc::new)
                 .map_err(map_recover)?;
             let tool = prepared.tool();
-            if tool.execution.component_scope != sdk::ComponentScope::Project
-                || !matches!(
-                    tool.execution.environment,
+            let supported_scope = matches!(
+                (&tool.execution.component_scope, &tool.execution.environment),
+                (
+                    sdk::ComponentScope::Project,
                     sdk::ExecutionEnvironmentDescriptor::Captured(_)
+                ) | (
+                    sdk::ComponentScope::Application,
+                    sdk::ExecutionEnvironmentDescriptor::Captured(_)
+                        | sdk::ExecutionEnvironmentDescriptor::Native(_)
                 )
+            );
+            if !supported_scope
                 || tool.binding.capability.declaration.effect != sdk::EffectKind::ReadOnly
                 || tool.binding.capability.declaration.contract
                     == sdk::generation_service_contract()

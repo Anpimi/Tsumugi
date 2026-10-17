@@ -93,7 +93,7 @@ function previewPayload() {
 function startPayload(): AiStartCommandPayload { const current = owner.current(), plan = current.preparedPlan!;
   if (!plan.attemptId) throw new Error("Expected assisted plan");
   return { kind: "ai-start", attemptId: plan.attemptId, planId: plan.planId, digest: plan.digest, editSeq: current.editSeq,
-    minutes:owner.planControl.current().minutes,confirmed:current.consent,checkerExecutions:[],toolExecution:false,effects:["save-candidate"] }; }
+    minutes:owner.planControl.current().minutes,confirmed:current.consent,checkerExecutions:[],toolExecution:false,applicationToolExecutions:[],effects:["save-candidate"] }; }
 function startPendingPayload() { const entry = owner.planControl.current().pending;
   if (entry?.kind !== "start") throw new Error("Expected original plan start");
   return { kind: "ai-start-pending" as const, request:entry.request, attemptId:entry.attemptId, editSeq:entry.editSeq }; }
@@ -193,7 +193,7 @@ it("registers the complete scoped AI command families and routes preview, confir
   expect(dispatch.mock.calls.map(([id]) => id)).toEqual(expect.arrayContaining(["ai.preview", "ai.start", "ai.open-translation"]));
   expect(payloads("prepare_work_plan")[0].unitIds).toEqual([item.unitId]);
   const authorized=payloads("authorize_work_plan")[0];
-  expect(authorized).toMatchObject({...reads.context,planId:plan.planId,digest:plan.digest,confirmed:true,checkerExecutions:[],toolExecution:false,effects:["save-candidate"]});
+  expect(authorized).toMatchObject({...reads.context,planId:plan.planId,digest:plan.digest,confirmed:true,checkerExecutions:[],toolExecution:false,applicationToolExecutions:[],effects:["save-candidate"]});
   expect(payloads("start_work_plan")).toEqual([{...reads.context,planId:plan.planId,actionId:authorized.actionId,expectedGeneration:"1"}]);
   expect(registry.list(scope).filter(command=>command.category==="ai").map(command=>command.id)).toEqual(expect.arrayContaining([
     "ai.agent.generate","ai.agent.query-tool","ai.agent.reconcile","ai.component.prepare","ai.component.start","ai.component.discard","ai.open-comparison"]));

@@ -137,7 +137,7 @@ fn candidates_only_records_actual_checker_findings_without_selecting_or_establis
     })).unwrap();
     let keys = checker_keys(&plan);
     assert_eq!(keys.len(), 2);
-    let authorization = json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":keys,"toolExecution":false,"effects":["save-candidate","run-checks"],"expiresAt":expiry()});
+    let authorization = json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":keys,"toolExecution":false,"applicationToolExecutions":[],"effects":["save-candidate","run-checks"],"expiresAt":expiry()});
     let before = fixture.bytes();
     for missing in [json!([]), json!([keys[0]]), json!([keys[1]])] {
         let mut rejected = authorization.clone();

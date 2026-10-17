@@ -364,6 +364,7 @@ impl ExecutionRuntime {
         expires_at_ms: u64,
         deadline: Instant,
         consent: PluginConsent,
+        application_leases: BTreeMap<ExecutionId, super::ApplicationExecutionLease>,
     ) -> Result<crate::application::WorkPlanToolConsent, ExecutionError> {
         if !self.accepting || !self.plugin_epoch.is_active() {
             return Err(ExecutionError::new(
@@ -378,6 +379,7 @@ impl ExecutionRuntime {
             expires_at_ms,
             deadline,
             consent,
+            application_leases,
         )
     }
 

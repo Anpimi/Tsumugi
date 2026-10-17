@@ -1978,6 +1978,13 @@
           "actionId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "applicationToolExecutions": {
+            "items": {
+              "$ref": "#/definitions/ApplicationScopeBasis"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
           "checkerExecutions": {
             "items": {
               "$ref": "#/definitions/ReviewCheckerKey"
@@ -2021,6 +2028,7 @@
           "confirmed",
           "checkerExecutions",
           "toolExecution",
+          "applicationToolExecutions",
           "effects",
           "expiresAt"
         ],
@@ -2040,6 +2048,13 @@
         "properties": {
           "actionId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "applicationToolExecutions": {
+            "items": {
+              "$ref": "#/definitions/ApplicationScopeBasis"
+            },
+            "maxItems": 32,
+            "type": "array"
           },
           "checkerExecutions": {
             "items": {
@@ -2088,7 +2103,8 @@
           "command",
           "confirmed",
           "checkerExecutions",
-          "toolExecution"
+          "toolExecution",
+          "applicationToolExecutions"
         ],
         "type": "object"
       },
@@ -5832,6 +5848,23 @@
         ],
         "type": "object"
       },
+      "ProcessCapability": {
+        "additionalProperties": false,
+        "description": "One callable declaration in the Host-captured component roster.",
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "contributionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "capability"
+        ],
+        "type": "object"
+      },
       "Progress": {
         "additionalProperties": false,
         "properties": {
@@ -8317,6 +8350,14 @@
         "additionalProperties": false,
         "description": "Captured by the trusted host from an installed package, never model text.",
         "properties": {
+          "applicationCapabilities": {
+            "description": "Complete captured callable membership of an Application instance.\nOther scopes carry an explicit empty roster; this data grants no lease.",
+            "items": {
+              "$ref": "#/definitions/ProcessCapability"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
           "binding": {
             "$ref": "#/definitions/CapabilityToolBinding"
           },
@@ -8348,6 +8389,7 @@
           "handle",
           "binding",
           "execution",
+          "applicationCapabilities",
           "resourceId",
           "settingsRevision",
           "packageOrigin",

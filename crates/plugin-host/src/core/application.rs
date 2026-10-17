@@ -2,12 +2,13 @@
 //! project connection nor the previous invocation's permit, input or deadline.
 //! The unsandboxed component can retain its own previously supplied data.
 use super::*;
+use crate::session::LaunchCleanup;
 use std::sync::{
     Mutex,
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
-use std::{collections::BTreeMap, thread::JoinHandle};
+use std::{collections::BTreeMap, thread::JoinHandle, time::Instant};
 use tsumugi_core::execution::{ApplicationExecutionLease, ApplicationScopeBasis, ExecutionId};
 
 struct Call {
@@ -15,10 +16,31 @@ struct Call {
     cancellation: Cancellation,
     reply: mpsc::SyncSender<Result<FixedResult, ExecutionError>>,
 }
+struct Ready {
+    deadline: Instant,
+    cancellation: Cancellation,
+    reply: mpsc::SyncSender<Result<(), ExecutionError>>,
+}
+enum Work {
+    Call(Call),
+    Ready(Ready),
+}
+impl Work {
+    fn reject(self) {
+        match self {
+            Self::Call(call) => {
+                let _ = call.reply.send(Err(denied()));
+            }
+            Self::Ready(ready) => {
+                let _ = ready.reply.send(Err(denied()));
+            }
+        }
+    }
+}
 struct Control {
     original: Option<ExecutionId>,
     lease: Option<ApplicationExecutionLease>,
-    sender: Option<tokio::sync::mpsc::Sender<Call>>,
+    sender: Option<tokio::sync::mpsc::Sender<Work>>,
     thread: Option<JoinHandle<()>>,
 }
 pub struct ApplicationInstance {
@@ -32,6 +54,21 @@ pub struct ApplicationInstance {
 }
 fn denied() -> ExecutionError {
     ExecutionError::new(ErrorCode::Unauthorized, "application-instance-lease")
+}
+fn check_ready(deadline: Instant, cancellation: &Cancellation) -> Result<(), ExecutionError> {
+    if cancellation.is_requested() {
+        Err(ExecutionError::new(
+            ErrorCode::Cancelled,
+            "application-instance-ready-cancelled",
+        ))
+    } else if Instant::now() >= deadline {
+        Err(ExecutionError::new(
+            ErrorCode::OutcomeUnknown,
+            "application-instance-ready-timeout",
+        ))
+    } else {
+        Ok(())
+    }
 }
 impl ApplicationInstance {
     pub fn validate_selection(
@@ -173,7 +210,7 @@ impl ApplicationInstance {
             self.revocation.clone(),
             settings_revocation.clone(),
         )?;
-        let (sender, mut receiver) = tokio::sync::mpsc::channel::<Call>(8);
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<Work>(8);
         let proxies = self.proxies.clone();
         let basis = self.basis.clone();
         let revoked = self.revocation.clone();
@@ -184,11 +221,66 @@ impl ApplicationInstance {
             if let Ok(runtime) = runtime {
                 runtime.block_on(async {
                     let mut session: Option<ProcessSession> = None;
+                    let launch_cleanup = LaunchCleanup::default();
                     loop {
                         if revoked.is_requested() || settings_revocation.is_requested() { break; }
-                        let call = tokio::select! {
-                            call = receiver.recv() => match call { Some(call) => call, None => break },
+                        let work = tokio::select! {
+                            work = receiver.recv() => match work { Some(work) => work, None => break },
                             _ = tokio::time::sleep(Duration::from_millis(5)) => continue,
+                        };
+                        let call = match work {
+                            Work::Call(call) => call,
+                            Work::Ready(ready) => {
+                                if let Err(error) = check_ready(ready.deadline, &ready.cancellation) {
+                                    let _ = ready.reply.send(Err(error));
+                                    continue;
+                                }
+                                let result = async {
+                                    if session.is_none() {
+                                        let proxy = proxies.values().next().ok_or_else(denied)?;
+                                        let lifetime = revoked.clone();
+                                        let settings = settings_revocation.clone();
+                                        let cancellation = ready.cancellation.clone();
+                                        let deadline = ready.deadline;
+                                        let complete = Arc::new(AtomicBool::new(false));
+                                        let admission = complete.clone();
+                                        let launched = ProcessSession::launch_observed(
+                                            &proxy.image, &proxy.capability.provider.contribution_id, &proxy.staging_parent,
+                                            &proxy.runtime.launcher(), LaunchOptions {
+                                                scope: crate::SessionScope::Application {
+                                                    instance_id: basis.instance_id.to_string(), activation_generation: basis.activation_generation,
+                                                },
+                                                allow_unsandboxed_execution: true, limits: proxy.limits.clone(),
+                                            }, launch_cleanup.clone(), move || !lifetime.is_requested() && !settings.is_requested()
+                                                && (admission.load(Ordering::Acquire)
+                                                    || (!cancellation.is_requested() && Instant::now() < deadline)),
+                                        ).await;
+                                        match launched {
+                                            Ok(value) => session = Some(value),
+                                            Err(_) => {
+                                                check_ready(ready.deadline, &ready.cancellation)?;
+                                                if revoked.is_requested() || settings_revocation.is_requested() {
+                                                    return Err(denied());
+                                                }
+                                                return Err(ExecutionError::new(ErrorCode::DependencyConflict, "application-instance-ready"));
+                                            }
+                                        }
+                                        check_ready(ready.deadline, &ready.cancellation)?;
+                                        // A caller's readiness bound is not this shared
+                                        // process's lifetime or a future project's grant.
+                                        complete.store(true, Ordering::Release);
+                                    }
+                                    check_ready(ready.deadline, &ready.cancellation)?;
+                                    if revoked.is_requested() || settings_revocation.is_requested()
+                                        || !session.as_ref().is_some_and(ProcessSession::is_accepting)
+                                    { return Err(denied()); }
+                                    Ok(())
+                                }.await;
+                                let failed = result.is_err();
+                                let _ = ready.reply.send(result);
+                                if failed { break; }
+                                continue;
+                            }
                         };
                         let proxy = match call.request.input.envelope().plugin.as_ref()
                             .and_then(|binding| proxies.get(&binding.capability.provider.contribution_id)) {
@@ -209,15 +301,21 @@ impl ApplicationInstance {
                             if session.is_none() {
                                 let lifetime = revoked.clone();
                                 let settings = settings_revocation.clone();
-                                session = Some(ProcessSession::launch(
+                                let launched = ProcessSession::launch_observed(
                                     &proxy.image, &proxy.capability.provider.contribution_id, &proxy.staging_parent,
                                     &proxy.runtime.launcher(), LaunchOptions {
                                         scope: crate::SessionScope::Application {
                                             instance_id: basis.instance_id.to_string(), activation_generation: basis.activation_generation,
                                         },
                                         allow_unsandboxed_execution: true, limits: proxy.limits.clone(),
-                                    }, move || !lifetime.is_requested() && !settings.is_requested(),
-                                ).await.map_err(|error| current_error(error, &call.request, &permit, &call.cancellation))?);
+                                    }, launch_cleanup.clone(), move || !lifetime.is_requested() && !settings.is_requested(),
+                                ).await;
+                                match launched {
+                                    Ok(value) => session = Some(value),
+                                    Err(error) => {
+                                        return Err(current_error(error, &call.request, &permit, &call.cancellation));
+                                    }
+                                }
                             }
                             let received = proxy.invoke(session.as_mut().unwrap(), &call.request, &permit, &call.cancellation).await?;
                             require_live(&call.request, &permit, &call.cancellation)?;
@@ -232,12 +330,10 @@ impl ApplicationInstance {
                         if failed { break; }
                     }
                     revoked.request();
-                    while let Ok(call) = receiver.try_recv() { let _ = call.reply.send(Err(denied())); }
-                    let reaped = match session.as_mut() {
-                        Some(session) => session.close().await.direct_child_reaped,
-                        None => true,
-                    };
-                    cleanup.store(reaped, Ordering::Release);
+                    while let Ok(work) = receiver.try_recv() { work.reject(); }
+                    if let Some(session) = session.as_mut() { let _ = session.close().await; }
+                    drop(session);
+                    cleanup.store(launch_cleanup.confirmed(), Ordering::Release);
                 });
             } else {
                 cleanup.store(true, Ordering::Release);
@@ -250,6 +346,44 @@ impl ApplicationInstance {
         control.sender = Some(sender);
         control.thread = Some(thread);
         Ok(lease)
+    }
+    /// Wait for this independently authorized instance's actual Ready handshake
+    /// on its original owner thread. No tool invocation or project grant starts.
+    /// The caller's bound applies only to readiness, never the shared lifetime.
+    pub fn ensure_ready(
+        &self,
+        deadline: Instant,
+        cancellation: &Cancellation,
+    ) -> Result<(), ExecutionError> {
+        check_ready(deadline, cancellation)?;
+        let (reply, result) = mpsc::sync_channel(1);
+        {
+            let control = self.control.lock().map_err(|_| denied())?;
+            if self.is_stopped() || !control.lease.as_ref().is_some_and(|lease| lease.is_live()) {
+                return Err(denied());
+            }
+            control
+                .sender
+                .as_ref()
+                .ok_or_else(denied)?
+                .try_send(Work::Ready(Ready {
+                    deadline,
+                    cancellation: cancellation.clone(),
+                    reply,
+                }))
+                .map_err(|_| ExecutionError::new(ErrorCode::Busy, "application-instance-queue"))?;
+        }
+        loop {
+            check_ready(deadline, cancellation)?;
+            if !self.is_authorized() {
+                return Err(denied());
+            }
+            match result.recv_timeout(Duration::from_millis(5)) {
+                Ok(value) => return value,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => return Err(denied()),
+            }
+        }
     }
     pub(super) fn dispatch(
         &self,
@@ -277,11 +411,11 @@ impl ApplicationInstance {
                 .sender
                 .as_ref()
                 .ok_or_else(denied)?
-                .try_send(Call {
+                .try_send(Work::Call(Call {
                     request: request.clone(),
                     cancellation: cancellation.clone(),
                     reply,
-                })
+                }))
                 .map_err(|_| ExecutionError::new(ErrorCode::Busy, "application-instance-queue"))?;
         }
         loop {

@@ -614,6 +614,9 @@ pub async fn start_work_plan_generation_component(
                 Some(start) => start.deadline,
                 None => start_deadline(initial.expires_at_ms.get())?,
             };
+            let tool_consent = (!prepared.tools.is_empty())
+                .then(|| broker::current_consent(host, store, &scope))
+                .transpose()?;
             let ticket = ExecutionId::new();
             host.work_plans
                 .generation
@@ -626,25 +629,28 @@ pub async fn start_work_plan_generation_component(
                     .generation
                     .probes
                     .remove(&(CapturePhase::Start, initial.attempt_id));
-                return Ok(Some((ticket, prepared, deadline, probe)));
+                return Ok(Some((ticket, prepared, deadline, tool_consent, probe)));
             }
             #[cfg(not(test))]
-            Ok(Some((ticket, prepared, deadline)))
+            Ok(Some((ticket, prepared, deadline, tool_consent)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
         #[cfg(test)]
-        let Some((ticket, prepared, deadline, probe)) = admitted.await? else {
+        let Some((ticket, prepared, deadline, tool_consent, probe)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
         #[cfg(not(test))]
-        let Some((ticket, prepared, deadline)) = admitted.await? else {
+        let Some((ticket, prepared, deadline, tool_consent)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
         let fixed = prepared.clone();
         let capture_plugins = plugins.clone();
+        let ready_deadline = tool_consent
+            .as_ref()
+            .map(|consent| consent.deadline().min(deadline));
         let loaded = io
             .run(CommandStage::ExecutionRecover, move || {
                 let environment =
@@ -669,6 +675,16 @@ pub async fn start_work_plan_generation_component(
                     &fixed.tools,
                     environment.captured.settings_revision,
                 )?;
+                if let Some(deadline) = ready_deadline {
+                    for tool in &fixed.tools {
+                        broker::ensure_application_ready(
+                            &capture_plugins,
+                            &tool.prepared,
+                            deadline,
+                            &Cancellation::default(),
+                        )?;
+                    }
+                }
                 Ok((environment, runner, tools))
             })
             .await;
@@ -703,6 +719,12 @@ pub async fn start_work_plan_generation_component(
                     let scope = agent::scope(host, store, request.scope_id)?;
                     if scope != prepared.scope || Instant::now() >= deadline {
                         return Err(denied());
+                    }
+                    if let Some(original) = &tool_consent {
+                        let current = broker::current_consent(host, store, &scope)?;
+                        if !Arc::ptr_eq(original, &current) {
+                            return Err(denied());
+                        }
                     }
                     consent(
                         host,

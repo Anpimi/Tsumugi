@@ -123,6 +123,7 @@ fn scope(fixture: &Fixture) -> (Value, Value) {
                         unsandboxed_execution: true,
                         application_execution: false,
                     },
+                    Default::default(),
                 )
                 .unwrap();
             host.work_plans

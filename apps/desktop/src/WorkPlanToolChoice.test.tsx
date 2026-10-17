@@ -6,6 +6,7 @@ import { SessionReadProvider } from "./SessionReadProvider";
 import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSupport/pluginToolFixture";
 import { WorkPlanToolChoice, type PlanToolDraft, type PlanToolChoiceHandle } from "./WorkPlanToolChoice";
 import { i18n } from "./i18n";
+import { nativeDigest, nativeEnvironment, nativeInventory, nativeOrigin, nativePackage } from "./testSupport/pluginNativeFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 function render(ui: ReactNode) { return renderUi(ui, { wrapper: ({ children }) => <SessionReadProvider context={{ projectId: "00000000-0000-4000-8000-000000000001", sessionToken: "synthetic-tool-choice" }} bridge={false}>{children}</SessionReadProvider> }); }
@@ -64,6 +65,23 @@ it("requires explicit tool/environment choices and captures fixed options withou
   expect(ref.current?.capture()?.entries[0].tool).toEqual({ package: { plugin: toolQueryPackage.manifest.plugin, packageDigest: toolQueryPackage.packageDigest }, resourceId: toolQueryView.resourceId, environmentDigest: toolQueryView.environmentDigest });
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(invoke.mock.calls.some(([command]) => command.startsWith("start_") || command.startsWith("authorize_"))).toBe(false);
+});
+
+it.each([false, true])("captures supported Application choices without starting a worker or requiring model use (Native: %s)", async native => {
+  const applicationView = { ...structuredClone(toolQueryView), componentScope: "application" as const,
+    ...(native ? { environment: nativeEnvironment, environmentDigest: nativeDigest, runtimeOrigin: nativeOrigin } : {}) };
+  if (native) inventory = nativeInventory(inventory);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "read_plugin_tool" ? structuredClone(applicationView)
+    : command === "read_plugin_package" && native ? nativePackage(toolQueryPackage) : original(command, args));
+  const user = userEvent.setup(), ref = createRef<PlanToolChoiceHandle>();
+  render(<Choice refProp={ref} />);
+  await user.click(screen.getByRole("checkbox", { name: "Include read-only reference tools" }));
+  await screen.findByRole("option", { name: /philosophy.*agent-query-tool/ });
+  await choose(user, 1, applicationView);
+  expect(ref.current?.capture()?.entries[0].view).toEqual(applicationView);
+  expect(screen.getByText(i18n.t("ai.tools.applicationCaptureHelp"))).toBeVisible();
+  expect(invoke.mock.calls.some(([command]) => command.startsWith("start_") || command.startsWith("authorize_") || command === "create_execution_identity")).toBe(false);
 });
 
 it("captures independent providers and per-provider options under one total limit without sharing draft references", async () => {

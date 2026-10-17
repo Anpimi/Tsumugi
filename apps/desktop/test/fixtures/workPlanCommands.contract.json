@@ -57,7 +57,8 @@
       ],
       "expiresAt": "18446744073709551615",
       "checkerExecutions": [],
-      "toolExecution": false
+      "toolExecution": false,
+      "applicationToolExecutions": []
     },
     "start": {
       "projectId": "60000000-0000-4000-8000-000000000001",
@@ -76,7 +77,8 @@
       "confirmed": false,
       "expiresAt": null,
       "checkerExecutions": [],
-      "toolExecution": false
+      "toolExecution": false,
+      "applicationToolExecutions": []
     },
     "status": {
       "projectId": "60000000-0000-4000-8000-000000000001",

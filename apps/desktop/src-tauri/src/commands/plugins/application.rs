@@ -149,6 +149,44 @@ fn view(instance: &ApplicationInstance) -> ApplicationInstanceView {
     }
 }
 impl ApplicationPlugins {
+    /// Reuse only the instance captured in this immutable plan. A stopped or
+    /// missing activation cannot be replaced while loading an old tool input.
+    pub(in crate::commands) fn work_plan_tool_instance(
+        &self,
+        tool: &tsumugi_core::application::WorkPlanToolSpec,
+    ) -> Result<Arc<ApplicationInstance>, CommandError> {
+        let basis = tool
+            .execution
+            .application_scope
+            .as_ref()
+            .ok_or_else(denied)?;
+        let instances = self.application_instances.try_lock().map_err(|_| busy())?;
+        if !self.open.load(Ordering::Acquire) || instances.closing.is_some() {
+            return Err(denied());
+        }
+        let provider = &tool.binding.capability.provider;
+        let instance = instances
+            .slots
+            .iter()
+            .find(|slot| {
+                &slot.basis == basis
+                    && slot.package.plugin == provider.plugin
+                    && slot.package.package_digest == provider.package_digest
+            })
+            .and_then(|slot| slot.instance.as_ref())
+            .cloned()
+            .ok_or_else(denied)?;
+        if instance.is_stopped()
+            || instance
+                .binding(&provider.contribution_id, tool.execution.profile.clone())
+                .map_err(|_| denied())?
+                != tool.execution
+            || instance.capabilities() != tool.application_capabilities
+        {
+            return Err(denied());
+        }
+        Ok(instance)
+    }
     pub(in crate::commands) fn reserve_application_tool(
         &self,
         environment: &tools::ToolEnvironment,

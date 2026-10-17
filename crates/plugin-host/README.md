@@ -122,11 +122,15 @@ Historical outcome queries cannot reconstruct a fresh deadline for execution.
 
 The Desktop generation factory can additionally bind exact prepared WorkPlan
 tool queries for an opt-in Project JavaScript caller. Each read-only Project
-JavaScript callee retains its original tool preparation, independent consent,
-grant, budget and real Core execution receipt. The caller receives a separate
+JavaScript or supported Application callee retains its original tool preparation,
+independent consent, grant, budget and real Core execution receipt. Application
+tools additionally require their exact shared instance's separate lifetime lease
+and complete captured capability roster. The original manual Agent query entry
+uses that same WorkPlan tool authority. The caller receives a separate
 [generation-component input](../plugin-sdk/docs/generation.md#prepared-component-tool-queries),
-including the frozen query bytes and call identity; ordinary tools and Attempt
-or Application service profiles are not widened. Both caller and callee package
+including the frozen query bytes and call identity. Application callees retain
+their restricted JavaScript roster or Native singleton profile, without their
+own required dependencies or ProjectService access. Both caller and callee package
 shutdown retain their original producer ownership until drainage. Query results
 keep the callee's own schema and never replace the Core generation receipt.
 
@@ -591,6 +595,16 @@ confinement, escaped descendants, signed source verification, host service grant
 artifact output opening and adoption authority are not provided by this profile.
 
 ## Core execution adapter
+
+An independently authorized `ApplicationInstance::ensure_ready(deadline,
+cancellation)` completes the original activation handshake on its existing
+owner thread without invoking a tool. A prepared dependency must be genuinely
+Ready before its caller starts. The readiness deadline does not become the
+shared instance's lifetime authorization after success. Failed startup retains
+actual not-spawned, unconfirmed or reaped evidence from the original process
+cleanup path; a returned error alone never proves drainage. WorkPlan calls still
+need their own exact tool grant and original live application lease. Cancellation
+keeps the existing policy of retiring the exact shared instance.
 
 With `core-adapter`, `RunnerProxy` captures a package contribution and the trusted
 installer's `CapturedRuntime` or approved `CapturedNativeRuntime`, selected by

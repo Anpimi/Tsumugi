@@ -90,7 +90,6 @@ fn decode(raw: RawRecord) -> Result<GrantRecord, ExecutionError> {
         || raw.6 != 1
         || ![0, 1].contains(&raw.7)
         || ![0, 1].contains(&raw.8)
-        || (raw.7 == 1 && raw.9.is_some())
     {
         return Err(corrupt());
     }
@@ -171,15 +170,17 @@ fn check_project(connection: &Connection, input: &FixedInput) -> Result<(), Exec
     Ok(())
 }
 fn check_record(record: &GrantRecord, input: &FixedInput) -> Result<(), ExecutionError> {
+    let application = input.envelope().plugin.as_ref().is_some_and(|binding| {
+        binding.component_scope == tsumugi_plugin_sdk::ComponentScope::Application
+            && binding.application_scope.is_some()
+    });
     if record.attempt_id != input.envelope().attempt_id
         || record.task_id != input.envelope().task_id
         || record.input_digest != input.digest()
-        || (record.application_execution
-            && !input
-                .envelope()
-                .plugin
-                .as_ref()
-                .is_some_and(|binding| binding.application_scope.is_some()))
+        || (record.application_execution && !application)
+        // A delegated lifetime fact must match its original fixed scope in
+        // both directions. Decoding the grant alone cannot establish that.
+        || (record.delegation.is_some() && record.application_execution != application)
     {
         return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-input"));
     }
@@ -631,8 +632,17 @@ pub(super) fn record_delegated_grant_in(
     input: &FixedInput,
     expires_at_ms: u64,
     delegation: &crate::application::WorkPlanToolDelegation,
+    application_lease: Option<&crate::execution::ApplicationExecutionLease>,
 ) -> Result<bool, ExecutionError> {
     authority.require_generation(generation)?;
+    let application_execution = input.envelope().plugin.as_ref().is_some_and(|binding| {
+        binding.component_scope == tsumugi_plugin_sdk::ComponentScope::Application
+    });
+    if application_execution != application_lease.is_some()
+        || application_lease.is_some_and(|lease| !lease.matches(input))
+    {
+        return Err(denied());
+    }
     check_project(c, input)?;
     not_cancelled(c, input.envelope().task_id)?;
     let existing = for_grant(c, grant_id)?;
@@ -643,7 +653,7 @@ pub(super) fn record_delegated_grant_in(
             || record.generation != generation
             || record.expires_at_ms != expires_at_ms
             || record.delegation.as_ref() != Some(delegation)
-            || record.application_execution
+            || record.application_execution != application_execution
             || record.revoked
         {
             return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
@@ -664,7 +674,7 @@ pub(super) fn record_delegated_grant_in(
         return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-task"));
     }
     c.execute(
-        "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation) VALUES (?1,?2,?3,?4,?5,?6,1,0,0,?7)",
+        "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation) VALUES (?1,?2,?3,?4,?5,?6,1,?7,0,?8)",
         params![
             grant_id.to_string(),
             input.envelope().attempt_id.to_string(),
@@ -672,6 +682,7 @@ pub(super) fn record_delegated_grant_in(
             input.digest(),
             generation.to_string(),
             expires_at_ms as i64,
+            i64::from(application_execution),
             crate::execution::codec::encode(delegation, crate::application::MAX_AGENT_DELEGATION_BYTES)?
         ],
     )

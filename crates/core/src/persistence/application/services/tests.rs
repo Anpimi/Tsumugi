@@ -34,6 +34,11 @@ impl Runner for Registered {
     fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
         self.plugin.as_ref().map(|binding| &binding.environment)
     }
+    fn plugin_application_scope(&self) -> Option<&ApplicationScopeBasis> {
+        self.plugin
+            .as_ref()
+            .and_then(|binding| binding.application_scope.as_ref())
+    }
     fn run(
         &self,
         _: DispatchRequest,

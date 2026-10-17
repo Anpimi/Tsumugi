@@ -163,6 +163,8 @@ function PlanToolEntry({ entry, number, open, disabled, duplicate, inventory, in
       ? <p role="status">{t("ai.tools.completeProvider")}</p> : null}
     {query ? <>
       <h4>{environment.data?.binding.declaration.title}</h4><p>{environment.data?.binding.declaration.description}</p>
+      {environment.data ? <p>{t(`toolQuery.scopes.${environment.data.componentScope}`)}</p> : null}
+      {environment.data?.componentScope === "application" ? <p>{t("ai.tools.applicationCaptureHelp")}</p> : null}
       <label className="field">{query.target.label}<select value={target} onChange={event => onChange({ target: event.target.value })}>
         {query.target.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select></label><p>{query.target.description}</p>

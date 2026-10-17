@@ -17,6 +17,7 @@ import type { WorkPlanGenerationPrepareRequest, WorkPlanGenerationStartRequest }
 import type { WorkPlanContinuation } from "./AiPreparationSession";
 import { useWorkbenchCommands, type CommandAvailability, type AiComponentPrepareCommandPayload, type AiComponentCommandPayload } from "./workbenchCommands";
 import { enUS } from "./i18n/en-US";
+import { useWorkPlanApplicationTools, WorkPlanApplicationToolDetails, WorkPlanApplicationToolObservation } from "./workPlanApplicationTools";
 
 type Consent = Pick<WorkPlanGenerationStartRequest, "grantId" | "expiresAtMs" | "unsandboxedExecution">;
 export type ComponentOperation = { prepared: WorkPlanGenerationPreflight; plan: WorkPlanStatusView["plan"]; lease: WorkPlanStatusView["lease"];
@@ -51,6 +52,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   const [runtimeKey, setRuntimeKey] = useState(""), [refresh, setRefresh] = useState(0);
   const [toolHandle, setToolHandle] = useState(""), [toolUnitId, setToolUnitId] = useState("");
   const { operation, consentDigest, discardUnknown } = session.state;
+  const applicationTools = useWorkPlanApplicationTools(operation?.prepared.preparedTools.map(item => item.tool) ?? [], open && !!operation && !busy);
   const setOperation = (operation: ComponentOperation | null) => session.update(before => ({ ...before, operation }));
   const setConsentDigest = (consentDigest: string | null) => session.update(before => ({ ...before, consentDigest }));
   const setDiscardUnknown = (discardUnknown: boolean) => session.update(before => ({ ...before, discardUnknown }));
@@ -168,7 +170,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
     } finally { dispose(); }
   }
   async function start(current: WorkPlanContinuation) {
-    if (!operation || !active || stale || consentDigest !== operation.prepared.inputDigest
+    if (!operation || !active || stale || !applicationTools.current() || consentDigest !== operation.prepared.inputDigest
       || !["prepared", "rejected"].includes(operation.phase)) return;
     const original = operation;
     const expiresAtMs=String(Date.now()+600_000);
@@ -193,7 +195,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
     setOperation(null); setConsentDigest(null); setDiscardUnknown(false);
   }
   const canStart = operation && ["prepared", "rejected"].includes(operation.phase) && !discardUnknown
-    && active && !stale && !busy && !disabled && consentDigest === operation.prepared.inputDigest
+    && active && !stale && applicationTools.current() && !busy && !disabled && consentDigest === operation.prepared.inputDigest
     && (!operation.consent || BigInt(operation.consent.expiresAtMs) > BigInt(Date.now()));
   const scope={projectId:context.projectId,sessionToken:context.sessionToken,area:"ai" as const};
   const unavailable:CommandAvailability={enabled:false,reason:"unavailable"};
@@ -290,6 +292,10 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
             <pre className="ai-text">{item.input.utf8}</pre>
             <p>{t("ai.component.referencePermission")}</p><PluginPermissions permissions={item.tool.binding.capability.declaration.permissions} />
           </article>; })}
+          {applicationTools.groups.length ? <section aria-label={t("toolQuery.applicationTitle")}>
+            {applicationTools.groups.map(group => <article key={jsonIdentity(group.basis)}><WorkPlanApplicationToolDetails group={group} /></article>)}
+            <WorkPlanApplicationToolObservation observation={applicationTools.observation} />
+          </section> : null}
         </section> : null}
         <PluginPermissions permissions={operation.prepared.component.binding.declaration.permissions} />
         <p>{t("sourcePlugin.unsandboxed")}</p>

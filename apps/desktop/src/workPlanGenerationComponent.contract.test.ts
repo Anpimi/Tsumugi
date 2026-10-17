@@ -9,7 +9,7 @@ const fixture = rawFixture as unknown as {
 import { workPlanGenerationCommands } from "./workPlanGenerationCommands";
 import * as validators from "./generated/ai.validators";
 import { generationToolFixture } from "./testSupport/generationToolFixture";
-import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
+import { applicationWorkPlanTool, workPlanToolStatus } from "./testSupport/workPlanToolFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -46,6 +46,25 @@ it("keeps exact tool identities, original scope and frozen Host input without ac
   expect(prepared.preparedTools[0].input).toEqual(preflight.preparedTools[0].input);
   expect(validators.validateRequestWorkPlanGenerationPrepare({ ...original, toolQueries: [{ ...original.toolQueries[0], input: preflight.preparedTools[0].input }] })).toBe(false);
   expect(validators.validateRequestWorkPlanGenerationPrepare({ ...original, toolQueries: [{ ...original.toolQueries[0], payload: {} }] })).toBe(false);
+});
+
+it.each([false, true])("pins the prepared Application service instance and full roster (Native: %s)", async native => {
+  const { request, component, preflight } = toolPreparation(), tool = applicationWorkPlanTool(undefined, native);
+  preflight.preparedTools[0].tool = structuredClone(tool);
+  invoke.mockResolvedValueOnce(structuredClone(preflight));
+  expect((await workPlanGenerationCommands.prepare(request, fixture.scope, component, [tool])).preparedTools[0].tool).toEqual(tool);
+  for (const change of [
+    { execution: { ...tool.execution, applicationScope: { ...tool.execution.applicationScope!, activationGeneration: 2 } } },
+    { applicationCapabilities: [] },
+    { applicationCapabilities: [...tool.applicationCapabilities, { ...tool.applicationCapabilities[0], contributionId: "unreviewed.call" }] },
+  ]) {
+    invoke.mockResolvedValueOnce({ ...preflight, preparedTools: [{ ...preflight.preparedTools[0], tool: { ...tool, ...change } }] });
+    await expect(workPlanGenerationCommands.prepare(request, fixture.scope, component, [tool])).rejects.toThrow("acknowledgement");
+  }
+  const before = invoke.mock.calls.length;
+  const invalid = { ...tool, applicationCapabilities: [] };
+  await expect(workPlanGenerationCommands.prepare(request, fixture.scope, component, [invalid])).rejects.toThrow("reference selection");
+  expect(invoke.mock.calls.length).toBe(before);
 });
 it("rejects legacy tool queries, duplicate tools or identities and units outside the generation subset before invoking Host", async () => {
   const { request, component, tools } = toolPreparation();

@@ -416,6 +416,13 @@ fn project_javascript(binding: &PluginExecutionBinding) -> bool {
         )
 }
 
+fn supported_prepared_tool(binding: &PluginExecutionBinding) -> bool {
+    project_javascript(binding)
+        || (binding.component_scope == sdk::ComponentScope::Application
+            && binding.application_scope.is_some()
+            && binding.validate().is_ok())
+}
+
 fn check_origin_permission(
     outer: &FixedInput,
     record: &OriginRecord,
@@ -465,7 +472,7 @@ fn check_tool_call(
         .iter()
         .find(|tool| tool.handle_id == call.handle_id && tool.call_id == call.call_id)
         .ok_or_else(|| fail(ErrorCode::Unauthorized, "service-tool-selection"))?;
-    if !project_javascript(binding)
+    if !supported_prepared_tool(binding)
         || declaration.effect != sdk::EffectKind::ReadOnly
         || service.contract != declaration.contract
         || service.input_schema != declaration.input_schema

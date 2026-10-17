@@ -11,7 +11,8 @@ import { validateResponseWorkPlan, validateResponseWorkPlanReceipt } from "./gen
 import { formatReviewSlotFixture, textReviewSlotFixture, textReviewViewFixture } from "./testSupport/textReviewFixture";
 import { i18n } from "./i18n";
 import { executionCommands } from "./executionCommands";
-import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
+import { applicationWorkPlanTool, workPlanToolStatus } from "./testSupport/workPlanToolFixture";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 type ControlProps = Omit<Parameters<typeof ProductionWorkPlanControls>[0], "session" | "editSeq" | "open" | "canFresh" | "ownerBusy" | "run" | "onOpenTranslation"> & {
   run: (work: (current: () => boolean) => Promise<void>) => Promise<void>;
@@ -47,6 +48,74 @@ function planFixture(): WorkPlanView {
 }
 beforeEach(async () => { await i18n.changeLanguage("en-US"); vi.restoreAllMocks(); });
 afterEach(cleanup);
+
+it("requires independent lifetime consent for each exact instance and deduplicates tools sharing its full roster", async () => {
+  const first = applicationWorkPlanTool(), shared = structuredClone(first), second = applicationWorkPlanTool({ instanceId: fixtureIdentity(1801), activationGeneration: 2 }, true);
+  shared.handle = fixtureIdentity(1802);
+  shared.binding.capability.provider.contributionId = "secondary.call";
+  shared.execution.capability = structuredClone(shared.binding.capability);
+  second.handle = fixtureIdentity(1803);
+  second.binding.declaration.title = "Native shared references";
+  const base = planFixture(), plan: WorkPlanView = { ...base, checkers: [], options: { ...base.options, advisoryChecks: [], stages: [{ stage: "generation", mode: "assisted" }] },
+    tools: { maxInvocations: 10, entries: [first, shared, second] } };
+  const receipt = wire.responses.receipt;
+  if (!validateResponseWorkPlanReceipt(receipt) || !receipt.attemptId) throw new Error("Invalid receipt fixture");
+  vi.spyOn(executionCommands, "applicationInstance").mockImplementation(async request => ({ basis: structuredClone(request.basis), state: "reserved" }));
+  vi.spyOn(executionCommands, "identity").mockResolvedValue(receipt.actionId);
+  const authorize = vi.spyOn(workPlanCommands, "authorize").mockResolvedValue(receipt);
+  vi.spyOn(workPlanCommands, "start").mockResolvedValue(receipt.attemptId);
+  const status: WorkPlanStatusView = { plan, lease: receipt.lease, state: "active", expiresAt: "9007199254740994",
+    effects: ["save-candidate", "query-tools"], toolInvocations: { reserved: 0, limit: 10 } };
+  const props = { context: { sessionToken: "session", projectId: wire.requests.prepare.projectId }, prepared: plan, status: null,
+    busy: false, disabled: false, consent: true, refresh: vi.fn().mockResolvedValue(status),
+    run: async (work: (current: () => boolean) => Promise<void>) => { await work(() => true); },
+    onPlan: vi.fn(), onStarted: vi.fn(), onBlockedChange: vi.fn(), onOpenTranslation: vi.fn() };
+  const user = userEvent.setup(), ui = render(<WorkPlanControls {...props} />);
+  const confirmations = screen.getAllByRole("checkbox", { name: i18n.t("ai.tools.applicationConsent") });
+  expect(confirmations).toHaveLength(2);
+  await waitFor(() => expect(confirmations.every(input => !input.hasAttribute("disabled"))).toBe(true));
+  expect(screen.getByText("secondary.call")).toBeVisible();
+  expect(screen.getAllByText(i18n.t("ai.tools.applicationStopHelp"))).toHaveLength(2);
+  const generate = screen.getByRole("button", { name: i18n.t("ai.generate") });
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.tools.consent") }));
+  await user.click(confirmations[0]);
+  expect(generate).toBeDisabled();
+  await user.click(confirmations[1]);
+  expect(generate).toBeEnabled();
+  await user.click(generate);
+  await waitFor(() => expect(authorize).toHaveBeenCalledOnce());
+  expect(authorize.mock.calls[0][0].applicationToolExecutions).toEqual([first.execution.applicationScope, second.execution.applicationScope]);
+  expect(authorize.mock.calls[0][0].toolExecution).toBe(true);
+  const paused = { ...status, state: "paused" as const, lease: { ...status.lease, generation: "2" } };
+  ui.rerender(<WorkPlanControls {...props} prepared={null} status={paused} />);
+  for (const input of screen.getAllByRole("checkbox", { name: i18n.t("ai.tools.applicationConsent") })) expect(input).not.toBeChecked();
+  expect(screen.getByRole("button", { name: i18n.t("ai.plan.continue") })).toBeDisabled();
+});
+
+it("keeps stopping available for a retired instance and never renews its old plan", async () => {
+  const tool = applicationWorkPlanTool(), base = planFixture();
+  const plan: WorkPlanView = { ...base, checkers: [], options: { ...base.options, advisoryChecks: [], stages: [{ stage: "generation", mode: "assisted" }] },
+    tools: { maxInvocations: 10, entries: [tool] } };
+  const status: WorkPlanStatusView = { plan, lease: { planId: plan.planId, generation: "2" }, state: "paused", expiresAt: "9007199254740994",
+    effects: ["save-candidate", "query-tools"], toolInvocations: { reserved: 0, limit: 10 } };
+  vi.spyOn(executionCommands, "applicationInstance").mockImplementation(async request => ({ basis: request.basis, state: "stopped" }));
+  vi.spyOn(executionCommands, "identity").mockResolvedValue(wire.requests.control.actionId);
+  const receipt = { ...wire.responses.control, actionId: wire.requests.control.actionId, lease: { planId: plan.planId, generation: "3" }, state: "stopped" as const, attemptId: null, parentTask: null };
+  const control = vi.spyOn(workPlanCommands, "control").mockResolvedValue(receipt);
+  const user = userEvent.setup();
+  render(<WorkPlanControls context={{ sessionToken: "session", projectId: wire.requests.prepare.projectId }} prepared={null} status={status}
+    busy={false} disabled={false} consent refresh={vi.fn().mockResolvedValue({ ...status, state: "stopped", lease: receipt.lease })}
+    run={async work => { await work(() => true); }} onPlan={vi.fn()} onStarted={vi.fn()} onBlockedChange={vi.fn()} onOpenTranslation={vi.fn()} />);
+  await screen.findByText(i18n.t("ai.tools.applicationRetired"));
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.plan.renewConsent") }));
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.tools.consent") }));
+  expect(screen.getByRole("checkbox", { name: i18n.t("ai.tools.applicationConsent") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("ai.plan.continue") })).toBeDisabled();
+  const stop = screen.getByRole("button", { name: i18n.t("ai.plan.stop") });
+  expect(stop).toBeEnabled(); await user.click(stop);
+  await waitFor(() => expect(control).toHaveBeenCalledOnce());
+  expect(control.mock.calls[0][0]).toMatchObject({ command: "stop", applicationToolExecutions: [], toolExecution: false });
+});
 
 it("authorizes all captured checker identities only after their separate confirmations", async () => {
   const plan = planFixture();

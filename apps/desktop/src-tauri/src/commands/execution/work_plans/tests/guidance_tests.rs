@@ -270,6 +270,7 @@ fn tool_guidance_registered_ipc_reads_frozen_philosophy_without_worker_or_model(
         .unwrap();
     let spec = WorkPlanToolSpec {
         handle: ExecutionId::new(),
+        application_capabilities: vec![],
         binding: view.binding.clone(),
         execution: PluginExecutionBinding {
             capability: view.binding.capability.clone(),
@@ -424,7 +425,7 @@ fn tool_guidance_registered_ipc_rejects_forged_members_sessions_and_old_scopes()
             "control_work_plan",
             json!({"actionId":ExecutionId::new(),"planId":plan_id,
         "expectedGeneration":opened["lease"]["generation"],"command":"stop","confirmed":false,
-        "checkerExecutions":[],"toolExecution":false,"expiresAt":null}),
+        "checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null}),
         )
         .unwrap();
     assert!(

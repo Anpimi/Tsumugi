@@ -2195,6 +2195,7 @@ impl ProjectStore {
                 input,
                 consent.expires_at_ms,
                 &delegation,
+                consent.application_lease(&prepared.tool)?,
             )?;
             Some((delegation, fresh))
         } else {
@@ -2244,8 +2245,13 @@ impl ProjectStore {
         if delegated.is_some() {
             crash_hook("after-tool-enqueue-commit");
         }
-        if let (Some((_, consent, grant, generation)), Some((delegation, true))) = (tool, delegated)
+        if let (Some((prepared, consent, grant, generation)), Some((delegation, true))) =
+            (tool, delegated)
         {
+            let application_lease = consent
+                .application_lease(&prepared.tool)
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "work-plan-tool-activation"))?
+                .cloned();
             authority
                 .activate_with_delegation(
                     generation,
@@ -2253,9 +2259,9 @@ impl ProjectStore {
                     input,
                     consent.expires_at_ms,
                     consent.deadline,
-                    false,
+                    application_lease.is_some(),
                     Some(delegation),
-                    None,
+                    application_lease,
                 )
                 .map_err(|_| error(ErrorCode::OutcomeUnknown, "work-plan-tool-activation"))?;
         }

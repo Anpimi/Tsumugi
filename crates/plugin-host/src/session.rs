@@ -6,7 +6,7 @@ use std::{
     process::Stdio,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::Duration,
 };
@@ -18,6 +18,35 @@ use tokio::{
     time::{Instant, timeout},
 };
 use tsumugi_plugin_sdk::*;
+
+/// Process-owner evidence for a launch that may fail before returning a session.
+/// Only successful spawn and the original wait/try_wait observations change it.
+#[derive(Clone, Default)]
+pub(crate) struct LaunchCleanup(Arc<AtomicU8>);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchCleanupState {
+    NotSpawned,
+    Unconfirmed,
+    Reaped,
+}
+impl LaunchCleanup {
+    pub(crate) fn state(&self) -> LaunchCleanupState {
+        match self.0.load(Ordering::Acquire) {
+            0 => LaunchCleanupState::NotSpawned,
+            2 => LaunchCleanupState::Reaped,
+            _ => LaunchCleanupState::Unconfirmed,
+        }
+    }
+    pub(crate) fn confirmed(&self) -> bool {
+        self.state() != LaunchCleanupState::Unconfirmed
+    }
+    fn spawned(&self) {
+        self.0.store(1, Ordering::Release);
+    }
+    fn reaped(&self) {
+        self.0.store(2, Ordering::Release);
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScopeBinding {
@@ -248,6 +277,7 @@ pub struct ProcessSession {
     service_output_bytes: usize,
     services_released: bool,
     termination: Option<CloseReceipt>,
+    launch_cleanup: Option<LaunchCleanup>,
     stop_ms: u32,
     cleanup_ms: u32,
 }
@@ -267,6 +297,29 @@ impl ProcessSession {
             launcher,
             options,
             None,
+            None,
+            authorized,
+        )
+        .await
+    }
+    #[cfg(feature = "core-adapter")]
+    pub(crate) async fn launch_observed(
+        image: &PackageImage,
+        contribution_id: &str,
+        staging_parent: &Path,
+        launcher: &RuntimeLauncher,
+        options: LaunchOptions,
+        cleanup: LaunchCleanup,
+        authorized: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> HostResult<Self> {
+        Self::launch_inner(
+            image,
+            contribution_id,
+            staging_parent,
+            launcher,
+            options,
+            None,
+            Some(cleanup),
             authorized,
         )
         .await
@@ -287,6 +340,7 @@ impl ProcessSession {
             launcher,
             options,
             Some(broker),
+            None,
             authorized,
         )
         .await
@@ -298,6 +352,7 @@ impl ProcessSession {
         launcher: &RuntimeLauncher,
         options: LaunchOptions,
         broker: Option<Arc<dyn ProjectServiceBroker>>,
+        cleanup: Option<LaunchCleanup>,
         authorized: impl Fn() -> bool + Send + Sync + 'static,
     ) -> HostResult<Self> {
         options.limits.validate()?;
@@ -458,7 +513,7 @@ impl ProcessSession {
             let child = command.spawn().map_err(|_| HostError::SpawnFailed)?;
             // From the first successful spawn through every subsequent await,
             // an owned lease keeps files alive unless the direct child is reaped.
-            let mut pending = PendingChild::new(child, directory);
+            let mut pending = PendingChild::new(child, directory, cleanup);
             let Some(pid) = pending.pid else {
                 pending.rollback(options.limits.cleanup_timeout_ms).await;
                 return Err(HostError::SpawnFailed);
@@ -530,6 +585,7 @@ impl ProcessSession {
                 service_output_bytes: 0,
                 services_released: false,
                 termination: None,
+                launch_cleanup: pending.cleanup.take(),
                 stop_ms,
                 cleanup_ms,
             };
@@ -1032,6 +1088,9 @@ impl ProcessSession {
             direct_child_reaped: reaped,
             exit_code,
         };
+        if reaped && let Some(cleanup) = &self.launch_cleanup {
+            cleanup.reaped();
+        }
         self.termination = Some(receipt.clone());
         receipt
     }
@@ -1067,6 +1126,9 @@ impl ProcessSession {
             direct_child_reaped: reaped,
             exit_code,
         });
+        if reaped && let Some(cleanup) = &self.launch_cleanup {
+            cleanup.reaped();
+        }
         self.abort_pipes();
         if reaped {
             self.directory.take();
@@ -1079,7 +1141,11 @@ impl Drop for ProcessSession {
         self.release_services();
         self.kill_group();
         self.abort_pipes();
-        release_or_keep(&mut self.child, &mut self.directory);
+        if release_or_keep(&mut self.child, &mut self.directory)
+            && let Some(cleanup) = &self.launch_cleanup
+        {
+            cleanup.reaped();
+        }
     }
 }
 
@@ -1089,13 +1155,18 @@ struct PendingChild {
     child: Option<Child>,
     directory: Option<StagedDirectory>,
     pid: Option<u32>,
+    cleanup: Option<LaunchCleanup>,
 }
 impl PendingChild {
-    fn new(child: Child, directory: StagedDirectory) -> Self {
+    fn new(child: Child, directory: StagedDirectory, cleanup: Option<LaunchCleanup>) -> Self {
+        if let Some(cleanup) = &cleanup {
+            cleanup.spawned();
+        }
         Self {
             pid: child.id(),
             child: Some(child),
             directory: Some(directory),
+            cleanup,
         }
     }
     async fn rollback(&mut self, timeout_ms: u32) {
@@ -1106,6 +1177,9 @@ impl PendingChild {
             Ok(Ok(_))
         ) {
             self.directory.take();
+            if let Some(cleanup) = &self.cleanup {
+                cleanup.reaped();
+            }
         }
     }
 }
@@ -1113,7 +1187,11 @@ impl Drop for PendingChild {
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
             kill_owned_child(child, self.pid);
-            release_or_keep(child, &mut self.directory);
+            if release_or_keep(child, &mut self.directory)
+                && let Some(cleanup) = &self.cleanup
+            {
+                cleanup.reaped();
+            }
         }
     }
 }
@@ -1130,9 +1208,10 @@ fn kill_owned_child(child: &mut Child, pid: Option<u32>) {
     }
     let _ = child.start_kill();
 }
-fn release_or_keep(child: &mut Child, directory: &mut Option<StagedDirectory>) {
+fn release_or_keep(child: &mut Child, directory: &mut Option<StagedDirectory>) -> bool {
+    let reaped = matches!(child.try_wait(), Ok(Some(_)));
     if let Some(directory) = directory.take() {
-        if matches!(child.try_wait(), Ok(Some(_))) {
+        if reaped {
             drop(directory);
         } else {
             // Unknown reap state must not invalidate files a live child uses.
@@ -1140,6 +1219,7 @@ fn release_or_keep(child: &mut Child, directory: &mut Option<StagedDirectory>) {
             directory.keep();
         }
     }
+    reaped
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -1172,12 +1252,19 @@ mod lifetime_tests {
             let parent = tempfile::tempdir().unwrap();
             let directory = staged(parent.path());
             let path = directory.path().to_owned();
-            let mut pending = PendingChild::new(sleeping_child(), directory);
+            let cleanup = LaunchCleanup::default();
+            assert_eq!(cleanup.state(), LaunchCleanupState::NotSpawned);
+            assert!(cleanup.confirmed());
+            let mut pending = PendingChild::new(sleeping_child(), directory, Some(cleanup.clone()));
+            assert_eq!(cleanup.state(), LaunchCleanupState::Unconfirmed);
+            assert!(!cleanup.confirmed());
             assert!(matches!(
                 attach_pipes(pending.child.as_mut().unwrap(), &HostLimits::default()),
                 Err(HostError::ChannelFailed)
             ));
             pending.rollback(1000).await;
+            assert_eq!(cleanup.state(), LaunchCleanupState::Reaped);
+            assert!(cleanup.confirmed());
             assert!(
                 pending
                     .child

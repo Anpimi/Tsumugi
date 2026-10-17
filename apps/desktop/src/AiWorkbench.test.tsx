@@ -639,7 +639,7 @@ function installReferenceProviders() {
         const entries = selection.entries.map(entry => {
         const view = views.find(candidate => candidate.binding.capability.provider.packageDigest === entry.tool.package.packageDigest);
         if (!view) throw new Error("Missing captured synthetic provider");
-        return { handle: entry.handle, target: entry.target, selections: entry.selections, binding: structuredClone(view.binding),
+        return { handle: entry.handle, target: entry.target, selections: entry.selections, applicationCapabilities: [], binding: structuredClone(view.binding),
           execution: { capability: structuredClone(view.binding.capability), componentScope: view.componentScope, applicationScope: null,
             profile: structuredClone(view.binding.declaration.profile), environment: structuredClone(view.environment) },
           resourceId: view.resourceId, settingsRevision: view.settingsRevision,

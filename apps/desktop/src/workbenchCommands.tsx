@@ -9,7 +9,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { TranslationKey } from "./i18n/types";
 import type { CancellationTarget } from "./ExecutionTaskSession";
-import type { RecoveryAction } from "./executionCommands";
+import type { RecoveryAction, ApplicationScopeBasis } from "./executionCommands";
 import type { PluginBuildLocaleChoice, ReleasePluginIntent, DeliveryView, ArtifactCheckWorkflowIdentity } from "./releaseCommands";
 import type { WorkPlanStartRequest, WorkPlanAuthorizeRequest, WorkPlanControlRequest, WorkPlanCommand, AutomationEffect, ReviewCheckerKey } from "./generated/ai.requests";
 import type { PluginSourceSelectRequest, PluginCaptureRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest, PluginStartRequest } from "./generated/source.requests";
@@ -109,9 +109,9 @@ export interface SourceImpactTargetCommandPayload { kind: "source-impact-target"
   selectionId: string | null; translationRevisionId: string | null; reviewBasis: string }
 export interface AiPreparationCommandPayload { kind: "ai-preparation"; editSeq: number; locale: string; unitIds: string[] }
 export interface AiStartCommandPayload { kind: "ai-start"; attemptId: string; planId: string; digest: string; editSeq: number;
-  minutes: number; confirmed: boolean; checkerExecutions: ReviewCheckerKey[]; toolExecution: boolean; effects: AutomationEffect[] }
+  minutes: number; confirmed: boolean; checkerExecutions: ReviewCheckerKey[]; toolExecution: boolean; applicationToolExecutions: ApplicationScopeBasis[]; effects: AutomationEffect[] }
 export interface AiPlanControlCommandPayload { kind: "ai-plan-control"; command: WorkPlanCommand; planId: string; expectedGeneration: string;
-  minutes: number | null; confirmed: boolean; checkerExecutions: ReviewCheckerKey[]; toolExecution: boolean }
+  minutes: number | null; confirmed: boolean; checkerExecutions: ReviewCheckerKey[]; toolExecution: boolean; applicationToolExecutions: ApplicationScopeBasis[] }
 export interface AiPlanStartCommandPayload { kind: "ai-plan-start"; request: WorkPlanStartRequest; attemptId: string }
 export interface AiPlanPendingCommandPayload { kind: "ai-plan-pending"; action:
   { kind: "authorize"; request: WorkPlanAuthorizeRequest } | { kind: "control"; request: WorkPlanControlRequest } }
@@ -766,6 +766,10 @@ function identities(value: unknown, nonempty = false): value is string[] {
   return Array.isArray(value) && (!nonempty || value.length > 0) && value.every(validIdentity) && new Set(value).size === value.length;
 }
 function taskRevision(value: unknown): value is string { return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value); }
+function validApplicationToolExecutions(value: unknown): value is ApplicationScopeBasis[] {
+  return Array.isArray(value) && value.length <= 32 && value.every(basis => executionValidation.validateRequestApplicationInstance({ basis }))
+    && new Set(value.map(basis => basis.instanceId)).size === value.length;
+}
 function translationSetup(value: Omit<TranslationImportSetupCommandPayload, "kind">) {
   return editSequence(value.editSeq) && validIdentity(value.locale) && nullableIdentity(value.selectionId) && typeof value.fileName === "string";
 }
@@ -953,12 +957,15 @@ function validAiPayload(payload: CommandPayload | undefined): payload is AiComma
       && payload.unitIds.length > 0 && payload.unitIds.every(validIdentity) && new Set(payload.unitIds).size === payload.unitIds.length;
     case "ai-start": return [payload.attemptId,payload.planId,payload.digest].every(validIdentity) && editSequence(payload.editSeq)
       && validMinutes(payload.minutes) && typeof payload.confirmed === "boolean" && typeof payload.toolExecution === "boolean"
+      && validApplicationToolExecutions(payload.applicationToolExecutions)
       && Array.isArray(payload.checkerExecutions) && Array.isArray(payload.effects) && new Set(payload.effects).size === payload.effects.length
       && payload.effects.every(value => ["save-candidate","run-checks","select-missing","replace-captured-selection","adopt-resources","deliver","query-tools"].includes(value));
     case "ai-start-pending": return validIdentity(payload.attemptId) && editSequence(payload.editSeq) && aiValidation.validateRequestWorkPlanStart(payload.request);
     case "ai-plan-control": return ["pause","stop","take-over","continue"].includes(payload.command)
       && validIdentity(payload.planId) && taskRevision(payload.expectedGeneration) && (payload.minutes === null || validMinutes(payload.minutes))
-      && typeof payload.confirmed === "boolean" && typeof payload.toolExecution === "boolean" && Array.isArray(payload.checkerExecutions);
+      && typeof payload.confirmed === "boolean" && typeof payload.toolExecution === "boolean" && Array.isArray(payload.checkerExecutions)
+      && validApplicationToolExecutions(payload.applicationToolExecutions)
+      && (payload.command === "continue" || payload.applicationToolExecutions.length === 0);
     case "ai-plan-start": return validIdentity(payload.attemptId) && aiValidation.validateRequestWorkPlanStart(payload.request);
     case "ai-plan-pending": return !!payload.action && (payload.action.kind === "authorize"
       ? aiValidation.validateRequestWorkPlanAuthorize(payload.action.request)

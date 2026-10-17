@@ -24,6 +24,7 @@ fn query_tool() -> WorkPlanToolSpec {
         target: "zh-CN".into(),
         selections: vec!["term".into()],
         execution,
+        application_capabilities: vec![],
     }
 }
 
@@ -49,6 +50,13 @@ impl ToolFixture {
         })
     }
     fn with_runner(runner: impl FnOnce(&WorkPlanToolSpec) -> Arc<dyn Runner>) -> Self {
+        Self::with_selection(query_tool(), Default::default(), runner)
+    }
+    fn with_selection(
+        tool: WorkPlanToolSpec,
+        application_leases: std::collections::BTreeMap<ExecutionId, ApplicationExecutionLease>,
+        runner: impl FnOnce(&WorkPlanToolSpec) -> Arc<dyn Runner>,
+    ) -> Self {
         let (directory, mut store, _) =
             crate::persistence::review::tests::current_release_fixture(false);
         let unit = store
@@ -61,7 +69,6 @@ impl ToolFixture {
             .rows[0]
             .unit_id
             .unwrap();
-        let tool = query_tool();
         let plan = store
             .prepare_work_plan_with_tools(
                 Some(AiConfig {
@@ -104,8 +111,9 @@ impl ToolFixture {
                 Instant::now() + Duration::from_secs(60),
                 PluginConsent {
                     unsandboxed_execution: true,
-                    application_execution: false,
+                    application_execution: !application_leases.is_empty(),
                 },
+                application_leases,
             )
             .unwrap();
         let root = FixedInput::capture(authorization.input.unwrap()).unwrap();
@@ -284,6 +292,90 @@ impl ToolFixture {
             [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).unwrap()
     }
+}
+
+#[test]
+fn application_tool_service_keeps_project_origin_and_exact_lifetime_grant() {
+    let mut tool = query_tool();
+    tool.execution.component_scope = sdk::ComponentScope::Application;
+    tool.execution.application_scope = Some(ApplicationScopeBasis {
+        instance_id: ExecutionId::new(),
+        activation_generation: 1,
+    });
+    tool.application_capabilities = vec![sdk::ProcessCapability {
+        contribution_id: tool.binding.capability.provider.contribution_id.clone(),
+        capability: tool.binding.capability.declaration.clone(),
+    }];
+    let lifetime = ApplicationExecutionLease::capture(
+        vec![tool.execution.clone()],
+        true,
+        Cancellation::default(),
+        Cancellation::default(),
+    )
+    .unwrap();
+    let leases = std::collections::BTreeMap::from([(tool.handle, lifetime.clone())]);
+    let mut f = ToolFixture::with_selection(tool, leases, |tool| {
+        Arc::new(Registered {
+            plugin: Some(tool.execution.clone()),
+        })
+    });
+    let (prepared, receipt) = f.submit();
+    let binding = prepared.input().envelope().plugin.as_ref().unwrap();
+    assert_eq!(binding.component_scope, sdk::ComponentScope::Application);
+    assert_eq!(
+        f.origin.record.service.scope_id,
+        f.origin.record.project_id.to_string()
+    );
+    assert_ne!(
+        f.origin.record.service.scope_id,
+        binding
+            .application_scope
+            .as_ref()
+            .unwrap()
+            .instance_id
+            .to_string()
+    );
+    let app_fact: i64 = f
+        .store
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT application_execution FROM plugin_execution_grants WHERE grant_id=?1",
+            [receipt.grant_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(app_fact, 1);
+    let item = prepared.input().envelope().items[0].item_id;
+    let dispatch = f
+        .store
+        .dispatch_execution_item(receipt.attempt_id, item)
+        .unwrap();
+    assert_eq!(
+        dispatch.plugin_permit().unwrap().grant_id(),
+        receipt.grant_id
+    );
+    dispatch.check_service_dispatch().unwrap();
+    lifetime.revocation().request();
+    assert!(!dispatch.plugin_permit().unwrap().is_authorized());
+    assert_eq!(
+        f.runtime
+            .submit_work_plan_service_tool(&mut f.store, &prepared, &f.consent, f.grant)
+            .unwrap(),
+        receipt
+    );
+    let path = f.store.directory().to_owned();
+    drop(f.runtime);
+    f.store.close().unwrap();
+    let mut reopened = ProjectStore::open(path).unwrap();
+    let mut runtime = ExecutionRuntime::new(&reopened).unwrap();
+    assert_eq!(
+        runtime
+            .submit_work_plan_service_tool(&mut reopened, &prepared, &f.consent, f.grant)
+            .unwrap(),
+        receipt
+    );
+    assert!(reopened.check_plugin_input(prepared.input()).is_err());
 }
 
 #[test]

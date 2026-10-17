@@ -102,8 +102,35 @@ impl ApplicationExecutionLease {
             .envelope()
             .plugin
             .as_ref()
-            .is_some_and(|binding| self.bindings.contains(binding))
-            && self.is_live()
+            .is_some_and(|binding| self.matches_binding(binding))
+    }
+    /// Compare the complete captured tuple without creating an invocation or
+    /// recovering authority from its persisted instance identity.
+    pub fn matches_binding(&self, binding: &super::PluginExecutionBinding) -> bool {
+        self.bindings.contains(binding) && self.is_live()
+    }
+    pub(crate) fn matches_capabilities(
+        &self,
+        binding: &super::PluginExecutionBinding,
+        capabilities: &[tsumugi_plugin_sdk::ProcessCapability],
+    ) -> bool {
+        if !self.matches_binding(binding) {
+            return false;
+        }
+        let members = self
+            .bindings
+            .iter()
+            .map(|binding| {
+                (
+                    &binding.capability.provider.contribution_id,
+                    &binding.capability.declaration,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        members.len() == capabilities.len()
+            && capabilities.iter().all(|member| {
+                members.get(&member.contribution_id).copied() == Some(&member.capability)
+            })
     }
     pub fn revocation(&self) -> Cancellation {
         self.revocation.clone()

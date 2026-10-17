@@ -173,12 +173,33 @@ fn native_application_reuses_one_process_across_projects_with_exact_grants_and_h
     assert!(!instance.is_authorized());
     assert!(
         instance
+            .ensure_ready(
+                Instant::now() + Duration::from_secs(5),
+                &Cancellation::default()
+            )
+            .is_err()
+    );
+    assert!(
+        instance
             .authorize(ExecutionId::new(), false, Cancellation::default())
             .is_err()
     );
     assert_eq!(std::fs::read_dir(stage.path()).unwrap().count(), 0);
     let lease = instance
         .authorize(ExecutionId::new(), true, Cancellation::default())
+        .unwrap();
+    let readiness_cancel = Cancellation::default();
+    instance
+        .ensure_ready(Instant::now() + Duration::from_secs(5), &readiness_cancel)
+        .unwrap();
+    // Finishing the original caller's readiness interval must not withdraw the
+    // independently authorized process lifetime or the next project's grant.
+    readiness_cancel.request();
+    instance
+        .ensure_ready(
+            Instant::now() + Duration::from_secs(5),
+            &Cancellation::default(),
+        )
         .unwrap();
     let runner = instance.runner("echo").unwrap();
     let mut first = store(a.path());

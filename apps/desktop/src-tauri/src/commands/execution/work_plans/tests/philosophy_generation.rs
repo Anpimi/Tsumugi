@@ -463,7 +463,7 @@ fn exercise(outcome: ChildOutcome) {
             "control_work_plan",
             json!({"actionId":ExecutionId::new(),"planId":plan["planId"],
             "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,
-            "checkerExecutions":[],"toolExecution":false,"expiresAt":null}),
+            "checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null}),
         );
         // Release the owned HTTP gate before assessing the cancellation reply.
         release.send(()).unwrap();

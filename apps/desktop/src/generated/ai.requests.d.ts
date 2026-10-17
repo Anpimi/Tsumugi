@@ -343,6 +343,10 @@ export interface WorkPlanAgentToolStartRequest {
 }
 export interface WorkPlanAuthorizeRequest {
   actionId: ExecutionId;
+  /**
+   * @maxItems 32
+   */
+  applicationToolExecutions: ApplicationScopeBasis[];
   checkerExecutions: ReviewCheckerKey[];
   confirmed: boolean;
   digest: string;
@@ -352,6 +356,14 @@ export interface WorkPlanAuthorizeRequest {
   projectId: ExecutionId;
   sessionToken: string;
   toolExecution: boolean;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
 }
 export interface ReviewCheckerKey {
   profile: ContractRef;
@@ -387,6 +399,10 @@ export interface PluginIdentity {
 }
 export interface WorkPlanControlRequest {
   actionId: ExecutionId;
+  /**
+   * @maxItems 32
+   */
+  applicationToolExecutions: ApplicationScopeBasis[];
   checkerExecutions: ReviewCheckerKey[];
   command: WorkPlanCommand;
   confirmed: boolean;
@@ -719,14 +735,6 @@ export interface PluginExecutionBinding {
    */
   environment: ExecutionEnvironmentDescriptor;
   profile?: ContractRef | null;
-}
-/**
- * Identity allocated by the application instance owner before consent. This
- * persisted fact never recreates the owner's session-local execution lease.
- */
-export interface ApplicationScopeBasis {
-  activationGeneration: number;
-  instanceId: ExecutionId;
 }
 /**
  * Exact tool and Host choices for a fixed invocation. Paths are logical within

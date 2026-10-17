@@ -213,7 +213,7 @@ fn fresh_work_plan_authorization_refuses_profile_drift_without_creating_a_lease(
         },
     );
     let action = ExecutionId::new();
-    let rejected = fixture.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":action,"confirmed":true,"checkerExecutions":[],"toolExecution":false,"effects":["save-candidate"],"expiresAt":expiry()})).unwrap_err();
+    let rejected = fixture.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":action,"confirmed":true,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"effects":["save-candidate"],"expiresAt":expiry()})).unwrap_err();
     assert_eq!(rejected["reason"], "model-connection-unavailable");
     fixture
         .app
@@ -232,7 +232,7 @@ fn original_work_plan_receipt_survives_profile_archival_and_reopen_without_reviv
     let (config, wire) = local_provider("Plan candidate");
     let config = capture(&fixture, "Saved", config);
     let plan = fixture.call("prepare_work_plan", json!({"config":config,"locale":"zh-CN","unitIds":[fixture.unit],"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null})).unwrap();
-    let authorize = json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":[],"toolExecution":false,"effects":["save-candidate"],"expiresAt":expiry()});
+    let authorize = json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"effects":["save-candidate"],"expiresAt":expiry()});
     let grant = fixture
         .call("authorize_work_plan", authorize.clone())
         .unwrap();

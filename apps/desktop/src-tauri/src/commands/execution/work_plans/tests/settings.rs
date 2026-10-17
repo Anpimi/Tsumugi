@@ -186,6 +186,7 @@ fn declared_tool(
     let binding = declaration.bind(&manifest, &"a".repeat(64)).unwrap();
     tsumugi_core::application::WorkPlanToolSpec {
         handle: ExecutionId::new(),
+        application_capabilities: vec![],
         binding: binding.clone(),
         resource_id: "query-tool".into(),
         settings_revision: revision,
@@ -248,6 +249,7 @@ impl Fixture {
             json!({"sessionToken":view["sessionToken"],"projectId":view["metadata"]["projectId"]});
         (
             Self {
+                project_path: directory.path().join("project"),
                 directory,
                 app,
                 webview,
@@ -497,7 +499,7 @@ fn pause_after_partial_checker_submission_revokes_every_grant_and_keeps_finished
             Err(error) => panic!("{error}"),
         }
     };
-    fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
+    fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null})).unwrap();
     // Drive the same host boundary that drains cancellation before dispatch.
     fixture
         .app
@@ -710,12 +712,13 @@ fn joint_settings_guard_and_replay_require_original_tools_and_complete_checker_c
             let request: WorkPlanAuthorizeRequest = serde_json::from_value(json!({
                 "sessionToken":context["sessionToken"], "projectId":context["projectId"],
                 "planId":plan.plan_id, "digest":plan.digest, "actionId":ExecutionId::new(),
-                "confirmed":true, "toolExecution":true,
+                "confirmed":true, "toolExecution":true,"applicationToolExecutions":[],
                 "checkerExecutions":bindings.iter().map(|checker| checker.key.clone()).collect::<Vec<_>>(),
                 "effects":["save-candidate","run-checks","select-missing","query-tools"],
                 "expiresAt":expiry(),
             })).unwrap();
-            broker::capture_human_intent(host, &plan, request.action_id, request.expires_at.get(), &request).unwrap();
+            broker::capture_human_intent(host, &plan, request.action_id, request.expires_at.get(), &request,
+                &request.application_tool_executions, request.confirmed, &guarded_plugins).unwrap();
             let receipt = with_plan_environment_revision(&guarded_plugins, &plan, Some(revision), || {
                 let receipt = store.authorize_work_plan(&plan, &AuthorizeWorkPlan {
                     action_id: request.action_id, plan_digest: request.digest.clone(),

@@ -259,7 +259,7 @@ fn accepted_service_receipt_loss_recovers_exact_child_without_resending_or_renew
     let expires_at = expiry();
     let authorization = json!({
         "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
-        "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,
+        "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],
         "effects":["save-candidate"],"expiresAt":expires_at
     });
     let grant = fixture

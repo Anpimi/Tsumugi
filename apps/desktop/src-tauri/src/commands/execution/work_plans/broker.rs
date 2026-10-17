@@ -3,6 +3,8 @@
 use super::*;
 use crate::commands::plugins::{PluginPackageRequest, PluginToolRequest, PluginToolView};
 use tsumugi_core::application::{AgentToolRequest, PreparedWorkPlanTool, WorkPlanToolSpec};
+use tsumugi_core::execution::{ApplicationExecutionLease, ApplicationScopeBasis};
+use tsumugi_plugin_host::core::ApplicationInstance;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -103,6 +105,7 @@ pub(super) struct HumanToolIntent {
     generation: ExecutionId,
     wall_deadline_ms: u64,
     deadline: Instant,
+    application_leases: BTreeMap<ExecutionId, ApplicationExecutionLease>,
 }
 
 fn now_ms() -> Result<u64, CommandError> {
@@ -119,6 +122,9 @@ pub(super) fn capture_human_intent(
     action: ExecutionId,
     root_expires_at: u64,
     request: &impl Serialize,
+    applications: &[ApplicationScopeBasis],
+    confirmed: bool,
+    plugins: &ApplicationPlugins,
 ) -> Result<(), CommandError> {
     if plan.tools.is_none() {
         return Ok(());
@@ -127,6 +133,7 @@ pub(super) fn capture_human_intent(
     if let Some(intent) = host.work_plans.tool_intents.get(&action) {
         return if intent.fingerprint == fingerprint
             && intent.generation == host.runtime.generation()
+            && application_leases_match(plan, &intent.application_leases)
         {
             Ok(())
         } else {
@@ -151,6 +158,13 @@ pub(super) fn capture_human_intent(
     let deadline = Instant::now()
         .checked_add(Duration::from_millis(duration))
         .ok_or_else(denied)?;
+    let selected = application_selection(plan)?;
+    check_application_selection(&selected, applications)?;
+    if !selected.is_empty() && !confirmed {
+        return Err(denied());
+    }
+    // Freeze the human clock before the first independently authorized lifetime
+    // can become uncertain. Missing leases on replay never recapture that clock.
     host.work_plans.tool_intents.insert(
         action,
         HumanToolIntent {
@@ -158,8 +172,46 @@ pub(super) fn capture_human_intent(
             generation: host.runtime.generation(),
             wall_deadline_ms,
             deadline,
+            application_leases: BTreeMap::new(),
         },
     );
+    let application_leases = if selected.is_empty() {
+        BTreeMap::new()
+    } else {
+        let revision = tools_revision(plan)?.ok_or_else(stale)?;
+        plugins.with_environment_authority(revision, |settings| {
+            let mut leases = BTreeMap::new();
+            for tool in plan
+                .tools
+                .as_ref()
+                .ok_or_else(stale)?
+                .entries
+                .iter()
+                .filter(|tool| {
+                    tool.execution.component_scope
+                        == tsumugi_plugin_sdk::ComponentScope::Application
+                })
+            {
+                let instance = plugins.work_plan_tool_instance(tool)?;
+                let lease = plugins.authorize_application_tool(
+                    &instance,
+                    action,
+                    true,
+                    settings.clone(),
+                )?;
+                if !lease.matches_binding(&tool.execution) {
+                    return Err(denied());
+                }
+                leases.insert(tool.handle, lease);
+            }
+            Ok(leases)
+        })?
+    };
+    host.work_plans
+        .tool_intents
+        .get_mut(&action)
+        .ok_or_else(denied)?
+        .application_leases = application_leases;
     Ok(())
 }
 
@@ -201,6 +253,7 @@ fn denied() -> CommandError {
 fn spec(
     view: PluginToolView,
     selected: &WorkPlanToolSelectionEntry,
+    application: Option<&Arc<ApplicationInstance>>,
 ) -> Result<WorkPlanToolSpec, CommandError> {
     Ok(WorkPlanToolSpec {
         handle: selected.handle,
@@ -208,10 +261,12 @@ fn spec(
         execution: PluginExecutionBinding {
             capability: view.binding.capability.clone(),
             component_scope: view.component_scope,
-            application_scope: None,
+            application_scope: application.map(|instance| instance.basis().clone()),
             profile: view.binding.declaration.profile.clone(),
             environment: view.environment,
         },
+        application_capabilities: application
+            .map_or_else(Vec::new, |instance| instance.capabilities()),
         resource_id: view.resource_id,
         settings_revision: view.settings_revision,
         package_origin: serde_json::to_value(view.package_origin).map_err(|_| stale())?,
@@ -247,7 +302,11 @@ pub(super) fn capture_selection(
     let entries = selected
         .entries
         .iter()
-        .map(|tool| spec(plugins.capture_tool(&tool.tool)?.view()?, tool))
+        .map(|tool| {
+            let environment = plugins.capture_tool(&tool.tool)?;
+            let application = plugins.reserve_application_tool(&environment)?;
+            spec(environment.view()?, tool, application.as_ref())
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let tools = WorkPlanTools {
         max_invocations: selected.max_invocations,
@@ -291,11 +350,83 @@ pub(super) fn with_tools_revision<T>(
     }
 }
 
+fn application_selection(
+    plan: &WorkPlan,
+) -> Result<BTreeMap<ExecutionId, ApplicationScopeBasis>, CommandError> {
+    let mut applications = BTreeMap::new();
+    for tool in plan
+        .tools
+        .iter()
+        .flat_map(|tools| &tools.entries)
+        .filter(|tool| {
+            tool.execution.component_scope == tsumugi_plugin_sdk::ComponentScope::Application
+        })
+    {
+        let basis = tool
+            .execution
+            .application_scope
+            .as_ref()
+            .ok_or_else(stale)?;
+        if applications
+            .insert(basis.instance_id, basis.clone())
+            .is_some_and(|old| old != *basis)
+        {
+            return Err(stale());
+        }
+    }
+    Ok(applications)
+}
+
+fn check_application_selection(
+    expected: &BTreeMap<ExecutionId, ApplicationScopeBasis>,
+    selected: &[ApplicationScopeBasis],
+) -> Result<(), CommandError> {
+    let mut captured = BTreeMap::new();
+    for basis in selected {
+        if captured.insert(basis.instance_id, basis.clone()).is_some() {
+            return Err(stale());
+        }
+    }
+    if &captured != expected {
+        return Err(denied());
+    }
+    Ok(())
+}
+
+fn application_leases_match(
+    plan: &WorkPlan,
+    leases: &BTreeMap<ExecutionId, ApplicationExecutionLease>,
+) -> bool {
+    let tools: Vec<_> = plan
+        .tools
+        .iter()
+        .flat_map(|tools| &tools.entries)
+        .filter(|tool| {
+            tool.execution.component_scope == tsumugi_plugin_sdk::ComponentScope::Application
+        })
+        .collect();
+    tools.len() == leases.len()
+        && tools.into_iter().all(|tool| {
+            leases
+                .get(&tool.handle)
+                .is_some_and(|lease| lease.matches_binding(&tool.execution))
+        })
+}
+
+pub(super) fn check_application_request(
+    plan: &WorkPlan,
+    applications: &[ApplicationScopeBasis],
+) -> Result<(), CommandError> {
+    check_application_selection(&application_selection(plan)?, applications)
+}
+
 pub(super) fn require_consent(
     plan: &WorkPlan,
     confirmed: bool,
     effects: Option<&[AutomationEffect]>,
+    applications: &[ApplicationScopeBasis],
 ) -> Result<(), CommandError> {
+    check_application_request(plan, applications)?;
     if plan.tools.is_some()
         && (!confirmed
             || effects.is_some_and(|effects| !effects.contains(&AutomationEffect::QueryTools)))
@@ -350,8 +481,9 @@ pub(super) fn save_consent(
             deadline,
             PluginConsent {
                 unsandboxed_execution: true,
-                application_execution: false,
+                application_execution: !intent.application_leases.is_empty(),
             },
+            intent.application_leases.clone(),
         )
         .map_err(map_recover)?;
     host.work_plans
@@ -379,6 +511,7 @@ pub(super) fn restore_consent(
         || intent.expiry().is_err()
         || status.lease != receipt.lease
         || status.state != WorkPlanState::Active
+        || !application_leases_match(plan, &intent.application_leases)
     {
         return Ok(());
     }
@@ -446,18 +579,29 @@ pub(super) fn load_runner(
         selections: expected.selections.clone(),
     };
     let environment = plugins.capture_tool(&selected.tool)?;
-    if spec(environment.view()?, &selected)? != *expected {
+    let application =
+        if expected.execution.component_scope == tsumugi_plugin_sdk::ComponentScope::Application {
+            Some(plugins.work_plan_tool_instance(expected)?)
+        } else {
+            None
+        };
+    if spec(environment.view()?, &selected, application.as_ref())? != *expected {
         return Err(stale());
     }
-    let proxy = RunnerProxy::new(
-        environment.package.image().clone(),
-        &environment.binding.declaration.capability_id,
-        environment.runtime,
-        environment.staging_parent,
-        HostLimits::default(),
-    )
-    .map(Arc::new)
-    .map_err(map_recover)?;
+    let proxy = match application {
+        Some(instance) => instance
+            .runner(&environment.binding.capability.provider.contribution_id)
+            .map_err(map_recover)?,
+        None => RunnerProxy::new(
+            environment.package.image().clone(),
+            &environment.binding.declaration.capability_id,
+            environment.runtime,
+            environment.staging_parent,
+            HostLimits::default(),
+        )
+        .map(Arc::new)
+        .map_err(map_recover)?,
+    };
     let binding = proxy
         .execution_binding(expected.binding.declaration.profile.clone())
         .map_err(map_recover)?;
@@ -465,6 +609,35 @@ pub(super) fn load_runner(
         return Err(stale());
     }
     Ok((expected.settings_revision, proxy, binding))
+}
+
+pub(super) fn ensure_application_ready(
+    plugins: &ApplicationPlugins,
+    prepared: &PreparedWorkPlanTool,
+    deadline: Instant,
+    cancellation: &Cancellation,
+) -> Result<(), CommandError> {
+    if prepared.tool().execution.component_scope != tsumugi_plugin_sdk::ComponentScope::Application
+    {
+        return Ok(());
+    }
+    let instance = plugins.work_plan_tool_instance(prepared.tool())?;
+    let deadline = Instant::now()
+        .checked_add(Duration::from_millis(
+            prepared
+                .tool()
+                .binding
+                .capability
+                .declaration
+                .limits
+                .timeout_ms
+                .into(),
+        ))
+        .ok_or_else(denied)?
+        .min(deadline);
+    instance
+        .ensure_ready(deadline, cancellation)
+        .map_err(map_recover)
 }
 
 pub(super) fn read_host(active: &ActiveSession) -> Result<&ExecutionHost, CommandError> {
@@ -660,9 +833,17 @@ pub async fn start_work_plan_agent_tool(
         };
         let captured = prepared.clone();
         let current = plugins.clone();
+        let ready_deadline = consent.deadline();
         let loaded = io
             .run(CommandStage::ExecutionRecover, move || {
-                load_runner(&current, &captured)
+                let loaded = load_runner(&current, &captured)?;
+                ensure_application_ready(
+                    &current,
+                    &captured,
+                    ready_deadline,
+                    &Cancellation::default(),
+                )?;
+                Ok(loaded)
             })
             .await;
         lease

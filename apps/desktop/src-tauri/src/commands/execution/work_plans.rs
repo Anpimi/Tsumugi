@@ -357,6 +357,8 @@ request!(
         confirmed: bool,
         checker_executions: Vec<ReviewCheckerKey>,
         tool_execution: bool,
+        #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+        application_tool_executions: Vec<tsumugi_core::execution::ApplicationScopeBasis>,
         effects: Vec<AutomationEffect>,
         expires_at: UnsignedDecimal
     }
@@ -379,6 +381,8 @@ request!(
         confirmed: bool,
         checker_executions: Vec<ReviewCheckerKey>,
         tool_execution: bool,
+        #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+        application_tool_executions: Vec<tsumugi_core::execution::ApplicationScopeBasis>,
         expires_at: Option<UnsignedDecimal>
     }
 );
@@ -755,6 +759,7 @@ pub async fn authorize_work_plan(
                 let plan = store
                     .work_plan(receipt.lease.plan_id)
                     .map_err(map_recover)?;
+                broker::check_application_request(&plan, &initial.application_tool_executions)?;
                 let receipt = store
                     .authorize_work_plan(
                         &plan,
@@ -778,13 +783,24 @@ pub async fn authorize_work_plan(
                 .cloned();
             if let Some(plan) = prepared {
                 verify_plan_connections(initial_connections.as_ref(), &plan)?;
-                broker::require_consent(&plan, initial.tool_execution, Some(&initial.effects))?;
+                broker::require_consent(
+                    &plan,
+                    initial.tool_execution,
+                    Some(&initial.effects),
+                    &initial.application_tool_executions,
+                )?;
+                if !initial.application_tool_executions.is_empty() {
+                    store.verify_work_plan(&plan).map_err(map_recover)?;
+                }
                 broker::capture_human_intent(
                     host,
                     &plan,
                     initial.action_id,
                     initial.expires_at.get(),
                     &initial,
+                    &initial.application_tool_executions,
+                    initial.confirmed,
+                    &captured_plugins,
                 )?;
                 let environments =
                     consent_environments(host, store, &plan, &initial.checker_executions)?;
@@ -810,6 +826,7 @@ pub async fn authorize_work_plan(
                 let plan = store
                     .work_plan(receipt.lease.plan_id)
                     .map_err(map_recover)?;
+                broker::check_application_request(&plan, &initial.application_tool_executions)?;
                 let receipt = store
                     .authorize_work_plan(
                         &plan,
@@ -1026,6 +1043,14 @@ pub async fn control_work_plan(
         "control_work_plan.capture",
         CommandStage::ExecutionCancel,
         move |sessions| {
+            if initial.command != WorkPlanCommand::Continue
+                && !initial.application_tool_executions.is_empty()
+            {
+                return Err(map_recover(ExecutionError::new(
+                    ErrorCode::InvalidInput,
+                    "work-plan-application-consent",
+                )));
+            }
             let active = authorized(
                 sessions,
                 &initial.session_token,
@@ -1053,6 +1078,9 @@ pub async fn control_work_plan(
                     .store
                     .work_plan(receipt.lease.plan_id)
                     .map_err(map_recover)?;
+                if initial.command == WorkPlanCommand::Continue {
+                    broker::check_application_request(&plan, &initial.application_tool_executions)?;
+                }
                 let (host, store) = active.execution_parts()?;
                 broker::restore_consent(host, store, &plan, &receipt, &initial, &captured_plugins)?;
                 return Ok(Err(WorkPlanReceiptView::from(receipt)));
@@ -1063,7 +1091,15 @@ pub async fn control_work_plan(
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
             let plan = store.work_plan(initial.plan_id).map_err(map_recover)?;
-            broker::require_consent(&plan, initial.tool_execution, None)?;
+            broker::require_consent(
+                &plan,
+                initial.tool_execution,
+                None,
+                &initial.application_tool_executions,
+            )?;
+            if !initial.application_tool_executions.is_empty() {
+                store.verify_work_plan(&plan).map_err(map_recover)?;
+            }
             if plan.tools.is_some() {
                 let expiry = initial
                     .expires_at
@@ -1074,7 +1110,16 @@ pub async fn control_work_plan(
                         ))
                     })?
                     .get();
-                broker::capture_human_intent(host, &plan, initial.action_id, expiry, &initial)?;
+                broker::capture_human_intent(
+                    host,
+                    &plan,
+                    initial.action_id,
+                    expiry,
+                    &initial,
+                    &initial.application_tool_executions,
+                    initial.confirmed,
+                    &captured_plugins,
+                )?;
             }
             let environments =
                 consent_environments(host, store, &plan, &initial.checker_executions)?;
@@ -1541,6 +1586,7 @@ mod tests {
 
     struct Fixture {
         directory: tempfile::TempDir,
+        project_path: std::path::PathBuf,
         app: tauri::App<tauri::test::MockRuntime>,
         webview: MockWebview,
         context: Value,
@@ -1640,7 +1686,25 @@ mod tests {
                 webview,
                 context,
             } = ProjectFixture::create("en-US");
-            let (unit, source_revision, snapshot) = app.state::<AppState>().sessions.with(move |sessions| {
+            let (unit, source_revision, snapshot) = Self::capture_source(&app, source_bytes);
+            let project_path = directory.path().join("project");
+            Self {
+                directory,
+                project_path,
+                app,
+                webview,
+                context,
+                unit,
+                source_revision,
+                snapshot,
+            }
+        }
+
+        fn capture_source(
+            app: &tauri::App<tauri::test::MockRuntime>,
+            source_bytes: Vec<u8>,
+        ) -> (ExecutionId, ExecutionId, ExecutionId) {
+            app.state::<AppState>().sessions.with(move |sessions| {
                 let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
                 let source = tsumugi_core::content::SourceBundle::capture(
                     br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
@@ -1667,16 +1731,7 @@ mod tests {
                 let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
                 let row = store.source_content(snapshot, 0, 1).unwrap().rows.remove(0);
                 (row.unit_id.unwrap(), row.source_revision_id.unwrap(), snapshot)
-            });
-            Self {
-                directory,
-                app,
-                webview,
-                context,
-                unit,
-                source_revision,
-                snapshot,
-            }
+            })
         }
 
         fn call(&self, command: &str, extra: Value) -> Result<Value, Value> {
@@ -1684,12 +1739,12 @@ mod tests {
         }
 
         fn bytes(&self) -> Vec<u8> {
-            std::fs::read(self.directory.path().join("project/project.sqlite3")).unwrap()
+            std::fs::read(self.project_path.join("project.sqlite3")).unwrap()
         }
 
         fn attempt_count(&self) -> i64 {
             let connection = rusqlite::Connection::open_with_flags(
-                self.directory.path().join("project/project.sqlite3"),
+                self.project_path.join("project.sqlite3"),
                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
             )
             .unwrap();
@@ -1934,7 +1989,7 @@ mod tests {
                 }
                 _ => unreachable!(),
             };
-            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"effects":effects,"expiresAt":expiry()})).unwrap();
+            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],"effects":effects,"expiresAt":expiry()})).unwrap();
             assert_eq!(self.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap(), plan["attemptId"]);
             plan
         }
@@ -1973,7 +2028,7 @@ mod tests {
             })).unwrap();
             let grant = self.call("authorize_work_plan", json!({
                 "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
-                "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"effects":["save-candidate"],"expiresAt":expiry()
+                "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],"effects":["save-candidate"],"expiresAt":expiry()
             })).unwrap();
             assert!(
                 self.call(
@@ -2215,7 +2270,7 @@ mod tests {
         let count = fixture.attempt_count();
         let paused = fixture.call("control_work_plan", json!({
             "planId":plan["planId"],"actionId":ExecutionId::new(),
-            "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false
+            "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]
         })).unwrap();
         assert!(
             fixture
@@ -2233,7 +2288,7 @@ mod tests {
                 json!({
                     "planId":plan["planId"],"actionId":ExecutionId::new(),
                     "expectedGeneration":paused["lease"]["generation"],"command":"continue",
-                    "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()
+                    "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],"expiresAt":expiry()
                 }),
             )
             .unwrap();
@@ -2439,7 +2494,7 @@ mod tests {
         assert_eq!(status["state"], "paused");
         let continue_request = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),
             "expectedGeneration":status["lease"]["generation"],"command":"continue",
-            "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()});
+            "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],"expiresAt":expiry()});
         let resumed = fixture
             .call("control_work_plan", continue_request.clone())
             .unwrap();
@@ -2527,7 +2582,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":"3","command":"pause",
-            "confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null}),
+            "confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null}),
             )
             .unwrap();
         let third = fixture
@@ -2535,7 +2590,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],
-            "command":"continue","confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()}),
+            "command":"continue","confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],"expiresAt":expiry()}),
             )
             .unwrap();
         fixture
@@ -2687,7 +2742,7 @@ mod tests {
             tsumugi_core::application::SelectionPolicy::MissingOnly,
         );
         waiting.recv_timeout(Duration::from_secs(3)).unwrap();
-        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
+        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null})).unwrap();
         release.send(()).unwrap();
         provider.join().unwrap();
         let view = fixture.wait_effect(&plan);
@@ -2961,12 +3016,12 @@ mod tests {
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry(),
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false,"applicationToolExecutions":[], "effects":["save-candidate"], "expiresAt":expiry(),
             "semanticAnswer":"yes"
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false,"applicationToolExecutions":[], "effects":["save-candidate"], "expiresAt":expiry()
         })).is_err());
         assert!(fixture.call("prepare_work_plan", json!({
             "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options(),
@@ -3040,7 +3095,7 @@ mod tests {
         assert_eq!(fixture.bytes(), before);
         let grant = json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false,"applicationToolExecutions":[], "effects":["save-candidate"], "expiresAt":expiry()
         });
         let mut unconfirmed = grant.clone();
         unconfirmed["confirmed"] = json!(false);
@@ -3095,7 +3150,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":receipt["lease"]["generation"], "command":"pause",
-                    "confirmed":false, "checkerExecutions":[],"toolExecution":false, "expiresAt":null
+                    "confirmed":false, "checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[], "expiresAt":null
                 }),
             )
             .unwrap();
@@ -3104,7 +3159,7 @@ mod tests {
         let resume = json!({
             "planId":prepared["planId"], "actionId":ExecutionId::new(),
             "expectedGeneration":paused["lease"]["generation"], "command":"continue",
-            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false,"applicationToolExecutions":[], "expiresAt":expiry()
         });
         let resumed = fixture.call("control_work_plan", resume.clone()).unwrap();
         assert_eq!(resumed["state"], "active");
@@ -3132,7 +3187,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":resumed["lease"]["generation"], "command":"take-over",
-                    "confirmed":false, "checkerExecutions":[],"toolExecution":false, "expiresAt":null
+                    "confirmed":false, "checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[], "expiresAt":null
                 }),
             )
             .unwrap();

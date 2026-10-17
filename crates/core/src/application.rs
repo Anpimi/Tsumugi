@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 mod disclosure;
 pub mod mcp_retrieval;
 pub use mcp_retrieval::*;
@@ -89,6 +89,10 @@ pub struct WorkPlanToolSpec {
     pub handle: ExecutionId,
     pub binding: tsumugi_plugin_sdk::CapabilityToolBinding,
     pub execution: crate::execution::PluginExecutionBinding,
+    /// Complete captured callable membership of an Application instance.
+    /// Other scopes carry an explicit empty roster; this data grants no lease.
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 128)))]
+    pub application_capabilities: Vec<tsumugi_plugin_sdk::ProcessCapability>,
     pub resource_id: String,
     pub settings_revision: UnsignedDecimal,
     pub package_origin: serde_json::Value,
@@ -129,7 +133,8 @@ impl WorkPlanTools {
             tool.binding
                 .validate()
                 .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "work-plan-tool"))?;
-            tool.execution.validate_project_or_attempt()?;
+            tool.execution.validate()?;
+            tool.validate_application_capabilities()?;
             if tool.execution.capability != tool.binding.capability
                 || tool.execution.profile != tool.binding.declaration.profile
             {
@@ -169,6 +174,49 @@ impl WorkPlanTools {
     }
     pub(crate) fn digest(&self) -> Result<String, ExecutionError> {
         Ok(codec::digest(&codec::encode(self, MAX_INPUT_BYTES)?))
+    }
+}
+
+impl WorkPlanToolSpec {
+    fn validate_application_capabilities(&self) -> Result<(), ExecutionError> {
+        use tsumugi_plugin_sdk as sdk;
+        let invalid = || ExecutionError::new(ErrorCode::InvalidInput, "work-plan-tool-application");
+        if self.execution.component_scope != sdk::ComponentScope::Application {
+            return if self.application_capabilities.is_empty() {
+                Ok(())
+            } else {
+                Err(invalid())
+            };
+        }
+        let members = &self.application_capabilities;
+        if members.is_empty()
+            || members.len() > sdk::MAX_PROCESS_CAPABILITIES
+            || (matches!(
+                &self.execution.environment,
+                sdk::ExecutionEnvironmentDescriptor::Native(_)
+            ) && members.len() != 1)
+            || members
+                .windows(2)
+                .any(|pair| pair[0].contribution_id >= pair[1].contribution_id)
+            || !members.iter().any(|member| {
+                member.contribution_id == self.binding.capability.provider.contribution_id
+                    && member.capability == self.binding.capability.declaration
+            })
+        {
+            return Err(invalid());
+        }
+        codec::encode(members, MAX_INPUT_BYTES)?;
+        for member in members {
+            member.validate().map_err(|_| invalid())?;
+            if member.capability.effect != sdk::EffectKind::ReadOnly
+                || member.capability.permissions.iter().any(|permission| {
+                    matches!(permission, sdk::PermissionRequest::ProjectService { .. })
+                })
+            {
+                return Err(invalid());
+            }
+        }
+        Ok(())
     }
 }
 
@@ -212,8 +260,28 @@ pub struct WorkPlanToolConsent {
     pub(crate) runtime_generation: ExecutionId,
     pub(crate) expires_at_ms: u64,
     pub(crate) deadline: std::time::Instant,
+    pub(crate) application_leases:
+        BTreeMap<ExecutionId, crate::execution::ApplicationExecutionLease>,
 }
 impl WorkPlanToolConsent {
+    pub(crate) fn application_lease(
+        &self,
+        tool: &WorkPlanToolSpec,
+    ) -> Result<Option<&crate::execution::ApplicationExecutionLease>, ExecutionError> {
+        let lease = self.application_leases.get(&tool.handle);
+        if match tool.execution.component_scope {
+            tsumugi_plugin_sdk::ComponentScope::Application => lease.is_none_or(|lease| {
+                !lease.matches_capabilities(&tool.execution, &tool.application_capabilities)
+            }),
+            _ => lease.is_some(),
+        } {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "work-plan-tool-application-lease",
+            ));
+        }
+        Ok(lease)
+    }
     pub(crate) fn matches_scope(&self, scope: &WorkPlanAgentScope) -> bool {
         self.project_id == scope.project_id
             && self.lease == scope.lease
@@ -222,6 +290,9 @@ impl WorkPlanToolConsent {
     }
     pub fn expires_at_ms(&self) -> u64 {
         self.expires_at_ms
+    }
+    pub fn deadline(&self) -> std::time::Instant {
+        self.deadline
     }
 }
 

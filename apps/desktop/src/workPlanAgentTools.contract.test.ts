@@ -4,7 +4,7 @@ import agentFixture from "../test/fixtures/workPlanAgent.contract.json";
 import fixture from "../test/fixtures/workPlanAgentTools.contract.json";
 import { openWorkPlanAgent, workPlanCommands } from "./workPlanCommands";
 import { validateResponseTool } from "./generated/plugins.validators";
-import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
+import { applicationWorkPlanTool, workPlanToolStatus } from "./testSupport/workPlanToolFixture";
 import * as validators from "./generated/ai.validators";
 import type { WorkPlanPrepareRequest } from "./generated/ai.requests";
 import type { AttemptDetail, ExecutionOutputView, WorkPlanAgentToolView } from "./generated/ai.responses";
@@ -55,6 +55,20 @@ it("shares strict tool contracts and starts only an exact preparation from its o
   await expect(consumer.startTool(structuredClone(fixture.responses.prepared))).rejects.toThrow("not prepared");
   const other = await opened();
   await expect(other.startTool(prepared)).rejects.toThrow("not prepared");
+});
+
+it.each([false, true])("uses the same bounded manual Agent tool path for an Application capture without generation (Native: %s)", async native => {
+  const tool = applicationWorkPlanTool(undefined, native);
+  invoke.mockResolvedValueOnce(structuredClone(agentFixture.responses.scope));
+  const consumer = await openWorkPlanAgent(agentFixture.requests.open, agentFixture.responses.scope.scope, [tool]);
+  invoke.mockResolvedValueOnce(structuredClone(fixture.responses.prepared));
+  const prepared = await consumer.prepareTool(fixture.requests.prepare.tool);
+  invoke.mockResolvedValueOnce(fixture.responses.prepared.attemptId);
+  expect(await consumer.startTool(prepared)).toBe(fixture.responses.prepared.attemptId);
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual([
+    "open_work_plan_agent_scope", "prepare_work_plan_agent_tool", "start_work_plan_agent_tool",
+  ]);
+  expect(invoke).toHaveBeenLastCalledWith("start_work_plan_agent_tool", { request: fixture.requests.start });
 });
 
 it("rejects caller identity, execution consent, raw text and expanded material before IPC", async () => {
@@ -115,6 +129,36 @@ it("pins complete captured tool metadata and options in work-plan preparation ac
     invoke.mockResolvedValueOnce(changed);
     await expect(workPlanCommands.prepare(request, [view])).rejects.toMatchObject({ outcome: "unknown" });
   }
+});
+
+it.each([false, true])("accepts a frozen Application tool roster and exact Host basis (Native: %s)", async native => {
+  const tool = applicationWorkPlanTool(undefined, native);
+  const view: unknown = { ...structuredClone(fixture.toolView), componentScope: "application", environment: tool.execution.environment, runtimeOrigin: tool.runtimeOrigin };
+  if (!validateResponseTool(view)) throw new Error("Invalid Application view fixture");
+  const request: WorkPlanPrepareRequest = { ...planFixture.requests.prepare,
+    config: workPlanToolStatus.plan.preview?.config ?? null, options: workPlanToolStatus.plan.options,
+    unitIds: workPlanToolStatus.plan.scope.map(unit => unit.unitId),
+    toolSelection: { maxInvocations: 2, entries: [{ handle: tool.handle, tool: { package: { plugin: view.binding.capability.provider.plugin,
+      packageDigest: view.binding.capability.provider.packageDigest }, resourceId: view.resourceId, environmentDigest: view.environmentDigest }, target: tool.target, selections: tool.selections }] } };
+  const response = { ...structuredClone(workPlanToolStatus.plan), tools: { maxInvocations: 2, entries: [tool] } };
+  invoke.mockResolvedValueOnce(response);
+  expect(await workPlanCommands.prepare(request, [view])).toEqual(response);
+  const malformed = [
+    { applicationCapabilities: [] },
+    { applicationCapabilities: [...tool.applicationCapabilities, structuredClone(tool.applicationCapabilities[0])] },
+    { applicationCapabilities: [{ ...tool.applicationCapabilities[0], contributionId: "unselected.call" }] },
+    { applicationCapabilities: [{ ...tool.applicationCapabilities[0], capability: { ...tool.applicationCapabilities[0].capability, effect: "external" } }] },
+    { applicationCapabilities: [{ ...tool.applicationCapabilities[0], capability: { ...tool.applicationCapabilities[0].capability,
+      permissions: [{ kind: "project-service", contract: tool.binding.capability.declaration.contract }] } }] },
+    { execution: { ...tool.execution, applicationScope: null } },
+    ...(native ? [{ applicationCapabilities: [...tool.applicationCapabilities, { ...tool.applicationCapabilities[0], contributionId: "second.call" }] }] : []),
+  ];
+  for (const change of malformed) {
+    invoke.mockResolvedValueOnce({ ...response, tools: { ...response.tools, entries: [{ ...tool, ...change }] } });
+    await expect(workPlanCommands.prepare(request, [view])).rejects.toMatchObject(unknownAck);
+  }
+  const { applicationCapabilities: _roster, ...missingRoster } = tool;
+  expect(validators.validateResponseWorkPlan({ ...response, tools: { ...response.tools, entries: [missingRoster] } })).toBe(false);
 });
 
 async function preparedTool() {

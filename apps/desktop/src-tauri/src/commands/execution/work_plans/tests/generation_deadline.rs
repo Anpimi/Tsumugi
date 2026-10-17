@@ -124,7 +124,7 @@ impl JointFixture {
         let authorization = json!({
             "planId":plan["planId"], "digest":plan["digest"],
             "actionId":ExecutionId::new(), "confirmed":true,
-            "checkerExecutions":keys, "toolExecution":true,
+            "checkerExecutions":keys, "toolExecution":true, "applicationToolExecutions":[],
             "effects":["save-candidate","run-checks","replace-captured-selection","query-tools"],
             "expiresAt":expires_at.to_string()
         });

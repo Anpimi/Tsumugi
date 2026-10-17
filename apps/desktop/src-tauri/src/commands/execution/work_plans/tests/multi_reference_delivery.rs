@@ -285,7 +285,7 @@ fn installed_multi_reference_generation_manual_merge_and_verified_delivery_keep_
     }
     let authorization = json!({"planId":plan["planId"],"digest":plan["digest"],
         "actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),
-        "toolExecution":true,"effects":["save-candidate","query-tools"],"expiresAt":expiry()});
+        "toolExecution":true,"applicationToolExecutions":[],"effects":["save-candidate","query-tools"],"expiresAt":expiry()});
     let grant = fixture
         .call("authorize_work_plan", authorization.clone())
         .unwrap();

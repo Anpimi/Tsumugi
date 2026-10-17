@@ -108,7 +108,7 @@ pub(super) fn derive(
     envelope.settings = serde_json::json!({"tool": {
         "settingsRevision": tool.settings_revision, "resourceId": tool.resource_id,
         "binding": tool.binding, "packageOrigin": tool.package_origin,
-        "componentScope": tool.execution.component_scope, "environment": tool.execution.environment, "environmentDigest": tool.execution.environment.digest().map_err(|_| fail(ErrorCode::InvalidInput, "work-plan-tool-environment"))?,
+        "componentScope": tool.execution.component_scope, "applicationCapabilities": tool.application_capabilities, "environment": tool.execution.environment, "environmentDigest": tool.execution.environment.digest().map_err(|_| fail(ErrorCode::InvalidInput, "work-plan-tool-environment"))?,
         "runtimeOrigin": tool.runtime_origin
     }, "query": {"target": tool.target, "selections": tool.selections}, "toolHandle": tool.handle, "agent": scope.execution_binding()});
     let input = FixedInput::capture(envelope)?;
@@ -263,6 +263,7 @@ impl ProjectStore {
         expires_at_ms: u64,
         human_deadline: Instant,
         consent: PluginConsent,
+        application_leases: std::collections::BTreeMap<ExecutionId, ApplicationExecutionLease>,
     ) -> Result<WorkPlanToolConsent, ExecutionError> {
         let monotonic_now = Instant::now();
         let human_remaining = human_deadline
@@ -303,6 +304,32 @@ impl ProjectStore {
             .tools
             .as_ref()
             .ok_or_else(|| fail(ErrorCode::Unauthorized, "work-plan-tools"))?;
+        tools.validate()?;
+        if application_leases.len() > tools.entries.len()
+            || consent.application_execution != !application_leases.is_empty()
+            || application_leases
+                .keys()
+                .any(|handle| !tools.entries.iter().any(|tool| tool.handle == *handle))
+            || tools
+                .entries
+                .iter()
+                .any(|tool| match tool.execution.component_scope {
+                    tsumugi_plugin_sdk::ComponentScope::Application => {
+                        application_leases.get(&tool.handle).is_none_or(|lease| {
+                            !lease.matches_capabilities(
+                                &tool.execution,
+                                &tool.application_capabilities,
+                            )
+                        })
+                    }
+                    _ => application_leases.contains_key(&tool.handle),
+                })
+        {
+            return Err(fail(
+                ErrorCode::Unauthorized,
+                "work-plan-tool-application-lease",
+            ));
+        }
         Ok(WorkPlanToolConsent {
             project_id: root.project_id,
             lease,
@@ -312,6 +339,7 @@ impl ProjectStore {
             runtime_generation,
             expires_at_ms,
             deadline,
+            application_leases,
         })
     }
 
@@ -333,6 +361,7 @@ impl ProjectStore {
         if fresh.input.digest() != prepared.input.digest() || fresh.tool != prepared.tool {
             return Err(fail(ErrorCode::ResultMismatch, "work-plan-tool-input"));
         }
+        consent.application_lease(&prepared.tool)?;
         Ok(())
     }
 }
@@ -342,6 +371,7 @@ pub(in crate::persistence) fn check_prepared_tool(
     prepared: &PreparedWorkPlanTool,
     consent: &WorkPlanToolConsent,
 ) -> Result<WorkPlanToolDelegation, ExecutionError> {
+    consent.application_lease(&prepared.tool)?;
     let stored = control::load(c, prepared.scope.lease.plan_id)?;
     let tools = stored
         .plan

@@ -231,6 +231,7 @@ pub(super) fn declared_fixture(
     });
     drop(state);
     Fixture {
+        project_path: directory.path().join("project"),
         directory,
         app,
         webview: window,
@@ -489,7 +490,7 @@ fn generation_component_actual_joint_checks_and_tool_consent_preserve_original_s
     assert_eq!(plan["tools"]["entries"][0]["binding"], json!(tool_binding));
     assert_eq!(fixture.bytes(), before);
     assert_eq!(fixture.attempt_count(), count);
-    let authorization = json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":keys,"toolExecution":true,"effects":["save-candidate","run-checks","replace-captured-selection","query-tools"],"expiresAt":expiry()});
+    let authorization = json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":keys,"toolExecution":true,"applicationToolExecutions":[],"effects":["save-candidate","run-checks","replace-captured-selection","query-tools"],"expiresAt":expiry()});
     for wrong in [
         json!([]),
         json!([keys[0]]),

@@ -5,6 +5,7 @@ use serde_json::json;
 fn human_tool_recovery_never_extends_either_original_deadline() {
     let now = now_ms().unwrap();
     let mut intent = HumanToolIntent {
+        application_leases: BTreeMap::new(),
         fingerprint: vec![],
         generation: ExecutionId::new(),
         wall_deadline_ms: now + 600_000,

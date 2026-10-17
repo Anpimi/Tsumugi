@@ -5,7 +5,7 @@ import { ToolQueryError } from "../../../crates/plugin-sdk/javascript/tool-query
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type PluginToolPrepareRequest, type PluginToolPreflight, type PluginToolStartRequest, type StopApplicationInstanceRequest, type PluginToolDiscardRequest, type CancelRequest, type AttemptDetail } from "./executionCommands";
 import type { PluginToolView } from "./pluginCommands";
-import { jsonIdentity, matchesTool as matches } from "./pluginToolChoices";
+import { jsonIdentity, matchesTool as matches, matchesApplicationToolRoster } from "./pluginToolChoices";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionAlive, useSessionReads } from "./SessionReadProvider";
 import { useMcpRetrieval } from "./McpRetrievalSession";
@@ -74,16 +74,8 @@ export function usePluginToolQuerySession(project: ProjectView) {
             || jsonIdentity(value.tool.binding) !== jsonIdentity(intent.view.binding)
             || jsonIdentity(value.tool.environment) !== jsonIdentity(intent.view.environment)
             || value.tool.componentScope !== intent.view.componentScope
-            || (value.tool.componentScope === "application"
-              ? value.applicationCapabilities.length === 0 || value.applicationCapabilities.length > 128
-                || value.tool.environment.profile === "native-application-host-v1" && value.applicationCapabilities.length !== 1
-                || new Set(value.applicationCapabilities.map(member => member.contributionId)).size !== value.applicationCapabilities.length
-                || !value.applicationCapabilities.some(member => member.contributionId === value.tool.binding.capability.provider.contributionId
-                  && jsonIdentity(member.capability) === jsonIdentity(value.tool.binding.capability.declaration))
-                || value.applicationCapabilities.some(member => member.capability.effect !== "read-only"
-                  || member.capability.permissions.some(permission => permission.kind === "project-service"))
-              : value.applicationCapabilities.length !== 0)
-            || (value.tool.componentScope === "application") !== (value.applicationScope !== null) || value.items.length !== intent.request.payloads.length
+            || !matchesApplicationToolRoster(value.tool, value.applicationScope, value.applicationCapabilities)
+            || value.items.length !== intent.request.payloads.length
             || new Set(value.items.map(item => item.itemId)).size !== value.items.length) invalidAcknowledgement("Tool preparation identity changed");
           for (const item of value.items) { const key = jsonIdentity(item.payload), count = expected.get(key) ?? 0; if (!count) invalidAcknowledgement("Tool input coverage changed"); expected.set(key, count - 1); }
           if (current()) { setCapture({ review: value, sequence: intent.sequence }); setConsent(null); setApplicationConsent(null); retain(null); }

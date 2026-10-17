@@ -303,7 +303,7 @@ fn agent_subset_registered_generation_results_require_the_original_child() {
     let plan = child["lease"]["planId"].clone();
     f.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan,
         "expectedGeneration":child["lease"]["generation"],"command":"stop","confirmed":false,"expiresAt":null,
-        "checkerExecutions":[],"toolExecution":false})).unwrap();
+        "checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]})).unwrap();
     assert!(
         f.call("read_work_plan_agent_generation_attempt", page(&reading))
             .is_err()
@@ -426,7 +426,7 @@ fn agent_subset_registered_human_reconciliation_distinguishes_ended_absence_and_
     );
     let accepted = json!({"lease":child["lease"],"taskId":accepted["taskId"],"attemptId":accepted["attemptId"],"inputDigest":accepted["inputDigest"]});
     f.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":child["lease"]["planId"],"expectedGeneration":child["lease"]["generation"],
-        "command":"stop","confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
+        "command":"stop","confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null})).unwrap();
     // The human metadata query needs neither the old scope registry nor a runtime.
     f.app.state::<AppState>().sessions.with(|sessions| {
         sessions.active.as_mut().unwrap().execution.take();

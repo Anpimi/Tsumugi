@@ -215,7 +215,7 @@ fn real_work_plan_tool_broker_scoped(attempt_scope: bool) {
         .as_secs()
         + 3600;
     let authorization = json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,
-        "checkerExecutions":checker_keys(&plan),"toolExecution":true,"effects":["save-candidate","query-tools"],"expiresAt":root_expiry.to_string()});
+        "checkerExecutions":checker_keys(&plan),"toolExecution":true,"applicationToolExecutions":[],"effects":["save-candidate","query-tools"],"expiresAt":root_expiry.to_string()});
     let mut rejected = authorization.clone();
     rejected["toolExecution"] = json!(false);
     assert!(fixture.call("authorize_work_plan", rejected).is_err());
@@ -423,7 +423,7 @@ fn real_work_plan_tool_broker_scoped(attempt_scope: bool) {
     );
     assert_eq!(fixture.attempt_count(), count);
 
-    let paused = fixture.call("control_work_plan", json!({"planId":plan["planId"],"actionId":ExecutionId::new(),"expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
+    let paused = fixture.call("control_work_plan", json!({"planId":plan["planId"],"actionId":ExecutionId::new(),"expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null})).unwrap();
     assert!(
         fixture
             .call("prepare_work_plan_agent_tool", prepare.clone())
@@ -434,7 +434,7 @@ fn real_work_plan_tool_broker_scoped(attempt_scope: bool) {
             .call("start_work_plan_agent_tool", start.clone())
             .is_err()
     );
-    let mut continued = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],"command":"continue","confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()});
+    let mut continued = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],"command":"continue","confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],"expiresAt":expiry()});
     assert!(
         fixture
             .call("control_work_plan", continued.clone())

@@ -15,6 +15,7 @@ import { useWorkbenchCommands, type CommandAvailability, type AiStartCommandPayl
 import { jsonIdentity } from "./pluginToolChoices";
 import { confirmPlanStartView, type WorkPlanContinuation } from "./AiPreparationSession";
 import type { EditorTarget } from "./TranslationWorkbench";
+import { useWorkPlanApplicationTools, WorkPlanApplicationToolDetails, WorkPlanApplicationToolObservation } from "./workPlanApplicationTools";
 
 export type PlanPending = ({ kind: "authorize"; request: WorkPlanAuthorizeRequest }
   | { kind: "control"; request: WorkPlanControlRequest }
@@ -23,10 +24,10 @@ export type PlanPending = ({ kind: "authorize"; request: WorkPlanAuthorizeReques
 export type PlanReady = { receipt: WorkPlanReceiptView; prepared: WorkPlanView; editSeq: number };
 
 export interface PlanControlState {
-  minutes: number; renewConsent: boolean; checkerConsent: string[]; toolConsent: string | null;
+  minutes: number; renewConsent: boolean; checkerConsent: string[]; toolConsent: string | null; applicationToolConsent: string[];
   pending: PlanPending | null; ready: PlanReady | null; missing: boolean;
 }
-const initialControl = (): PlanControlState => ({ minutes: 60, renewConsent: false, checkerConsent: [], toolConsent: null, pending: null, ready: null, missing: false });
+const initialControl = (): PlanControlState => ({ minutes: 60, renewConsent: false, checkerConsent: [], toolConsent: null, applicationToolConsent: [], pending: null, ready: null, missing: false });
 /** The preparation owner calls this hook once, independently of its consumer. */
 export function useWorkPlanControlSession(live: () => boolean) {
   const [state, setState] = useState(initialControl), ref = useRef(state);
@@ -56,7 +57,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   onOpenExtensions?: () => void;
 }) {
   const { t, i18n } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
-  const { minutes, renewConsent, checkerConsent, toolConsent, pending, ready, missing } = session.state;
+  const { minutes, renewConsent, checkerConsent, toolConsent, applicationToolConsent, pending, ready, missing } = session.state;
   const setMinutes = (minutes: number) => session.update(before => ({ ...before, minutes }));
   const setRenewConsent = (renewConsent: boolean) => session.update(before => ({ ...before, renewConsent }));
   const setCheckerConsent = (change: (before: string[]) => string[]) => session.update(before => ({ ...before, checkerConsent: change(before.checkerConsent) }));
@@ -68,6 +69,12 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   useEffect(() => { onBlockedChange(Boolean(pending || ready)); }, [pending, ready, onBlockedChange]);
   const validMinutes = Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440;
   const plan = status?.plan ?? pending?.prepared ?? ready?.prepared ?? prepared;
+  const applicationTools = useWorkPlanApplicationTools(plan?.tools?.entries ?? [], open && !busy);
+  const applicationConsentKey = (group: typeof applicationTools.groups[number]) => jsonIdentity([context.sessionToken, context.projectId,
+    plan?.planId, plan?.digest, status?.lease.generation ?? "prepared", group.basis, group.capabilities, group.tools]) ?? "";
+  const applicationsConfirmed = applicationTools.groups.every(group => applicationToolConsent.includes(applicationConsentKey(group)));
+  const confirmedApplications = () => applicationTools.groups.length && applicationsConfirmed && applicationTools.current()
+    ? applicationTools.groups.map(group => structuredClone(group.basis)) : [];
   const checkerRequired = Boolean(plan?.preview && plan.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted"));
   const checkerConsentKey = (checker: WorkPlanView["checkers"][number]) => JSON.stringify([context.sessionToken, context.projectId,
     plan?.planId, plan?.digest, status?.lease.generation ?? "prepared", checker]);
@@ -145,6 +152,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     if (!status) return;
     const original = structuredClone({ ...context, planId:payload.planId, expectedGeneration:payload.expectedGeneration,
       command:payload.command,confirmed:payload.confirmed,checkerExecutions:payload.checkerExecutions,toolExecution:payload.toolExecution,
+      applicationToolExecutions:payload.applicationToolExecutions,
       expiresAt:payload.command==="continue" ? expiry() : null });
     const prepared = structuredClone(status.plan), capturedSeq=editSeq;
     const actionId = await executionCommands.identity(context);
@@ -194,18 +202,19 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   }
   function startPayload():AiStartCommandPayload|undefined {
     return prepared?.preview&&prepared.attemptId?{kind:"ai-start",planId:prepared.planId,digest:prepared.digest,attemptId:prepared.attemptId,
-      editSeq,minutes:session.current().minutes,confirmed:consent,checkerExecutions:confirmedCheckers(),toolExecution:toolsRequired&&toolsConfirmed,effects:effects()}:undefined;
+      editSeq,minutes:session.current().minutes,confirmed:consent,checkerExecutions:confirmedCheckers(),toolExecution:toolsRequired&&toolsConfirmed,
+      applicationToolExecutions:confirmedApplications(),effects:effects()}:undefined;
   }
   function authorizeAvailability(payload?:AiStartCommandPayload):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;
     return payload&&jsonIdentity(payload)===jsonIdentity(startPayload())&&!!prepared&&!status&&!session.current().ready
-      &&consent&&checkerConfirmed&&toolsConfirmed&&validMinutes&&canFresh()?{enabled:true}:unavailable;
+      &&consent&&checkerConfirmed&&toolsConfirmed&&applicationsConfirmed&&applicationTools.current()&&validMinutes&&canFresh()?{enabled:true}:unavailable;
   }
   async function authorize(payload:AiStartCommandPayload,current:WorkPlanContinuation) {
     if(!prepared)return;
     const capture={prepared,editSeq:payload.editSeq,uncertain:false,receipt:null,
       request:{...context,planId:payload.planId,digest:payload.digest,confirmed:payload.confirmed,checkerExecutions:structuredClone(payload.checkerExecutions),
-        toolExecution:payload.toolExecution,effects:[...payload.effects],expiresAt:expiry()}};
+        toolExecution:payload.toolExecution,applicationToolExecutions:structuredClone(payload.applicationToolExecutions),effects:[...payload.effects],expiresAt:expiry()}};
     const actionId=await executionCommands.identity(context);
     if(!current.fresh())return;
     await mutate({kind:"authorize",...capture,request:{...capture.request,actionId}},current,true);
@@ -213,12 +222,14 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   function controlPayload(command:WorkPlanCommand):AiPlanControlCommandPayload|undefined {
     return status?{kind:"ai-plan-control",command,planId:status.lease.planId,expectedGeneration:status.lease.generation,
       minutes:command==="continue"?session.current().minutes:null,confirmed:command==="continue"&&renewConsent,
-      checkerExecutions:command==="continue"?confirmedCheckers():[],toolExecution:command==="continue"&&toolsRequired&&toolsConfirmed}:undefined;
+      checkerExecutions:command==="continue"?confirmedCheckers():[],toolExecution:command==="continue"&&toolsRequired&&toolsConfirmed,
+      applicationToolExecutions:command==="continue"?confirmedApplications():[]}:undefined;
   }
   function controlAvailability(payload?:AiPlanControlCommandPayload):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;
     if(!payload||!status||!statusCurrent()||jsonIdentity(payload)!==jsonIdentity(controlPayload(payload.command)))return unavailable;
-    if(payload.command==="continue")return !session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent&&checkerConfirmed&&toolsConfirmed&&validMinutes?{enabled:true}:unavailable;
+    if(payload.command==="continue")return !session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent&&checkerConfirmed&&toolsConfirmed
+      &&applicationsConfirmed&&applicationTools.current()&&validMinutes?{enabled:true}:unavailable;
     return (payload.command==="pause"?status.state==="active":payload.command==="stop"?status.state!=="stopped":status.state!=="taken-over"&&status.state!=="stopped")?{enabled:true}:unavailable;
   }
   function readyPayload():AiPlanStartCommandPayload|undefined {
@@ -321,8 +332,23 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
           <h4>{tool.binding.declaration.title} · {tool.binding.capability.provider.plugin.id} {tool.binding.capability.provider.plugin.version}</h4>
           <p>{tool.binding.declaration.description}</p><PluginPermissions permissions={tool.binding.capability.declaration.permissions} />
           <details><summary>{t("sourcePlugin.fixedDetails")}</summary><pre className="ai-text">{JSON.stringify({ binding: tool.binding, execution: tool.execution,
-            packageOrigin: tool.packageOrigin, runtimeOrigin: tool.runtimeOrigin, target: tool.target, selections: tool.selections }, null, 2)}</pre></details>
+            applicationCapabilities: tool.applicationCapabilities, packageOrigin: tool.packageOrigin, runtimeOrigin: tool.runtimeOrigin, target: tool.target, selections: tool.selections }, null, 2)}</pre></details>
         </article>)}
+        {applicationTools.groups.length ? <section aria-label={t("toolQuery.applicationTitle")}>
+          {applicationTools.groups.map(group => <fieldset key={jsonIdentity(group.basis)}>
+            <legend>{t("ai.tools.applicationInstance", { name: group.tools[0].binding.declaration.title })}</legend>
+            <WorkPlanApplicationToolDetails group={group} />
+            {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
+              <input type="checkbox" checked={applicationToolConsent.includes(applicationConsentKey(group))}
+                disabled={blocked || Boolean(ready) || !applicationTools.current()} onChange={event => {
+                  const key = applicationConsentKey(group), checked = event.target.checked;
+                  session.update(before => ({ ...before, applicationToolConsent: checked
+                    ? [...before.applicationToolConsent.filter(value => value !== key), key]
+                    : before.applicationToolConsent.filter(value => value !== key) }));
+                }} />{t("ai.tools.applicationConsent")}</label> : null}
+          </fieldset>)}
+          <WorkPlanApplicationToolObservation observation={applicationTools.observation} />
+        </section> : null}
         <p>{t("sourcePlugin.unsandboxed")}</p>
         {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
           <input type="checkbox" checked={toolKey !== null && toolConsent === toolKey} disabled={blocked || Boolean(ready)}

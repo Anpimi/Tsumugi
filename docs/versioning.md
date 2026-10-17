@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Prepared WorkPlan tools can now retain an exact independently authorized
+Application instance and its complete read-only capability roster. The original
+tool grant and service association preserve their separate authority; required
+Application dependencies finish the real activation handshake before a caller
+starts. WorkPlan tool specs require `applicationCapabilities`, and Desktop
+authorization/continuation requests require exact `applicationToolExecutions`.
+These persisted semantics advance the current-only project format to schema 51.
+Schema 50 and earlier directories are preserved and refused without migration
+or reset. Process3, WorkPlan3 and the existing SDK component input remain
+unchanged. This stays in the same undistributed application `0.2.0-alpha.1` /
+SDK `0.1.0-alpha.1` batch, with synchronized bilingual Unreleased entries and no
+additional version bump, dependency change or replacement SDK archive.
+
 Prepared WorkPlan tool services add an explicit generation-component input
 contract and Desktop preparation fields. The old generation-service input and
 receipt keep their original meanings; Process3 and WorkPlan3 remain unchanged.

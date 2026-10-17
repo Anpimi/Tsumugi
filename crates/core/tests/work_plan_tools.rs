@@ -1,4 +1,6 @@
 //! Broker authority and ledger evidence; the separate Host test executes the worker.
+#[path = "work_plan_tools/application.rs"]
+mod application;
 #[path = "work_plan_tools/guidance.rs"]
 mod guidance;
 #[path = "work_plan_tools/subsets.rs"]
@@ -30,6 +32,7 @@ fn tool() -> WorkPlanToolSpec {
     let binding = declaration.bind(&manifest, &"a".repeat(64)).unwrap();
     WorkPlanToolSpec {
         handle: ExecutionId::new(),
+        application_capabilities: vec![],
         binding: binding.clone(),
         resource_id: "query-tool".into(),
         settings_revision: 1u64.into(),
@@ -99,6 +102,9 @@ impl Runner for UncalledPlugin {
     fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
         Some(&self.0.execution.environment)
     }
+    fn plugin_application_scope(&self) -> Option<&ApplicationScopeBasis> {
+        self.0.execution.application_scope.as_ref()
+    }
     fn run(
         &self,
         _: DispatchRequest,
@@ -135,6 +141,14 @@ fn fixture_with_tool_runners(
     limit: u32,
     tools: Vec<WorkPlanToolSpec>,
     runners: Vec<Arc<dyn Runner>>,
+) -> Fixture {
+    fixture_with_tool_runners_and_leases(limit, tools, runners, Default::default())
+}
+fn fixture_with_tool_runners_and_leases(
+    limit: u32,
+    tools: Vec<WorkPlanToolSpec>,
+    runners: Vec<Arc<dyn Runner>>,
+    application_leases: std::collections::BTreeMap<ExecutionId, ApplicationExecutionLease>,
 ) -> Fixture {
     let (temp, mut store, rows) = support::source_fixture();
     let units = rows
@@ -183,8 +197,9 @@ fn fixture_with_tool_runners(
             std::time::Instant::now() + std::time::Duration::from_secs(60),
             PluginConsent {
                 unsandboxed_execution: true,
-                application_execution: false,
+                application_execution: !application_leases.is_empty(),
             },
+            application_leases,
         )
         .unwrap();
     store
@@ -578,7 +593,8 @@ fn consent_preserves_original_monotonic_deadline_and_rejects_scope_expansion() {
                     PluginConsent {
                         unsandboxed_execution: true,
                         application_execution: false
-                    }
+                    },
+                    Default::default(),
                 )
                 .unwrap_err()
                 .code,
@@ -596,7 +612,8 @@ fn consent_preserves_original_monotonic_deadline_and_rejects_scope_expansion() {
                     PluginConsent {
                         unsandboxed_execution: true,
                         application_execution: false
-                    }
+                    },
+                    Default::default(),
                 )
                 .unwrap_err()
                 .code,
@@ -614,6 +631,7 @@ fn consent_preserves_original_monotonic_deadline_and_rejects_scope_expansion() {
                 unsandboxed_execution: true,
                 application_execution: false,
             },
+            Default::default(),
         )
         .unwrap();
     f.runtime
@@ -931,7 +949,8 @@ fn delegated_tool_derives_source_and_requires_independent_process_consent() {
                 PluginConsent {
                     unsandboxed_execution: false,
                     application_execution: false
-                }
+                },
+                Default::default(),
             )
             .unwrap_err()
             .code,
@@ -1078,6 +1097,7 @@ fn all_tool_items_share_original_limit_across_continue_and_root_cancellation() {
                 unsandboxed_execution: true,
                 application_execution: false,
             },
+            Default::default(),
         )
         .unwrap();
     let second = f
@@ -1252,7 +1272,7 @@ fn reopening_refuses_a_delegated_grant_without_its_original_attempt() {
 }
 
 #[test]
-fn reopening_refuses_application_lifetime_consent_on_a_delegated_grant() {
+fn reopening_refuses_application_lifetime_consent_on_a_project_delegated_grant() {
     let mut f = fixture(1);
     let prepared = f
         .store
@@ -1462,6 +1482,7 @@ fn crash_after_atomic_tool_commit_preserves_input_without_rearming_permission() 
                 unsandboxed_execution: true,
                 application_execution: false,
             },
+            Default::default(),
         )
         .unwrap();
     let proposal = store
@@ -1663,7 +1684,7 @@ fn tool_plan_requires_its_complete_execution_binding_without_scope_defaults() {
 }
 
 #[test]
-fn agent_tool_selection_rejects_a_structurally_valid_application_instance() {
+fn agent_tool_selection_requires_the_application_instances_captured_roster() {
     let mut entry = tool();
     entry.execution.component_scope = sdk::ComponentScope::Application;
     entry.execution.application_scope = Some(ApplicationScopeBasis {
@@ -1679,7 +1700,7 @@ fn agent_tool_selection_rejects_a_structurally_valid_application_instance() {
         .validate()
         .unwrap_err()
         .stage,
-        "plugin-composition-scope"
+        "work-plan-tool-application"
     );
 }
 
