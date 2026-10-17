@@ -195,8 +195,9 @@ impl FixedInput {
                 | crate::content::TRANSLATION_EXTRACTION_OPERATION
                 | TRANSLATION_CHECK_OPERATION
                 | REVIEW_CHECK_OPERATION
-        ) || (declaration.input_schema
+        ) || ((declaration.input_schema
             == sdk::generation_service_input_contract()
+            || declaration.input_schema == sdk::generation_component_input_contract())
             && declaration.output_schema == sdk::generation_service_receipt_contract()
             && declaration.error_schema == sdk::generation_service_error_contract());
         // These contracts return strict JSON with bounded integer/string fields.

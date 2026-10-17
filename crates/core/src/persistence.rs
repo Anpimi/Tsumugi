@@ -33,8 +33,9 @@ mod translation;
 pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler};
 pub use application::{
     CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
-    PreparedWorkPlanServiceGeneration, WorkPlanServiceCall, WorkPlanServiceCallIdentity,
-    WorkPlanServiceOrigin, WorkPlanServiceReceipt,
+    PreparedWorkPlanServiceGeneration, PreparedWorkPlanServiceTool, WorkPlanServiceCall,
+    WorkPlanServiceCallIdentity, WorkPlanServiceOrigin, WorkPlanServiceReceipt,
+    WorkPlanToolServiceReceipt,
 };
 pub use arena::{
     ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
@@ -87,10 +88,10 @@ pub use review::{
     ReviewCheckEvidence, ReviewCheckOrigin, ReviewCheckOriginEvidence, ReviewCheckOutcome,
     ReviewCheckPlan, ReviewChecker, ReviewCheckerKey, ReviewCheckerKind, ReviewDecision,
     ReviewDecisionKind, ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewFindingDecision,
-    ReviewFindingDisposition, ReviewFindingRepair, ReviewFindingView, ReviewFindingWrite, ReviewHistoryPage,
-    ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewRepairStatus, ReviewScopeCapture,
-    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
-    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
+    ReviewFindingDisposition, ReviewFindingRepair, ReviewFindingView, ReviewFindingWrite,
+    ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewRepairStatus,
+    ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision,
+    ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use translation::{
     CandidateDecision, CandidateDecisionWrite, CandidateDisposition, SaveTranslationRevision,
@@ -103,7 +104,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 49;
+pub(crate) const SCHEMA_VERSION: i64 = 50;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,

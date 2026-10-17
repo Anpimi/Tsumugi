@@ -12,7 +12,7 @@ fn sql(_: rusqlite::Error) -> ExecutionError {
     fail(ErrorCode::StorageFailed, "work-plan-tool-storage")
 }
 
-fn derive(
+pub(super) fn derive(
     plan: &WorkPlan,
     scope: &WorkPlanAgentScope,
     request: &AgentToolRequest,

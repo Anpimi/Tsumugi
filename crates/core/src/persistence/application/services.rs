@@ -46,11 +46,11 @@ pub struct WorkPlanServiceCall {
     pub input: sdk::EncodedPayload,
 }
 impl WorkPlanServiceCall {
-    fn validate(
+    fn validate_request(
         &self,
         binding: &sdk::ServiceBinding,
         context: &sdk::InvocationContext,
-    ) -> Result<AgentGenerationRequest, ExecutionError> {
+    ) -> Result<(), ExecutionError> {
         sdk::ServiceRequest {
             call_id: self.call_id.clone(),
             handle_id: self.handle_id.clone(),
@@ -58,7 +58,14 @@ impl WorkPlanServiceCall {
             input: self.input.clone(),
         }
         .validate_against(binding, context)
-        .map_err(|_| fail(ErrorCode::InvalidInput, "service-call-input"))?;
+        .map_err(|_| fail(ErrorCode::InvalidInput, "service-call-input"))
+    }
+    fn validate(
+        &self,
+        binding: &sdk::ServiceBinding,
+        context: &sdk::InvocationContext,
+    ) -> Result<AgentGenerationRequest, ExecutionError> {
+        self.validate_request(binding, context)?;
         sdk::validate_generation_service_binding(binding)
             .map_err(|_| fail(ErrorCode::InvalidInput, "service-generation-contract"))?;
         let generation = sdk::parse_generation_service_input(self.input.utf8.as_bytes())
@@ -87,9 +94,32 @@ pub struct WorkPlanServiceReceipt {
     pub input_digest: String,
 }
 
+/// A query acknowledgement is separate from the generation service receipt.
+/// Both grants identify original persisted facts, never renewable authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanToolServiceReceipt {
+    pub identity: WorkPlanServiceCallIdentity,
+    pub origin_grant_id: ExecutionId,
+    pub grant_id: ExecutionId,
+    pub lease: AutomationLease,
+    pub parent_task: ExecutionId,
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub input_digest: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ServiceKind {
+    Generation,
+    PluginTool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct OriginRecord {
+    kind: ServiceKind,
     project_id: ExecutionId,
     lease: AutomationLease,
     parent_task: ExecutionId,
@@ -123,7 +153,14 @@ impl WorkPlanServiceOrigin {
         &self,
         call: &WorkPlanServiceCall,
     ) -> Result<WorkPlanServiceCallIdentity, ExecutionError> {
-        call.validate(&self.record.service, &self.record.invocation.context)?;
+        match self.record.kind {
+            ServiceKind::Generation => {
+                call.validate(&self.record.service, &self.record.invocation.context)?;
+            }
+            ServiceKind::PluginTool => {
+                call.validate_request(&self.record.service, &self.record.invocation.context)?;
+            }
+        }
         Ok(WorkPlanServiceCallIdentity {
             outer_attempt_id: ExecutionId::parse(&self.record.invocation.context.attempt_id)?,
             outer_item_id: ExecutionId::parse(&self.record.invocation.context.item_id)?,
@@ -131,6 +168,30 @@ impl WorkPlanServiceOrigin {
             handle_id: call.handle_id.clone(),
             call_id: call.call_id.clone(),
         })
+    }
+}
+
+/// One immutable, single-unit tool proposal associated with its original caller.
+/// Only the existing tool consent and enqueue transaction can admit this input.
+#[derive(Clone, Debug)]
+pub struct PreparedWorkPlanServiceTool {
+    pub(crate) origin: WorkPlanServiceOrigin,
+    pub(crate) call: WorkPlanServiceCall,
+    pub(crate) prepared: PreparedWorkPlanTool,
+}
+impl PreparedWorkPlanServiceTool {
+    pub fn input(&self) -> &FixedInput {
+        self.prepared.input()
+    }
+    pub fn tool(&self) -> &WorkPlanToolSpec {
+        self.prepared.tool()
+    }
+    pub fn identity(&self) -> Result<WorkPlanServiceCallIdentity, ExecutionError> {
+        self.origin.identity(&self.call)
+    }
+    pub fn original_caller_package(&self) -> (&sdk::PluginIdentity, &str) {
+        let package = self.origin.guard.permit.original_package();
+        (package.plugin(), package.digest())
     }
 }
 
@@ -208,7 +269,7 @@ fn validate_origin(c: &Connection, record: &OriginRecord) -> Result<FixedInput, 
     {
         return Err(corrupt());
     }
-    check_permission(&outer, &record.service)?;
+    check_origin_permission(&outer, record)?;
     Ok(outer)
 }
 
@@ -250,20 +311,55 @@ fn load_call(
     }
     let record: OriginRecord = codec::decode(&origin, MAX_INPUT_BYTES)?;
     let call: WorkPlanServiceCall = codec::decode(&call, MAX_INPUT_BYTES)?;
-    let generation = call.validate(&record.service, &record.invocation.context)?;
-    let outer = validate_origin(c, &record)?;
-    check_permission(&outer, &record.service)?;
+    validate_origin(c, &record)?;
     let input = super::super::ledger::load_input(c, ExecutionId::parse(&child)?)?;
     let plan = control::load(c, record.lease.plan_id)?.plan;
-    let expected = derive_historical(&plan, &record, &generation)?;
-    if input.bytes() != expected.bytes()
-        || grant_id != record.grant_id.to_string()
+    if grant_id != record.grant_id.to_string()
         || identity.outer_attempt_id.to_string() != record.invocation.context.attempt_id
         || identity.outer_item_id.to_string() != record.invocation.context.item_id
         || identity.outer_dispatch_id.to_string() != record.invocation.context.dispatch_id
         || identity.handle_id != call.handle_id
         || identity.call_id != call.call_id
     {
+        return Err(corrupt());
+    }
+    if record.kind == ServiceKind::PluginTool {
+        let bytes: Vec<u8> = c
+            .query_row(
+                "SELECT delegation FROM application_executions WHERE attempt_id=?1 AND kind='tool'",
+                [&child],
+                |row| row.get(0),
+            )
+            .map_err(sql)?;
+        let delegation: WorkPlanToolDelegation = codec::decode(&bytes, MAX_AGENT_DELEGATION_BYTES)?;
+        if delegation.lease != record.lease
+            || delegation.root_task != record.parent_task
+            || delegation.caller_id != record.caller_id
+            || delegation.delegation.is_some()
+        {
+            return Err(corrupt());
+        }
+        super::tools::validate_tool_input(c, &input, &delegation)?;
+        let prepared = super::tools::derive(
+            &plan,
+            &historical_scope(&record),
+            &AgentToolRequest {
+                task_id: input.envelope().task_id,
+                attempt_id: input.envelope().attempt_id,
+                tool_handle: delegation.tool_handle,
+                unit_ids: input
+                    .envelope()
+                    .items
+                    .iter()
+                    .map(|item| ExecutionId::parse(&item.scope.id))
+                    .collect::<Result<_, _>>()?,
+            },
+        )?;
+        check_tool_call(&record, &call, &prepared)?;
+        return Ok(Some((input, record, call, origin_digest)));
+    }
+    let generation = call.validate(&record.service, &record.invocation.context)?;
+    if input.bytes() != derive_historical(&plan, &record, &generation)?.bytes() {
         return Err(corrupt());
     }
     let parent: Option<String> = c
@@ -311,19 +407,128 @@ fn check_permission(
     Ok(())
 }
 
-fn derive_historical(
-    plan: &WorkPlan,
-    origin: &OriginRecord,
-    request: &AgentGenerationRequest,
-) -> Result<FixedInput, ExecutionError> {
-    let scope = WorkPlanAgentScope {
+fn project_javascript(binding: &PluginExecutionBinding) -> bool {
+    binding.component_scope == sdk::ComponentScope::Project
+        && binding.application_scope.is_none()
+        && matches!(
+            &binding.environment,
+            sdk::ExecutionEnvironmentDescriptor::Captured(_)
+        )
+}
+
+fn check_origin_permission(
+    outer: &FixedInput,
+    record: &OriginRecord,
+) -> Result<(), ExecutionError> {
+    if record.kind == ServiceKind::Generation {
+        return check_permission(outer, &record.service);
+    }
+    let binding = outer.envelope().plugin.as_ref().ok_or_else(corrupt)?;
+    let capability = &binding.capability.declaration;
+    if !project_javascript(binding)
+        || capability.effect != sdk::EffectKind::External
+        || record.service.effect != sdk::EffectKind::ReadOnly
+        || capability.input_schema != sdk::generation_component_input_contract()
+        || capability.output_schema != sdk::generation_service_receipt_contract()
+        || capability.error_schema != sdk::generation_service_error_contract()
+        || !capability.permissions.iter().any(|permission| matches!(permission,
+            sdk::PermissionRequest::ProjectService { contract } if contract == &record.service.contract))
+    {
+        return Err(fail(ErrorCode::Unauthorized, "service-tool-permission"));
+    }
+    sdk::parse_generation_component_input(record.invocation.input.utf8.as_bytes())
+        .map_err(|_| fail(ErrorCode::InvalidInput, "service-component-input"))?;
+    Ok(())
+}
+
+fn check_tool_call(
+    record: &OriginRecord,
+    call: &WorkPlanServiceCall,
+    prepared: &PreparedWorkPlanTool,
+) -> Result<(), ExecutionError> {
+    if record.kind != ServiceKind::PluginTool {
+        return Err(fail(ErrorCode::Unauthorized, "service-tool-kind"));
+    }
+    call.validate_request(&record.service, &record.invocation.context)?;
+    let binding = prepared
+        .input
+        .envelope()
+        .plugin
+        .as_ref()
+        .ok_or_else(corrupt)?;
+    let declaration = &binding.capability.declaration;
+    let service = &record.service;
+    let component = sdk::parse_generation_component_input(record.invocation.input.utf8.as_bytes())
+        .map_err(|_| fail(ErrorCode::InvalidInput, "service-component-input"))?;
+    let frozen = component
+        .prepared_tools
+        .iter()
+        .find(|tool| tool.handle_id == call.handle_id && tool.call_id == call.call_id)
+        .ok_or_else(|| fail(ErrorCode::Unauthorized, "service-tool-selection"))?;
+    if !project_javascript(binding)
+        || declaration.effect != sdk::EffectKind::ReadOnly
+        || service.contract != declaration.contract
+        || service.input_schema != declaration.input_schema
+        || service.output_schema != declaration.output_schema
+        || service.error_schema != declaration.error_schema
+        || service.limits.max_input_bytes != declaration.limits.max_input_bytes
+        || service.limits.max_output_bytes != declaration.limits.max_output_bytes
+        || service.limits.concurrency != 1
+        || service.limits.concurrency > declaration.limits.concurrency
+        || service.limits.timeout_ms == 0
+        || service.limits.timeout_ms > declaration.limits.timeout_ms
+        || service.configuration_digest != prepared.input.digest()
+        || service.activation_generation as u64 != record.lease.generation.get()
+        || service.provider_id != format!("prepared-tool.{}", prepared.tool.handle)
+        || call.call_id != prepared.input.envelope().attempt_id.to_string()
+        || prepared.scope.project_id != record.project_id
+        || prepared.scope.lease != record.lease
+        || prepared.scope.parent_task != record.parent_task
+        || prepared.scope.caller_id != record.caller_id
+        || prepared.scope.delegation.is_some()
+        || prepared.request.unit_ids.len() != 1
+        || prepared.input.envelope().items.len() != 1
+        || !component
+            .generation
+            .unit_ids
+            .contains(&prepared.request.unit_ids[0].to_string())
+        || frozen.tool_handle != prepared.tool.handle.to_string()
+        || frozen.input != call.input
+    {
+        return Err(fail(ErrorCode::ResultMismatch, "service-tool-input"));
+    }
+    let payload = sdk::EncodedPayload::capture(
+        declaration.input_schema.clone(),
+        String::from_utf8(codec::encode(
+            &prepared.input.envelope().items[0].payload,
+            declaration.limits.max_input_bytes as usize,
+        )?)
+        .map_err(|_| fail(ErrorCode::InvalidInput, "service-tool-input"))?,
+    )
+    .map_err(|_| fail(ErrorCode::InvalidInput, "service-tool-input"))?;
+    if payload != call.input {
+        return Err(fail(ErrorCode::ResultMismatch, "service-tool-input"));
+    }
+    Ok(())
+}
+
+fn historical_scope(origin: &OriginRecord) -> WorkPlanAgentScope {
+    WorkPlanAgentScope {
         project_id: origin.project_id,
         lease: origin.lease,
         parent_task: origin.parent_task,
         caller_id: origin.caller_id,
         store_epoch: String::new(),
         delegation: None,
-    };
+    }
+}
+
+fn derive_historical(
+    plan: &WorkPlan,
+    origin: &OriginRecord,
+    request: &AgentGenerationRequest,
+) -> Result<FixedInput, ExecutionError> {
+    let scope = historical_scope(origin);
     if plan.execution_input()?.task_id != origin.parent_task
         || plan.execution_input()?.project_id != origin.project_id
     {
@@ -432,6 +637,53 @@ impl ProjectStore {
         cancellation: &Cancellation,
         settings_revocation: &Cancellation,
     ) -> Result<WorkPlanServiceOrigin, ExecutionError> {
+        self.capture_service_origin(
+            scope,
+            dispatch,
+            invocation,
+            service,
+            host_deadline,
+            cancellation,
+            settings_revocation,
+            ServiceKind::Generation,
+        )
+    }
+
+    /// Capture the caller of a previously prepared read-only tool. This does
+    /// not grant the tool process consent or create an execution attempt.
+    pub fn capture_work_plan_tool_service_origin(
+        &self,
+        scope: &WorkPlanAgentScope,
+        dispatch: &DispatchRequest,
+        invocation: &sdk::InvocationRequest,
+        service: &sdk::ServiceBinding,
+        host_deadline: Instant,
+        cancellation: &Cancellation,
+        settings_revocation: &Cancellation,
+    ) -> Result<WorkPlanServiceOrigin, ExecutionError> {
+        self.capture_service_origin(
+            scope,
+            dispatch,
+            invocation,
+            service,
+            host_deadline,
+            cancellation,
+            settings_revocation,
+            ServiceKind::PluginTool,
+        )
+    }
+
+    fn capture_service_origin(
+        &self,
+        scope: &WorkPlanAgentScope,
+        dispatch: &DispatchRequest,
+        invocation: &sdk::InvocationRequest,
+        service: &sdk::ServiceBinding,
+        host_deadline: Instant,
+        cancellation: &Cancellation,
+        settings_revocation: &Cancellation,
+        kind: ServiceKind,
+    ) -> Result<WorkPlanServiceOrigin, ExecutionError> {
         self.check_work_plan_agent_scope(scope)?;
         if scope.delegation().is_some() {
             return Err(fail(ErrorCode::Unauthorized, "service-agent-subset"));
@@ -457,9 +709,11 @@ impl ProjectStore {
         {
             return Err(fail(ErrorCode::Unauthorized, "service-origin-dispatch"));
         }
-        check_permission(&dispatch.input, service)?;
-        sdk::validate_generation_service_binding(service)
-            .map_err(|_| fail(ErrorCode::InvalidInput, "service-generation-contract"))?;
+        if kind == ServiceKind::Generation {
+            check_permission(&dispatch.input, service)?;
+            sdk::validate_generation_service_binding(service)
+                .map_err(|_| fail(ErrorCode::InvalidInput, "service-generation-contract"))?;
+        }
         let deadline = original
             .instant
             .min(host_deadline)
@@ -471,6 +725,7 @@ impl ProjectStore {
         let narrowed = u64::try_from(narrowed)
             .map_err(|_| fail(ErrorCode::InvalidInput, "service-origin-deadline"))?;
         let record = OriginRecord {
+            kind,
             project_id: scope.project_id(),
             lease: scope.lease(),
             parent_task: scope.parent_task(),
@@ -498,6 +753,7 @@ impl ProjectStore {
                 revoked: Cancellation::default(),
                 deadline,
                 digest,
+                retain_until_terminal: kind == ServiceKind::PluginTool,
             }),
         };
         let c = self
@@ -512,6 +768,9 @@ impl ProjectStore {
         origin: &WorkPlanServiceOrigin,
         call: &WorkPlanServiceCall,
     ) -> Result<PreparedWorkPlanServiceGeneration, ExecutionError> {
+        if origin.record.kind != ServiceKind::Generation {
+            return Err(fail(ErrorCode::Unauthorized, "service-generation-kind"));
+        }
         let generation =
             call.validate(&origin.record.service, &origin.record.invocation.context)?;
         check_permission(&origin.outer, &origin.record.service)?;
@@ -583,7 +842,7 @@ impl ProjectStore {
         super::super::review::read_snapshot(c, |_| {
             load_call(c, identity)?
                 .map(|(input, origin, original, _)| {
-                    if original != *call {
+                    if original != *call || origin.kind != ServiceKind::Generation {
                         return Err(fail(ErrorCode::ResultMismatch, "service-call-identity"));
                     }
                     Ok(receipt(identity.clone(), &input, &origin))
@@ -592,12 +851,164 @@ impl ProjectStore {
         })
     }
 
+    pub fn prepare_work_plan_service_tool(
+        &self,
+        origin: &WorkPlanServiceOrigin,
+        call: &WorkPlanServiceCall,
+        prepared: &PreparedWorkPlanTool,
+    ) -> Result<PreparedWorkPlanServiceTool, ExecutionError> {
+        check_tool_call(&origin.record, call, prepared)?;
+        let c = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "service-call-storage"))?;
+        super::super::review::read_snapshot(c, |_| {
+            if let Some((input, record, original, _)) = load_call(c, &origin.identity(call)?)? {
+                if record != origin.record
+                    || original != *call
+                    || input.bytes() != prepared.input.bytes()
+                {
+                    return Err(fail(ErrorCode::ResultMismatch, "service-call-identity"));
+                }
+            } else {
+                check_origin(c, origin, &self.plugin_authority)?;
+                self.check_work_plan_agent_scope(&prepared.scope)?;
+                let fresh =
+                    self.prepare_work_plan_agent_tool(&prepared.scope, &prepared.request)?;
+                if fresh.input.bytes() != prepared.input.bytes() || fresh.tool != prepared.tool {
+                    return Err(fail(ErrorCode::ResultMismatch, "service-tool-input"));
+                }
+            }
+            Ok(PreparedWorkPlanServiceTool {
+                origin: origin.clone(),
+                call: call.clone(),
+                prepared: prepared.clone(),
+            })
+        })
+    }
+
+    /// A historical query ACK never restores either independent process grant.
+    pub fn work_plan_tool_service_receipt(
+        &self,
+        identity: &WorkPlanServiceCallIdentity,
+        call: &WorkPlanServiceCall,
+    ) -> Result<Option<WorkPlanToolServiceReceipt>, ExecutionError> {
+        codec::encode(call, MAX_INPUT_BYTES)?;
+        if call.call_id != identity.call_id || call.handle_id != identity.handle_id {
+            return Err(fail(ErrorCode::ResultMismatch, "service-call-identity"));
+        }
+        let c = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "service-call-storage"))?;
+        super::super::review::read_snapshot(c, |_| {
+            load_call(c, identity)?
+                .map(|(input, origin, original, _)| {
+                    if original != *call || origin.kind != ServiceKind::PluginTool {
+                        return Err(fail(ErrorCode::ResultMismatch, "service-call-identity"));
+                    }
+                    let grant: String = c
+                        .query_row(
+                            "SELECT grant_id FROM plugin_execution_grants WHERE attempt_id=?1",
+                            [input.envelope().attempt_id.to_string()],
+                            |row| row.get(0),
+                        )
+                        .map_err(sql)?;
+                    Ok(WorkPlanToolServiceReceipt {
+                        identity: identity.clone(),
+                        origin_grant_id: origin.grant_id,
+                        grant_id: ExecutionId::parse(&grant)?,
+                        lease: origin.lease,
+                        parent_task: origin.parent_task,
+                        task_id: input.envelope().task_id,
+                        attempt_id: input.envelope().attempt_id,
+                        input_digest: input.digest().into(),
+                    })
+                })
+                .transpose()
+        })
+    }
+
+    pub fn check_prepared_work_plan_service_tool(
+        &self,
+        prepared: &PreparedWorkPlanServiceTool,
+    ) -> Result<(), ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "service-call-storage"))?;
+        super::super::review::read_snapshot(c, |_| {
+            check_prepared_tool(c, prepared, &self.plugin_authority)?;
+            if self
+                .execution_input_if_present(prepared.input().envelope().attempt_id)?
+                .is_some()
+            {
+                return Err(fail(ErrorCode::Unauthorized, "service-child-enqueued"));
+            }
+            self.check_work_plan_agent_scope(&prepared.prepared.scope)
+        })
+    }
+
+    pub(crate) fn release_terminal_tool_service_origin(
+        &mut self,
+        input: &FixedInput,
+    ) -> Result<(), ExecutionError> {
+        if self
+            .plugin_authority
+            .retained_service_origin(input.envelope().attempt_id)?
+            .is_none()
+        {
+            return Ok(());
+        }
+        let c = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "service-call-storage"))?;
+        if load_input_origin(c, input)?
+            .is_some_and(|(origin, _)| origin.kind == ServiceKind::PluginTool)
+        {
+            if self
+                .execution_attempt(input.envelope().attempt_id, false)?
+                .items
+                .iter()
+                .any(|item| {
+                    matches!(
+                        item.execution,
+                        ExecutionState::Queued | ExecutionState::Dispatched
+                    )
+                })
+            {
+                return Ok(());
+            }
+            let (grant, generation): (String, String) = c
+                .query_row(
+                    "SELECT grant_id,generation FROM plugin_execution_grants WHERE attempt_id=?1",
+                    [input.envelope().attempt_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(sql)?;
+            self.revoke_plugin_grant(
+                ExecutionId::parse(&generation)?,
+                ExecutionId::parse(&grant)?,
+            )?;
+            self.plugin_authority
+                .release_service_origin(input.envelope().attempt_id)?;
+        }
+        Ok(())
+    }
+
     /// Call after the child execution and its authorized effects are terminal.
     /// Channel closure alone is not a terminal state for a durable child.
     pub fn release_work_plan_service_origin(
         &self,
         attempt: ExecutionId,
     ) -> Result<(), ExecutionError> {
+        if let Some(input) = self.execution_input_if_present(attempt)? {
+            let c = self
+                .connection()
+                .map_err(|_| fail(ErrorCode::StorageFailed, "service-call-storage"))?;
+            if load_input_origin(c, &input)?
+                .is_some_and(|(record, _)| record.kind == ServiceKind::PluginTool)
+            {
+                return Err(fail(ErrorCode::Unauthorized, "service-tool-lifecycle"));
+            }
+        }
         self.plugin_authority.release_service_origin(attempt)
     }
 }
@@ -607,6 +1018,9 @@ pub(in crate::persistence) fn check_prepared(
     prepared: &PreparedWorkPlanServiceGeneration,
     authority: &PluginAuthority,
 ) -> Result<(), ExecutionError> {
+    if prepared.origin.record.kind != ServiceKind::Generation {
+        return Err(fail(ErrorCode::Unauthorized, "service-generation-kind"));
+    }
     check_origin(c, &prepared.origin, authority)?;
     check_permission(&prepared.origin.outer, &prepared.origin.record.service)?;
     let generation = prepared.call.validate(
@@ -622,21 +1036,54 @@ pub(in crate::persistence) fn check_prepared(
     control::check_enqueue(c, &prepared.input, Some(prepared.parent_task()))
 }
 
+pub(in crate::persistence) fn check_prepared_tool(
+    c: &Connection,
+    prepared: &PreparedWorkPlanServiceTool,
+    authority: &PluginAuthority,
+) -> Result<(), ExecutionError> {
+    check_origin(c, &prepared.origin, authority)?;
+    check_tool_call(&prepared.origin.record, &prepared.call, &prepared.prepared)?;
+    let plan = control::load(c, prepared.origin.record.lease.plan_id)?.plan;
+    let expected =
+        super::tools::derive(&plan, &prepared.prepared.scope, &prepared.prepared.request)?;
+    if expected.input.bytes() != prepared.input().bytes() || expected.tool != prepared.prepared.tool
+    {
+        return Err(fail(ErrorCode::ResultMismatch, "service-tool-input"));
+    }
+    Ok(())
+}
+
 pub(in crate::persistence) fn record_call(
     c: &Connection,
     prepared: &PreparedWorkPlanServiceGeneration,
 ) -> Result<(), ExecutionError> {
-    let identity = prepared.identity()?;
-    let origin = codec::encode(&prepared.origin.record, MAX_INPUT_BYTES)?;
-    let call = codec::encode(&prepared.call, MAX_INPUT_BYTES)?;
+    record_call_in(c, &prepared.origin, &prepared.call, &prepared.input)
+}
+
+pub(in crate::persistence) fn record_tool_call(
+    c: &Connection,
+    prepared: &PreparedWorkPlanServiceTool,
+) -> Result<(), ExecutionError> {
+    record_call_in(c, &prepared.origin, &prepared.call, prepared.input())
+}
+
+fn record_call_in(
+    c: &Connection,
+    original: &WorkPlanServiceOrigin,
+    request: &WorkPlanServiceCall,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    let identity = original.identity(request)?;
+    let origin = codec::encode(&original.record, MAX_INPUT_BYTES)?;
+    let call = codec::encode(request, MAX_INPUT_BYTES)?;
     c.execute(
         "INSERT INTO application_service_calls VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         params![
-            prepared.input.envelope().attempt_id.to_string(),
+            input.envelope().attempt_id.to_string(),
             identity.outer_attempt_id.to_string(),
             identity.outer_item_id.to_string(),
             identity.outer_dispatch_id.to_string(),
-            prepared.origin.record.grant_id.to_string(),
+            original.record.grant_id.to_string(),
             identity.handle_id,
             identity.call_id,
             origin,
@@ -647,6 +1094,16 @@ pub(in crate::persistence) fn record_call(
     )
     .map_err(sql)?;
     Ok(())
+}
+
+pub(in crate::persistence) fn activate_tool(
+    authority: &PluginAuthority,
+    prepared: &PreparedWorkPlanServiceTool,
+) -> Result<(), ExecutionError> {
+    authority.register_service_origin(
+        prepared.input().envelope().attempt_id,
+        prepared.origin.guard.clone(),
+    )
 }
 
 pub(in crate::persistence) fn activate(

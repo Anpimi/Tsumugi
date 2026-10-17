@@ -4,7 +4,8 @@ import type { PluginGenerationComponentView } from "./generated/plugins.response
 import type {
   WorkPlanGenerationPrepareRequest, WorkPlanGenerationStartRequest, WorkPlanGenerationDiscardRequest,
 } from "./generated/ai.requests";
-import type { WorkPlanAgentView, WorkPlanGenerationPreflight } from "./generated/ai.responses";
+import type { WorkPlanAgentView, WorkPlanGenerationPreflight, WorkPlanToolSpec } from "./generated/ai.responses";
+import { contractIdentity } from "./reviewIdentity";
 import * as validators from "./generated/ai.validators";
 
 function invalidAcknowledgement(): never {
@@ -14,23 +15,49 @@ function invalidAcknowledgement(): never {
 }
 const preparations = new WeakMap<WorkPlanGenerationPreflight, WorkPlanGenerationPrepareRequest & { inputDigest: string }>();
 const starts = new WeakMap<WorkPlanGenerationPreflight, WorkPlanGenerationStartRequest>();
+export function generationSupportsPreparedTools(component: PluginGenerationComponentView) {
+  return component.componentScope === "project" && component.environment.profile === "node-system-libraries-v1"
+    && contractIdentity(component.binding.declaration.inputSchema) === contractIdentity({ id: "tsumugi.generation-component-input", schemaVersion: 1, behaviorVersion: 1 });
+}
+export function compatiblePreparedTool(tool: WorkPlanToolSpec) {
+  return tool.execution.componentScope === "project" && tool.execution.environment.profile === "node-system-libraries-v1"
+    && tool.binding.capability.declaration.effect === "read-only" && tool.binding.declaration.query !== null && tool.binding.declaration.query !== undefined;
+}
 
 /** Trusted human operations; these are separate from the bounded Agent facade. */
 export const workPlanGenerationCommands = {
-  prepare: async (input: WorkPlanGenerationPrepareRequest, scope: WorkPlanAgentView, component: PluginGenerationComponentView) => {
-    const request = structuredClone(input), originalScope = structuredClone(scope), installed = structuredClone(component);
+  prepare: async (input: WorkPlanGenerationPrepareRequest, scope: WorkPlanAgentView, component: PluginGenerationComponentView, tools: readonly WorkPlanToolSpec[] = []) => {
+    const request = structuredClone(input), originalScope = structuredClone(scope), installed = structuredClone(component), capturedTools = structuredClone(tools);
     if (!validators.validateRequestWorkPlanGenerationPrepare(request)) throw new Error("Invalid generation component request");
     const ids = request.generation.unitIds, basis = new Map(originalScope.scope.map(unit => [unit.unitId, unit]));
+    const identities = new Set([request.attemptId, request.generation.taskId, request.generation.attemptId, originalScope.parentTask]);
+    const validToolIdentities = request.toolQueries.every(query => {
+      if (query.taskId === query.attemptId || identities.has(query.taskId) || identities.has(query.attemptId)) return false;
+      identities.add(query.taskId); identities.add(query.attemptId); return true;
+    });
     if (request.scopeId !== originalScope.scopeId || new Set(ids).size !== ids.length || ids.some(id => !basis.has(id))
       || jsonIdentity(request.component.provider) !== jsonIdentity(installed.binding.provider)
       || jsonIdentity(request.component.profile) !== jsonIdentity(installed.profile)
       || request.component.environmentDigest !== installed.environmentDigest) throw new Error("Invalid generation component selection");
+    if (request.toolQueries.length > 15 || (request.toolQueries.length > 0 && !generationSupportsPreparedTools(installed))
+      || new Set(request.toolQueries.map(query => query.toolHandle)).size !== request.toolQueries.length
+      || !validToolIdentities
+      || request.toolQueries.some(query => query.unitIds.length !== 1 || !ids.includes(query.unitIds[0])
+        || !capturedTools.some(tool => tool.handle === query.toolHandle && compatiblePreparedTool(tool)))) throw new Error("Invalid prepared reference selection");
     const value = await checkedInvoke("prepare_work_plan_generation_component", request, validators.validateResponseWorkPlanGenerationPreflight);
     if (value.scopeId !== request.scopeId || value.parentTask !== originalScope.parentTask || value.attemptId !== request.attemptId
       || value.taskId === value.parentTask || value.taskId === request.generation.taskId
+      || request.toolQueries.some(query => query.taskId === value.taskId || query.attemptId === value.taskId)
       || jsonIdentity(value.component) !== jsonIdentity(installed) || jsonIdentity(value.generation) !== jsonIdentity(request.generation)
       || value.scope.length !== ids.length || new Set(value.scope.map(unit => unit.unitId)).size !== ids.length
-      || value.scope.some(unit => !ids.includes(unit.unitId) || jsonIdentity(unit) !== jsonIdentity(basis.get(unit.unitId)))) invalidAcknowledgement();
+      || value.scope.some(unit => !ids.includes(unit.unitId) || jsonIdentity(unit) !== jsonIdentity(basis.get(unit.unitId)))
+      || value.preparedTools.length !== request.toolQueries.length
+      || new Set(value.preparedTools.map(tool => tool.handleId)).size !== value.preparedTools.length
+      || new Set(value.preparedTools.map(tool => tool.callId)).size !== value.preparedTools.length
+      || value.preparedTools.some((tool, index) => !tool.handleId || tool.callId !== tool.query.attemptId
+        || jsonIdentity(tool.query) !== jsonIdentity(request.toolQueries[index])
+        || jsonIdentity(tool.tool) !== jsonIdentity(capturedTools.find(candidate => candidate.handle === tool.query.toolHandle))
+        || contractIdentity(tool.input.schema) !== contractIdentity(tool.tool.binding.capability.declaration.inputSchema))) invalidAcknowledgement();
     preparations.set(value, { ...request, inputDigest: value.inputDigest });
     return value;
   },

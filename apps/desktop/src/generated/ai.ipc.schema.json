@@ -2132,6 +2132,13 @@
           },
           "sessionToken": {
             "type": "string"
+          },
+          "toolQueries": {
+            "items": {
+              "$ref": "#/definitions/AgentToolRequest"
+            },
+            "maxItems": 15,
+            "type": "array"
           }
         },
         "required": [
@@ -2140,7 +2147,8 @@
           "scopeId",
           "attemptId",
           "component",
-          "generation"
+          "generation",
+          "toolQueries"
         ],
         "type": "object"
       },
@@ -2638,6 +2646,35 @@
           "declarationResourceId",
           "resourcePins",
           "rules"
+        ],
+        "type": "object"
+      },
+      "AgentToolRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "toolHandle": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "toolHandle",
+          "unitIds"
         ],
         "type": "object"
       },
@@ -8066,6 +8103,12 @@
           "parentTask": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "preparedTools": {
+            "items": {
+              "$ref": "#/definitions/WorkPlanGenerationToolPreflight"
+            },
+            "type": "array"
+          },
           "scope": {
             "items": {
               "$ref": "#/definitions/PlanSelectionBasis"
@@ -8087,8 +8130,41 @@
           "inputDigest",
           "component",
           "generation",
+          "preparedTools",
           "scope",
           "budget"
+        ],
+        "type": "object"
+      },
+      "WorkPlanGenerationToolPreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "callId": {
+            "type": "string"
+          },
+          "handleId": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/EncodedPayload"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/definitions/AgentToolRequest"
+          },
+          "tool": {
+            "$ref": "#/definitions/WorkPlanToolSpec"
+          }
+        },
+        "required": [
+          "query",
+          "handleId",
+          "callId",
+          "inputDigest",
+          "tool",
+          "input"
         ],
         "type": "object"
       },

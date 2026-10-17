@@ -331,7 +331,8 @@ describe("AI command payloads", () => {
     ["ai.agent.generate", { kind: "ai-agent", planId: "plan", expectedGeneration: "1", unitIds: ["second", "first"], toolHandle: null }, [{ unitIds: ["same", "same"] }]],
     ["ai.agent.query-tool", { kind: "ai-agent", planId: "plan", expectedGeneration: "1", unitIds: ["second", "first"], toolHandle: "tool" }, [{ toolHandle: false }]],
     ["ai.agent.reconcile", { kind: "ai-agent-pending", operation: "generation", scopeId: "scope", taskId: "task", attemptId: "attempt", inputDigest: "digest", unitIds: ["second", "first"], toolHandle: null }, [{ operation: "other" }, { toolHandle: "wrong-tool" }]],
-    ["ai.component.prepare", { kind: "ai-component-prepare", planId: "plan", expectedGeneration: "1", unitIds: ["second", "first"], component: generationWorkflow.prepare.component }, [{ component: {} }]],
+    ["ai.component.prepare", { kind: "ai-component-prepare", planId: "plan", expectedGeneration: "1", unitIds: ["second", "first"], component: generationWorkflow.prepare.component, toolQuery: { toolHandle: "reference", unitId: "second" } },
+      [{ component: {} }, { toolQuery: undefined }, { toolQuery: { toolHandle: "reference", unitId: "outside" } }, { toolQuery: { toolHandle: "", unitId: "second" } }]],
     ["ai.component.start", { kind: "ai-component", scopeId: "scope", attemptId: "attempt", inputDigest: "digest" }, [{ inputDigest: "" }]],
     ["ai.component.discard", { kind: "ai-component", scopeId: "scope", attemptId: "attempt", inputDigest: "digest" }, [{ scopeId: null }]],
 

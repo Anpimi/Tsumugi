@@ -120,6 +120,16 @@ The actual dispatch deadline remains required through launch, invocation and
 result delivery, including while Core is waiting for its next runtime tick.
 Historical outcome queries cannot reconstruct a fresh deadline for execution.
 
+The Desktop generation factory can additionally bind exact prepared WorkPlan
+tool queries for an opt-in Project JavaScript caller. Each read-only Project
+JavaScript callee retains its original tool preparation, independent consent,
+grant, budget and real Core execution receipt. The caller receives a separate
+[generation-component input](../plugin-sdk/docs/generation.md#prepared-component-tool-queries),
+including the frozen query bytes and call identity; ordinary tools and Attempt
+or Application service profiles are not widened. Both caller and callee package
+shutdown retain their original producer ownership until drainage. Query results
+keep the callee's own schema and never replace the Core generation receipt.
+
 For each call, the Host supplies a `ServiceCaller` derived from the actual channel
 and original invocation, then checks the exact handle, context, contract, payload
 and current guards. `ServiceCaller::deadline()` exposes the fixed absolute outer

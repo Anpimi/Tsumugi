@@ -20,6 +20,9 @@ use tsumugi_plugin_host::{
     core::{ProjectServiceFactory, ProjectServiceSelectionFuture},
 };
 use tsumugi_plugin_sdk as sdk;
+mod tool_services;
+use tool_services::PreparedTool;
+pub use tool_services::WorkPlanGenerationToolPreflight;
 
 const MAX_COMPONENT_ATTEMPTS: usize = 128;
 const OPERATION: &str = "work-plan-generation-component";
@@ -31,7 +34,9 @@ request!(
         scope_id: ExecutionId,
         attempt_id: ExecutionId,
         component: PluginGenerationComponentRequest,
-        generation: sdk::GenerationServiceInput
+        generation: sdk::GenerationServiceInput,
+        #[cfg_attr(feature = "wire-schema", schemars(length(max = 15)))]
+        tool_queries: Vec<tsumugi_core::application::AgentToolRequest>
     }
 );
 request!(
@@ -64,6 +69,7 @@ pub struct WorkPlanGenerationPreflight {
     pub input_digest: String,
     pub component: PluginGenerationComponentView,
     pub generation: sdk::GenerationServiceInput,
+    pub prepared_tools: Vec<WorkPlanGenerationToolPreflight>,
     pub scope: Vec<PlanSelectionBasis>,
     pub budget: ProviderBudget,
 }
@@ -73,6 +79,7 @@ struct PreparedComponent {
     scope: WorkPlanAgentScope,
     input: FixedInput,
     view: WorkPlanGenerationPreflight,
+    tools: Vec<PreparedTool>,
 }
 #[derive(Clone)]
 struct ComponentStart {
@@ -84,6 +91,7 @@ struct ComponentStart {
     // Unknown authorization never permits a second authorize call or new grant.
     authorized: bool,
     enqueue_unknown: bool,
+    tool_grants: BTreeMap<ExecutionId, ExecutionId>,
 }
 #[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -243,6 +251,7 @@ fn build_preflight(
     request: WorkPlanGenerationPrepareRequest,
     scope: WorkPlanAgentScope,
     environment: &GenerationComponentEnvironment,
+    tools: Vec<PreparedTool>,
 ) -> Result<Arc<PreparedComponent>, CommandError> {
     let generation = generation_request(&request.generation)?;
     // This is the original read-only preparation. It validates source identities,
@@ -252,7 +261,8 @@ fn build_preflight(
         .map_err(map_recover)?;
     let binding = component_binding(environment)?;
     let declaration = binding.capability.declaration.clone();
-    let payload = serde_json::to_value(&request.generation).map_err(|_| mismatch())?;
+    tool_services::check_prepared(store, &scope, &request, &tools)?;
+    let payload = tool_services::component_input(&request, &declaration, &tools)?;
     if serde_json::to_vec(&payload).map_err(|_| mismatch())?.len()
         > declaration.limits.max_input_bytes as usize
     {
@@ -292,11 +302,44 @@ fn build_preflight(
     envelope.limits.timeout_ms = declaration.limits.timeout_ms.min(60_000);
     envelope.limits.max_result_bytes = result_bytes;
     let component = environment.view()?;
-    envelope.settings = serde_json::json!({"component": component});
+    envelope.settings = serde_json::json!({"component": component,
+        "preparedTools": tools.iter().map(|tool| &tool.view).collect::<Vec<_>>()});
     let input = FixedInput::capture(envelope).map_err(map_recover)?;
     let plan = store
         .work_plan(scope.lease().plan_id)
         .map_err(map_recover)?;
+    let offered = tool_services::selected_bindings(
+        &input,
+        &scope,
+        &plan.digest,
+        &tools,
+        input.envelope().limits.timeout_ms,
+    )?;
+    let image = environment.captured.package.image();
+    let owner = image
+        .manifest()
+        .manifest()
+        .components
+        .iter()
+        .find(|owner| owner.id == component.binding.provider.component_id)
+        .ok_or_else(mismatch)?;
+    let invocation_scope = tsumugi_plugin_host::ScopeBinding {
+        project_id: project.to_string(),
+        scope_id: input
+            .envelope()
+            .plugin
+            .as_ref()
+            .ok_or_else(denied)?
+            .scope_id(input.envelope().project_id, input.envelope().attempt_id)
+            .map_err(map_recover)?,
+    };
+    tsumugi_plugin_host::select_declared_services(owner, &declaration, &invocation_scope, &offered)
+        .map_err(|_| {
+            map_recover(ExecutionError::new(
+                ErrorCode::DependencyConflict,
+                "generation-component-services",
+            ))
+        })?;
     let budget = store
         .provider_budget(scope.parent_task())
         .map_err(map_recover)?
@@ -309,6 +352,7 @@ fn build_preflight(
         input_digest: input.digest().into(),
         component,
         generation: request.generation.clone(),
+        prepared_tools: tools.iter().map(|tool| tool.view.clone()).collect(),
         scope: plan
             .selection_basis
             .into_iter()
@@ -321,6 +365,7 @@ fn build_preflight(
         scope,
         input,
         view,
+        tools,
     }))
 }
 
@@ -348,6 +393,7 @@ pub async fn prepare_work_plan_generation_component(
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
             let scope = agent::scope(host, store, initial.scope_id)?;
+            let tools = tool_services::prepare(store, &scope, &initial)?;
             let generation = &mut host.work_plans.generation;
             if let Some(prepared) = generation.prepared.get(&initial.attempt_id) {
                 if prepared.request != initial || prepared.scope != scope {
@@ -374,10 +420,10 @@ pub async fn prepare_work_plan_generation_component(
                 let probe = generation
                     .probes
                     .remove(&(CapturePhase::Prepare, initial.attempt_id));
-                return Ok((Some((ticket, scope, probe)), None));
+                return Ok((Some((ticket, scope, tools, probe)), None));
             }
             #[cfg(not(test))]
-            Ok((Some((ticket, scope)), None))
+            Ok((Some((ticket, scope, tools)), None))
         },
     )?;
     let io = state.io.clone();
@@ -388,14 +434,21 @@ pub async fn prepare_work_plan_generation_component(
             return Ok(view);
         }
         #[cfg(test)]
-        let (ticket, captured_scope, probe) = pending.ok_or_else(mismatch)?;
+        let (ticket, captured_scope, tools, probe) = pending.ok_or_else(mismatch)?;
         #[cfg(not(test))]
-        let (ticket, captured_scope) = pending.ok_or_else(mismatch)?;
+        let (ticket, captured_scope, tools) = pending.ok_or_else(mismatch)?;
         let component = request.component.clone();
         let capture_plugins = plugins.clone();
+        let captured_tools = tools.clone();
         let loaded = io
             .run(CommandStage::ExecutionRead, move || {
-                capture_plugins.capture_generation_component(&component)
+                let environment = capture_plugins.capture_generation_component(&component)?;
+                tool_services::recapture(
+                    &capture_plugins,
+                    &captured_tools,
+                    environment.captured.settings_revision,
+                )?;
+                Ok(environment)
             })
             .await;
         #[cfg(test)]
@@ -439,8 +492,13 @@ pub async fn prepare_work_plan_generation_component(
                     plugins.with_environment_revision(
                         environment.captured.settings_revision,
                         || {
-                            let prepared =
-                                build_preflight(store, request, captured_scope, &environment)?;
+                            let prepared = build_preflight(
+                                store,
+                                request,
+                                captured_scope,
+                                &environment,
+                                tools,
+                            )?;
                             let view = prepared.view.clone();
                             host.work_plans
                                 .generation
@@ -606,11 +664,16 @@ pub async fn start_work_plan_generation_component(
                 )
                 .map(Arc::new)
                 .map_err(map_recover)?;
-                Ok((environment, runner))
+                let tools = tool_services::recapture(
+                    &capture_plugins,
+                    &fixed.tools,
+                    environment.captured.settings_revision,
+                )?;
+                Ok((environment, runner, tools))
             })
             .await;
         #[cfg(test)]
-        if let (Some(probe), Ok((environment, _))) = (probe, &loaded) {
+        if let (Some(probe), Ok((environment, _, _))) = (probe, &loaded) {
             probe
                 .after_successful_capture(environment.captured.settings_revision)
                 .await;
@@ -636,7 +699,7 @@ pub async fn start_work_plan_generation_component(
                         .generation
                         .pending
                         .remove(&request.attempt_id);
-                    let (environment, runner) = loaded?;
+                    let (environment, runner, tools) = loaded?;
                     let scope = agent::scope(host, store, request.scope_id)?;
                     if scope != prepared.scope || Instant::now() >= deadline {
                         return Err(denied());
@@ -648,9 +711,18 @@ pub async fn start_work_plan_generation_component(
                         &plugins,
                         environment.captured.settings_revision,
                     )?;
+                    tool_services::check_prepared(
+                        store,
+                        &scope,
+                        &prepared.request,
+                        &prepared.tools,
+                    )?;
                     plugins.with_environment_authority(
                         environment.captured.settings_revision,
                         |settings_revocation| {
+                            for (_, runner, binding) in tools {
+                                host.register_plugin(runner, binding).map_err(map_recover)?;
+                            }
                             host.register_plugin(runner, component_binding(&environment)?)
                                 .map_err(map_recover)?;
                             if let Some(original) =
@@ -678,6 +750,13 @@ pub async fn start_work_plan_generation_component(
                                         deadline,
                                         authorized: false,
                                         enqueue_unknown: false,
+                                        tool_grants: prepared
+                                            .tools
+                                            .iter()
+                                            .map(|tool| {
+                                                (tool.view.query.attempt_id, ExecutionId::new())
+                                            })
+                                            .collect(),
                                     },
                                 );
                                 let authorized = host.runtime.authorize_plugin(
@@ -837,41 +916,13 @@ impl GenerationFactory {
                     .and_then(|value| value.as_millis().try_into().ok())
                     .filter(|value: &u32| *value > 0)
                     .ok_or_else(denied)?;
-                let service = sdk::ServiceBinding {
-                    handle_id: "work-plan-generation".into(),
-                    provider_id: "tsumugi.core".into(),
-                    contract: sdk::generation_service_contract(),
-                    input_schema: sdk::generation_service_input_contract(),
-                    output_schema: sdk::generation_service_receipt_contract(),
-                    error_schema: sdk::generation_service_error_contract(),
-                    effect: sdk::EffectKind::External,
-                    project_id: self.project.to_string(),
-                    scope_id: dispatch
-                        .input
-                        .envelope()
-                        .plugin
-                        .as_ref()
-                        .ok_or_else(denied)?
-                        .scope_id(
-                            dispatch.input.envelope().project_id,
-                            dispatch.input.envelope().attempt_id,
-                        )
-                        .map_err(map_recover)?,
-                    activation_generation: scope
-                        .lease()
-                        .generation
-                        .get()
-                        .try_into()
-                        .map_err(|_| limit())?,
-                    configuration_digest: plan.digest.clone(),
-                    limits: sdk::CapabilityLimits {
-                        timeout_ms: remaining.min(60_000),
-                        max_input_bytes: sdk::MAX_GENERATION_SERVICE_INPUT_BYTES as u32,
-                        max_output_bytes: sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES as u32,
-                        concurrency: 1,
-                    },
-                };
-                sdk::validate_generation_service_binding(&service).map_err(|_| mismatch())?;
+                let bindings = tool_services::selected_bindings(
+                    &dispatch.input,
+                    &scope,
+                    &plan.digest,
+                    &start.prepared.tools,
+                    remaining,
+                )?;
                 Ok(Arc::new(GenerationBroker {
                     factory: self.clone(),
                     start,
@@ -880,7 +931,8 @@ impl GenerationFactory {
                     permit,
                     cancellation,
                     deadline,
-                    bindings: vec![service],
+                    bindings,
+                    tool_lifecycle: Arc::default(),
                 }) as Arc<dyn ProjectServiceBroker>)
             })
     }
@@ -916,6 +968,7 @@ struct GenerationBroker {
     cancellation: Cancellation,
     deadline: Instant,
     bindings: Vec<sdk::ServiceBinding>,
+    tool_lifecycle: Arc<tool_services::ToolLifecycle>,
 }
 fn core_error(error: CommandError) -> ExecutionError {
     let code = match error.code {
@@ -1125,6 +1178,9 @@ impl ProjectServiceBroker for GenerationBroker {
         binding: sdk::ServiceBinding,
         request: sdk::ServiceRequest,
     ) -> ProjectServiceFuture<'a> {
+        if binding.contract != sdk::generation_service_contract() {
+            return self.call_tool(caller, binding, request);
+        }
         let broker = self.clone();
         let callback = self.factory.context.callback.clone();
         Box::pin(async move {
@@ -1162,7 +1218,8 @@ impl ProjectServiceBroker for GenerationBroker {
             Ok(response)
         })
     }
-    fn release_channel(&self, _channel: &ChannelReceipt) {
+    fn release_channel(&self, channel: &ChannelReceipt) {
+        self.release_tools(channel);
         // Process closure releases no durable child's original caller association.
         // The original AI owner releases each child after execution AND effects.
     }

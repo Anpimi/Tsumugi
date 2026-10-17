@@ -567,7 +567,7 @@ fn generation_component_actual_joint_checks_and_tool_consent_preserve_original_s
         .unwrap();
     let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]});
     let outer = ExecutionId::new();
-    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation,"toolQueries":[]});
     let preflight = fixture
         .call("prepare_work_plan_generation_component", preparing.clone())
         .unwrap();

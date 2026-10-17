@@ -168,7 +168,7 @@ impl ExecutionRuntime {
         let Some(permit) = request
             .plugin_permit
             .as_ref()
-            .filter(|permit| permit.is_work_plan_tool() && permit.is_authorized())
+            .filter(|permit| permit.is_work_plan_tool())
         else {
             return Ok(());
         };
@@ -190,7 +190,10 @@ impl ExecutionRuntime {
         }
         // Query tools cannot adopt output. Once every child item is durable and
         // its producer has ended, retain provenance but release the live slot.
-        self.revoke_plugin(store, permit.grant_id())
+        if permit.is_authorized() {
+            self.revoke_plugin(store, permit.grant_id())?;
+        }
+        store.release_terminal_tool_service_origin(&request.input)
     }
     pub fn register(&mut self, runner: Arc<dyn Runner>) -> Result<(), ExecutionError> {
         self.register_with_policy(runner, RecoveryPolicy::ExternalUnknown)
@@ -437,6 +440,49 @@ impl ExecutionRuntime {
             ));
         }
         store.check_work_plan_tool_consent(scope, consent)
+    }
+
+    /// Submit through the original tool delegation and ledger transaction.
+    /// Reconciliation returns the original ACK without renewing either grant.
+    pub fn submit_work_plan_service_tool(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedWorkPlanServiceTool,
+        consent: &crate::application::WorkPlanToolConsent,
+        grant_id: ExecutionId,
+    ) -> Result<crate::application::WorkPlanToolServiceReceipt, ExecutionError> {
+        let identity = prepared.identity()?;
+        if let Some(receipt) = store.work_plan_tool_service_receipt(&identity, &prepared.call)? {
+            if receipt.input_digest != prepared.input().digest() || receipt.grant_id != grant_id {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "service-child-identity",
+                ));
+            }
+            return Ok(receipt);
+        }
+        let (plugin, digest) = prepared.original_caller_package();
+        if self.original_package_stopped(Some(&PackageKey {
+            plugin: plugin.clone(),
+            digest: digest.into(),
+        })) {
+            return Err(ExecutionError::new(ErrorCode::Busy, "package-quiescing"));
+        }
+        let policy = self.submission_policy(store, prepared.input(), None)?;
+        store.enqueue_work_plan_service_tool(
+            prepared,
+            consent,
+            grant_id,
+            self.generation,
+            policy,
+        )?;
+        store
+            .work_plan_tool_service_receipt(&identity, &prepared.call)
+            .map_err(|mut error| {
+                error.code = ErrorCode::OutcomeUnknown;
+                error
+            })?
+            .ok_or_else(|| ExecutionError::new(ErrorCode::OutcomeUnknown, "service-child-receipt"))
     }
 
     pub fn revoke_plugin(
@@ -757,7 +803,7 @@ impl ExecutionRuntime {
     ) -> Result<bool, ExecutionError> {
         if !self.accepting
             || self.generation != query.generation
-            || query.queries.stopped(query.package_queries.as_deref())
+            || query.queries.stopped(&query.package_queries)
             || self.stored_input_package_stopped(store, &query.request.input)?
         {
             return Err(ExecutionError::new(
@@ -809,14 +855,22 @@ impl ExecutionRuntime {
     }
     fn tick_at(&mut self, store: &mut ProjectStore, now: Instant) -> Result<(), ExecutionError> {
         let mut remaining = Vec::new();
+        let mut completed = Vec::new();
         for worker in self.retired.drain(..) {
             if worker.thread.is_finished() {
                 let _ = worker.thread.join();
+                completed.push(worker.attempt);
             } else {
                 remaining.push(worker);
             }
         }
         self.retired = remaining;
+        for attempt in completed {
+            if !self.has_owned_attempt_work(attempt) {
+                let input = store.execution_input(attempt)?;
+                store.release_terminal_tool_service_origin(&input)?;
+            }
+        }
         let mut index = 0;
         while index < self.workers.len() {
             let worker = &mut self.workers[index];
@@ -997,6 +1051,9 @@ impl ExecutionRuntime {
                 Err(error)
                     if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) =>
                 {
+                    if !self.has_owned_attempt_work(attempt) {
+                        store.release_terminal_tool_service_origin(&input)?;
+                    }
                     continue;
                 }
                 Err(error) => return Err(error),
@@ -1080,6 +1137,19 @@ impl ExecutionRuntime {
                 worker.cancellation_started.get_or_insert_with(Instant::now);
             }
         }
+        (|| {
+            for attempt in store.execution_attempt_ids(task)? {
+                if !self.has_owned_attempt_work(attempt) {
+                    let input = store.execution_input(attempt)?;
+                    store.release_terminal_tool_service_origin(&input)?;
+                }
+            }
+            Ok::<_, ExecutionError>(())
+        })()
+        .map_err(|mut error| {
+            error.code = ErrorCode::OutcomeUnknown;
+            error
+        })?;
         Ok(revision)
     }
     pub fn outcome_query(
@@ -1120,8 +1190,12 @@ impl ExecutionRuntime {
         let Some(runner) = self.runners.get(&input_key(&request.input)?) else {
             return Ok(None);
         };
-        let package = Self::stored_input_package(store, &request.input)?;
-        let package_queries = runner.queries.capture_package(package.as_ref())?;
+        let mut package_queries = Vec::new();
+        for package in Self::stored_input_packages(store, &request.input)? {
+            if let Some(scope) = runner.queries.capture_package(Some(&package))? {
+                package_queries.push(scope);
+            }
+        }
         Ok(Some(OutcomeQuery {
             request,
             runner: runner.runner.clone(),
@@ -1231,7 +1305,7 @@ pub struct OutcomeQuery {
     pub generation: ExecutionId,
     runner: Arc<dyn Runner>,
     queries: Arc<QueryGate>,
-    package_queries: Option<Arc<PackageQueries>>,
+    package_queries: Vec<Arc<PackageQueries>>,
 }
 
 #[cfg(test)]

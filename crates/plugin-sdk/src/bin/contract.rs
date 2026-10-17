@@ -21,9 +21,13 @@ fn print<T: serde::Serialize>(value: &T) -> Result<(), Box<dyn std::error::Error
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let data_schemas: [(&str, fn() -> schemars::Schema); 26] = [
+    let data_schemas: [(&str, fn() -> schemars::Schema); 27] = [
         ("source-context-facts", source_context_facts_schema),
         ("generation-service-input", generation_service_input_schema),
+        (
+            "generation-component-input",
+            generation_component_input_schema,
+        ),
         (
             "generation-service-receipt",
             generation_service_receipt_schema,
@@ -86,6 +90,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             )?)?);
         }
         let bytes = |limit| read(&args[1], limit);
+        if args[0] == "validate-generation-component-input" {
+            return print(&parse_generation_component_input(&bytes(
+                MAX_GENERATION_COMPONENT_INPUT_BYTES,
+            )?)?);
+        }
         if args[0] == "validate-generation-service-input" {
             return print(&parse_generation_service_input(&bytes(
                 MAX_GENERATION_SERVICE_INPUT_BYTES,

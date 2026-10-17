@@ -1986,7 +1986,7 @@ impl ProjectStore {
         policy: RecoveryPolicy,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
-        self.enqueue_execution_with_authority(input, policy, parent, None, None, None, None)
+        self.enqueue_execution_with_authority(input, policy, parent, None, None, None, None, None)
     }
 
     pub(crate) fn enqueue_work_plan_agent_generation(
@@ -2002,6 +2002,7 @@ impl ProjectStore {
             None,
             None,
             Some(prepared),
+            None,
             None,
         )
     }
@@ -2023,6 +2024,7 @@ impl ProjectStore {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -2039,6 +2041,28 @@ impl ProjectStore {
             Some(prepared),
             None,
             None,
+            None,
+        )
+    }
+
+    pub(crate) fn enqueue_work_plan_service_tool(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanServiceTool,
+        consent: &crate::application::WorkPlanToolConsent,
+        grant_id: ExecutionId,
+        generation: ExecutionId,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.check_work_plan_tool_proposal(&prepared.prepared, consent, generation)?;
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            None,
+            Some((&prepared.prepared, consent, grant_id, generation)),
+            None,
+            None,
+            None,
+            Some(prepared),
         )
     }
 
@@ -2060,6 +2084,7 @@ impl ProjectStore {
             None,
             None,
             Some((prepared, permit)),
+            None,
         )
     }
 
@@ -2080,6 +2105,7 @@ impl ProjectStore {
             &crate::application::PreparedMcpTermQuery,
             &crate::application::McpTermQueryPermit,
         )>,
+        service_tool: Option<&crate::application::PreparedWorkPlanServiceTool>,
     ) -> Result<(), ExecutionError> {
         if (input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
             || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY)
@@ -2107,6 +2133,7 @@ impl ProjectStore {
             if agent.is_some()
                 || service.is_some()
                 || tool.is_some()
+                || service_tool.is_some()
                 || parent.is_some()
                 || input.bytes() != prepared.input().bytes()
                 || policy != RecoveryPolicy::ExternalUnknown
@@ -2121,6 +2148,7 @@ impl ProjectStore {
         if let Some(prepared) = agent {
             if service.is_some()
                 || tool.is_some()
+                || service_tool.is_some()
                 || input.bytes() != prepared.input().bytes()
                 || parent != Some(prepared.scope.parent_task())
             {
@@ -2130,12 +2158,29 @@ impl ProjectStore {
         }
         if let Some(prepared) = service {
             if tool.is_some()
+                || service_tool.is_some()
                 || prepared.input().bytes() != input.bytes()
                 || parent != Some(prepared.parent_task())
             {
                 return Err(error(ErrorCode::Unauthorized, "service-child-enqueue"));
             }
             super::application::check_prepared_service(&tx, prepared, &authority)?;
+        }
+        if let Some(prepared) = service_tool {
+            if tool.is_none() || prepared.input().bytes() != input.bytes() || parent.is_some() {
+                return Err(error(ErrorCode::Unauthorized, "service-tool-enqueue"));
+            }
+            super::application::check_prepared_service_tool(&tx, prepared, &authority)?;
+            if tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [input.envelope().attempt_id.to_string()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(sql_error)?
+            {
+                return Err(error(ErrorCode::ResultMismatch, "service-child-enqueued"));
+            }
         }
         if input.envelope().plugin.is_some() && parent.is_some() {
             return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
@@ -2179,11 +2224,18 @@ impl ProjectStore {
         if let Some(prepared) = service {
             super::application::record_service_call(&tx, prepared)?;
         }
+        if let Some(prepared) = service_tool {
+            super::application::record_service_tool_call(&tx, prepared)?;
+        }
         #[cfg(test)]
         crash_hook("before-enqueue-commit");
         commit(tx)?;
         if let Some(prepared) = service {
             super::application::activate_service_origin(&authority, prepared)
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "service-origin-activation"))?;
+        }
+        if let Some(prepared) = service_tool {
+            super::application::activate_service_tool_origin(&authority, prepared)
                 .map_err(|_| error(ErrorCode::OutcomeUnknown, "service-origin-activation"))?;
         }
         #[cfg(test)]

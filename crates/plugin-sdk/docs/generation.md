@@ -80,3 +80,44 @@ Rust consumers use `parse_generation_service_input`,
 validators are generated from that same Rust definition through the existing
 contract harness and `runtimes/javascript-host` generator. JavaScript structural
 validation does not replace Host identity, permission or scope checks.
+
+## Prepared component tool queries
+
+`tsumugi.generation-component-input` schema/behavior `1/1` is a separate input
+contract for an explicitly selected generation component. It contains
+`generation: GenerationServiceInput` and `preparedTools`, an array of at most
+15 entries. Each entry contains `handleId`, `callId`, `toolHandle` and the exact
+`EncodedPayload` input. Handles, call IDs and tool handles must each be unique;
+the complete JSON encoding, including escaped payload text, is at most 1 MiB.
+An empty array is valid. The old generation-service input keeps exactly its
+original three fields and is not implicitly upgraded.
+
+The Desktop adapter currently supports Project JavaScript callers and selected
+read-only Project JavaScript query tools from the same human-authorized WorkPlan.
+It prepares each query for one selected source unit through the original Core
+tool preparation. The preview shows the exact query content shared with both
+components. A caller's process consent cannot replace the tool's independent
+WorkPlan consent, grant, original deadline or budget. Neither payloads nor
+`toolHandle` values are execution authority.
+
+The normal `api.register` handler receives this input. For a prepared entry it
+can call `metadata.services.call(entry.handleId, entry.input.utf8, entry.callId)`.
+The Host matches all three values and the original caller, and dispatches the
+selected tool through the original Core runtime and ledger. The response retains
+the tool's own output/error schema. Transport or authorization failures do not
+invent a payload under that schema. A service provider ID is a Host-selected
+index; the original prepared tool binding determines the actual package,
+capability, profile and environment.
+
+Tool results are query data. A generation component still calls the original
+`tsumugi.work-plan-generation` service with `JSON.stringify(input.generation)`
+and returns its real generation receipt. A query result must never be presented
+as that receipt. The Host retains the tool's exact caller association until its
+actual producer is terminal and reaped; cancellation and channel closure request
+withdrawal rather than claiming rollback or immediate drainage. Historical
+receipts do not restore live consent after reopening.
+
+Rust consumers use `parse_generation_component_input`. The contract harness
+exports `schema-generation-component-input` and
+`validate-generation-component-input`; the existing generator produces
+`generation-component.d.ts` and its standalone structural validator from Rust.

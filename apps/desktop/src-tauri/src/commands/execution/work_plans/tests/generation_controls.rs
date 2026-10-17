@@ -323,7 +323,7 @@ fn generation_component_package_cleanup_waits_for_its_held_selection_effect() {
     let generation =
         json!({"taskId":ExecutionId::new(),"attemptId":child,"unitIds":[fixture.unit]});
     let outer = ExecutionId::new();
-    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation,"toolQueries":[]});
     let preflight = fixture
         .call("prepare_work_plan_generation_component", preparing.clone())
         .unwrap();
@@ -584,7 +584,7 @@ fn generation_component_prepared_before_settings_withdrawal_needs_a_new_human_ac
             .unwrap();
         let outer = ExecutionId::new();
         let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]});
-        let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+        let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation,"toolQueries":[]});
         let preflight = fixture
             .call("prepare_work_plan_generation_component", preparing.clone())
             .unwrap();

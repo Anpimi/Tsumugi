@@ -1,5 +1,16 @@
 # Application versioning and changelog maintenance
 
+Prepared WorkPlan tool services add an explicit generation-component input
+contract and Desktop preparation fields. The old generation-service input and
+receipt keep their original meanings; Process3 and WorkPlan3 remain unchanged.
+The original application service-call owner now distinguishes generation and
+plugin-tool associations, retaining independent tool grants and exact caller
+provenance. This incompatible current-only project format advances to schema 50;
+schema 49 and earlier directories are preserved and refused without migration
+or reset. This is the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with synchronized bilingual Unreleased entries and no
+additional version bump, dependency change or replacement SDK archive.
+
 Component dependency closure diagnostics add Rust SDK and Host APIs for bounded
 declaration inspection. They reuse the existing exact resolver and captured
 catalog identities without changing manifest, Process, SDK wire, project or

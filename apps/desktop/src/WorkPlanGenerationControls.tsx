@@ -5,15 +5,15 @@ import { executionCommands, type SessionRequest } from "./executionCommands";
 import { readRecordedAttempt } from "./executionRead";
 import { pluginCommands } from "./pluginCommands";
 import { pluginEnvironmentVersion } from "./pluginEnvironments";
-import { readPluginGenerationChoices } from "./pluginGenerationChoices";
+import { generationDeclaresPreparedTool, readPluginGenerationChoices } from "./pluginGenerationChoices";
 import { jsonIdentity } from "./pluginToolChoices";
 import { PluginPermissions } from "./PluginPermissions";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { openWorkPlanAgentScope, type WorkPlanStatusView } from "./workPlanCommands";
-import { workPlanGenerationCommands } from "./workPlanGenerationCommands";
+import { compatiblePreparedTool, generationSupportsPreparedTools, workPlanGenerationCommands } from "./workPlanGenerationCommands";
 import type { WorkPlanGenerationPreflight } from "./generated/ai.responses";
-import type { WorkPlanGenerationStartRequest } from "./generated/ai.requests";
+import type { WorkPlanGenerationPrepareRequest, WorkPlanGenerationStartRequest } from "./generated/ai.requests";
 import type { WorkPlanContinuation } from "./AiPreparationSession";
 import { useWorkbenchCommands, type CommandAvailability, type AiComponentPrepareCommandPayload, type AiComponentCommandPayload } from "./workbenchCommands";
 import { enUS } from "./i18n/en-US";
@@ -49,6 +49,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const [expanded, setExpanded] = useState(false), [choiceKey, setChoiceKey] = useState(""), [profileKey, setProfileKey] = useState("");
   const [runtimeKey, setRuntimeKey] = useState(""), [refresh, setRefresh] = useState(0);
+  const [toolHandle, setToolHandle] = useState(""), [toolUnitId, setToolUnitId] = useState("");
   const { operation, consentDigest, discardUnknown } = session.state;
   const setOperation = (operation: ComponentOperation | null) => session.update(before => ({ ...before, operation }));
   const setConsentDigest = (consentDigest: string | null) => session.update(before => ({ ...before, consentDigest }));
@@ -71,8 +72,21 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   const active = status.state === "active" && BigInt(status.expiresAt) > BigInt(Math.floor(Date.now() / 1000));
   const validUnits = selected.length > 0 && new Set(selected).size === selected.length
     && selected.every(id => status.plan.scope.some(unit => unit.unitId === id));
+  const preparedToolsSupported = !!choice?.supportsPreparedTools && !!environment.data && generationSupportsPreparedTools(environment.data);
+  const tool = status.plan.tools?.entries.find(item => item.handle === toolHandle);
+  const compatibleTools = status.plan.tools?.entries.filter(compatiblePreparedTool) ?? [];
+  const callerAcceptsTool = (item: typeof compatibleTools[number]) => compatiblePreparedTool(item) && !!choice && generationDeclaresPreparedTool(choice, item);
+  const declaredTools = compatibleTools.filter(callerAcceptsTool);
+  const toolAuthorized = status.effects.includes("query-tools");
+  const toolRemaining = status.toolInvocations ? status.toolInvocations.limit - status.toolInvocations.reserved : 0;
+  const toolSelectionValid = !toolHandle || preparedToolsSupported && !!tool && callerAcceptsTool(tool)
+    && selected.includes(toolUnitId) && toolAuthorized && toolRemaining > 0;
+  const selection = jsonIdentity({ request, selected, toolHandle, toolUnitId, tool: tool ?? null });
+  const selectionRef = useRef(selection); selectionRef.current = selection;
   const stale = !!operation && (jsonIdentity(operation.lease) !== jsonIdentity(status.lease) || operation.plan.digest !== status.plan.digest
-    || operation.prepared.scope.some(unit => jsonIdentity(unit) !== jsonIdentity(status.plan.scope.find(item => item.unitId === unit.unitId))));
+    || operation.prepared.scope.some(unit => jsonIdentity(unit) !== jsonIdentity(status.plan.scope.find(item => item.unitId === unit.unitId)))
+    || operation.prepared.preparedTools.some(item => !toolAuthorized || toolRemaining < 1
+      || jsonIdentity(item.tool) !== jsonIdentity(status.plan.tools?.entries.find(tool => tool.handle === item.query.toolHandle))));
   const outerAttempt = operation?.prepared.attemptId ?? null;
   useEffect(() => {
     if (busy) return;
@@ -106,16 +120,17 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   }, [childId, onGenerated]);
   const locked = disabled || busy || !!operation || !active;
   const readFailure = inventory.error ?? environment.error ?? observation.error;
-  const preparingAllowed = !locked && validUnits && request && environment.data && !readFailure && !inventory.isFetching && !environment.isFetching;
+  const preparingAllowed = !locked && validUnits && toolSelectionValid && request && environment.data && !readFailure && !inventory.isFetching && !environment.isFetching;
   async function prepare(current: WorkPlanContinuation) {
     if (!preparingAllowed || !request || !environment.data) return;
-    const fixed = structuredClone({ request, component: environment.data, lease: status.lease, plan: status.plan, ids: selected });
+    const fixed = structuredClone({ request, component: environment.data, lease: status.lease, plan: status.plan, ids: selected,
+      tool: toolHandle ? tool : null, toolUnitId, selection });
     const originalInventory = inventory.data;
     const inventoryWitness = reads.watchExactQuery(inventoryKey), environmentWitness = reads.watchExactQuery(environmentKey);
     const dispose = session.holdRead(() => { inventoryWitness.dispose(); environmentWitness.dispose(); });
     const checked = () => {
       const inventoryQuery = inventoryWitness.current(), environmentQuery = environmentWitness.current();
-      return current.fresh() && inventoryQuery?.state.status === "success" && inventoryQuery.state.error === null
+      return current.fresh() && selectionRef.current === fixed.selection && inventoryQuery?.state.status === "success" && inventoryQuery.state.error === null
         && environmentQuery?.state.status === "success" && environmentQuery.state.error === null
         && jsonIdentity(inventoryQuery.state.data) === jsonIdentity(originalInventory)
         && jsonIdentity(environmentQuery.state.data) === jsonIdentity(fixed.component);
@@ -127,10 +142,14 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
       executionCommands.identity(context), executionCommands.identity(context), executionCommands.identity(context),
     ]);
     if (!checked()) return;
+    const toolIdentities = fixed.tool ? await Promise.all([executionCommands.identity(context), executionCommands.identity(context)]) : null;
+    const toolQueries: WorkPlanGenerationPrepareRequest["toolQueries"] = fixed.tool && toolIdentities ? [{ taskId: toolIdentities[0], attemptId: toolIdentities[1],
+      toolHandle: fixed.tool.handle, unitIds: [fixed.toolUnitId] as [string] }] : [];
+    if (!checked()) return;
     const [first,...rest]=fixed.ids;
     if(!first)return;
     const prepared = await workPlanGenerationCommands.prepare({ ...context, scopeId: scope.scopeId, attemptId: outerId,
-      component: fixed.request, generation: { taskId, attemptId, unitIds: [first,...rest] } }, scope, fixed.component);
+      component: fixed.request, generation: { taskId, attemptId, unitIds: [first,...rest] }, toolQueries }, scope, fixed.component, fixed.plan.tools?.entries);
     if (!checked()) {
       if(current()) {
         // Preserve the original Host capture until its disposal is acknowledged.
@@ -180,9 +199,11 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   const unavailable:CommandAvailability={enabled:false,reason:"unavailable"};
   function planCurrent(){const query=reads.client.getQueryState<WorkPlanStatusView>(reads.key(["workPlan",status.lease.planId]));
     return query?.status==="success"&&query.fetchStatus==="idle"&&!query.isInvalidated&&query.error===null
-      &&query.data?.plan.digest===status.plan.digest&&jsonIdentity(query.data.lease)===jsonIdentity(status.lease)&&query.data.state===status.state;}
+      &&query.data?.plan.digest===status.plan.digest&&jsonIdentity(query.data.lease)===jsonIdentity(status.lease)&&query.data.state===status.state
+      &&jsonIdentity(query.data.effects)===jsonIdentity(status.effects)&&jsonIdentity(query.data.toolInvocations)===jsonIdentity(status.toolInvocations);}
   function preparationPayload():AiComponentPrepareCommandPayload|undefined {return request?{kind:"ai-component-prepare",planId:status.lease.planId,
-    expectedGeneration:status.lease.generation,unitIds:[...selected],component:request}:undefined;}
+    expectedGeneration:status.lease.generation,unitIds:[...selected],component:request,
+    toolQuery:toolHandle?{toolHandle,unitId:toolUnitId}:null}:undefined;}
   function prepareAvailability(value?:AiComponentPrepareCommandPayload):CommandAvailability {
     if(!open||reads.retired)return{enabled:false,reason:"hidden"};
     if(ownerBusy()||busy)return{enabled:false,reason:"busy"};
@@ -213,9 +234,23 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
     {expanded || operation ? <>
       <p>{t("ai.component.help")}</p>
       <fieldset disabled={locked}><legend>{t("ai.component.choice")}</legend>
-        <label className="field">{t("ai.component.provider")}<select value={choiceKey} onChange={event => { setChoiceKey(event.target.value); setProfileKey(""); setRuntimeKey(""); }}>
+        <label className="field">{t("ai.component.provider")}<select value={choiceKey} onChange={event => { setChoiceKey(event.target.value); setProfileKey(""); setRuntimeKey(""); setToolHandle(""); setToolUnitId(""); }}>
           <option value="">{t("ai.component.chooseProvider")}</option>{inventory.data?.choices.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
         </select></label>
+        <label className="field">{t("ai.component.referenceTool")}<select value={toolHandle} disabled={!preparedToolsSupported}
+          onChange={event => { setToolHandle(event.target.value); setToolUnitId(""); }}>
+          <option value="">{t("ai.component.noReferenceTool")}</option>{status.plan.tools?.entries.map(item => <option key={item.handle} value={item.handle} disabled={!callerAcceptsTool(item) || !toolAuthorized || toolRemaining < 1}>
+            {item.binding.declaration.title || item.binding.declaration.name}</option>)}
+        </select></label>
+        {!choice ? null : !choice.supportsPreparedTools ? <p>{t("ai.component.referenceLegacy")}</p> : compatibleTools.length === 0
+          ? <p>{t("ai.component.referenceUnavailable")}</p> : declaredTools.length === 0 ? <p role="status">{t("ai.component.referenceUndeclared")}</p>
+          : !toolAuthorized ? <p role="status">{t("ai.component.referenceConsent")}</p>
+          : toolRemaining < 1 ? <p role="status">{t("ai.component.referenceBudget")}</p> : <p>{t("ai.component.referenceHelp")}</p>}
+        {toolHandle ? <label className="field">{t("ai.component.referenceUnit")}<select value={toolUnitId} onChange={event => setToolUnitId(event.target.value)}>
+          <option value="">{t("ai.component.chooseReferenceUnit")}</option>{status.plan.scope.filter(unit => selected.includes(unit.unitId)).map(unit =>
+            <option key={unit.unitId} value={unit.unitId}>{unit.nativeKey}</option>)}
+        </select></label> : null}
+        {toolHandle && !toolSelectionValid ? <p role="status">{t("ai.component.referenceSelection")}</p> : null}
         <label className="field">{t("ai.component.profile")}<select value={profileKey} onChange={event => setProfileKey(event.target.value)}>
           <option value="">{t("ai.component.chooseProfile")}</option>{choice?.declaration.profiles.length === 0
             ? <option value="none">{t("ai.component.noProfile")}</option>
@@ -243,6 +278,19 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
           <article key={item.unitId}><h4>{item.nativeKey}</h4><pre className="ai-text">{item.sourceText}</pre>
             {item.terms.map(term => <p key={term.revisionId}>{term.source}: {term.target}</p>)}
             {item.context ? <pre className="ai-text">{item.context.text}</pre> : null}</article>)}</details>
+        {operation.prepared.preparedTools.length ? <section aria-label={t("ai.component.referenceReview")}>
+          <h4>{t("ai.component.referenceReview")}</h4><p>{t("ai.component.referenceSharing")}</p>
+          {operation.prepared.preparedTools.map(item => {
+            const sourceUnit = operation.prepared.scope.find(unit => unit.unitId === item.query.unitIds[0]);
+            if (!sourceUnit) return null;
+            return <article key={item.handleId}>
+            <h5>{item.tool.binding.declaration.title || item.tool.binding.declaration.name}</h5>
+            <p>{t("ai.component.referenceSource", { entry: sourceUnit.nativeKey })}</p>
+            <p>{`${item.tool.binding.capability.provider.plugin.publisher}/${item.tool.binding.capability.provider.plugin.id} ${item.tool.binding.capability.provider.plugin.version} · ${item.tool.binding.capability.provider.contributionId}`}</p>
+            <pre className="ai-text">{item.input.utf8}</pre>
+            <p>{t("ai.component.referencePermission")}</p><PluginPermissions permissions={item.tool.binding.capability.declaration.permissions} />
+          </article>; })}
+        </section> : null}
         <PluginPermissions permissions={operation.prepared.component.binding.declaration.permissions} />
         <p>{t("sourcePlugin.unsandboxed")}</p>
         <details><summary>{t("execution.diagnostic")}</summary><p>{operation.prepared.component.packageOrigin.sourceId} / {operation.prepared.component.packageOrigin.publisherId}</p>

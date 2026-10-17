@@ -409,6 +409,134 @@ export interface WorkPlanGenerationPrepareRequest {
   projectId: ExecutionId;
   scopeId: ExecutionId;
   sessionToken: string;
+  /**
+   * @maxItems 15
+   */
+  toolQueries:
+    | []
+    | [AgentToolRequest]
+    | [AgentToolRequest, AgentToolRequest]
+    | [AgentToolRequest, AgentToolRequest, AgentToolRequest]
+    | [AgentToolRequest, AgentToolRequest, AgentToolRequest, AgentToolRequest]
+    | [AgentToolRequest, AgentToolRequest, AgentToolRequest, AgentToolRequest, AgentToolRequest]
+    | [AgentToolRequest, AgentToolRequest, AgentToolRequest, AgentToolRequest, AgentToolRequest, AgentToolRequest]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ]
+    | [
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest,
+        AgentToolRequest
+      ];
 }
 export interface PluginGenerationComponentRequest {
   environmentDigest: string;

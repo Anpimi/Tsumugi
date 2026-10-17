@@ -976,8 +976,9 @@ impl WorkPlan {
     }
 }
 pub use crate::persistence::{
-    PreparedWorkPlanServiceGeneration, WorkPlanServiceCall, WorkPlanServiceCallIdentity,
-    WorkPlanServiceOrigin, WorkPlanServiceReceipt,
+    PreparedWorkPlanServiceGeneration, PreparedWorkPlanServiceTool, WorkPlanServiceCall,
+    WorkPlanServiceCallIdentity, WorkPlanServiceOrigin, WorkPlanServiceReceipt,
+    WorkPlanToolServiceReceipt,
 };
 
 #[cfg(test)]

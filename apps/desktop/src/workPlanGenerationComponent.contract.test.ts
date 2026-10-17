@@ -8,6 +8,9 @@ const fixture = rawFixture as unknown as {
 };
 import { workPlanGenerationCommands } from "./workPlanGenerationCommands";
 import * as validators from "./generated/ai.validators";
+import { generationToolFixture } from "./testSupport/generationToolFixture";
+import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
@@ -16,9 +19,62 @@ it("uses the generated strict human boundary and excludes plan or model override
   expect(validators.validateRequestWorkPlanGenerationStart(fixture.start)).toBe(true);
   expect(validators.validateResponseWorkPlanGenerationPreflight(fixture.preflight)).toBe(true);
   expect(validators.validateRequestWorkPlanGenerationDiscard(fixture.discard)).toBe(true);
-  for (const field of ["parentTask", "lease", "model", "budget", "confirmed", "effects"]) {
+  expect(validators.validateRequestWorkPlanGenerationPrepare({ ...fixture.prepare, toolQueries: undefined })).toBe(false);
+  expect(validators.validateResponseWorkPlanGenerationPreflight({ ...fixture.preflight, preparedTools: undefined })).toBe(false);
+  for (const field of ["parentTask", "lease", "model", "budget", "confirmed", "effects", "payload", "input"]) {
     expect(validators.validateRequestWorkPlanGenerationPrepare({ ...fixture.prepare, [field]: true })).toBe(false);
     expect(validators.validateRequestWorkPlanGenerationPrepare({ ...fixture.prepare, generation: { ...fixture.prepare.generation, [field]: true } })).toBe(false);
+  }
+});
+function toolPreparation() {
+  const component = structuredClone(fixture.preflight.component);
+  component.binding.declaration.inputSchema.id = "tsumugi.generation-component-input";
+  component.binding.declaration.permissions.push({ kind: "project-service", contract: structuredClone(workPlanToolStatus.plan.tools!.entries[0].binding.capability.declaration.contract) });
+  const query = { taskId: fixtureIdentity(810), attemptId: fixtureIdentity(811),
+    toolHandle: workPlanToolStatus.plan.tools!.entries[0].handle, unitIds: [fixture.prepare.generation.unitIds[0]] as [string] };
+  const request = { ...structuredClone(fixture.prepare), toolQueries: [query] } satisfies WorkPlanGenerationPrepareRequest;
+  const preflight = { ...structuredClone(fixture.preflight), component, preparedTools: [generationToolFixture(query)] };
+  return { component, query, request, preflight, tools: workPlanToolStatus.plan.tools!.entries };
+}
+it("keeps exact tool identities, original scope and frozen Host input without accepting caller payloads", async () => {
+  const { request, component, preflight, tools } = toolPreparation(), original = structuredClone(request);
+  invoke.mockResolvedValueOnce(structuredClone(preflight));
+  const pending = workPlanGenerationCommands.prepare(request, fixture.scope, component, tools);
+  request.toolQueries[0].unitIds[0] = fixtureIdentity(999);
+  const prepared = await pending;
+  expect(invoke).toHaveBeenLastCalledWith("prepare_work_plan_generation_component", { request: original });
+  expect(prepared.preparedTools[0].input).toEqual(preflight.preparedTools[0].input);
+  expect(validators.validateRequestWorkPlanGenerationPrepare({ ...original, toolQueries: [{ ...original.toolQueries[0], input: preflight.preparedTools[0].input }] })).toBe(false);
+  expect(validators.validateRequestWorkPlanGenerationPrepare({ ...original, toolQueries: [{ ...original.toolQueries[0], payload: {} }] })).toBe(false);
+});
+it("rejects legacy tool queries, duplicate tools or identities and units outside the generation subset before invoking Host", async () => {
+  const { request, component, tools } = toolPreparation();
+  const before = invoke.mock.calls.length;
+  await expect(workPlanGenerationCommands.prepare(request, fixture.scope, fixture.preflight.component, tools)).rejects.toThrow("reference selection");
+  const invalidQueries: WorkPlanGenerationPrepareRequest["toolQueries"][] = [
+    [{ ...request.toolQueries[0], unitIds: [fixtureIdentity(999)] as [string] }],
+    [{ ...request.toolQueries[0], unitIds: [...fixture.prepare.generation.unitIds, fixtureIdentity(999)] as [string, ...string[]] }],
+    [{ ...request.toolQueries[0], taskId: fixture.scope.parentTask }],
+    [request.toolQueries[0], { ...request.toolQueries[0], taskId: fixtureIdentity(812), attemptId: fixtureIdentity(813) }],
+  ];
+  for (const toolQueries of invalidQueries) await expect(workPlanGenerationCommands.prepare({ ...request, toolQueries }, fixture.scope, component, tools)).rejects.toThrow("reference selection");
+  await expect(workPlanGenerationCommands.prepare(request, fixture.scope, component, [])).rejects.toThrow("reference selection");
+  expect(invoke.mock.calls.length).toBe(before);
+});
+it("rejects substituted tool preflights even when each response separately matches the generated schema", async () => {
+  const { request, component, preflight, tools } = toolPreparation(), originalTool = preflight.preparedTools[0];
+  const replacements = [
+    [],
+    [{ ...originalTool, query: { ...originalTool.query, unitIds: [fixtureIdentity(999)] } }],
+    [{ ...originalTool, callId: fixtureIdentity(999) }],
+    [{ ...originalTool, tool: { ...originalTool.tool, settingsRevision: "2" } }],
+    [{ ...originalTool, input: { ...originalTool.input, schema: { ...originalTool.input.schema, behaviorVersion: 2 } } }],
+  ];
+  for (const preparedTools of replacements) {
+    const response = { ...preflight, preparedTools };
+    expect(validators.validateResponseWorkPlanGenerationPreflight(response)).toBe(true);
+    invoke.mockResolvedValueOnce(response);
+    await expect(workPlanGenerationCommands.prepare(request, fixture.scope, component, tools)).rejects.toThrow("acknowledgement");
   }
 });
 it("pins preparation and human consent across caller edits, unknown replies and explicit reconciliation", async () => {

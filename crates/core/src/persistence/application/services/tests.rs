@@ -2,6 +2,7 @@ use super::*;
 use crate::ai::{AiConfig, AiOutput};
 use serde_json::json;
 use std::sync::{Mutex, mpsc};
+mod tool_services;
 
 fn contract(id: &str) -> sdk::ContractRef {
     sdk::ContractRef {

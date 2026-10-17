@@ -1473,6 +1473,7 @@ export interface WorkPlanGenerationPreflight {
   generation: GenerationServiceInput;
   inputDigest: string;
   parentTask: ExecutionId;
+  preparedTools: WorkPlanGenerationToolPreflight[];
   scope: PlanSelectionBasis[];
   scopeId: ExecutionId;
   taskId: ExecutionId;
@@ -1499,6 +1500,24 @@ export interface GenerationServiceInput {
    * @maxItems 100
    */
   unitIds: [string, ...string[]];
+}
+export interface WorkPlanGenerationToolPreflight {
+  callId: string;
+  handleId: string;
+  input: EncodedPayload;
+  inputDigest: string;
+  query: AgentToolRequest;
+  tool: WorkPlanToolSpec;
+}
+export interface AgentToolRequest {
+  attemptId: ExecutionId;
+  taskId: ExecutionId;
+  toolHandle: ExecutionId;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
 }
 export interface WorkPlanStatusView {
   effects: AutomationEffect[];

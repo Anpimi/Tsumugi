@@ -43,10 +43,15 @@ impl DispatchRequest {
     }
     /// The original dispatch limit, never reconstructed by an outcome query.
     pub fn deadline(&self) -> Option<std::time::Instant> {
-        self.original_deadline.as_ref().map(|value| value.instant)
+        self.original_deadline.as_ref().map(|value| {
+            self.service_origin
+                .as_ref()
+                .map_or(value.instant, |origin| value.instant.min(origin.deadline))
+        })
     }
-    /// A worker checks the original caller immediately before external dispatch.
-    pub(crate) fn check_service_dispatch(&self) -> Result<(), ExecutionError> {
+    /// Check the original caller immediately before dispatch or a service use.
+    /// This reads the original live guard; it cannot renew or restore authority.
+    pub fn check_service_dispatch(&self) -> Result<(), ExecutionError> {
         if self
             .service_origin
             .as_ref()

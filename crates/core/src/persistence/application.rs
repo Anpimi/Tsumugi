@@ -23,12 +23,15 @@ pub use selection::{
     CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
 };
 pub use services::{
-    PreparedWorkPlanServiceGeneration, WorkPlanServiceCall, WorkPlanServiceCallIdentity,
-    WorkPlanServiceOrigin, WorkPlanServiceReceipt,
+    PreparedWorkPlanServiceGeneration, PreparedWorkPlanServiceTool, WorkPlanServiceCall,
+    WorkPlanServiceCallIdentity, WorkPlanServiceOrigin, WorkPlanServiceReceipt,
+    WorkPlanToolServiceReceipt,
 };
 pub(in crate::persistence) use services::{
-    activate as activate_service_origin, check_input as check_service_input,
-    check_prepared as check_prepared_service, record_call as record_service_call,
+    activate as activate_service_origin, activate_tool as activate_service_tool_origin,
+    check_input as check_service_input, check_prepared as check_prepared_service,
+    check_prepared_tool as check_prepared_service_tool, record_call as record_service_call,
+    record_tool_call as record_service_tool_call,
 };
 pub(in crate::persistence) use tools::{
     check_prepared_tool, check_tool_delegation, record_tool_input, validate_tool_input,

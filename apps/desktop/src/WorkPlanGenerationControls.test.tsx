@@ -4,12 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WorkPlanAgentControls as ProductionAgentControls, useWorkPlanAgentSession } from "./WorkPlanAgentControls";
 import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
-import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
+import { WorkbenchCommands, WorkbenchCommandsProvider, type AiComponentPrepareCommandPayload } from "./workbenchCommands";
 import { SessionReadProvider, useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import type { SessionReads } from "./sessionReads";
 import { i18n } from "./i18n";
 import { generationComponent, generationInventory, generationPackage } from "./testSupport/pluginGenerationFixture";
 import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
+import { generationToolFixture } from "./testSupport/generationToolFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import generationFixture from "../test/fixtures/workPlanGenerationComponent.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
@@ -23,8 +24,9 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const context = { projectId: generationFixture.prepare.projectId, sessionToken: generationFixture.prepare.sessionToken };
 let reader: SessionReads;
+let registry: WorkbenchCommands;
 function ReadOwnerProbe() { reader = useSessionReads(); return null; }
-function render(ui: ReactNode) { const commands=new WorkbenchCommands(); return renderUi(ui, { wrapper: ({ children }) => <WorkbenchCommandsProvider commands={commands}><SessionReadProvider context={context} bridge={false}><ReadOwnerProbe />{children}</SessionReadProvider></WorkbenchCommandsProvider> }); }
+function render(ui: ReactNode) { const commands=new WorkbenchCommands(); registry=commands; return renderUi(ui, { wrapper: ({ children }) => <WorkbenchCommandsProvider commands={commands}><SessionReadProvider context={context} bridge={false}><ReadOwnerProbe />{children}</SessionReadProvider></WorkbenchCommandsProvider> }); }
 type AgentProps=Omit<Parameters<typeof ProductionAgentControls>[0],"session"|"component"|"ownerBusy"|"run"> & {
   run:(work:(current:()=>boolean)=>Promise<void>)=>Promise<void>;
 };
@@ -67,6 +69,7 @@ beforeEach(async () => {
     if (command === "prepare_work_plan_generation_component") {
       original = structuredClone(request);
       return { ...structuredClone(generationFixture.preflight), attemptId: request.attemptId, generation: request.generation,
+        preparedTools: request.toolQueries.map(generationToolFixture),
         taskId: fixtureIdentity(200),
         component: { ...structuredClone(generationComponent), profile: request.component.profile,
           binding: { ...structuredClone(generationComponent.binding), declaration: installed.manifest.contributions[0].contribution.kind === "capability"
@@ -117,7 +120,9 @@ it("offers only installed compatible candidates and requires every explicit choi
   expect(screen.getByRole("heading", { name: "Review component generation" })).toHaveFocus();
   expect(original?.generation).toEqual({ taskId: fixtureIdentity(100), attemptId: fixtureIdentity(101), unitIds: [workPlanToolStatus.plan.scope[0].unitId] });
   expect(original?.component).toEqual(generationFixture.prepare.component);
-  expect(Object.keys(original!).sort()).toEqual(["attemptId", "component", "generation", "projectId", "scopeId", "sessionToken"]);
+  expect(Object.keys(original!).sort()).toEqual(["attemptId", "component", "generation", "projectId", "scopeId", "sessionToken", "toolQueries"]);
+  expect(original?.toolQueries).toEqual([]);
+  expect(screen.getByRole("combobox", { name: "Reference tool for this component" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Start component generation" })).toBeDisabled();
   expect(screen.getByRole("checkbox", { name: "barrel" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command.startsWith("start_") || command.startsWith("authorize_"))).toBe(false);
@@ -225,6 +230,7 @@ it("offers Attempt generation components through the existing installed-package 
   const observed = await readPluginGenerationChoices();
   expect(observed.choices).toHaveLength(1);
   expect(observed.choices[0].provider).toEqual(generationComponent.binding.provider);
+  expect(observed.choices[0].supportsPreparedTools).toBe(false);
   expect(observed.runtimes).toHaveLength(1);
   expect(invoke.mock.calls.some(([command]) => command === "start_work_plan_generation_component")).toBe(false);
 });
@@ -248,6 +254,7 @@ it("renders Chinese accessible actions and preserves captured user material", as
   await screen.findByRole("option", { name: "example/generation 0.1.0 · generation.call" });
   expect(screen.getByRole("combobox", { name: "生成组件" })).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "组件 profile" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "供此组件使用的参考工具" })).toBeDisabled();
   expect(screen.getByRole("checkbox", { name: "第二条 👩🏽‍💻 é" })).toBeInTheDocument();
 });
 
@@ -347,6 +354,151 @@ async function chooseComponent() {
   await waitFor(()=>expect(screen.getByRole("button",{name:"Prepare component generation"})).toBeEnabled());
   return user;
 }
+function usePreparedToolInput() {
+  const contribution = installed.manifest.contributions[0].contribution;
+  if (contribution.kind !== "capability") throw new Error("Expected generation capability");
+  contribution.declaration.inputSchema.id = "tsumugi.generation-component-input";
+  const contract = workPlanToolStatus.plan.tools!.entries[0].binding.capability.declaration.contract;
+  installed.manifest.components[0].dependencies.push({ contract: structuredClone(contract), required: false, selection: "single" });
+  contribution.declaration.permissions = [...contribution.declaration.permissions, { kind: "project-service", contract: structuredClone(contract) }];
+  installed.manifest.permissions = [...installed.manifest.permissions, { kind: "project-service", contract: structuredClone(contract) }];
+}
+async function chooseReference(user: ReturnType<typeof userEvent.setup>) {
+  const tool = workPlanToolStatus.plan.tools!.entries[0];
+  await user.selectOptions(screen.getByRole("combobox", { name: "Reference tool for this component" }), tool.handle);
+  expect(screen.getByRole("button", { name: "Prepare component generation" })).toBeDisabled();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Original entry for the reference query" }), workPlanToolStatus.plan.scope[0].unitId);
+  return tool;
+}
+it("discovers the opt-in input only for Project components while retaining the original Attempt input", async () => {
+  usePreparedToolInput();
+  expect((await readPluginGenerationChoices()).choices[0].supportsPreparedTools).toBe(true);
+  installed.manifest.components[0].scope = "attempt";
+  expect((await readPluginGenerationChoices()).choices).toEqual([]);
+});
+it("keeps the opt-in input free of reference queries until a human selects a tool and an original entry", async () => {
+  usePreparedToolInput(); render(controls());
+  const user = await chooseComponent();
+  expect(screen.getByRole("combobox", { name: "Reference tool for this component" })).toHaveValue("");
+  await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
+  await screen.findByRole("region", { name: "Review component generation" });
+  expect(original?.toolQueries).toEqual([]);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(3);
+  expect(screen.queryByRole("region", { name: "Prepared reference query" })).toBeNull();
+});
+it.each(["dependency", "permission", "version"] as const)("keeps a reference tool unavailable when its caller's %s declaration does not match", async reason => {
+  usePreparedToolInput();
+  const contribution = installed.manifest.contributions[0].contribution;
+  if (contribution.kind !== "capability") throw new Error("Expected generation capability");
+  const contract = workPlanToolStatus.plan.tools!.entries[0].binding.capability.declaration.contract;
+  if (reason === "dependency") installed.manifest.components[0].dependencies = installed.manifest.components[0].dependencies.filter(dependency => dependency.contract.id !== contract.id);
+  if (reason === "permission") contribution.declaration.permissions = contribution.declaration.permissions.filter(permission => permission.kind !== "project-service" || permission.contract.id !== contract.id);
+  if (reason === "version") installed.manifest.components[0].dependencies[1].contract.behaviorVersion++;
+  render(controls()); const user = await chooseComponent();
+  expect(within(screen.getByRole("combobox", { name: "Reference tool for this component" })).getByRole("option", { name: "Reference lookup" })).toBeDisabled();
+  expect(screen.getByText(/does not declare both the dependency and permission/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
+  await screen.findByRole("region", { name: "Review component generation" });
+  expect(original?.toolQueries).toEqual([]);
+  expect(invoke.mock.calls.some(([command]) => command.startsWith("authorize_"))).toBe(false);
+});
+it("prepares one exact read-only tool query from the selected original entry and reviews its frozen input before independent component consent", async () => {
+  usePreparedToolInput(); render(controls()); const user = await chooseComponent(), tool = await chooseReference(user);
+  await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
+  const review = await screen.findByRole("region", { name: "Prepared reference query" });
+  const query = { taskId: fixtureIdentity(103), attemptId: fixtureIdentity(104), toolHandle: tool.handle, unitIds: [workPlanToolStatus.plan.scope[0].unitId] as [string] };
+  expect(original?.toolQueries).toEqual([query]);
+  expect(original?.generation).toEqual({ taskId: fixtureIdentity(100), attemptId: fixtureIdentity(101), unitIds: query.unitIds });
+  expect(original?.attemptId).toBe(fixtureIdentity(102));
+  const capturedQuery = original?.toolQueries[0];
+  if (!capturedQuery) throw new Error("Expected one captured reference query");
+  expect(Object.keys(capturedQuery).sort()).toEqual(["attemptId", "taskId", "toolHandle", "unitIds"]);
+  expect(within(review).getByText(generationToolFixture(query).input.utf8)).toBeInTheDocument();
+  expect(within(review).getByText("Original plan entry: barrel")).toBeInTheDocument();
+  expect(within(review).getByText(/generation component receives the complete reference query/)).toBeInTheDocument();
+  expect(within(review).getByText(/original plan’s independent tool permission/)).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Reference tool for this component" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Start component generation" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command.startsWith("start_") || command.startsWith("authorize_"))).toBe(false);
+  await confirm(user); await screen.findByText("Not started");
+  const start = invoke.mock.calls.find(([command]) => command === "start_work_plan_generation_component")![1].request;
+  expect(start.inputDigest).toBe(generationFixture.preflight.inputDigest);
+  expect(start.unsandboxedExecution).toBe(true);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(6);
+  expect(invoke.mock.calls.some(([command]) => command.startsWith("authorize_"))).toBe(false);
+  expect(failures).toEqual([]);
+});
+it("invalidates a registry preparation when its explicit tool or original entry changes", async () => {
+  usePreparedToolInput(); render(controls()); const user = await chooseComponent(), tool = await chooseReference(user);
+  const payload: AiComponentPrepareCommandPayload = { kind: "ai-component-prepare", planId: workPlanToolStatus.lease.planId,
+    expectedGeneration: workPlanToolStatus.lease.generation, unitIds: [workPlanToolStatus.plan.scope[0].unitId], component: generationFixture.prepare.component,
+    toolQuery: { toolHandle: tool.handle, unitId: workPlanToolStatus.plan.scope[0].unitId } };
+  const scope = { ...context, area: "ai" as const };
+  expect(registry.describe("ai.component.prepare", scope, payload)?.availability.enabled).toBe(true);
+  await user.click(screen.getByRole("checkbox", { name: "barrel" }));
+  expect(screen.getByText(/Choose a compatible tool and one currently selected original entry/)).toBeInTheDocument();
+  expect(registry.dispatch("ai.component.prepare", scope, payload)).toBe(false);
+  await user.click(screen.getByRole("checkbox", { name: "barrel" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Reference tool for this component" }), "");
+  expect(registry.dispatch("ai.component.prepare", scope, payload)).toBe(false);
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_work_plan_generation_component")).toBe(false);
+});
+it("discards a late Host capture when the explicit reference selection changed during preparation", async () => {
+  usePreparedToolInput(); render(controls()); const user = await chooseComponent(); await chooseReference(user);
+  const originalInvoke = invoke.getMockImplementation()!;
+  let finish!: () => void;
+  invoke.mockImplementation(async (command, args) => {
+    const value = await originalInvoke(command, args);
+    return command === "prepare_work_plan_generation_component" ? new Promise(resolve => { finish = () => resolve(value); }) : value;
+  });
+  await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Reference tool for this component" }), "");
+  await act(async () => finish());
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "discard_work_plan_generation_component")).toHaveLength(1));
+  expect(invoke.mock.calls.find(([command]) => command === "discard_work_plan_generation_component")![1].request.attemptId).toBe(original!.attemptId);
+  expect(screen.queryByRole("region", { name: "Review component generation" })).toBeNull();
+  expect(invoke.mock.calls.some(([command]) => command.startsWith("start_"))).toBe(false);
+});
+it.each(["consent", "scope", "effect", "budget"] as const)("explains unavailable reference %s without granting permission through the component", async reason => {
+  usePreparedToolInput(); const status = structuredClone(workPlanToolStatus);
+  if (reason === "consent") status.effects = status.effects.filter(effect => effect !== "query-tools");
+  if (reason === "scope") status.plan.tools!.entries[0].execution.componentScope = "attempt";
+  if (reason === "effect") status.plan.tools!.entries[0].binding.capability.declaration.effect = "external";
+  if (reason === "budget") status.toolInvocations!.reserved = status.toolInvocations!.limit;
+  render(controls(status)); const user = await chooseComponent();
+  expect(within(screen.getByRole("combobox", { name: "Reference tool for this component" })).getByRole("option", { name: "Reference lookup" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Prepare component generation" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
+  await screen.findByRole("region", { name: "Review component generation" });
+  expect(original?.toolQueries).toEqual([]);
+  expect(invoke.mock.calls.some(([command]) => command.startsWith("authorize_"))).toBe(false);
+});
+it("rechecks the original tool authority before component start and retains safe disposal", async () => {
+  usePreparedToolInput(); const ui = render(controls()), user = await chooseComponent(); await chooseReference(user);
+  await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
+  await screen.findByRole("region", { name: "Review component generation" });
+  await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
+  ui.rerender(controls({ ...workPlanToolStatus, effects: workPlanToolStatus.effects.filter(effect => effect !== "query-tools") }));
+  expect(screen.getByRole("button", { name: "Start component generation" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Discard this component preparation" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Review component generation" })).toBeNull());
+  expect(invoke.mock.calls.some(([command]) => command.startsWith("start_"))).toBe(false);
+});
+it("keeps an uncertain component start bound to its original reference query and consent", async () => {
+  usePreparedToolInput(); startOutcome = "unknown"; render(controls()); const user = await chooseComponent(); await chooseReference(user);
+  await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
+  await screen.findByRole("region", { name: "Review component generation" });
+  const captured = structuredClone(original!);
+  await confirm(user); await screen.findByText(/The action may have run/);
+  const started = structuredClone(invoke.mock.calls.find(([command]) => command === "start_work_plan_generation_component")![1].request);
+  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  expect(original).toEqual(captured);
+  expect(screen.getByRole("combobox", { name: "Reference tool for this component" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([command]) => command === "start_work_plan_generation_component").map(([, args]) => args.request)).toEqual([started]);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(6);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_work_plan_generation_component").map(([, args]) => args.request)).toEqual([captured]);
+});
 it.each(["eviction","error","contradiction","destroyed"] as const)("keeps component metadata witness ownership through %s during identity",async phase=>{
   const ui=render(<StableComponentConsumer/>),user=await chooseComponent(),originalInvoke=invoke.getMockImplementation()!;
   const cache=reader.client.getQueryCache(),inventory=reader.client.getQueryState(reader.key(["generation-component-inventory",0]));

@@ -106,7 +106,7 @@ fn capture_then_change_settings(phase: CapturePhase) {
         .unwrap();
     let outer = ExecutionId::new();
     let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]});
-    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation,"toolQueries":[]});
     let preflight = if phase == CapturePhase::Start {
         Some(
             fixture

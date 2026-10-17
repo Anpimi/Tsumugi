@@ -122,7 +122,7 @@ export interface AiAgentCommandPayload { kind: "ai-agent"; planId: string; expec
 export interface AiAgentPendingCommandPayload { kind: "ai-agent-pending"; operation: "tool" | "generation"; scopeId: string; taskId: string;
   attemptId: string; inputDigest: string; unitIds: string[]; toolHandle: string | null }
 export interface AiComponentPrepareCommandPayload { kind: "ai-component-prepare"; planId: string; expectedGeneration: string;
-  unitIds: string[]; component: PluginGenerationComponentRequest }
+  unitIds: string[]; component: PluginGenerationComponentRequest; toolQuery: { toolHandle: string; unitId: string } | null }
 export interface AiComponentCommandPayload { kind: "ai-component"; scopeId: string; attemptId: string; inputDigest: string }
 interface ExecutionItemCommandTarget {
   attemptId: string; taskId: string; itemId: string; translationUnitId: string;
@@ -970,7 +970,9 @@ function validAiPayload(payload: CommandPayload | undefined): payload is AiComma
     case "ai-agent-pending": return ["tool","generation"].includes(payload.operation) && [payload.scopeId,payload.taskId,payload.attemptId,payload.inputDigest].every(validIdentity)
       && identities(payload.unitIds,true) && (payload.operation === "tool" ? validIdentity(payload.toolHandle) : payload.toolHandle === null);
     case "ai-component-prepare": return validIdentity(payload.planId) && taskRevision(payload.expectedGeneration) && identities(payload.unitIds,true)
-      && pluginValidation.validateRequestGenerationComponent(payload.component);
+      && pluginValidation.validateRequestGenerationComponent(payload.component)
+      && (payload.toolQuery === null || !!payload.toolQuery && typeof payload.toolQuery === "object"
+        && validIdentity(payload.toolQuery.toolHandle) && validIdentity(payload.toolQuery.unitId) && payload.unitIds.includes(payload.toolQuery.unitId));
     case "ai-component": return [payload.scopeId,payload.attemptId,payload.inputDigest].every(validIdentity);
     case "ai-candidate": return validExecutionItemTarget(payload) && validIdentity(payload.resultId) && validIdentity(payload.recoveryUnitId);
     case "ai-saved-candidate": return validExecutionItemTarget(payload) && validIdentity(payload.revisionId) && validIdentity(payload.resultId);

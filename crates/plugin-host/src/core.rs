@@ -529,6 +529,7 @@ impl Runner for RunnerProxy {
 
 fn is_live(request: &DispatchRequest, permit: &PluginPermit, cancellation: &Cancellation) -> bool {
     !cancellation.is_requested()
+        && request.check_service_dispatch().is_ok()
         && request
             .deadline()
             .is_some_and(|deadline| std::time::Instant::now() < deadline)
@@ -541,6 +542,7 @@ fn require_live(
     permit: &PluginPermit,
     cancellation: &Cancellation,
 ) -> Result<(), ExecutionError> {
+    request.check_service_dispatch()?;
     if cancellation.is_requested() {
         return Err(ExecutionError::new(
             ErrorCode::Cancelled,

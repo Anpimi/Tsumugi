@@ -100,6 +100,27 @@ pub(crate) fn select_service_bindings(
     broker: Option<&dyn ProjectServiceBroker>,
 ) -> HostResult<Vec<ServiceBinding>> {
     let bindings = broker.map_or(&[][..], |broker| broker.bindings());
+    let captured = select_declared_services(component, capability, scope, bindings)?;
+    if captured.iter().any(|binding| {
+        !broker
+            .expect("an offered binding has a broker")
+            .is_current(binding)
+    }) {
+        return Err(HostError::AuthorityRevoked);
+    }
+    Ok(captured)
+}
+
+/// Pure declaration compatibility for a trusted preparation preview. This does
+/// not authenticate its arguments or establish provider availability, approval,
+/// currentness or execution permission. Process launch reuses this predicate
+/// with its captured package and independently checks the actual live broker.
+pub fn select_declared_services(
+    component: &ComponentDeclaration,
+    capability: &CapabilityDeclaration,
+    scope: &ScopeBinding,
+    bindings: &[ServiceBinding],
+) -> HostResult<Vec<ServiceBinding>> {
     // An Attempt caller may use only the supported generation adapter, captured
     // for its own dispatch. A matching Project descriptor is still rejected by
     // the exact scope check below, including an optional offered dependency.
@@ -137,12 +158,6 @@ pub(crate) fn select_service_bindings(
             )
         {
             return Err(HostError::DependencyUnavailable);
-        }
-        if !broker
-            .expect("an offered binding has a broker")
-            .is_current(binding)
-        {
-            return Err(HostError::AuthorityRevoked);
         }
     }
     for dependency in &component.dependencies {

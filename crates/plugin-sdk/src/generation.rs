@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_GENERATION_SERVICE_UNITS: usize = 100;
 pub const MAX_GENERATION_SERVICE_INPUT_BYTES: usize = 16 * 1024;
+/// Leaves one binding available for the generation service on the process channel.
+pub const MAX_PREPARED_TOOL_SERVICE_CALLS: usize = MAX_SERVICE_BINDINGS - 1;
+pub const MAX_GENERATION_COMPONENT_INPUT_BYTES: usize = 1 * 1024 * 1024;
 pub const MAX_GENERATION_SERVICE_RECEIPT_BYTES: usize = 1024;
 pub const MAX_GENERATION_SERVICE_ERROR_BYTES: usize = 1024;
 
@@ -23,6 +26,9 @@ pub fn generation_service_contract() -> ContractRef {
 }
 pub fn generation_service_input_contract() -> ContractRef {
     contract("tsumugi.work-plan-generation-input")
+}
+pub fn generation_component_input_contract() -> ContractRef {
+    contract("tsumugi.generation-component-input")
 }
 pub fn generation_service_receipt_contract() -> ContractRef {
     contract("tsumugi.work-plan-generation-receipt")
@@ -78,6 +84,80 @@ impl GenerationServiceInput {
             opaque_id(id, "generation.unitIds")?;
         }
         encoded_limit(self, MAX_GENERATION_SERVICE_INPUT_BYTES, "generation.input")
+    }
+}
+
+/// One query payload selected from the original work plan. These identities
+/// carry data only and do not grant permission to invoke the selected tool.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct PreparedToolServiceCall {
+    #[cfg_attr(feature = "schema", schemars(schema_with = "identity_schema"))]
+    pub handle_id: String,
+    #[cfg_attr(feature = "schema", schemars(schema_with = "identity_schema"))]
+    pub call_id: String,
+    #[cfg_attr(feature = "schema", schemars(schema_with = "identity_schema"))]
+    pub tool_handle: String,
+    pub input: EncodedPayload,
+}
+
+/// Data supplied to the generation component after the Host prepared its
+/// read-only query inputs from the user's selected work plan.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct GenerationComponentInput {
+    pub generation: GenerationServiceInput,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(schema_with = "prepared_tool_service_calls_schema")
+    )]
+    pub prepared_tools: Vec<PreparedToolServiceCall>,
+}
+impl GenerationComponentInput {
+    pub fn validate(&self) -> Result<(), ContractError> {
+        self.generation.validate()?;
+        if self.prepared_tools.len() > MAX_PREPARED_TOOL_SERVICE_CALLS {
+            return Err(ContractError::at(
+                ContractErrorCode::LimitExceeded,
+                "generationComponent.preparedTools",
+            ));
+        }
+        encoded_limit(
+            self,
+            MAX_GENERATION_COMPONENT_INPUT_BYTES,
+            "generationComponent.input",
+        )?;
+        unique(
+            self.prepared_tools
+                .iter()
+                .map(|call| call.handle_id.as_str()),
+            "generationComponent.preparedTools.handleId",
+        )?;
+        unique(
+            self.prepared_tools.iter().map(|call| call.call_id.as_str()),
+            "generationComponent.preparedTools.callId",
+        )?;
+        unique(
+            self.prepared_tools
+                .iter()
+                .map(|call| call.tool_handle.as_str()),
+            "generationComponent.preparedTools.toolHandle",
+        )?;
+        for call in &self.prepared_tools {
+            opaque_id(
+                &call.handle_id,
+                "generationComponent.preparedTools.handleId",
+            )?;
+            opaque_id(&call.call_id, "generationComponent.preparedTools.callId")?;
+            opaque_id(
+                &call.tool_handle,
+                "generationComponent.preparedTools.toolHandle",
+            )?;
+            call.input.validate()?;
+        }
+        Ok(())
     }
 }
 
@@ -172,6 +252,12 @@ receiver!(
     MAX_GENERATION_SERVICE_INPUT_BYTES
 );
 receiver!(
+    parse_generation_component_input,
+    generation_component_input_schema,
+    GenerationComponentInput,
+    MAX_GENERATION_COMPONENT_INPUT_BYTES
+);
+receiver!(
     parse_generation_service_receipt,
     generation_service_receipt_schema,
     GenerationServiceReceipt,
@@ -197,6 +283,13 @@ fn digest_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars::Schem
 #[cfg(feature = "schema")]
 fn units_schema(generator: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({"type":"array", "minItems":1, "maxItems":MAX_GENERATION_SERVICE_UNITS, "uniqueItems":true, "items":identity_schema(generator)})
+}
+#[cfg(feature = "schema")]
+fn prepared_tool_service_calls_schema(
+    generator: &mut schemars::generate::SchemaGenerator,
+) -> schemars::Schema {
+    schemars::json_schema!({"type":"array", "maxItems":MAX_PREPARED_TOOL_SERVICE_CALLS,
+        "items":generator.subschema_for::<PreparedToolServiceCall>()})
 }
 #[cfg(feature = "schema")]
 pub fn generation_service_types_schema() -> schemars::Schema {

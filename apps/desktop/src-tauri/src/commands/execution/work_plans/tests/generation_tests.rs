@@ -54,6 +54,14 @@ mod philosophy_generation;
     target_os = "macos",
     target_arch = "aarch64"
 ))]
+#[path = "prepared_tool_services.rs"]
+mod prepared_tool_services;
+
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
 struct ComponentAction {
     scope: Value,
     preparing: Value,
@@ -83,7 +91,7 @@ fn start_component_for_units(
     let generation =
         json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":units});
     let outer = ExecutionId::new();
-    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation,"toolQueries":[]});
     let prepared = fixture
         .call("prepare_work_plan_generation_component", preparing.clone())
         .unwrap();
@@ -396,7 +404,7 @@ fn generation_component_real_scoped(component_scope: sdk::ComponentScope) {
             .unwrap();
         let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]});
         let outer = ExecutionId::new();
-        let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+        let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation,"toolQueries":[]});
         let before = fixture.bytes();
         let count = fixture.attempt_count();
         let preflight = fixture
@@ -713,7 +721,7 @@ fn generation_component_wire_preserves_strict_original_authority_boundaries() {
     .unwrap();
     let prepare = json!({"sessionToken":"test-session","projectId":ExecutionId::new(),"scopeId":ExecutionId::new(),"attemptId":ExecutionId::new(),
         "component":{"provider":binding.provider,"profile":binding.declaration.profiles.first(),"environmentDigest":"b".repeat(64)},
-        "generation":{"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[ExecutionId::new()]}});
+        "generation":{"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[ExecutionId::new()]},"toolQueries":[]});
     assert!(
         serde_json::from_value::<generation::WorkPlanGenerationPrepareRequest>(prepare.clone())
             .is_ok()

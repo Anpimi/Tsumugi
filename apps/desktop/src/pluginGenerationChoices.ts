@@ -1,6 +1,8 @@
 import { pluginCommands, readEnabledPluginPackages } from "./pluginCommands";
 import { approvedPluginEnvironments } from "./pluginEnvironments";
 import { contractIdentity } from "./reviewIdentity";
+import type { CapabilityDeclaration, CapabilityDependency } from "./generated/plugins.responses";
+import type { WorkPlanToolSpec } from "./generated/ai.responses";
 
 const generationContract = (id: string) => contractIdentity({ id: `tsumugi.work-plan-generation${id}`, schemaVersion: 1, behaviorVersion: 1 });
 
@@ -16,16 +18,24 @@ export async function readPluginGenerationChoices() {
         && contractIdentity(dependency.contract) === generationContract(""))
       || contribution.contribution.kind !== "capability") return [];
     const declaration = contribution.contribution.declaration;
+    const supportsPreparedTools = component.scope === "project" && contractIdentity(declaration.inputSchema) === contractIdentity({ id: "tsumugi.generation-component-input", schemaVersion: 1, behaviorVersion: 1 });
     if (declaration.effect !== "external"
       || !declaration.permissions.some(permission => permission.kind === "project-service" && contractIdentity(permission.contract) === generationContract(""))
       || !item.manifest.permissions.some(permission => permission.kind === "project-service" && contractIdentity(permission.contract) === generationContract(""))
-      || contractIdentity(declaration.inputSchema) !== generationContract("-input")
+      || (!supportsPreparedTools && contractIdentity(declaration.inputSchema) !== generationContract("-input"))
       || contractIdentity(declaration.outputSchema) !== generationContract("-receipt")
       || contractIdentity(declaration.errorSchema) !== generationContract("-error")) return [];
-    return [{ key: `${item.packageDigest}:${contribution.id}`, declaration,
+    return [{ key: `${item.packageDigest}:${contribution.id}`, declaration, dependencies: component.dependencies, supportsPreparedTools,
       label: `${item.manifest.plugin.publisher}/${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`,
       provider: { plugin: item.manifest.plugin, packageDigest: item.packageDigest,
         componentId: component.id, contributionId: contribution.id } }];
   }));
   return { choices, runtimes: approvedPluginEnvironments(inventory).filter(choice => choice.environment.profile === "node-system-libraries-v1") };
+}
+
+/** Presentation uses the caller's actual manifest; Host checks it again before capture and launch. */
+export function generationDeclaresPreparedTool(choice: { declaration: CapabilityDeclaration; dependencies: readonly CapabilityDependency[] }, tool: WorkPlanToolSpec) {
+  const contract = contractIdentity(tool.binding.capability.declaration.contract);
+  return choice.dependencies.some(dependency => contractIdentity(dependency.contract) === contract)
+    && choice.declaration.permissions.some(permission => permission.kind === "project-service" && contractIdentity(permission.contract) === contract);
 }

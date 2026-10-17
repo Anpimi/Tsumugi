@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Let an explicitly selected Project JavaScript generation component call frozen
+  queries from the work plan's selected read-only Project JavaScript tools.
+  The preview shows the exact query content shared with both components; tool
+  consent, grants, budgets, original deadlines and cancellation remain separate.
+  Results retain the original execution receipts and never replace generation
+  acknowledgements. The current-only development project format advances to
+  schema 50; earlier directories are preserved and refused without migration.
+
 - Diagnose a bounded component dependency closure through the Rust SDK and
   captured Host catalog. Reports retain exact provider/profile choices, missing
   or disabled declarations, ambiguity and dependency cycles without activating

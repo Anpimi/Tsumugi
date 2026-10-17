@@ -298,6 +298,7 @@ pub(crate) struct ServiceOriginGuard {
     pub(crate) revoked: Cancellation,
     pub(crate) deadline: Instant,
     pub(crate) digest: String,
+    pub(crate) retain_until_terminal: bool,
 }
 impl ServiceOriginGuard {
     pub(crate) fn live(&self) -> bool {
@@ -583,7 +584,7 @@ impl PluginAuthority {
                 Err(denied())
             };
         }
-        origins.retain(|_, origin| origin.live());
+        origins.retain(|_, origin| origin.retain_until_terminal || origin.live());
         if origins.len() >= MAX_LIVE_GRANTS {
             return Err(ExecutionError::new(
                 ErrorCode::LimitExceeded,

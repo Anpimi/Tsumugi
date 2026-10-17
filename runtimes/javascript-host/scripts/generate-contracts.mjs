@@ -55,7 +55,7 @@ for (const kind of ['text-review-input', 'text-review-declaration', 'text-review
   textReviewSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
 const generationSchemas = new Map();
-for (const kind of ['generation-service-input', 'generation-service-receipt', 'generation-service-error', 'generation-service-types']) {
+for (const kind of ['generation-component-input', 'generation-service-input', 'generation-service-receipt', 'generation-service-error', 'generation-service-types']) {
   const url = new URL(`crates/plugin-sdk/schemas/${kind}.schema.json`, root);
   cargo(`check-${kind}-schema`, fileURLToPath(url));
   generationSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
@@ -147,6 +147,9 @@ for (const kind of ['text-review-input', 'text-review-declaration', 'text-review
 outputs.push([new URL('crates/plugin-sdk/javascript/generation.d.ts', root), await compile(generationSchemas.get('generation-service-types'), 'GenerationServiceTypes', {
   bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
 })]);
+outputs.push([new URL('crates/plugin-sdk/javascript/generation-component.d.ts', root), await compile(generationSchemas.get('generation-component-input'), 'GenerationComponentInput', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
 for (const kind of ['generation-service-input', 'generation-service-receipt', 'generation-service-error']) {
   const validator = standaloneCode(ajv, ajv.compile(generationSchemas.get(kind)));
   if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
@@ -163,6 +166,11 @@ if (/^\s*import\s/m.test(sourceContextValidator) || /\brequire\s*\(/.test(source
 }
 outputs.push([new URL('crates/plugin-sdk/javascript/validate-source-context-facts.mjs', root), banner + sourceValidatorAttribution + sourceContextValidator]);
 outputs.push([new URL('crates/plugin-sdk/javascript/source-context-profile.mjs', root), `${banner}const profile = ${JSON.stringify(sourceContextProfile, null, 2)};\nObject.freeze(profile.contract);\nexport const SOURCE_CONTEXT_FACTS_PROFILE = Object.freeze(profile);\n`]);
+const componentValidator = standaloneCode(ajv, ajv.compile(generationSchemas.get('generation-component-input')));
+if (/^\s*import\s/m.test(componentValidator) || /\brequire\s*\(/.test(componentValidator)) {
+  throw new Error('The generated component input validator requires a runtime dependency.');
+}
+outputs.push([new URL('crates/plugin-sdk/javascript/validate-generation-component-input.mjs', root), banner + sourceValidatorAttribution + componentValidator]);
 for (const [url, source] of outputs) {
   if (process.argv.includes('--check')) {
     if (await readFile(url, 'utf8') !== source) throw new Error(`Stale generated contract: ${url.pathname.split('/').at(-1)}`);

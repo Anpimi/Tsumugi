@@ -434,7 +434,7 @@ fn selector(tool: &WorkPlanToolSpec) -> PluginToolRequest {
     }
 }
 
-fn load_runner(
+pub(super) fn load_runner(
     plugins: &ApplicationPlugins,
     prepared: &PreparedWorkPlanTool,
 ) -> Result<(UnsignedDecimal, Arc<RunnerProxy>, PluginExecutionBinding), CommandError> {
