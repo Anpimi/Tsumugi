@@ -161,6 +161,7 @@ correctionFeedback: {
 },
 contextFacts: {
   saved: "Fact decision saved for {{key}} → {{locale}}.",
+  checking: "Checking the saved fact decision…",
   "title": "Project decisions on these facts",
   "help": "Change one known fact for this entry and target language, or reject an inference. Original observations and their sources remain in history. This does not create a project-wide rule or authorize sharing.",
   "editor": "Edit a source-fact decision",
@@ -1698,6 +1699,7 @@ ai: {
       saveContext: "Save context",
       saved: "Saved. Earlier revisions remain available.",
       savedNewer: "The earlier version was saved. Your newer edits are still here; save them separately when ready.",
+      checkingAction: "Checking the saved resource result…",
       captureSaved: "The current input was captured. Its saved evidence and omissions remain available.",
       actionFailed: "The action could not complete. Your drafts and captured evidence are retained.",
       readFailed: "Current resource information could not be read ({{reason}}). Your drafts and original pending action are still available.",

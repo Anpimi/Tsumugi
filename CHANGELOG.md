@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check an uncertain correction proposal, resource-entry decision, or context-fact
+  decision once against its original saved action. Newer edits are retained, with
+  manual recovery available when the result remains unconfirmed.
+
 - Confirm an uncertain saved translation or revision choice from its original
   action receipt before asking for a retry. Checking a saved result no longer
   sends a save or selection again, and newer draft text is retained.

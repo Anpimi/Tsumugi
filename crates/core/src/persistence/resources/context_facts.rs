@@ -309,6 +309,12 @@ impl ProjectStore {
         {
             return Err(failure(ErrorCode::Unauthorized, "context-fact-project"));
         }
+        if self
+            .execution_unknown
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.reconcile_execution()?;
+        }
         Ok(value)
     }
     pub fn context_fact_decisions(

@@ -66,7 +66,7 @@ function ActiveContextFactDecisionFields({ context, disabled=false }: { context:
     <label>{t("contextFacts.reason")}<textarea value={draft.reason} onChange={e=>owner.editFact({reason:e.target.value})}/></label>
     {!pending&&!current()?<p role="status">{t("contextFacts.changed")} <button onClick={()=>{void source.refetch();void decisions.refetch();}}>{t("resource.refresh")}</button></p>:null}
     {state.factRecorded?<p role="status">{t("resource.savedNewer")}</p>:null}
-    {pending?<p role="alert">{t("contextFacts.unknown")}</p>:null}
+    {pending ? state.checkingAction === "fact" ? <p role="status">{t("contextFacts.checking")}</p> : <p role="alert">{t("contextFacts.unknown")}</p> : null}
     {state.factFailure?<div role="alert"><p>{t(!pending&&isContextFactCasRejection(state.factFailure)?"contextFacts.notSubmitted":"contextFacts.failed")}</p><CommandFailureDetails failure={state.factFailure}/>{!pending?<button onClick={()=>{void source.refetch();void decisions.refetch();}}>{t("resource.refresh")}</button>:null}</div>:null}
     <button disabled={!availability(payload(),"save").enabled} onClick={()=>command("save")}>{t("contextFacts.save")}</button>
     <button disabled={!availability(payload(),"discard").enabled} onClick={()=>command("discard")}>{t("contextFacts.discard")}</button>

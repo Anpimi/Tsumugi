@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ResourceWorkbench } from "./ResourceWorkbench";
-import type { ProjectView } from "./projectCommands";
+import type { CommandError, ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
@@ -13,9 +13,10 @@ import errorFixture from "../test/fixtures/commandErrors.contract.json";
 import { useResourceDraftSession } from "./ResourceDraftSession";
 import { useSessionReads } from "./SessionReadProvider";
 import { useWorkbenchCommands, type ResourceDecisionCommandPayload, type ResourceTranslationCommandPayload } from "./workbenchCommands";
-import type { SaveTerm, SaveContext, CaptureContext, ResourceDecision, ResourcePreview, TermRevision, GlossaryCapture } from "./resourceCommands";
+import type { SaveTerm, SaveContext, CaptureContext, ResourceDecision, ResourceDecisionResult, ResourcePreview, TermRevision, GlossaryCapture } from "./resourceCommands";
+import { retrievalCapture, retrievalResourcePreview } from "./testSupport/mcpRetrievalFixture";
 
-import { validateRequestCapture, validateRequestTerm, validateResponseCapture, validateResponsePreview, validateResponseCorrectionBasis } from "./generated/resource.validators";
+import { validateRequestCapture, validateRequestTerm, validateRequestResourceAction, validateResponseDecisionAction, validateResponseCapture, validateResponsePreview, validateResponseCorrectionBasis } from "./generated/resource.validators";
 const originalCapture = structuredClone(resourceFixture.responses.capture), originalPreview = structuredClone(resourceFixture.responses.preview);
 if (!validateResponseCapture(originalCapture) || originalCapture === null || !validateResponsePreview(originalPreview)) throw new Error("Invalid resource fixture");
 const checkedCapture = originalCapture, checkedPreview = originalPreview;
@@ -195,6 +196,10 @@ function captureAcknowledgement(request: CaptureContext) {
 function installResourceReads() {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_resource_decision_action") {
+      if (!validateRequestResourceAction(payload.request)) throw new Error("Invalid resource action lookup request");
+      return Promise.resolve(null);
+    }
     if (command === "read_context_revision") return Promise.resolve(null);
     if (command === "resolve_terms") return Promise.resolve({ unitId: payload.request.unitId, locale: payload.request.locale, sourceRevisionId: fixtureIdentity(402), entries: [] });
     if (command === "tm_suggestions") return Promise.resolve([]);
@@ -205,6 +210,127 @@ function installResourceReads() {
 function editTermA() {
   resourceOwner.editTerm({ source: "Barrel", aliases: ["Cask", "Drum"], target: "A", protected: false, scopeUnitId: null, reason: "Reviewed" }, "Cask,  Drum");
 }
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+function decisionPreview(origin: "file" | "mcp"): ResourcePreview {
+  if (origin === "file") return structuredClone(checkedPreview);
+  const receipt = retrievalCapture();
+  if (receipt.capture.origin.kind !== "mcp") throw new Error("Expected MCP capture fixture");
+  const { unitId, sourceRevisionId } = page.rows[0], sourceSnapshotId = page.scope.currentSnapshot;
+  if (!unitId || !sourceRevisionId || !sourceSnapshotId) throw new Error("Expected complete source fixture");
+  receipt.capture.origin.provenance.basis = { projectId: project.metadata.projectId, unitId,
+    sourceLocale: project.metadata.sourceLocale, locale: "zh-CN", sourceSnapshotId, sourceRevisionId };
+  const preview = retrievalResourcePreview(receipt); preview.rows[0].scopeUnitId = unitId;
+  if (!validateResponsePreview(preview)) throw new Error("Invalid MCP resource preview fixture"); return preview;
+}
+function decisionReceipt(request: ResourceDecision): ResourceDecisionResult {
+  return { actionId: request.actionId, decision: request.decision, request: { ...structuredClone(request), expectedRevisionId: request.expectedRevisionId ?? null }, revision: null };
+}
+const lostResource: CommandError = { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown", recoveryRequired: true,
+  reason: "resource-decision", diagnosticId: fixtureIdentity(510) };
+
+it.each(["file", "mcp"] as const)("confirms one original %s decision read after consumer removal without replacing either resource draft", async origin => {
+  installResourceReads(); const native = invoke.getMockImplementation()!, preview = decisionPreview(origin), lookup = deferred<ResourceDecisionResult | null>();
+  let written!: ResourceDecision;
+  invoke.mockImplementation((command: string, args) => {
+    if (command === "read_resource_preview") return Promise.resolve(preview);
+    if (command === "decide_resource_entry") { written = args.request.decision; return Promise.reject(lostResource); }
+    if (command === "read_resource_decision_action") return lookup.promise;
+    return native(command, args);
+  });
+  const view = render(<ResourceView project={project} />), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
+  await act(async () => { await resourceOwner.openPreview(preview.capture); });
+  act(() => { resourceOwner.beginContext(page.rows[0], null); });
+  let running!: Promise<void>; act(() => { running = resourceOwner.decide("barrel", null, "keep"); });
+  await screen.findByText(i18n.t("resource.checkingAction"));
+  expect(resourceOwner.current()).toMatchObject({ checkingAction: "resource", busyMutation: true, failure: null });
+  expect(resourceOwner.inFlight()).toBe(true);
+  act(() => { editTermA(); resourceOwner.editContext("Context B"); resourceOwner.editContextReason("Reason B"); });
+  await act(async () => { await resourceOwner.checkPending(); await resourceOwner.retryPending(); await resourceOwner.decide("barrel", null, "keep"); });
+  const readsBefore = invoke.mock.calls.filter(([command]) => command === "read_resource_preview").length;
+  view.rerender(null);
+  await act(async () => { lookup.resolve(decisionReceipt(written)); await running; });
+  view.rerender(<ResourceView project={project} />);
+  expect(resourceOwner.current()).toMatchObject({ pending: null, checkingAction: null, busyMutation: false, failure: null,
+    notice: "decisionSaved", termDraft: { target: "A" }, contextDraft: "Context B", contextReason: "Reason B", previewNeedsRefresh: true });
+  expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action").map(([, args]) => args.request))
+    .toEqual([{ projectId: project.metadata.projectId, sessionToken: project.sessionToken, actionId: written.actionId }]);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_preview")).toHaveLength(readsBefore);
+  expect(invoke.mock.calls.some(([command]) => ["save_term", "save_context", "capture_context"].includes(command))).toBe(false);
+});
+
+it.each(["file", "mcp"] as const)("keeps the exact %s decision check and explicit retry reachable after null, rejection, and failed reads", async origin => {
+  installResourceReads(); const native = invoke.getMockImplementation()!, preview = decisionPreview(origin);
+  const rejected: CommandError = { code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false };
+  const readFailure: CommandError = { code: "storage-failed", stage: "execution-recover", outcome: "rejected", recoveryRequired: false, reason: "resource-action-read" };
+  let written!: ResourceDecision, writes = 0, reads = 0;
+  invoke.mockImplementation((command: string, args) => {
+    if (command === "read_resource_preview") return Promise.resolve(preview);
+    if (command === "decide_resource_entry") { written = args.request.decision; return Promise.reject(++writes === 1 ? lostResource : rejected); }
+    if (command === "read_resource_decision_action") {
+      reads++; if (reads === 1) return Promise.resolve(null);
+      if (reads === 3) return Promise.reject(readFailure);
+      const receipt = decisionReceipt(written);
+      if (reads === 2) receipt.request.entryId = "different-original-entry";
+      expect(validateResponseDecisionAction(receipt)).toBe(true); return Promise.resolve(receipt);
+    }
+    return native(command, args);
+  });
+  const view = render(<ResourceView project={project} />), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
+  await act(async () => { await resourceOwner.openPreview(preview.capture); await resourceOwner.decide("barrel", null, "keep"); });
+  const pending = resourceOwner.current().pending;
+  expect(resourceOwner.current()).toMatchObject({ pendingCheckedMissing: true, failure: lostResource, pendingUncertain: true });
+  expect(resourceOwner.current().failure).toBe(lostResource);
+  expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: i18n.t("resource.retry") }));
+  expect(writes).toBe(2); expect(reads).toBe(1); expect(resourceOwner.current().pending).toBe(pending);
+  expect(screen.queryByRole("button", { name: i18n.t("resource.retry") })).not.toBeInTheDocument();
+  act(() => { editTermA(); });
+  const removed = { ...project, metadata: { ...project.metadata, targetLocales: [] } };
+  view.rerender(<ResourceView project={removed} />, removed);
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+  expect(resourceOwner.current()).toMatchObject({ pending, pendingCheckedMissing: false, failure: "failed" });
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+  expect(resourceOwner.current().failure).toBe(readFailure); expect(resourceOwner.current().pending).toBe(pending);
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
+  await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
+  expect(resourceOwner.current()).toMatchObject({ failure: null, checkingAction: null, termDraft: { target: "A" } });
+  expect(writes).toBe(2); expect(reads).toBe(4);
+  const requests = invoke.mock.calls.filter(([command]) => command === "decide_resource_entry").map(([, args]) => args.request);
+  expect(requests[1]).toEqual(requests[0]); expect(requests[0].decision.captureId).toBe(preview.capture.captureId);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action").every(([, args]) => args.request.actionId === written.actionId)).toBe(true);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["before", "during"] as const)("does not read or accept a resource decision after its owner retires %s lookup", async moment => {
+  installResourceReads(); const native = invoke.getMockImplementation()!, write = deferred<ResourceDecisionResult>(), lookup = deferred<ResourceDecisionResult | null>();
+  let written!: ResourceDecision;
+  invoke.mockImplementation((command: string, args) => {
+    if (command === "decide_resource_entry") { written = args.request.decision; return write.promise; }
+    if (command === "read_resource_decision_action") return lookup.promise;
+    return native(command, args);
+  });
+  render(<ResourceView project={project} />);
+  await act(async () => { await resourceOwner.openPreview(checkedCapture); });
+  let running!: Promise<void>; act(() => { running = resourceOwner.decide("barrel", null, "keep"); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry")).toHaveLength(1));
+  if (moment === "during") {
+    await act(async () => { write.reject(lostResource); });
+    await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action")).toHaveLength(1));
+  }
+  const before = resourceOwner.current(); act(() => resourceReads.retire());
+  await act(async () => { if (moment === "before") write.reject(lostResource); else lookup.resolve(decisionReceipt(written)); await running; });
+  expect(resourceOwner.current()).toBe(before);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action")).toHaveLength(moment === "before" ? 0 : 1);
+  expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry")).toHaveLength(1);
+});
 
 it("displays the first impact read after the impact tab is committed", async () => {
   const original = invoke.getMockImplementation()!;
@@ -472,6 +598,7 @@ it("retains the chosen capture after preview failure and uses its actual languag
   expect(pending?.kind === "decision" && pending.locale).toBe("fr");
   view.rerender(<ResourceView project={project} />);
   expect(within(screen.getByRole("row", { name: /Barrel/ })).getByRole("button", { name: "Keep current" })).toBeDisabled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check or retry the same action" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Check or retry the same action" }));
   await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
   const requests = invoke.mock.calls.filter(([name]) => name === "decide_resource_entry").map(([, payload]) => payload.request);
@@ -871,6 +998,7 @@ it.each(["term", "context", "decision", "capture"] as const)("retains the origin
   expect(resourceOwner.current().pendingUncertain).toBe(true);
   await act(async () => { await resourceOwner.saveTerm(); await resourceOwner.saveContext(); });
   expect(writes).toBe(2);
+  if (kind === "decision") await act(async () => { await resourceOwner.checkPending(); });
   await act(async () => { await resourceOwner.retryPending(); });
   expect(resourceOwner.current().pending).toBeNull();
   const requests = invoke.mock.calls.filter(([name]) => name === command).map(([, payload]) => payload.request);

@@ -77,6 +77,7 @@ export interface ResourceDraftState {
   pending: ResourcePending | null;
   pendingUncertain: boolean;
   busyMutation: boolean;
+  checkingAction: "resource" | "fact" | null;
   notice: ResourceNotice;
   failure: CommandFailure | null;
   completionVersion: number;
@@ -144,7 +145,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   const [state, setState] = useState<ResourceDraftState>(() => ({ correctionDraft:null,correctionReceipt:null,pendingCheckedMissing:false,factDraft:null,factPending:null,factCheckedMissing:false,factFailure:null,factRecorded:null, locale: project.metadata.targetLocales[0] ?? "",
     selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: 0, newerTerm: false,
     selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: 0, newerContext: false,
-    previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, pendingUncertain: false, busyMutation: false, notice: null, failure: null, completionVersion: 0 }));
+    previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, pendingUncertain: false, busyMutation: false, checkingAction: null, notice: null, failure: null, completionVersion: 0 }));
   const currentState = useRef(state), projectRef = useRef(project);
   const [session] = useState(() => executionContext(project));
   const mounted = useSessionAlive(), running = useRef(false);
@@ -241,22 +242,40 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   function discardFact(){if(reserved())return false;update(before=>({...before,factDraft:null,factFailure:null,factCheckedMissing:false}));return true;}
   function settleFact(request:ContextFactWrite,value:ContextFactDecision){
     confirmContextFact(request,value);const pending=current().factPending;if(!pending || pending.request!==request)return;
-    update(before=>({...before,factPending:null,factCheckedMissing:false,factFailure:null,factRecorded:{key:before.factDraft?.key??"",decision:value},
+    update(before=>({...before,factPending:null,factCheckedMissing:false,factFailure:null,checkingAction:null,factRecorded:{key:before.factDraft?.key??"",decision:value},
       factDraft:before.factDraft?.editSeq===pending.submittedSeq?null:before.factDraft?{...before.factDraft,expectedDecisionId:request.actionId}:null,
       notice:before.factDraft?.editSeq===pending.submittedSeq?"saved":"savedNewer",completionVersion:before.completionVersion+1}));
     reads.invalidate(["resources","review"],false);
   }
+  async function lookupFact(pending: NonNullable<ResourceDraftState["factPending"]>) {
+    if (!live() || current().factPending !== pending) return;
+    update(before => ({ ...before, checkingAction: "fact", factFailure: null, factCheckedMissing: false }));
+    try {
+      const value = await resourceCommands.factAction({ ...session, actionId: pending.request.actionId });
+      if (!live() || current().factPending !== pending) return;
+      if (value === null) update(before => ({ ...before, factCheckedMissing: true })); else settleFact(pending.request, value);
+    } finally {
+      if (live() && current().factPending === pending) update(before => ({ ...before, checkingAction: null }));
+    }
+  }
   async function dispatchFact(request:ContextFactWrite,recovering=false){
-    try{const value=await resourceCommands.decideFact({...session,decision:request});if(live())settleFact(request,value);}
+    const pending=current().factPending; if(!live() || !pending || pending.request!==request)return;
+    let writeFailure:CommandFailure|null=null;
+    try{const value=await resourceCommands.decideFact({...session,decision:request});if(live())settleFact(request,value);return;}
     catch(error){
       if(!live() || current().factPending?.request!==request)return;
       const notSubmitted=isContextFactCasRejection(error);
+      const unknown=hasUnknownOutcome(error);writeFailure=commandFailure(error);
       update(before=>before.factPending?.request!==request?before:{...before,
-        factPending:hasUnknownOutcome(error)||recovering&&!notSubmitted?before.factPending:null,
-        factCheckedMissing:false,factFailure:commandFailure(error)});
+        factPending:unknown||recovering&&!notSubmitted?before.factPending:null,
+        factCheckedMissing:false,factFailure:unknown?null:writeFailure});
       // Refresh facts without adopting a new CAS into the retained B draft.
       if(notSubmitted)reads.invalidate(["resources","review"],false);
+      if(!unknown)return;
     }
+    // Keep the original reservation; a failed read never retries the write.
+    try{await lookupFact(pending);if(live()&&current().factPending===pending)update(before=>({...before,factFailure:writeFailure}));}
+    catch(error){if(live()&&current().factPending===pending)update(before=>({...before,factFailure:commandFailure(error)}));}
   }
   async function saveFact(proof:()=>boolean){
     const start=current().factDraft;if(!start || !proof() || !localeAvailable(start.basis.scope.locale) || !validContextFactDraft(start) || !reserve())return;
@@ -268,14 +287,13 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     }catch(error){update(before=>({...before,factFailure:commandFailure(error)}));}finally{release();}
   }
   async function checkFact(){
-    const pending=current().factPending;if(!pending || !live() || running.current)return;
+    const pending=current().factPending,previousFailure=current().factFailure;if(!pending || !live() || running.current)return;
     running.current=true;update(before=>({...before,busyMutation:true,factFailure:null,factCheckedMissing:false}));
-    try{const value=await resourceCommands.factAction({...session,actionId:pending.request.actionId});if(!live()||current().factPending!==pending)return;
-      if(value)settleFact(pending.request,value);else update(before=>({...before,factCheckedMissing:true}));
-    }catch(error){update(before=>({...before,factFailure:commandFailure(error)}));}finally{release();}
+    try{await lookupFact(pending);if(live()&&current().factPending===pending)update(before=>({...before,factFailure:previousFailure}));}
+    catch(error){if(live()&&current().factPending===pending)update(before=>({...before,factFailure:commandFailure(error)}));}finally{release();}
   }
   async function retryFact(){const pending=current().factPending;if(!pending || !current().factCheckedMissing || !live() || running.current)return;
-    running.current=true;update(before=>({...before,busyMutation:true,factFailure:null}));try{await dispatchFact(pending.request,true);}finally{release();}}
+    running.current=true;update(before=>({...before,busyMutation:true,factFailure:null,factCheckedMissing:false}));try{await dispatchFact(pending.request,true);}finally{release();}}
   function fail(error: unknown, notice: ResourceNotice = "error") { update(before => ({ ...before, failure: commandFailure(error), notice })); }
   function reserve() {
     if (!live() || reserved()) return false;
@@ -312,7 +330,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   function confirmDecision(action: Extract<ResourcePending, { kind: "decision" }>, result: ResourceDecisionResult) {
     if (result.actionId !== action.request.actionId || result.decision !== action.request.decision || jsonIdentity(result.request) !== jsonIdentity(action.request)) invalidReceipt();
-    update(before => before.pending === action ? { ...before, pending: null, pendingUncertain: false, previewNeedsRefresh: true, notice: "decisionSaved", failure: null, completionVersion: before.completionVersion + 1 } : before);
+    update(before => before.pending === action ? { ...before, pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null, previewNeedsRefresh: true, notice: "decisionSaved", failure: null, completionVersion: before.completionVersion + 1 } : before);
   }
   function confirmCapture(action: Extract<ResourcePending, { kind: "capture" }>, capture: ContextCapture) {
     const request = action.request;
@@ -342,7 +360,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       const unchanged = before.correctionDraft?.editSeq === action.submittedSeq;
       return { ...before, correctionDraft: unchanged ? null : before.correctionDraft, correctionReceipt: receipt,
         previewCapture: receipt.capture, preview: null, previewSourceBasis: null, previewNeedsRefresh: true,
-        pending: null, pendingUncertain: false, pendingCheckedMissing: false, failure: null,
+        pending: null, pendingUncertain: false, pendingCheckedMissing: false, checkingAction: null, failure: null,
         notice: unchanged ? "correctionSaved" : "correctionSavedNewer", completionVersion: before.completionVersion + 1 };
     });
     reads.invalidate(["resources"], false);
@@ -358,22 +376,30 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       await dispatch({ kind: "correction", session, request, submittedSeq: draft.editSeq });
     } catch (error) { fail(error); } finally { release(); }
   }
-  async function checkPending() {
-    const action = current().pending;
-    if (!live() || running.current || !action || (action.kind !== "correction" && action.kind !== "decision")) return;
-    running.current = true; update(before => ({ ...before, busyMutation: true, failure: null, pendingCheckedMissing: false }));
+  async function lookupPending(action: Extract<ResourcePending, {kind:"correction"|"decision"}>) {
+    if (!live() || current().pending !== action) return;
+    update(before => ({ ...before, checkingAction: "resource", failure: null, notice: null, pendingCheckedMissing: false }));
     try {
-      const request = { ...session, actionId: action.request.actionId };
+      const request = { ...action.session, actionId: action.request.actionId };
       if (action.kind === "correction") {
         const receipt = await resourceCommands.correctionAction(request);
         if (!live() || current().pending !== action) return;
-        if (receipt) confirmCorrection(action, receipt); else update(before => ({ ...before, pendingCheckedMissing: true }));
+        if (receipt === null) update(before => ({ ...before, pendingCheckedMissing: true })); else confirmCorrection(action, receipt);
       } else {
         const receipt = await resourceCommands.decisionAction(request);
         if (!live() || current().pending !== action) return;
-        if (receipt) confirmDecision(action, receipt); else update(before => ({ ...before, pendingCheckedMissing: true }));
+        if (receipt === null) update(before => ({ ...before, pendingCheckedMissing: true })); else confirmDecision(action, receipt);
       }
-    } catch (error) { fail(error, "unknown"); } finally { release(); }
+    } finally { if (live() && current().pending === action) update(before => ({ ...before, checkingAction: null })); }
+  }
+  async function checkPending() {
+    const action = current().pending, previousFailure = current().failure;
+    if (!live() || running.current || !action || (action.kind !== "correction" && action.kind !== "decision")) return;
+    running.current = true; update(before => ({ ...before, busyMutation: true }));
+    try {
+      await lookupPending(action);
+      if (live() && current().pending === action) update(before => ({ ...before, failure: previousFailure, notice: "unknown" }));
+    } catch (error) { if (live() && current().pending === action) fail(error, "unknown"); } finally { release(); }
   }
   async function readPreview(capture: GlossaryCapture, isCurrent: () => boolean = live) {
     if (!live() || !isCurrent() || !canReadCapture(capture)) return;
@@ -399,6 +425,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   async function dispatch(action: ResourcePending) {
     if (!live()) return;
     update(before => ({ ...before, pending: action, pendingCheckedMissing: false }));
+    let writeFailure: CommandFailure | null = null;
     try {
       if (action.kind === "correction") { const result = await resourceCommands.captureCorrection({ ...action.session, capture: action.request }); if (live()) confirmCorrection(action, result); }
       if (action.kind === "term") { const result = await resourceCommands.saveTerm({ ...action.session, term: action.request }); if (live()) confirmTerm(action, result); }
@@ -409,17 +436,27 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
         if (!live()) return;
         confirmDecision(action, result);
       }
+      return;
     } catch (error) {
+      if (!live() || current().pending !== action) return;
       const notCommitted = current().pending === action && isReceiptFirstRejection(action, error);
+      const unknown = hasUnknownOutcome(error), readable = action.kind === "correction" || action.kind === "decision";
+      writeFailure = commandFailure(error);
       update(before => {
         if (before.pending !== action) return before;
-        const uncertain = !notCommitted && (hasUnknownOutcome(error) || before.pendingUncertain);
+        const uncertain = !notCommitted && (unknown || before.pendingUncertain);
         return { ...before, pending: uncertain ? action : null, pendingUncertain: uncertain, pendingCheckedMissing: false,
           previewNeedsRefresh: before.previewNeedsRefresh || notCommitted && action.kind === "decision",
-          notice: uncertain ? "unknown" : "error", failure: commandFailure(error) };
+          notice: unknown && readable ? null : uncertain ? "unknown" : "error", failure: unknown && readable ? null : writeFailure };
       });
       if (notCommitted) reads.invalidate(["source", "translation", "resources"], false);
+      if (!unknown || !readable) return;
     }
+    if (action.kind !== "correction" && action.kind !== "decision") return;
+    try {
+      await lookupPending(action);
+      if (live() && current().pending === action) update(before => ({ ...before, failure: writeFailure, notice: "unknown" }));
+    } catch (error) { if (live() && current().pending === action) fail(error, "unknown"); }
   }
   async function fresh(kind: ResourcePending["kind"], entry?: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }, isScopeCurrent: () => boolean = () => true) {
     const start = current(), locale = kind === "decision" ? start.previewCapture?.targetLocale ?? "" : start.locale;
@@ -455,7 +492,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   async function retryPending() {
     const action = current().pending;
-    if (!live() || !action || running.current || current().pendingUncertain && (action.kind === "correction" || action.kind === "decision" && current().previewCapture?.origin.kind === "correction") && !current().pendingCheckedMissing) return;
+    if (!live() || !action || running.current || current().pendingUncertain && (action.kind === "correction" || action.kind === "decision") && !current().pendingCheckedMissing) return;
     running.current = true; update(before => ({ ...before, busyMutation: true, failure: null, notice: null }));
     try { await dispatch(action); } finally { release(); }
   }

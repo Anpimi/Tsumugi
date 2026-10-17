@@ -2278,7 +2278,12 @@ impl ProjectStore {
         &mut self,
         request: &ResourceDecision,
     ) -> Result<ResourceDecisionResult, ExecutionError> {
-        if let Some(prior) = self.resource_decision_action(request.project_id, request.action_id)? {
+        if let Some(prior) = correction::decision_action_in(
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
+            request.project_id,
+            request.action_id,
+        )? {
             return if &prior.request == request {
                 Ok(prior)
             } else {
@@ -2772,6 +2777,203 @@ mod tests {
                 expected_selection_id: None,
                 text: text.into(),
             })
+            .unwrap();
+    }
+
+    #[test]
+    fn correction_action_read_reconciles_lost_ack_without_a_resource_write() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let unit_id = unit(&store, project_id, "data.item.barrel.name");
+        let (source_revision_id, _, _, _) =
+            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
+        let before = store
+            .save_translation_edit(&SaveTranslationRevision {
+                project_id,
+                action_id: ExecutionId::new(),
+                unit_id,
+                locale: "zh-CN".into(),
+                source_revision_id,
+                expected_selection_id: None,
+                text: "原译文".into(),
+            })
+            .unwrap();
+        let after = store
+            .save_translation_edit(&SaveTranslationRevision {
+                project_id,
+                action_id: ExecutionId::new(),
+                unit_id,
+                locale: "zh-CN".into(),
+                source_revision_id,
+                expected_selection_id: Some(before.selection.event_id),
+                text: "甲乙".into(),
+            })
+            .unwrap();
+        let evidence = store
+            .correction_term_basis(project_id, unit_id, "zh-CN", after.selection.event_id)
+            .unwrap();
+        let request = CaptureCorrectionTerm {
+            action_id: ExecutionId::new(),
+            basis: evidence.basis,
+            source: evidence.source_text,
+            target: "甲".into(),
+            protected: false,
+            reason: "Explicit correction".into(),
+        };
+        let receipt = store.capture_correction_term(&request).unwrap();
+        let fresh = CaptureCorrectionTerm {
+            action_id: ExecutionId::new(),
+            target: "乙".into(),
+            ..request.clone()
+        };
+        // The original commit is durable, but its acknowledgement was lost.
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(store.capture_correction_term(&request).unwrap(), receipt);
+        assert!(store.is_reconciling(), "idempotent replay is not a fresh admission");
+        assert_eq!(
+            store.capture_correction_term(&fresh).unwrap_err().code,
+            ErrorCode::OutcomeUnknown
+        );
+        let changes = store.changes_since(crate::execution::Revision::new(0).unwrap()).sequence;
+        let count = store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM resource_captures", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .correction_term_capture_action(project_id, request.action_id)
+                .unwrap(),
+            Some(receipt)
+        );
+        assert!(!store.is_reconciling());
+        assert_eq!(store.changes_since(changes).sequence, changes);
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM resource_captures", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            count
+        );
+        assert_eq!(store.capture_correction_term(&fresh).unwrap().request, fresh);
+    }
+
+    #[test]
+    fn resource_decision_action_read_reconciles_lost_ack_without_a_resource_write() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let capture = store
+            .capture_glossary(
+                project_id,
+                ExecutionId::new(),
+                include_bytes!("../../tests/fixtures/resource-updates/g1.json"),
+            )
+            .unwrap();
+        let request = ResourceDecision {
+            project_id,
+            action_id: ExecutionId::new(),
+            capture_id: capture.capture_id,
+            entry_id: "barrel".into(),
+            expected_revision_id: None,
+            decision: ResourceDecisionKind::Adopt,
+        };
+        let receipt = store.decide_glossary_entry(&request).unwrap();
+        let fresh = ResourceDecision {
+            action_id: ExecutionId::new(),
+            entry_id: "box".into(),
+            ..request.clone()
+        };
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(store.decide_glossary_entry(&request).unwrap(), receipt);
+        assert!(store.is_reconciling());
+        assert_eq!(
+            store.decide_glossary_entry(&fresh).unwrap_err().code,
+            ErrorCode::OutcomeUnknown
+        );
+        let changes = store.changes_since(crate::execution::Revision::new(0).unwrap()).sequence;
+        let counts = {
+            let c = store.connection().unwrap();
+            (
+                c.query_row("SELECT COUNT(*) FROM resource_decisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                c.query_row("SELECT COUNT(*) FROM term_revisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            )
+        };
+        assert_eq!(
+            store
+                .resource_decision_action(project_id, request.action_id)
+                .unwrap(),
+            Some(receipt)
+        );
+        assert!(!store.is_reconciling());
+        assert_eq!(store.changes_since(changes).sequence, changes);
+        let c = store.connection().unwrap();
+        assert_eq!(
+            (
+                c.query_row("SELECT COUNT(*) FROM resource_decisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                c.query_row("SELECT COUNT(*) FROM term_revisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            ),
+            counts
+        );
+        assert_eq!(store.decide_glossary_entry(&fresh).unwrap().request, fresh);
+    }
+
+    #[test]
+    fn missing_context_fact_action_read_reconciles_without_a_resource_write() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let action_id = ExecutionId::new();
+        let glossary = include_bytes!("../../tests/fixtures/resource-updates/g1.json");
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            store
+                .capture_glossary(project_id, ExecutionId::new(), glossary)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutcomeUnknown
+        );
+        let changes = store.changes_since(crate::execution::Revision::new(0).unwrap()).sequence;
+        let count = store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM context_fact_decisions", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(store.context_fact_action(project_id, action_id).unwrap(), None);
+        assert!(!store.is_reconciling());
+        assert_eq!(store.changes_since(changes).sequence, changes);
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM context_fact_decisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            count
+        );
+        store
+            .capture_glossary(project_id, ExecutionId::new(), glossary)
             .unwrap();
     }
 

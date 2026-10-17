@@ -163,6 +163,7 @@ correctionFeedback: {
 },
 contextFacts: {
   saved: "已保存 {{key}} → {{locale}} 的事实决定。",
+  checking: "正在核对已保存的事实决定…",
   "title": "这些事实的项目决定",
   "help": "仅为此条目和目标语言修改一条已知事实，或拒绝推断。原观察及其来源保留在历史中。此操作不创建全项目规则，也不授予分享权限。",
   "editor": "编辑源事实决定",
@@ -1689,6 +1690,7 @@ ai: {
       saveContext: "保存上下文",
       saved: "已保存，旧修订仍可查看。",
       savedNewer: "此前版本已保存。较新的编辑仍保留在此，准备好后请单独保存。",
+      checkingAction: "正在核对资源保存结果…",
       captureSaved: "当前输入已捕获，已保存的依据和遗漏仍可查看。",
       actionFailed: "操作未能完成，草稿和已捕获依据均已保留。",
       readFailed: "当前资源信息读取失败（{{reason}}），草稿与原待核对操作仍可使用。",

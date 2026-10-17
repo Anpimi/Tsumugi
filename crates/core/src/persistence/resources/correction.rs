@@ -611,33 +611,50 @@ impl ProjectStore {
         project_id: ExecutionId,
         action_id: ExecutionId,
     ) -> Result<Option<CorrectionTermReceipt>, ExecutionError> {
-        capture_action_in(
+        let receipt = capture_action_in(
             self.connection()
                 .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
             project_id,
             action_id,
-        )
+        )?;
+        if self
+            .execution_unknown
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.reconcile_execution()?;
+        }
+        Ok(receipt)
     }
     pub fn resource_decision_action(
         &self,
         project_id: ExecutionId,
         action_id: ExecutionId,
     ) -> Result<Option<ResourceDecisionResult>, ExecutionError> {
-        decision_action_in(
+        let decision = decision_action_in(
             self.connection()
                 .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
             project_id,
             action_id,
-        )
+        )?;
+        if self
+            .execution_unknown
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.reconcile_execution()?;
+        }
+        Ok(decision)
     }
     /// Capture only an explicit local proposal. This does not adopt or share a term.
     pub fn capture_correction_term(
         &mut self,
         request: &CaptureCorrectionTerm,
     ) -> Result<CorrectionTermReceipt, ExecutionError> {
-        if let Some(prior) =
-            self.correction_term_capture_action(request.basis.project_id, request.action_id)?
-        {
+        if let Some(prior) = capture_action_in(
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
+            request.basis.project_id,
+            request.action_id,
+        )? {
             return if &prior.request == request {
                 Ok(prior)
             } else {

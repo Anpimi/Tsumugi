@@ -44,7 +44,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   const correctionSourceInvalid = !!correctionDraft?.source && (!correctionDraft.source.trim() || !correctionDraft.evidence.sourceText.includes(correctionDraft.source));
   const correctionTargetInvalid = !!correctionDraft?.target && (!correctionDraft.target.trim() || !correctionDraft.evidence.afterText.includes(correctionDraft.target));
   const correctionFieldsTooLarge = !!correctionDraft && [correctionDraft.source, correctionDraft.target, correctionDraft.reason].some(text => new TextEncoder().encode(text).length > 16 * 1024);
-  const pendingChecked = pending && owner.state.pendingUncertain && (pending.kind === "correction" || pending.kind === "decision" && owner.state.previewCapture?.origin.kind === "correction");
+  const pendingChecked = pending && owner.state.pendingUncertain && (pending.kind === "correction" || pending.kind === "decision");
   const pendingTerm = pending?.kind === "term" ? pending.request : null;
   const pendingContext = pending?.kind === "context" ? pending.request : null;
   const pendingDecision = pending?.kind === "decision" ? pending.request : null;
@@ -434,7 +434,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
           {!targetAvailable && locale ? <p role="status">{t("resource.removedTarget", { locale })} <button className="text-button" onClick={requestClose}>{t("resource.returnSettings")}</button></p> : null}
           {previewCapture && previewCapture.targetLocale !== locale && !owner.localeAvailable(previewCapture.targetLocale) ? <p role="status">{t("resource.removedPreviewTarget", { locale: previewCapture.targetLocale })} <button className="text-button" onClick={requestClose}>{t("resource.returnSettings")}</button></p> : null}
           {pending && !pendingChecked && (pending.kind === "capture" || (pending.kind === "term" && tab !== "terms") || (pending.kind === "context" && tab !== "context") || (pending.kind === "decision" && tab !== "updates")) ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button></div> : null}
-          {busy ? <p role="status">{t("execution.working")}</p> : null}
+          {busy && !owner.state.checkingAction ? <p role="status">{t("execution.working")}</p> : null}
           <label>{t("resource.targetLocale")}<select value={locale} disabled={busyMutation || !!pending} onChange={event => switchLocale(event.target.value)}>{!targetAvailable && locale ? <option value={locale} disabled>{t("resource.removedTargetOption", { locale })}</option> : null}{project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
           {!locale ? <p>{t("resource.noLocale")}</p> : null}
           {readStatus(scopeRead.error || sourceRead.error, scopeRead.isFetching || sourceRead.isFetching, () => { void retrySourceRead(); })}
@@ -485,7 +485,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
               <button type="button" disabled={!!pending || busyMutation} onClick={() => owner.discardCorrection()}>{t("resource.discardDraft")}</button></div>
           </section> : null}
           {correctionEditorReturn && onReturnFromCorrection ? <button type="button" disabled={busyMutation || !!pending || disabled || owner.tool.blocked() || owner.tool.hasDraft()} onClick={() => { void onReturnFromCorrection(correctionEditorReturn); }}>{t("correctionFeedback.return")}</button> : null}
-          {pendingChecked ? <div role="status"><p>{t(owner.state.pendingCheckedMissing ? "correctionFeedback.missing" : "correctionFeedback.unknown")}</p>
+          {pendingChecked ? <div role="status"><p>{t(owner.state.checkingAction === "resource" ? "resource.checkingAction" : owner.state.pendingCheckedMissing ? "correctionFeedback.missing" : "correctionFeedback.unknown")}</p>
             <button type="button" disabled={busyMutation || disabled} onClick={() => { const input = pendingPayload(); if (input) registry.dispatch("resource.check-pending", commandScope, input); }}>{t("correctionFeedback.check")}</button>
             {owner.state.pendingCheckedMissing ? <button type="button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button> : null}</div> : null}
           {tab === "updates" && locale ? <section><h3 ref={captureHeading} tabIndex={-1}>{t("resource.resourceUpdates")}</h3><p>{t("resource.fileHelp")}</p><button className="primary-button" disabled={!chooseFileAvailability().enabled} onClick={() => registry.dispatch("resource.choose-file", commandScope, { kind: "resource-locale", locale })}>{t("resource.chooseFile")}</button>

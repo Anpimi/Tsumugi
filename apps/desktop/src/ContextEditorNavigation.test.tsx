@@ -217,10 +217,71 @@ async function editFact(user:ReturnType<typeof userEvent.setup>){
   await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("contextFacts.save")})).toBeEnabled());
 }
 
+it.each(["en-US", "zh-CN"])("checks an invalid fact acknowledgement once and preserves newer actor and reason B (%s)", async language => {
+  await i18n.changeLanguage(language); factsEnabled=true; const user=await open(); await editFact(user);
+  let finishWrite!:(value:ContextFactDecision)=>void, finishRead!:(value:ContextFactDecision|null)=>void;
+  const write=new Promise<ContextFactDecision>(resolve=>{finishWrite=resolve;}),lookup=new Promise<ContextFactDecision|null>(resolve=>{finishRead=resolve;});
+  const native=invoke.getMockImplementation()!;let recorded!:ContextFactDecision;
+  invoke.mockImplementation(async(command:string,args)=>{
+    if(command==="read_context_fact_action")return lookup;
+    const value=await native(command,args);
+    if(command!=="decide_context_fact")return value;
+    if(!validateResponseContextFact(value))throw new Error("Invalid original fact fixture");recorded=value;return write;
+  });
+  const identities=invoke.mock.calls.filter(([name])=>name==="create_execution_identity").length;
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));
+  await waitFor(()=>expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(1));
+  expect(screen.queryByText(i18n.t("contextFacts.checking"))).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action")).toHaveLength(0);
+  await act(async()=>{finishWrite({request:{...recorded.request,reason:"Wrong acknowledged reason"}});});
+  await screen.findByText(i18n.t("contextFacts.checking"));
+  expect(screen.queryByText(i18n.t("contextFacts.unknown"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button",{name:i18n.t("contextFacts.check")})).toBeDisabled();
+  await user.clear(screen.getByRole("textbox",{name:i18n.t("contextFacts.actor")}));
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.actor")}),"Reviewer B");
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," newer B");
+  await act(async()=>{finishRead(recorded);});
+  await screen.findByText(i18n.t("resource.savedNewer"));
+  expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.actor")})).toHaveValue("Reviewer B");
+  expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");
+  expect(recorded.request).toMatchObject({actor:"Human reviewer",reason:"Reason A",disposition:{kind:"replace",text:"navigator"}});
+  expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action").map(([,args])=>args.request))
+    .toEqual([{projectId:project.metadata.projectId,sessionToken:project.sessionToken,actionId:recorded.request.actionId}]);
+  expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name])=>name==="create_execution_identity")).toHaveLength(identities+1);
+  expect(screen.queryByText(i18n.t("contextFacts.checking"))).not.toBeInTheDocument();
+  expect(screen.queryByText(i18n.t("contextFacts.failed"))).not.toBeInTheDocument();
+});
+
+it("keeps a fact action unresolved after a typed read changes its disposition and confirms only the original receipt",async()=>{
+  factsEnabled=true;const user=await open();await editFact(user);loseFact=true;
+  const native=invoke.getMockImplementation()!;let reads=0;
+  invoke.mockImplementation(async(command:string,args)=>{
+    const value=await native(command,args);
+    if(command!=="read_context_fact_action"||reads++>0)return value;
+    if(!validateResponseContextFactAction(value)||value===null)throw new Error("Missing fact receipt fixture");
+    const wrong:ContextFactDecision={request:{...value.request,disposition:{kind:"replace",text:"Different original value"}}};
+    expect(validateResponseContextFactAction(wrong)).toBe(true);return wrong;
+  });
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("contextFacts.check")})).toBeEnabled());
+  expect(screen.queryByRole("button",{name:i18n.t("contextFacts.retry")})).not.toBeInTheDocument();
+  expect(screen.getByRole("button",{name:i18n.t("contextFacts.discard")})).toBeDisabled();
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," retained B");
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.check")}));
+  await screen.findByText(i18n.t("resource.savedNewer"));
+  expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action")).toHaveLength(2);
+  expect(factHistory).toHaveLength(1);expect(factHistory[0].request.disposition).toEqual({kind:"replace",text:"navigator"});
+  expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A retained B");
+});
+
 function loseFactBeforeReceiptThenReject(error:CommandError,beforeRetry?:(request:ContextFactWrite)=>void){
   if(!validateResponseError(error))throw new Error("Invalid synthetic fact rejection");
-  const native=invoke.getMockImplementation()!,requests:ContextFactWrite[]=[];
+  const native=invoke.getMockImplementation()!,requests:ContextFactWrite[]=[];let reads=0;
   invoke.mockImplementation((command:string,args:{request:Record<string,unknown>})=>{
+    if(command==="read_context_fact_action"&&reads++===0)return Promise.reject(new Error("Original fact action read temporarily unavailable"));
     if(command!=="decide_context_fact")return native(command,args);
     if(!validateRequestContextFact(args.request))throw new Error("Invalid synthetic fact request");
     requests.push(structuredClone(args.request.decision));
@@ -254,6 +315,7 @@ it("settles an unknown fact action only after an exact Core CAS rejection and ke
   expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");
   expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
   expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);expect(requests[1].reason).toBe("Reason A");
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action")).toHaveLength(2);
   expect(factActions.has(requests[0].actionId)).toBe(false);
   expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action").at(-1)![1].request.actionId).toBe(requests[0].actionId);
   const discard=screen.getByRole("button",{name:i18n.t("contextFacts.discard")});await waitFor(()=>expect(discard).toBeEnabled());await user.click(discard);
@@ -279,6 +341,7 @@ it("keeps an unknown fact action pending when its retry is rejected before the C
   expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
   let accepted=true;await act(async()=>{accepted=await session.current!.navigate({kind:"area",area:"resources"});});expect(accepted).toBe(false);
   expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);expect(factActions.has(requests[0].actionId)).toBe(false);
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action")).toHaveLength(2);
   await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.check")}));
   await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("contextFacts.retry")})).toBeEnabled());
   expect(screen.getByRole("button",{name:i18n.t("contextFacts.discard")})).toBeDisabled();
@@ -306,11 +369,15 @@ it("settles only the original fact action when a successful acknowledgement arri
 
 it("keeps unknown fact actions reachable, blocks navigation, and checks the original receipt without resending B",async()=>{
   factsEnabled=true;const user=await open();await editFact(user);loseFact=true;
+  const original=invoke.getMockImplementation()!;let reads=0;
+  invoke.mockImplementation((command:string,args)=>command==="read_context_fact_action"&&reads++===0
+    ?Promise.reject(new Error("Original fact action read temporarily unavailable")):original(command,args));
   await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));await screen.findByText(i18n.t("contextFacts.unknown"));
   await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," newer B");let accepted=true;
   await act(async()=>{accepted=await session.current!.navigate({kind:"area",area:"resources"});});expect(accepted).toBe(false);
   await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.check")}));await screen.findByText(i18n.t("resource.savedNewer"));
   expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action")).toHaveLength(2);
   expect(invoke.mock.calls.find(([name])=>name==="read_context_fact_action")![1].request.actionId).toBe(factHistory[0].request.actionId);
   expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
 });
