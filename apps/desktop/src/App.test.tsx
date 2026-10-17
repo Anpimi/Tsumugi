@@ -158,6 +158,10 @@ async function prepareUnknownMetadata({ directory = false, navigation = false, s
 
 async function prepareAiInApp(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "AI work" }));
+  expect(mocks.invoke.mock.calls).toContainEqual(["read_context_strategy_default", {
+    request: { ...mocks.reads!.context, locale: "zh-CN" },
+  }]);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Check and review" }), "manual");
   await user.type(screen.getByRole("textbox", { name: "Chat Completions URL" }), "http://127.0.0.1:4000/v1/chat/completions");
   await user.type(screen.getByRole("textbox", { name: "Model" }), "test-model");
   await user.clear(screen.getByRole("textbox", { name: "API key environment variable name" }));
@@ -170,6 +174,7 @@ async function prepareAiInApp(user: ReturnType<typeof userEvent.setup>) {
 }
 
 function installTranslationEditor() {
+  const originalInvoke = mocks.invoke.getMockImplementation()!;
   const target = reviewTargetFixture({ unitId: fixtureIdentity(501), nativeKey: "first", sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis" });
   let text: string | null = null;
   let selection: { eventId: string; revisionId: string; unitId: string; locale: string; actionId: string; sequence: string; previousEventId: string | null } | null = null;
@@ -219,6 +224,7 @@ function installTranslationEditor() {
     if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
     if (command === "list_execution_tasks") return [];
     if (command === "read_execution_task_activity") return emptyTaskActivity(args.request);
+    if (command === "read_context_strategy_default") return originalInvoke(command, args);
     return projectView();
   });
   return { setSave: (handler: typeof onSave) => { onSave = handler; }, saves: () => mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision"),
@@ -435,7 +441,13 @@ describe("project lifecycle workbench", () => {
     const calls = mocks.invoke.mock.calls.filter(([command]) => command === "read_content_scope");
     expect(calls).toHaveLength(3);
     for (const [, args] of calls) expect(args).toEqual({ request: { projectId: metadata().projectId, sessionToken: "session-1" } });
-    expect(mocks.invoke.mock.calls.every(([command]) => command === "create_project" || command === "read_content_scope" || command === "read_execution_task_activity")).toBe(true);
+    const strategyDefaults = mocks.invoke.mock.calls.filter(([command]) => command === "read_context_strategy_default");
+    expect(strategyDefaults).toHaveLength(1);
+    for (const [, args] of strategyDefaults) expect(args).toEqual({ request: {
+      projectId: metadata().projectId, sessionToken: "session-1", locale: "zh-CN",
+    } });
+    expect(mocks.invoke.mock.calls.every(([command]) => command === "create_project" || command === "read_content_scope"
+      || command === "read_execution_task_activity" || command === "read_context_strategy_default")).toBe(true);
     const activity = mocks.invoke.mock.calls.filter(([command]) => command === "read_execution_task_activity");
     expect(activity.length).toBeGreaterThan(0);
     for (const [, args] of activity) expect(args).toEqual({ request: { projectId: metadata().projectId, sessionToken: "session-1", limit: 12 } });
@@ -2304,6 +2316,15 @@ describe("project lifecycle workbench", () => {
     mocks.destroy.mockResolvedValue(undefined);
     mocks.invoke.mockImplementation(async (command: string, args?: { request?: unknown }) => {
       if (command === "read_execution_task_activity") return emptyTaskActivity(args?.request);
+      if (command === "read_context_strategy_default") {
+        expect(mocks.reads).not.toBeNull();
+        expect(args?.request).toEqual({
+          projectId: mocks.reads!.context.projectId,
+          sessionToken: mocks.reads!.context.sessionToken,
+          locale: expect.stringMatching(/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/),
+        });
+        return null;
+      }
       if (command === "create_project") return projectView();
       if (command === "close_project") return { closed: true };
       if (command === "stop_application_plugin_instances") return { actionId: (args?.request as { actionId: string }).actionId, state: "stopped" };
