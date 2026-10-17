@@ -260,7 +260,14 @@ transport hashes and Host package digests are different identities. The catalog
 records a fixed SDK artifact as well as its alpha version; an alpha version
 alone cannot identify a development contract snapshot. Its runtime profile and
 process protocol must match the captured bundled runtime. These fixed development
-candidates do not claim complete two-domain release acceptance. See
+candidates do not claim complete two-domain release acceptance. The catalog's
+`sourceCommit` records the candidate build's declared source baseline,
+`53d3a1d9db711b1942a9d38a13610173090da9bb`; the build record marks
+`sourceDirty: true`. This is provenance, not proof of a clean or authenticated
+build or a release. Use the exact archive SHA-256, Host `packageDigest` and SDK
+artifact SHA-256 to identify the matching package bytes and SDK. These digests
+are distinct, and a later clean source commit cannot stand in for these build
+artifacts. See
 [fixed offline extension preparation](../../docs/plugin-distribution.md) and
 [中文说明](../../docs/plugin-distribution.zh-CN.md) for recovery and evidence limits.
 

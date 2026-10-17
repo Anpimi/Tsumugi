@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+The macOS default WebVTT and SMAPI bundle selection now pins the current
+prebuilt candidate archives and SDK artifact. Archive transport identities and
+Host package digests remain separate; the recorded source commit is the
+construction baseline of a dirty candidate, not authenticated clean-build or
+release provenance. Existing project bindings and independent approvals are
+unchanged. This remains the same undistributed application `0.2.0-alpha.1`,
+SDK and plugin `0.1.0-alpha.1` batch; bilingual Unreleased entries are synchronized
+without an additional bump. Full default installation and clean-system offline
+acceptance still require the final bundled application.
+
 Attempt JavaScript generation components can explicitly consume the existing
 prepared-tool wrapper through their original service boundary. Facades now use
 the caller's actual Project or Attempt scope; tool execution bindings and

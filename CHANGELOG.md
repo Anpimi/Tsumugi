@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Refresh the bundled WebVTT and SMAPI snapshots to the current pinned SDK
+  artifact. Package approval and existing project bindings remain separate
+  from the default bundle selection.
+
 - Let explicitly selected Attempt JavaScript generation components call the
   work plan's prepared read-only tools. Service facades retain the caller's
   exact attempt while each tool keeps its own scope and independent authority;
