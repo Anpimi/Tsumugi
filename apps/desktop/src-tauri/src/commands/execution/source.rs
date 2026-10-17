@@ -923,7 +923,7 @@ pub async fn read_source_impact(
 pub async fn read_source_adoption_action(
     state: State<'_, AppState>,
     request: SourceAdoptionActionRequest,
-) -> Result<Option<SourceAdoptionActionRead>, CommandError> {
+) -> Result<Option<AdoptionActionRead>, CommandError> {
     state
         .sessions
         .run(

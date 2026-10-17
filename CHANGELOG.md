@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Confirm uncertain Task, AI, comparison-candidate and translation-import adoption
+  from the complete original saved action and receipt. Result checks no longer
+  prepare adoption again; newer input and partial import counts are retained.
+
 - Check an uncertain term save, context save, or context capture from its original
   saved request before offering a retry. Result checks retain newer edits and do
   not repeat the save or capture.

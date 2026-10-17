@@ -452,10 +452,10 @@ it("settles a Registry adoption A without replacing newer B even when the subseq
 
 it("requires an exact absent receipt before Registry adoption retry", async () => {
   await open(); await startThroughRegistry();
-  const original = invoke.getMockImplementation()!; let adoptions = 0;
+  const original = invoke.getMockImplementation()!; let adoptions = 0,lookups = 0;
   invoke.mockImplementation((command: string, request: unknown) => command === "adopt_execution"
     ? (++adoptions === 1 ? Promise.reject(new Error("Lost adoption acknowledgement")) : original(command, request))
-    : command === "read_execution_receipt" ? Promise.resolve(null) : original(command, request));
+    : command === "read_execution_adoption_action" ? ++lookups === 1 ? Promise.reject(new Error("Automatic lookup unavailable")) : Promise.resolve(null) : original(command, request));
   await act(async () => { expect(registry.dispatch("ai.adopt-result", scope, candidatePayload())).toBe(true); });
   await waitFor(() => expect(owner.pendingAdopt?.uncertain).toBe(true));
   const payload = adoptionPendingPayload(), request = owner.pendingAdopt!.request;
@@ -471,9 +471,9 @@ it("requires an exact absent receipt before Registry adoption retry", async () =
 
 it("reconciles a checked Registry receipt without dispatching adoption again", async () => {
   await open(); await startThroughRegistry();
-  const original = invoke.getMockImplementation()!;
+  const original = invoke.getMockImplementation()!; let lookups = 0;
   invoke.mockImplementation((command: string, request: unknown) => command === "adopt_execution" ? Promise.reject(new Error("Lost adoption acknowledgement"))
-    : command === "read_execution_receipt" ? Promise.resolve(receiptFor()) : original(command, request));
+    : command === "read_execution_adoption_action" ? ++lookups === 1 ? Promise.reject(new Error("Automatic lookup unavailable")) : Promise.resolve({action,receipt:receiptFor()}) : original(command, request));
   await act(async () => { expect(registry.dispatch("ai.adopt-result", scope, candidatePayload())).toBe(true); });
   await waitFor(() => expect(owner.pendingAdopt?.uncertain).toBe(true));
   await act(async () => { expect(registry.dispatch("ai.reconcile-adoption", scope, adoptionPendingPayload())).toBe(true); });

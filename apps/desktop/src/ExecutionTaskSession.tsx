@@ -7,6 +7,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import type { QueryKey } from "@tanstack/react-query";
+import { validateResponseAdoptionAction } from "./generated/execution.validators";
 
 type Origin = "tasks" | "source" | "ai" | "arena" | "release" | "resources";
 export interface CancellationTarget { readonly taskId: string; readonly attemptId: string; readonly origin: Origin }
@@ -336,6 +337,29 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       value = change(value, { phase: "adopting" });
       const receipt = await executionCommands.adopt(freeze({ ...session, actionId: value.prepare!.actionId }));
       if (holds(value)) settle(value, receipt);
+    } catch (error) {
+      if (!holds(value)) return;
+      if (!hasUnknownOutcome(error)) { fail(value, error, true); return; }
+      value = change(value, { uncertain: true });
+      await lookupAdoption(value, commandFailure(error, "outcome-unknown"));
+    }
+  }
+  async function lookupAdoption(start: TaskActivity, originalFailure = start.failure) {
+    if (!holds(start) || !start.prepare) return;
+    let value = change(start, { phase: "checking", uncertain: true, retryAllowed: false, failure: null });
+    try {
+      const result = await executionCommands.adoptionAction(value.prepare!);
+      if (!holds(value)) return;
+      if (!validateResponseAdoptionAction(result)) throw new Error("Invalid task adoption record");
+      if (result === null) {
+        if (value.receipt) throw new Error("Previously recorded task receipt is missing");
+      } else {
+        if (result.receipt !== null) value = change(value, { receipt: freeze(structuredClone(confirmExecutionReceipt(value.prepare!, result.receipt, value.receipt))) });
+        else if (value.receipt) throw new Error("Previously recorded task receipt is missing");
+        value = change(value, { proof: freeze(structuredClone(confirmExecutionAction(value.prepare!, value.intent.operation, result.action, value.proof))) });
+        if (value.receipt) { settle(value, value.receipt); return; }
+      }
+      change(value, { phase: "unknown", retryAllowed: true, failure: originalFailure });
     } catch (error) { fail(value, error, true); }
   }
   function settleContinuation(value: TaskActivity, receipt: ContinuationReceipt) {
@@ -418,24 +442,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
   async function checkAdoption() {
     const start = activityRef.current;
     if (!live() || start?.phase !== "unknown" || !start.prepare || start.intent.action !== "adopt-result") return;
-    let value = change(start, { phase: "checking", retryAllowed: false, failure: null });
-    try {
-      const receipt = await executionCommands.receipt(freeze({ ...session, actionId: value.prepare!.actionId }));
-      if (!holds(value)) return;
-      if (receipt === null) {
-        if (value.receipt) throw new Error("Previously recorded task receipt is missing");
-        change(value, { phase: "unknown", retryAllowed: true });
-        return;
-      }
-      const checked = freeze(structuredClone(confirmExecutionReceipt(value.prepare!, receipt, value.receipt)));
-      value = change(value, { receipt: checked });
-      if (!value.proof) {
-        const action = await executionCommands.prepare(value.prepare!);
-        if (!holds(value)) return;
-        value = change(value, { proof: freeze(structuredClone(confirmExecutionAction(value.prepare!, value.intent.operation, action))) });
-      }
-      settle(value, checked);
-    } catch (error) { fail(value, error, true); }
+    await lookupAdoption(start);
   }
   async function retryAdoption() {
     const value = activityRef.current;

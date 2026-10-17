@@ -406,19 +406,25 @@ it("reconciles a well-formed acknowledgement for the wrong AI attempt without re
 });
 
 it("checks an uncertain adoption receipt before retrying the same action",async()=>{
- const user=await preview();const original=invoke.getMockImplementation()!;let lost=true;
- invoke.mockImplementation((command:string,args:unknown)=>{if(command==="adopt_execution"&&lost){lost=false;return Promise.reject({code:"outcome-unknown"});}if(command==="read_execution_receipt")return Promise.resolve(null);return original(command,args);});
+ const user=await preview();const original=invoke.getMockImplementation()!;let lost=true,lookups=0;
+ invoke.mockImplementation((command:string,args:unknown)=>{if(command==="adopt_execution"&&lost){lost=false;return Promise.reject({code:"outcome-unknown"});}if(command==="read_execution_adoption_action")return ++lookups===1?Promise.reject(new Error("Automatic lookup unavailable")):Promise.resolve(null);return original(command,args);});
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));await screen.findByText(/Saving may have committed/);
  expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
  await user.click(screen.getByRole("button",{name:"Check saved result"}));await user.click(await screen.findByRole("button",{name:"Retry same action"}));await waitFor(()=>expect(screen.queryByText(/Saving may have committed/)).not.toBeInTheDocument());
  const calls=invoke.mock.calls.filter(([c])=>c==="adopt_execution");expect(calls).toHaveLength(2);expect(calls.map(([,args])=>args.request.actionId)).toEqual([fixtureIdentity(511),fixtureIdentity(511)]);expect(invoke.mock.calls.filter(([c])=>c==="create_execution_identity")).toHaveLength(2);
- const receiptIndex=invoke.mock.calls.findIndex(([c])=>c==="read_execution_receipt");expect(receiptIndex).toBeGreaterThan(invoke.mock.calls.findIndex(([c])=>c==="adopt_execution"));
+ const receiptIndex=invoke.mock.calls.findIndex(([c])=>c==="read_execution_adoption_action");expect(receiptIndex).toBeGreaterThan(invoke.mock.calls.findIndex(([c])=>c==="adopt_execution"));
 });
 
 it("uses a committed receipt to reconcile adoption without repeating the mutation",async()=>{
- const user=await preview();const original=invoke.getMockImplementation()!;
- invoke.mockImplementation((command:string,args:unknown)=>command==="adopt_execution"?Promise.reject({code:"outcome-unknown"}):command==="read_execution_receipt"?Promise.resolve(receiptFor()):original(command,args));
- await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));await screen.findByText(/Saving may have committed/);await user.click(screen.getByRole("button",{name:"Check saved result"}));
+ const user=await preview();const original=invoke.getMockImplementation()!;let finish!:(value:unknown)=>void;
+ invoke.mockImplementation((command:string,args:unknown)=>command==="adopt_execution"?Promise.reject({code:"outcome-unknown"}):command==="read_execution_adoption_action"?new Promise(resolve=>{finish=resolve;}):original(command,args));
+ await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));
+ await screen.findByText("Checking the saved adoption result…");expect(screen.getByRole("button",{name:"Check saved result"})).toBeDisabled();
+ await act(async()=>{await i18n.changeLanguage("zh-CN");});expect(screen.getByText("正在核对采纳结果…")).toBeInTheDocument();
+ await act(async()=>{finish({action:originalAction,receipt:receiptFor()});});
+ expect(await screen.findByRole("button",{name:i18n.t("ai.saved")})).toBeDisabled();expect(screen.queryByText("正在核对采纳结果…")).not.toBeInTheDocument();
+ expect(invoke.mock.calls.filter(([name])=>name==="read_execution_adoption_action")).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([name])=>name==="prepare_execution_adoption")).toHaveLength(1);
  await waitFor(()=>expect(screen.queryByText(/Saving may have committed/)).not.toBeInTheDocument());expect(invoke.mock.calls.filter(([c])=>c==="adopt_execution")).toHaveLength(1);expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();
 });
 
@@ -815,9 +821,9 @@ it("finishes candidate saving through consumer identity and ACK waits and retain
 });
 
 it("offers the captured uncertain candidate after a complete consumer remount and checks its original receipt",async()=>{
- const {user,rendered}=await prepareToggle(),original=invoke.getMockImplementation()!;
+ const {user,rendered}=await prepareToggle(),original=invoke.getMockImplementation()!;let lookups=0;
  invoke.mockImplementation((command:string,args:unknown)=>command==="adopt_execution"?Promise.reject(new Error("Disconnected"))
-  :command==="read_execution_receipt"?Promise.resolve(receiptFor()):original(command,args));
+  :command==="read_execution_adoption_action"?++lookups===1?Promise.reject(new Error("Automatic lookup unavailable")):Promise.resolve({action:originalAction,receipt:receiptFor()}):original(command,args));
  await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
  await user.click(await screen.findByRole("button",{name:"Save candidate"}));
  await screen.findByText(/Saving may have committed/);
@@ -831,7 +837,7 @@ it("offers the captured uncertain candidate after a complete consumer remount an
  expect(invoke.mock.calls.filter(([name])=>name==="adopt_execution")).toHaveLength(1);
  await user.click(screen.getByRole("button",{name:"Check saved result"}));
  expect(await screen.findByRole("button",{name:"Candidate saved"})).toBeDisabled();
- expect(invoke.mock.calls.find(([name])=>name==="read_execution_receipt")![1].request).toEqual({sessionToken:project.sessionToken,projectId:project.metadata.projectId,actionId:request.actionId});
+ expect(invoke.mock.calls.filter(([name])=>name==="read_execution_adoption_action").map(([,args])=>args.request)).toEqual([request,request]);
  expect(invoke.mock.calls.filter(([name])=>name==="adopt_execution")).toHaveLength(1);
 });
 

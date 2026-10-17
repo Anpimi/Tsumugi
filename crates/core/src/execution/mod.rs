@@ -1179,12 +1179,15 @@ fn nullable_adoption_receipt(generator: &mut schemars::SchemaGenerator) -> schem
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub struct SourceAdoptionActionRead {
+pub struct AdoptionActionRead {
     pub action: AdoptionAction,
     #[serde(deserialize_with = "required_adoption_receipt")]
     #[cfg_attr(feature = "wire-schema", schemars(schema_with = "nullable_adoption_receipt"))]
     pub receipt: Option<AdoptionReceipt>,
 }
+
+/// Existing source callers use the same historical action/receipt contract.
+pub type SourceAdoptionActionRead = AdoptionActionRead;
 
 fn label(value: &str) -> Result<(), ExecutionError> {
     if value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control) {

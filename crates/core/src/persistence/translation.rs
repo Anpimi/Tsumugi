@@ -2969,24 +2969,22 @@ mod tests {
             let result = store
                 .execution_result(input.envelope().attempt_id, row.result_id)
                 .unwrap();
-            store
-                .prepare_adoption_with_id(
-                    ExecutionId::new(),
-                    input.envelope().attempt_id,
-                    unit.unit_id,
-                    vec![row.result_id],
-                    serde_json::to_value(TranslationAdoptionConfirmation {
-                        result_digest: result.digest().into(),
-                        source_snapshot_id: snapshot,
-                        occurrence_id: row.occurrence_id.unwrap(),
-                        source_revision_id: row.source_revision_id.unwrap(),
-                        target_unit_id: row.unit_id.unwrap(),
-                        expected_selection_id: row.current_selection.as_ref().map(|s| s.event_id),
-                        decision,
-                    })
-                    .unwrap(),
-                )
-                .unwrap()
+            let confirmation = TranslationAdoptionConfirmation {
+                result_digest: result.digest().into(), source_snapshot_id: snapshot,
+                occurrence_id: row.occurrence_id.unwrap(), source_revision_id: row.source_revision_id.unwrap(),
+                target_unit_id: row.unit_id.unwrap(), expected_selection_id: row.current_selection.as_ref().map(|s| s.event_id), decision,
+            };
+            let action_id = ExecutionId::new();
+            let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+            assert_eq!(store.translation_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, row.item_id, row.result_id, &confirmation).unwrap(), None);
+            assert_eq!(store.changes_since(sequence).sequence, sequence);
+            let action = store.prepare_adoption_with_id(action_id, input.envelope().attempt_id, unit.unit_id, vec![row.result_id], serde_json::to_value(&confirmation).unwrap()).unwrap();
+            assert_eq!(store.translation_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, row.item_id, row.result_id, &confirmation).unwrap(), Some(crate::execution::AdoptionActionRead { action: action.clone(), receipt: None }));
+            assert_eq!(store.translation_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, ExecutionId::new(), row.result_id, &confirmation).unwrap_err().code, ErrorCode::ResultMismatch);
+            let mut wrong = confirmation.clone(); wrong.expected_selection_id = Some(ExecutionId::new());
+            assert_eq!(store.translation_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, row.item_id, row.result_id, &wrong).unwrap_err().code, ErrorCode::ResultMismatch);
+            assert_eq!(store.execution_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, &[row.result_id]).unwrap_err().code, ErrorCode::ResultMismatch);
+            action
         };
         let conflict = adopt(
             &mut store,
@@ -3091,6 +3089,13 @@ mod tests {
             .unwrap();
         assert_eq!(replaced_history.total, 2);
         assert_eq!(replaced_history.current.unwrap().sequence, 2);
+        let original_item = input.envelope().units.iter().find(|unit| unit.unit_id == selected.unit_id).unwrap().item_ids[0];
+        let original_confirmation: TranslationAdoptionConfirmation = serde_json::from_value(selected.parameters.clone()).unwrap();
+        let expected_read = Some(crate::execution::AdoptionActionRead { action: selected.clone(), receipt: Some(selected_receipt.clone()) });
+        store.cancel_execution(input.envelope().task_id, ExecutionId::new()).unwrap();
+        let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+        assert_eq!(store.translation_adoption_action_read(project_id, selected.attempt_id, selected.action_id, selected.unit_id, original_item, selected.result_ids[0], &original_confirmation).unwrap(), expected_read);
+        assert_eq!(store.changes_since(sequence).sequence, sequence);
         let after_replace = store
             .translation_preview(input.envelope().attempt_id, 0, 3, None)
             .unwrap()
@@ -3098,6 +3103,7 @@ mod tests {
         store.close().unwrap();
         std::fs::remove_file(&external).unwrap();
         let store = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(store.translation_adoption_action_read(project_id, selected.attempt_id, selected.action_id, selected.unit_id, original_item, selected.result_ids[0], &original_confirmation).unwrap(), expected_read);
         let saved = store.execution_input(input.envelope().attempt_id).unwrap();
         assert_eq!(TranslationBundle::from_input(&saved).unwrap(), bundle);
         for item in &saved.envelope().items {

@@ -87,6 +87,7 @@ beforeEach(async () => {
   if (!validateResponsePrepared(value)) throw new Error("Invalid prepared fixture");
   prepared = value; prepared.attemptId = aiAttempt; items = prepared.preview.items;
   let identity = 910;
+  let checkedWrites = -1;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: PrepareRequest & { config: AiConfig; unitIds: string[] } }) => {
     if (command === "read_context_strategy_default") return null;
     if (command === "preview_ai_translation") {
@@ -99,6 +100,11 @@ beforeEach(async () => {
     if (command === "create_execution_identity") return fixtureIdentity(identity++);
     if (command === "prepare_execution_adoption") { action = actionFor(payload.request); return action; }
     if (command === "adopt_execution" || command === "read_execution_receipt") return receiptFor(action);
+    if (command === "read_execution_adoption_action") {
+      const writes = calls("prepare_execution_adoption").length + calls("adopt_execution").length;
+      if (checkedWrites !== writes) { checkedWrites = writes; throw new Error("Automatic lookup unavailable"); }
+      return { action, receipt: receiptFor(action) };
+    }
     throw new Error(command);
   });
 });
@@ -464,10 +470,10 @@ it.each(["project", "attempt", "action", "unit", "result", "operation", "paramet
   });
   await act(async () => { await owner.adopt(view, view.rows[0].resultId!); });
   expect(owner.pendingAdopt?.uncertain).toBe(true); expect(calls("adopt_execution")).toHaveLength(0);
-  invoke.mockImplementation((command: string, payload: unknown) => command === "read_execution_receipt" ? Promise.resolve(receiptFor(action)) : original(command, payload));
+  invoke.mockImplementation((command: string, payload: unknown) => command === "read_execution_adoption_action" ? Promise.resolve({action,receipt:receiptFor(action)}) : original(command, payload));
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.pendingAdopt).toBeNull(); expect(owner.saved[view.rows[0].resultId!]).toEqual(receiptFor(action));
-  expect(payloads("prepare_execution_adoption")[1]).toEqual(payloads("prepare_execution_adoption")[0]);
+  expect(calls("prepare_execution_adoption")).toHaveLength(1);
   expect(calls("adopt_execution")).toHaveLength(0);
 });
 
@@ -496,7 +502,7 @@ it.each(["prepare", "adopt"] as const)("retains unknown adoption after a Busy %s
   invoke.mockImplementation((command: string, payload: unknown) => {
     if (command === "prepare_execution_adoption" && ++prepares === 2 && boundary === "prepare") return Promise.reject(busyRejected);
     if (command === "adopt_execution") { count++; return count === 1 ? Promise.reject(new Error("Disconnected")) : count === 2 && boundary === "adopt" ? Promise.reject(busyRejected) : original(command, payload); }
-    if (command === "read_execution_receipt") return Promise.resolve(null);
+    if (command === "read_execution_adoption_action") return Promise.resolve(null);
     return original(command, payload);
   });
   await act(async () => { await owner.adopt(view, view.rows[0].resultId!); }); const request = owner.pendingAdopt!.request;
@@ -516,8 +522,38 @@ it.each(["prepare_execution_adoption", "adopt_execution"])("releases a fresh rej
   invoke.mockImplementation((command: string, payload: unknown) => command === boundary ? Promise.reject(busyRejected) : original(command, payload));
   await act(async () => { await owner.adopt(view, view.rows[0].resultId!); });
   expect(owner.pendingAdopt).toBeNull(); expect(owner.reserved()).toBe(false);
+  expect(calls("read_execution_adoption_action")).toHaveLength(0);
   invoke.mockImplementation(original); await act(async () => { await owner.adopt(view, view.rows[0].resultId!); });
   expect(calls("create_execution_identity")).toHaveLength(2); expect(payloads("prepare_execution_adoption")[0].actionId).not.toBe(payloads("prepare_execution_adoption")[1].actionId);
+});
+
+it.each(["prepare_execution_adoption","adopt_execution"] as const)("automatically confirms lost %s from one complete original read without another write",async boundary=>{
+  render(<Harness/>,project);const view=await start(),original=invoke.getMockImplementation()!;
+  invoke.mockImplementation(async(command:string,payload:unknown)=>{
+    if(command===boundary){await original(command,payload);throw new Error("Lost ACK");}
+    if(command==="read_execution_adoption_action")return {action,receipt:receiptFor(action)};
+    return original(command,payload);
+  });
+  await act(async()=>{await owner.adopt(view,view.rows[0].resultId!);});
+  expect(owner.pendingAdopt).toBeNull();expect(owner.failure).toBeNull();expect(owner.saved[view.rows[0].resultId!]).toEqual(receiptFor(action));
+  expect(calls("prepare_execution_adoption")).toHaveLength(1);expect(calls("adopt_execution")).toHaveLength(boundary==="adopt_execution"?1:0);
+  expect(payloads("read_execution_adoption_action")).toEqual(payloads("prepare_execution_adoption"));expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it("keeps a typed lost write detail when automatic lookup is missing, but never grants retry for invalid proof",async()=>{
+  render(<Harness/>,project);const view=await start(),original=invoke.getMockImplementation()!;
+  const failure:CommandError={...busyRejected,code:"outcome-unknown",outcome:"unknown",recoveryRequired:true};
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="adopt_execution"?Promise.reject(failure)
+    :command==="read_execution_adoption_action"?Promise.resolve(null):original(command,payload));
+  await act(async()=>{await owner.adopt(view,view.rows[0].resultId!);});
+  expect(owner.pendingAdopt).toMatchObject({uncertain:true,retryAllowed:true,checking:false});expect(owner.failure).toEqual(failure);
+  const request=owner.pendingAdopt!.request;
+  for(const result of [undefined,{action:{...action,cancellationRevision:"9"},receipt:receiptFor(action)}]){
+    invoke.mockImplementation((command:string,payload:unknown)=>command==="read_execution_adoption_action"?Promise.resolve(result):original(command,payload));
+    await act(async()=>{await owner.checkAdoption();await owner.retryAdoption();});
+    expect(owner.pendingAdopt?.request).toBe(request);expect(owner.pendingAdopt?.retryAllowed).toBe(false);
+  }
+  expect(calls("adopt_execution")).toHaveLength(1);expect(calls("prepare_execution_adoption")).toHaveLength(1);
 });
 
 it("keeps a checked start when its first result read fails", async () => {
@@ -539,26 +575,28 @@ it("binds later original attempt reads to the first checked task identity", asyn
   expect(owner.started?.taskId).toBe(first!.detail.taskId); expect(owner.pendingStart).toBeNull(); expect(owner.reserved()).toBe(false);
 });
 
-it("keeps a seen original receipt while restoring its missing action proof without repeating adoption", async () => {
-  render(<Harness />, project); const view = await start(), original = invoke.getMockImplementation()!; let prepares = 0;
+it("keeps a seen original receipt while a mismatched action proof is unresolved without repeating adoption", async () => {
+  render(<Harness />, project); const view = await start(), original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: { request: PrepareRequest }) => {
-    if (command === "prepare_execution_adoption") { action = actionFor(payload.request); return ++prepares === 1 ? Promise.reject(new Error("Lost prepare ACK")) : Promise.reject(busyRejected); }
+    if (command === "prepare_execution_adoption") { action = actionFor(payload.request); return Promise.reject(new Error("Lost prepare ACK")); }
+    if (command === "read_execution_adoption_action") return Promise.resolve({action:{...action,parameters:{}},receipt:receiptFor(action)});
     return original(command, payload);
   });
   await act(async () => { await owner.adopt(view, view.rows[0].resultId!); }); const request = owner.pendingAdopt!.request;
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.pendingAdopt).toMatchObject({ request, action: null, receipt: receiptFor(action), uncertain: true, retryAllowed: false });
-  invoke.mockImplementation((command: string, payload: unknown) => command === "read_execution_receipt" ? Promise.resolve(null) : original(command, payload));
+  invoke.mockImplementation((command: string, payload: unknown) => command === "read_execution_adoption_action" ? Promise.resolve(null) : original(command, payload));
   await act(async () => { await owner.checkAdoption(); }); expect(owner.pendingAdopt?.retryAllowed).toBe(false);
-  invoke.mockImplementation(original); await act(async () => { await owner.checkAdoption(); });
+  invoke.mockImplementation((command: string, payload: unknown) => command === "read_execution_adoption_action" ? Promise.resolve({action,receipt:receiptFor(action)}) : original(command,payload));
+  await act(async () => { await owner.checkAdoption(); });
   expect(owner.pendingAdopt).toBeNull(); expect(calls("adopt_execution")).toHaveLength(0); expect(calls("create_execution_identity")).toHaveLength(1);
-  expect(payloads("prepare_execution_adoption")).toEqual([request, request, request]);
+  expect(payloads("prepare_execution_adoption")).toEqual([request]);
 });
 
 it("revokes an earlier missing-receipt permission when its next receipt check is unknown", async () => {
   render(<Harness />, project); const view = await start(), original = invoke.getMockImplementation()!; let readsCount = 0;
   invoke.mockImplementation((command: string, payload: unknown) => command === "adopt_execution" ? Promise.reject(new Error("Disconnected"))
-    : command === "read_execution_receipt" ? ++readsCount === 1 ? Promise.resolve(null) : Promise.reject(new Error("Read disconnected")) : original(command, payload));
+    : command === "read_execution_adoption_action" ? ++readsCount <= 2 ? Promise.resolve(null) : Promise.reject(new Error("Read disconnected")) : original(command, payload));
   await act(async () => { await owner.adopt(view, view.rows[0].resultId!); await owner.checkAdoption(); });
   expect(owner.pendingAdopt?.retryAllowed).toBe(true);
   await act(async () => { await owner.checkAdoption(); await owner.retryAdoption(); });

@@ -645,6 +645,9 @@
       "adopt": {
         "$ref": "#/definitions/AdoptRequest"
       },
+      "adoptionAction": {
+        "$ref": "#/definitions/PrepareRequest"
+      },
       "applicationInstance": {
         "$ref": "#/definitions/ApplicationInstanceRequest"
       },
@@ -714,6 +717,7 @@
       "continuationList",
       "taskView",
       "prepare",
+      "adoptionAction",
       "adopt",
       "toolPrepare",
       "toolStart",
@@ -768,6 +772,29 @@
           "resultIds",
           "cancellationRevision",
           "parameters"
+        ],
+        "type": "object"
+      },
+      "AdoptionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AdoptionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "receipt"
         ],
         "type": "object"
       },
@@ -3276,6 +3303,16 @@
       "adoption": {
         "$ref": "#/definitions/AdoptionReceipt"
       },
+      "adoptionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/AdoptionActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "applicationInstance": {
         "$ref": "#/definitions/ApplicationInstanceView"
       },
@@ -3364,6 +3401,7 @@
       "taskView",
       "action",
       "adoption",
+      "adoptionAction",
       "receipt",
       "toolPreflight",
       "toolDiscarded",

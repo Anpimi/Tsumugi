@@ -1,7 +1,9 @@
 import type { AdoptionAction, Receipt } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationFilesRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
-import type { TranslationSaveReceipt } from "./generated/translation.responses";
+import type { TranslationSaveReceipt, Responses } from "./generated/translation.responses";
+import type { Requests } from "./generated/translation.requests";
+import { validateResponseAdoptionAction } from "./generated/translation.validators";
 import type { PluginTranslationRequest, PluginTranslationView } from "./pluginCommands";
 import { validateRequestAdopt, validateResponseCheckReview, validateResponseProjectionReview, validateResponseChecked, validateResponseSource, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseFiles, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaveAction, validateResponseSelectionAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
 import { validateResponseAdoption } from "./generated/execution.validators";
@@ -34,6 +36,7 @@ export const translationCommands = {
   startProjection: (request: TranslationProjectionStartRequest) => checkedInvoke("start_translation_projection", request, validateResponseAttempt),
   preview: (request: TranslationPreviewRequest) => checkedInvoke("read_translation_preview", request, validateResponsePreview),
   prepare: (request: TranslationAdoptRequest) => checkedInvoke("prepare_translation_adoption", request, validateResponsePrepared),
+  adoptionAction: (request: Requests["adoptionAction"]): Promise<Responses["adoptionAction"]> => checkedInvoke("read_translation_adoption_action", request, validateResponseAdoptionAction),
   history: (request: TranslationHistoryRequest) => checkedInvoke("read_translation_history", request, validateResponseHistory),
   action: (request: TranslationActionRequest) => checkedInvoke("read_translation_action", request, validateResponseAction),
   saveAction: async (request: TranslationSaveRequest) => {

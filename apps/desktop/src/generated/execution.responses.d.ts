@@ -206,6 +206,7 @@ export interface Responses {
   action: AdoptionAction;
   activity: TaskActivity;
   adoption: AdoptionReceipt;
+  adoptionAction: AdoptionActionRead | null;
   applicationInstance: ApplicationInstanceView;
   applicationShutdown: ApplicationShutdownView;
   attempt: AttemptDetail;
@@ -271,6 +272,10 @@ export interface ChangeReference {
   id: string;
   kind: string;
   revision: Revision;
+}
+export interface AdoptionActionRead {
+  action: AdoptionAction;
+  receipt: AdoptionReceipt | null;
 }
 export interface ApplicationInstanceView {
   basis: ApplicationScopeBasis;

@@ -4718,7 +4718,7 @@ return errors === 0;
 
 export const validateResponseAdoptionAction = validate306;
 const schema437 = {"$id":"urn:tsumugi:ipc:source:responses:adoptionAction","$ref":"urn:tsumugi:ipc:source:responses#/properties/adoptionAction"};
-const schema438 = {"anyOf":[{"$ref":"#/definitions/SourceAdoptionActionRead"},{"type":"null"}]};
+const schema438 = {"anyOf":[{"$ref":"#/definitions/AdoptionActionRead"},{"type":"null"}]};
 const schema200 = {"additionalProperties":false,"properties":{"action":{"$ref":"#/definitions/AdoptionAction"},"receipt":{"anyOf":[{"$ref":"#/definitions/AdoptionReceipt"},{"type":"null"}]}},"required":["action","receipt"],"type":"object"};
 
 function validate137(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){

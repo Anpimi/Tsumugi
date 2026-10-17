@@ -3,6 +3,7 @@ import type { Requests } from "./execution.requests";
 import type { Responses } from "./execution.responses";
 export declare function validateRequestActivity(value: unknown): value is Requests["activity"];
 export declare function validateRequestAdopt(value: unknown): value is Requests["adopt"];
+export declare function validateRequestAdoptionAction(value: unknown): value is Requests["adoptionAction"];
 export declare function validateRequestApplicationInstance(value: unknown): value is Requests["applicationInstance"];
 export declare function validateRequestApplicationInstanceStop(value: unknown): value is Requests["applicationInstanceStop"];
 export declare function validateRequestApplicationShutdown(value: unknown): value is Requests["applicationShutdown"];
@@ -24,6 +25,7 @@ export declare function validateRequestToolStart(value: unknown): value is Reque
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseActivity(value: unknown): value is Responses["activity"];
 export declare function validateResponseAdoption(value: unknown): value is Responses["adoption"];
+export declare function validateResponseAdoptionAction(value: unknown): value is Responses["adoptionAction"];
 export declare function validateResponseApplicationInstance(value: unknown): value is Responses["applicationInstance"];
 export declare function validateResponseApplicationShutdown(value: unknown): value is Responses["applicationShutdown"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];

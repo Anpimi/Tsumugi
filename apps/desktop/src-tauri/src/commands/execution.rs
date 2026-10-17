@@ -52,7 +52,7 @@ macro_rules! handlers {
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
         super::plugins::runtimes::set_plugin_native_host_approval,
         list_execution_tasks,read_execution_task_activity,read_execution_task,read_execution_attempt,read_execution_output,
-        cancel_execution_task,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,adopt_execution,
+        cancel_execution_task,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,read_execution_adoption_action,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         crate::commands::plugins::application::read_application_plugin_instance,
@@ -71,7 +71,7 @@ macro_rules! handlers {
         source::plugin_translation::start_translation_check,source::plugin_translation::finish_translation_check,
         source::plugin_translation::prepare_translation_projection,source::plugin_translation::start_translation_projection,
         source::translation::read_translation_preview,
-        source::translation::prepare_translation_adoption,source::translation::read_translation_history,
+        source::translation::prepare_translation_adoption,source::translation::read_translation_adoption_action,source::translation::read_translation_history,
         source::translation::read_translation_action,
         source::translation::read_translation_save_action,
         source::translation::read_translation_selection_action,
@@ -1607,6 +1607,19 @@ pub async fn recover_execution(
             },
         )
         .await
+}
+#[tauri::command]
+pub async fn read_execution_adoption_action(
+    state: State<'_, AppState>,
+    request: PrepareRequest,
+) -> Result<Option<AdoptionActionRead>, CommandError> {
+    state.sessions.run("read_execution_adoption_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.execution_adoption_action_read(
+                request.project_id, request.attempt_id, request.action_id,
+                request.unit_id, &request.result_ids,
+            ).map_err(|error| map_execution(error, CommandStage::ExecutionRead))
+    }).await
 }
 #[tauri::command]
 pub async fn prepare_execution_adoption(

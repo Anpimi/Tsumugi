@@ -9,6 +9,7 @@ export type UnsignedDecimal = string;
 export interface Requests {
   action: TranslationActionRequest;
   adopt: TranslationAdoptRequest;
+  adoptionAction: TranslationAdoptionActionRequest;
   candidateDecision: CandidateDecisionRequest;
   checkFinish: TranslationCheckFinishRequest;
   checkPrepare: TranslationCheckPrepareRequest;
@@ -50,6 +51,10 @@ export interface TranslationAdoptionConfirmation {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   targetUnitId: ExecutionId;
+}
+export interface TranslationAdoptionActionRequest {
+  adoption: TranslationAdoptRequest;
+  unitId: ExecutionId;
 }
 export interface CandidateDecisionRequest {
   decision: CandidateDecisionWrite;

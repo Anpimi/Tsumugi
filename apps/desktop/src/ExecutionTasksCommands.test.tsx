@@ -325,9 +325,9 @@ it.each(["retire","replace"] as const)("does not dispatch after the original ses
 });
 
 it("checks actual receipt absence before replaying an unknown adoption and keeps its original scope independently of Query", async () => {
-  await open();await capture();const original=invoke.getMockImplementation()!;let count=0;
+  await open();await capture();const original=invoke.getMockImplementation()!;let count=0,lookups=0;
   invoke.mockImplementation((command:string,payload:unknown)=>command==="adopt_execution"&&++count===1?Promise.reject(new Error("Adoption ACK lost")):
-    command==="read_execution_receipt"?Promise.resolve(null):original(command,payload));
+    command==="read_execution_adoption_action"?++lookups===1?Promise.reject(new Error("Automatic lookup unavailable")):Promise.resolve(null):original(command,payload));
   await act(async()=>{expect(registry.dispatch("tasks.submit-action",scope,confirmedPayload())).toBe(true);});
   await waitFor(()=>expect(owner.currentActivity()?.phase).toBe("unknown"));const payload=pendingPayload(),request=pendingPrepare;
   if(payload.requestKind!=="adoption")throw new Error("Expected original adoption");

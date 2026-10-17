@@ -67,10 +67,16 @@ async function confirmApplication(value = applicationDetail()) {
   expect(owner.activity?.phase).toBe("confirming");
 }
 function installApplication() {
+  let lookups = 0;
   invoke.mockImplementation(async command => {
     if (command === "create_execution_identity") return fixture.prepare.actionId;
     if (command === "prepare_execution_adoption") return generalAction();
     if (command === "adopt_execution" || command === "read_execution_receipt") return structuredClone(fixture.receipt);
+    // Existing manual-recovery scenarios begin with an unavailable automatic read.
+    if (command === "read_execution_adoption_action") {
+      if (++lookups === 1) throw new Error("Automatic lookup unavailable");
+      return { action: generalAction(), receipt: structuredClone(fixture.receipt) };
+    }
     if (command === "cancel_execution_task") return "2";
     throw new Error(command);
   });
@@ -180,7 +186,7 @@ it("rejects a shape-valid wrong preparation before adoption and revokes a missin
   invoke.mockResolvedValueOnce(null);
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.activity?.retryAllowed).toBe(true);
-  invoke.mockRejectedValueOnce(new Error("Preparation acknowledgement lost again"));
+  invoke.mockRejectedValueOnce(new Error("Preparation acknowledgement lost again")).mockRejectedValueOnce(new Error("Lookup unavailable"));
   await act(async () => { await owner.retryAdoption(); });
   expect(owner.activity).toMatchObject({ phase: "unknown", retryAllowed: false, prepare: fixture.prepare });
   await act(async () => { await owner.retryAdoption(); });
@@ -188,7 +194,7 @@ it("rejects a shape-valid wrong preparation before adoption and revokes a missin
   expect(calls("adopt_execution")).toHaveLength(0);
 });
 
-it("restores lost preparation evidence using only the original prepare when its receipt already exists", async () => {
+it("restores lost preparation evidence through a pure read when its receipt already exists", async () => {
   render(<Probe />, project); installApplication(); await confirmApplication();
   invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockRejectedValueOnce(new Error("Lost preparation ACK"));
   await act(async () => { await owner.submit(); });
@@ -196,26 +202,78 @@ it("restores lost preparation evidence using only the original prepare when its 
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.activity).toMatchObject({ phase: "recorded", receipt: fixture.receipt, proof: { parameters: null } });
   expect(calls("adopt_execution")).toHaveLength(0);
-  expect(calls("prepare_execution_adoption").map(([, payload]) => payload.request)).toEqual([fixture.prepare, fixture.prepare]);
-  expect(calls("read_execution_receipt")[0][1].request).toEqual(fixture.adopt);
+  expect(calls("prepare_execution_adoption").map(([, payload]) => payload.request)).toEqual([fixture.prepare]);
+  expect(calls("read_execution_adoption_action").map(([, payload]) => payload.request)).toEqual([fixture.prepare, fixture.prepare]);
+  expect(calls("read_execution_receipt")).toHaveLength(0);
   expect(calls("read_project")).toHaveLength(0);
+});
+
+it("automatically reads a lost preparation once inside the original reservation and survives consumer removal", async () => {
+  const view = render(<Probe/>,project); installApplication(); await confirmApplication();
+  let finish!: (value:unknown)=>void;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="prepare_execution_adoption"?Promise.reject(new Error("Lost preparation ACK"))
+    :command==="read_execution_adoption_action"?new Promise(resolve=>{finish=resolve;}):original(command,payload));
+  let work!:Promise<void>;act(()=>{work=owner.submit();void owner.submit();void owner.checkAdoption();});
+  await act(async()=>{});
+  expect(owner.currentActivity()).toMatchObject({phase:"checking",failure:null});
+  expect(translation.reserveMutation()).toBeNull();expect(calls("read_execution_adoption_action")).toHaveLength(1);
+  view.rerender(null);
+  await act(async()=>{finish({action:generalAction(),receipt:fixture.receipt});await work;});
+  view.rerender(<Probe/>);
+  expect(owner.activity).toMatchObject({phase:"recorded",failure:null,receipt:fixture.receipt});
+  expect(calls("prepare_execution_adoption")).toHaveLength(1);expect(calls("adopt_execution")).toHaveLength(0);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["missing","prepared"] as const)("opens only an explicit original retry after the automatic read is %s",async outcome=>{
+  render(<Probe/>,project);installApplication();await confirmApplication();
+  const original=invoke.getMockImplementation()!;let prepares=0;
+  const failure={code:"outcome-unknown",outcome:"unknown",stage:"execution-adopt",recoveryRequired:true};
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="prepare_execution_adoption"&&++prepares===1?Promise.reject(failure)
+    :command==="read_execution_adoption_action"?Promise.resolve(outcome==="missing"?null:{action:generalAction(),receipt:null}):original(command,payload));
+  await act(async()=>{await owner.submit();});
+  expect(owner.activity).toMatchObject({phase:"unknown",retryAllowed:true,failure});
+  expect(calls("adopt_execution")).toHaveLength(0);expect(calls("prepare_execution_adoption")).toHaveLength(1);
+  await act(async()=>{await owner.retryAdoption();});expect(owner.activity?.phase).toBe("recorded");
+  expect(calls("read_execution_adoption_action")).toHaveLength(1);expect(calls("adopt_execution")).toHaveLength(1);
+  expect(calls("prepare_execution_adoption").map(([,args])=>args.request)).toEqual([fixture.prepare,fixture.prepare]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["before-read","during-read"] as const)("ignores retired task adoption recovery %s",async boundary=>{
+  render(<Probe/>,project);installApplication();await confirmApplication();
+  let reject!: (error:unknown)=>void,finish!: (value:unknown)=>void;
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="adopt_execution"?new Promise((_,fail)=>{reject=fail;})
+    :command==="read_execution_adoption_action"?new Promise(resolve=>{finish=resolve;}):original(command,payload));
+  let work!:Promise<void>;act(()=>{work=owner.submit();});await act(async()=>{});
+  if(boundary==="before-read")act(()=>sessionReads.retire());
+  await act(async()=>{reject(new Error("Lost ACK"));});
+  if(boundary==="during-read"){
+    expect(owner.currentActivity()?.phase).toBe("checking");act(()=>sessionReads.retire());
+    await act(async()=>{finish({action:generalAction(),receipt:fixture.receipt});});
+  }
+  await act(async()=>{await work;});
+  expect(owner.currentActivity()?.phase).not.toBe("recorded");
+  expect(calls("read_execution_adoption_action")).toHaveLength(boundary==="before-read"?0:1);
 });
 
 it("pins a seen receipt before failed proof restoration and never readopts after it disappears or changes", async () => {
   render(<Probe />, project); installApplication(); await confirmApplication();
   invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockRejectedValueOnce(new Error("Lost preparation ACK"));
   await act(async () => { await owner.submit(); });
-  invoke.mockResolvedValueOnce(fixture.receipt).mockResolvedValueOnce({ ...generalAction(), parameters: {} });
+  invoke.mockResolvedValueOnce({ action: { ...generalAction(), parameters: {} }, receipt: fixture.receipt });
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.activity).toMatchObject({ phase: "unknown", receipt: fixture.receipt, retryAllowed: false });
   invoke.mockResolvedValueOnce(null);
   await act(async () => { await owner.checkAdoption(); await owner.retryAdoption(); owner.dismiss(); });
   expect(owner.activity).toMatchObject({ phase: "unknown", receipt: fixture.receipt, retryAllowed: false });
-  invoke.mockResolvedValueOnce({ ...fixture.receipt, requestDigest: "f".repeat(64) });
+  invoke.mockResolvedValueOnce({ action: generalAction(), receipt: { ...fixture.receipt, requestDigest: "f".repeat(64) } });
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.activity?.receipt).toEqual(fixture.receipt);
   expect(calls("adopt_execution")).toHaveLength(0);
-  expect(calls("prepare_execution_adoption")).toHaveLength(2);
+  expect(calls("prepare_execution_adoption")).toHaveLength(1);
   expect(owner.unresolved()).toBe(true);
 });
 
@@ -242,7 +300,7 @@ it("pins the first checked cancellation basis and keeps an incompatible replay u
   invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockResolvedValueOnce(generalAction()).mockRejectedValueOnce(new Error("Lost adoption ACK"));
   await act(async () => { await owner.submit(); });
   invoke.mockResolvedValueOnce(null); await act(async () => { await owner.checkAdoption(); });
-  invoke.mockResolvedValueOnce({ ...generalAction(), cancellationRevision: "2" });
+  invoke.mockResolvedValueOnce({ ...generalAction(), cancellationRevision: "2" }).mockRejectedValueOnce(new Error("Lookup unavailable"));
   await act(async () => { await owner.retryAdoption(); });
   expect(owner.activity?.phase).toBe("unknown");
   expect(owner.activity?.proof?.cancellationRevision).toBe(fixture.action.cancellationRevision);

@@ -1141,6 +1141,29 @@
         ],
         "type": "object"
       },
+      "AdoptionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AdoptionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "receipt"
+        ],
+        "type": "object"
+      },
       "AdoptionReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -3018,29 +3041,6 @@
         ],
         "type": "object"
       },
-      "SourceAdoptionActionRead": {
-        "additionalProperties": false,
-        "properties": {
-          "action": {
-            "$ref": "#/definitions/AdoptionAction"
-          },
-          "receipt": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/AdoptionReceipt"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "action",
-          "receipt"
-        ],
-        "type": "object"
-      },
       "SourceChange": {
         "additionalProperties": false,
         "properties": {
@@ -4788,7 +4788,7 @@
       "adoptionAction": {
         "anyOf": [
           {
-            "$ref": "#/definitions/SourceAdoptionActionRead"
+            "$ref": "#/definitions/AdoptionActionRead"
           },
           {
             "type": "null"

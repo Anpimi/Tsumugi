@@ -3,7 +3,8 @@ import type { ProjectView } from "./projectCommands";
 import { checkedInvoke } from "./ipc";
 import type { SessionRequest, ListRequest, TaskActivityRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest, PluginToolPrepareRequest, PluginToolStartRequest, ApplicationInstanceRequest, StopApplicationInstanceRequest, ApplicationShutdownRequest, PluginToolDiscardRequest } from "./generated/execution.requests";
 import { validateResponseIdentity, validateResponseStatus, validateResponseTasks, validateResponseActivity, validateResponseAttempts, validateResponseAttempt, validateResponseOutput, validateResponseCancellation, validateResponseRecovery, validateResponseContinuation, validateResponseContinuationReceipt, validateResponseContinuations, validateResponseTaskView, validateResponseAction, validateResponseAdoption, validateResponseReceipt, validateResponseToolPreflight, validateResponseToolDiscarded, validateResponseApplicationInstance, validateResponseApplicationShutdown } from "./generated/execution.validators";
-import type { AdoptionAction, AdoptionReceipt, ApplicationInstanceView, ApplicationShutdownView } from "./generated/execution.responses";
+import type { AdoptionAction, AdoptionReceipt, ApplicationInstanceView, ApplicationShutdownView, Responses } from "./generated/execution.responses";
+import { validateResponseAdoptionAction } from "./generated/execution.validators";
 
 export type { SessionRequest, ListRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest, PluginToolPrepareRequest, PluginToolStartRequest, ApplicationInstanceRequest, StopApplicationInstanceRequest, ApplicationShutdownRequest, PluginToolDiscardRequest } from "./generated/execution.requests";
 export type { TaskView as Task, AdoptionReceipt as Receipt, AttemptSummary, ExecutionState, ItemStatus, Scope, ItemView, Progress, RecoveryUnit, AttemptDetail, RuntimeStatus, RecoveryView, AdoptionAction, ExecutionOutputView, RecoveryAction, ContinuationAction, ContinuationReceipt, ContinuationPage, PluginToolPreflight, PluginToolItem, ApplicationScopeBasis, ApplicationInstanceView, ApplicationShutdownView } from "./generated/execution.responses";
@@ -107,6 +108,7 @@ export const executionCommands = {
   taskView: readTaskView,
   recover: (request: RecoveryRequest) => checkedInvoke("recover_execution", request, validateResponseRecovery),
   prepare: (request: PrepareRequest) => checkedInvoke("prepare_execution_adoption", request, validateResponseAction),
+  adoptionAction: (request: PrepareRequest): Promise<Responses["adoptionAction"]> => checkedInvoke("read_execution_adoption_action", request, validateResponseAdoptionAction),
   adopt: (request: AdoptRequest) => checkedInvoke("adopt_execution", request, validateResponseAdoption),
   receipt: (request: AdoptRequest) => checkedInvoke("read_execution_receipt", request, validateResponseReceipt),
   quiesce: (request: SessionRequest) => checkedInvoke("quiesce_execution", request, validateResponseStatus),

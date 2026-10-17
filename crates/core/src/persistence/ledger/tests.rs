@@ -271,6 +271,74 @@ fn prepared_adoption_rechecks_cancellation_and_returns_competing_receipt_without
 }
 
 #[test]
+fn historical_adoption_action_reads_keep_original_proof_after_cancel_and_reopen() {
+    let _schema = TestSchema::enable();
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    install_targets(&store);
+    let input = fixture_input(&store, true);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let mut results = Vec::new();
+    for item in &input.envelope().items {
+        let result = produce(&mut store, &input, item.item_id);
+        store.save_execution_result(&result).unwrap();
+        store.validate_execution_result(input.envelope().attempt_id, result.envelope().result_id).unwrap();
+        results.push(result.envelope().result_id);
+    }
+    let project = input.envelope().project_id;
+    let attempt = input.envelope().attempt_id;
+    let unit = input.envelope().units[0].unit_id;
+    let action_id = ExecutionId::new();
+    let before = store.changes_since(Revision::new(0).unwrap()).sequence;
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), None);
+    assert_eq!(store.changes_since(before).sequence, before);
+    results.reverse();
+    let original = store.prepare_adoption_with_id(action_id, attempt, unit, results.clone(), serde_json::Value::Null).unwrap();
+    let prepared = Some(AdoptionActionRead { action: original.clone(), receipt: None });
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), prepared);
+    for (p, a, u, ids) in [
+        (ExecutionId::new(), attempt, unit, results.clone()),
+        (project, ExecutionId::new(), unit, results.clone()),
+        (project, attempt, ExecutionId::new(), results.clone()),
+        (project, attempt, unit, vec![ExecutionId::new()]),
+    ] {
+        assert_eq!(store.execution_adoption_action_read(p, a, action_id, u, &ids).unwrap_err().code, ErrorCode::ResultMismatch);
+    }
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &[results[0], results[0]]).unwrap_err().code, ErrorCode::InvalidInput);
+    let receipt = store.adopt_execution(&original, &Handler).unwrap();
+    store.cancel_execution(input.envelope().task_id, ExecutionId::new()).unwrap();
+    let expected = Some(AdoptionActionRead { action: original.clone(), receipt: Some(receipt.clone()) });
+    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let count: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get(0)).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get::<_, i64>(0)).unwrap(), count);
+
+    let connection = store.execution_connection().unwrap();
+    let (bytes, digest): (Vec<u8>, String) = connection.query_row("SELECT request,digest FROM execution_actions WHERE action_id=?1", [action_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    connection.execute("UPDATE execution_actions SET digest=?2 WHERE action_id=?1", params![action_id.to_string(), "0".repeat(64)]).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert!(store.is_reconciling());
+    connection.execute("UPDATE execution_actions SET digest=?2 WHERE action_id=?1", params![action_id.to_string(), &digest]).unwrap();
+    connection.pragma_update(None, "foreign_keys", "OFF").unwrap();
+    connection.execute("DELETE FROM execution_actions WHERE action_id=?1", [action_id.to_string()]).unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    connection.execute("INSERT INTO execution_actions(action_id,attempt_id,unit_id,request,digest) VALUES (?1,?2,?3,?4,?5)", params![action_id.to_string(), attempt.to_string(), unit.to_string(), bytes, digest]).unwrap();
+    connection.execute("UPDATE adoption_receipts SET unit_id=?2 WHERE action_id=?1", params![action_id.to_string(), ExecutionId::new().to_string()]).unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    connection.execute("UPDATE adoption_receipts SET unit_id=?2 WHERE action_id=?1", params![action_id.to_string(), unit.to_string()]).unwrap();
+    connection.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+}
+
+#[test]
 fn durable_inputs_results_and_reads_preserve_metadata_and_do_not_regenerate() {
     let parent = tempfile::tempdir().unwrap();
     let path = parent.path().join("project");
@@ -730,7 +798,7 @@ fn current_reopen_preserves_results_adoption_receipts_relations_and_refuses_sche
                 &confirmation,
             )
             .unwrap(),
-        Some(SourceAdoptionActionRead {
+        Some(AdoptionActionRead {
             action: source_action.clone(),
             receipt: None,
         })
@@ -804,7 +872,7 @@ fn current_reopen_preserves_results_adoption_receipts_relations_and_refuses_sche
                 &confirmation,
             )
             .unwrap(),
-        Some(SourceAdoptionActionRead {
+        Some(AdoptionActionRead {
             action: source_action.clone(),
             receipt: Some(source_receipt.clone()),
         })
@@ -901,7 +969,7 @@ fn current_reopen_preserves_results_adoption_receipts_relations_and_refuses_sche
                 &confirmation,
             )
             .unwrap(),
-        Some(SourceAdoptionActionRead {
+        Some(AdoptionActionRead {
             action: source_action,
             receipt: reopened.adoption_receipt(source_action_id).unwrap(),
         })

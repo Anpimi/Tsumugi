@@ -11,6 +11,21 @@ const list: ListRequest = fixture.list;
 const prepare: PrepareRequest = fixture.prepare;
 const receipt: Receipt = fixture.receipt;
 beforeEach(() => invoke.mockReset());
+it("reads complete original adoption records with required nullable receipts without a write", async () => {
+  const action = {...fixture.action,parameters:null};
+  for (const result of [null,{action,receipt:null},{action,receipt}]) {
+    expect(validators.validateRequestAdoptionAction(prepare)).toBe(true);
+    invoke.mockResolvedValueOnce(result);
+    expect(await executionCommands.adoptionAction(prepare)).toEqual(result);
+    expect(invoke).toHaveBeenLastCalledWith("read_execution_adoption_action",{request:prepare});
+  }
+  for (const result of [undefined,{action},{action,receipt:undefined},{action,receipt,extra:true},{action,receipt:{...receipt,unitId:"invalid"}}]) {
+    invoke.mockResolvedValueOnce(result);
+    expect(hasUnknownOutcome(await executionCommands.adoptionAction(prepare).catch(error=>error))).toBe(true);
+    expect(validators.validateResponseAdoptionAction(result)).toBe(false);
+  }
+  expect(invoke.mock.calls.every(([name])=>name==="read_execution_adoption_action")).toBe(true);
+});
 it("accepts bounded source-failure shape without opening the execution output contract", () => {
   const output = { ...fixture.output, sourceFailure: {
     code: "invalid-source", artifactId: "captured-1", detail: "Expected exactly one entry declaration.",

@@ -4,7 +4,7 @@ import { aiCommands, defaultAiConfig, editedAiConfig, validSourceContextSelectio
 import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
 import type { ConnectionReadView } from "./connectionCommands";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt, type AttemptDetail } from "./executionCommands";
-import { validateResponseIdentity } from "./generated/execution.validators";
+import { validateResponseIdentity, validateResponseAdoptionAction } from "./generated/execution.validators";
 import { validateResponseWorkPlanStatus, validateResponseView } from "./generated/ai.validators";
 import { validateResponseScope, validateResponsePage } from "./generated/source.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
@@ -32,7 +32,7 @@ type PreparationCapture = { kind: "direct"; value: AiPrepared } | { kind: "plan"
 
 type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; uncertain: boolean };
 type Candidate = { taskId: string; item: AiItem; resultId: string; unitId: string; text: string };
-type AdoptCapture = { request: PrepareRequest; candidate: Candidate; editSeq: number; action: AdoptionAction | null; receipt: Receipt | null; uncertain: boolean; retryAllowed: boolean };
+type AdoptCapture = { request: PrepareRequest; candidate: Candidate; editSeq: number; action: AdoptionAction | null; receipt: Receipt | null; uncertain: boolean; retryAllowed: boolean; checking: boolean };
 interface State {
   maintenance: MaintenancePlanBasis | null;
   presetName: string; config: AiConfig; locale: string; selected: string[]; selectedSnapshotId: string | null; capture: PreparationCapture | null; consent: boolean;
@@ -598,7 +598,34 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       // Retain both the exact request and checked partial proof across an unknown original replay.
       update(before => before.pendingAdopt?.request !== entry.request ? before : { ...before,pendingAdopt:retryingUnknown || hasUnknownOutcome(error)
         ? {...before.pendingAdopt,uncertain:true,retryAllowed:false} : null });
+      if (hasUnknownOutcome(error) && live() && current().pendingAdopt?.request === entry.request) {
+        await lookupAdoption(entry,commandFailure(error,"outcome-unknown")); return;
+      }
       throw error;
+    }
+  }
+  async function lookupAdoption(entry: AdoptCapture, originalFailure = current().failure) {
+    if (!live() || current().pendingAdopt?.request !== entry.request) return;
+    update(before => ({...before,failure:null,pendingAdopt:before.pendingAdopt && {...before.pendingAdopt,checking:true,retryAllowed:false}}));
+    try {
+      const result = await executionCommands.adoptionAction(entry.request);
+      if (!live() || current().pendingAdopt?.request !== entry.request) return;
+      let checked = current().pendingAdopt!;
+      if (!validateResponseAdoptionAction(result)) invalidAck();
+      if (result === null) { if (checked.receipt) invalidAck(); }
+      else {
+        if (result.receipt !== null) {
+          confirmReceipt(checked,result.receipt); checked = {...checked,receipt:fixed(result.receipt)};
+          update(before => ({...before,pendingAdopt:checked}));
+        } else if (checked.receipt) invalidAck();
+        confirmAction(checked,result.action); checked = {...checked,action:fixed(result.action)};
+        update(before => ({...before,pendingAdopt:checked}));
+        if (checked.receipt) { settleAdopt(checked,checked.receipt); return; }
+      }
+      update(before => ({...before,failure:originalFailure,pendingAdopt:{...checked,checking:false,retryAllowed:true}}));
+    } catch (error) {
+      update(before => before.pendingAdopt?.request !== entry.request ? before : {...before,failure:commandFailure(error,"outcome-unknown"),
+        pendingAdopt:{...before.pendingAdopt,checking:false,uncertain:true,retryAllowed:false}});
     }
   }
   async function adopt(view: AiView, resultId: string) {
@@ -626,7 +653,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
         const actionId = await executionCommands.identity(session);
         if (!proof()) return;
         const entry: AdoptCapture = {request:fixed({...session,attemptId,unitId:captured.unitId,actionId,resultIds:[captured.resultId]}),candidate:captured,editSeq,
-          action:null,receipt:null,uncertain:false,retryAllowed:false};
+          action:null,receipt:null,uncertain:false,retryAllowed:false,checking:false};
         await dispatchAdopt(entry,false,proof);
       } finally {
         dispose();
@@ -637,26 +664,8 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   async function checkAdoption() {
     const entry = current().pendingAdopt;
     if (!entry) return;
-    await run(async () => {
-      update(before => ({ ...before,pendingAdopt:before.pendingAdopt && {...before.pendingAdopt,retryAllowed:false} }));
-      const receipt = await reads.client.fetchQuery({queryKey:reads.key(["execution-receipt",entry.request.actionId]),staleTime:0,meta:{scopes:["execution","translation"]},
-        queryFn:() => executionCommands.receipt({...session,actionId:entry.request.actionId})});
-      if (!live() || current().pendingAdopt?.request !== entry.request) return;
-      if (!receipt) {
-        if (entry.receipt) invalidAck();
-        update(before => ({ ...before,pendingAdopt:before.pendingAdopt && {...before.pendingAdopt,retryAllowed:true} })); return;
-      }
-      confirmReceipt(entry,receipt);
-      update(before => ({ ...before,pendingAdopt:before.pendingAdopt && {...before.pendingAdopt,receipt:fixed(receipt)} }));
-      // The receipt digest depends on full Core input. Restore its original action proof instead of recomputing it.
-      if (!entry.action) {
-        const action = await executionCommands.prepare(entry.request);
-        if (!live()) return;
-        confirmAction(entry,action);
-        update(before => ({ ...before,pendingAdopt:before.pendingAdopt && {...before.pendingAdopt,action:fixed(action)} }));
-      }
-      settleAdopt(current().pendingAdopt ?? entry,receipt);
-    },true);
+    const originalFailure = current().failure;
+    await run(() => lookupAdoption(entry,originalFailure),true);
   }
   async function retryAdoption() { const entry = current().pendingAdopt; if (entry?.retryAllowed) await run(() => dispatchAdopt(entry,true),true); }
   function showAttempt(attempt: string) {

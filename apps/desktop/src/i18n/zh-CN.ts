@@ -2148,6 +2148,7 @@ ai: {
       "continuationItems": "{{count, number}} 个剩余项",
       "viewContinuation": "查看已接续工作",
       "checkReceipt": "核对已记录结果",
+      "checkingAdoption": "正在核对采纳结果…",
       "retryAdoption": "重试原应用请求",
       "keepOutput": "保留输出并返回",
       "working": "正在处理…",

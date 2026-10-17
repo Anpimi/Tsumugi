@@ -14,6 +14,7 @@ export type UnsignedDecimal = string;
 export interface Requests {
   activity: TaskActivityRequest;
   adopt: AdoptRequest;
+  adoptionAction: PrepareRequest;
   applicationInstance: ApplicationInstanceRequest;
   applicationInstanceStop: StopApplicationInstanceRequest;
   applicationShutdown: ApplicationShutdownRequest;
@@ -42,6 +43,14 @@ export interface AdoptRequest {
   actionId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
+}
+export interface PrepareRequest {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  resultIds: ExecutionId[];
+  sessionToken: string;
+  unitId: ExecutionId;
 }
 export interface ApplicationInstanceRequest {
   basis: ApplicationScopeBasis;
@@ -111,14 +120,6 @@ export interface OutputRequest {
   projectId: ExecutionId;
   resultId: ExecutionId;
   sessionToken: string;
-}
-export interface PrepareRequest {
-  actionId: ExecutionId;
-  attemptId: ExecutionId;
-  projectId: ExecutionId;
-  resultIds: ExecutionId[];
-  sessionToken: string;
-  unitId: ExecutionId;
 }
 export interface RecoveryRequest {
   action: RecoveryAction;

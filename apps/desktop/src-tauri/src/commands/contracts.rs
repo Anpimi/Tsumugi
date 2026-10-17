@@ -154,6 +154,7 @@ struct ExecutionRequests {
     continuation_list: execution::ContinuationListRequest,
     task_view: execution::TaskViewRequest,
     prepare: execution::PrepareRequest,
+    adoption_action: execution::PrepareRequest,
     adopt: execution::AdoptRequest,
     tool_prepare: execution::tools::PluginToolPrepareRequest,
     tool_start: execution::tools::PluginToolStartRequest,
@@ -181,6 +182,7 @@ struct ExecutionResponses {
     task_view: tsumugi_core::TaskView,
     action: tsumugi_core::execution::AdoptionAction,
     adoption: tsumugi_core::execution::AdoptionReceipt,
+    adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
     receipt: Option<tsumugi_core::execution::AdoptionReceipt>,
     tool_preflight: execution::tools::PluginToolPreflight,
     tool_discarded: bool,
@@ -231,7 +233,7 @@ struct SourceResponses {
     estimates: Vec<tsumugi_core::content::SourceImpactSummary>,
     impact: tsumugi_core::content::SourceImpactPage,
     action: tsumugi_core::execution::AdoptionAction,
-    adoption_action: Option<tsumugi_core::execution::SourceAdoptionActionRead>,
+    adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
     plugin_selection: Option<execution::source::plugin::PluginSourceSelection>,
     plugin_preflight: execution::source::plugin::PluginSourcePreflight,
     check_review: execution::source::plugin::SourceCheckReview,
@@ -252,6 +254,7 @@ struct TranslationRequests {
     files: execution::source::translation::TranslationFilesRequest,
     preview: execution::source::translation::TranslationPreviewRequest,
     adopt: execution::source::translation::TranslationAdoptRequest,
+    adoption_action: execution::source::translation::TranslationAdoptionActionRequest,
     history: execution::source::translation::TranslationHistoryRequest,
     save: execution::source::translation::TranslationSaveRequest,
     action: execution::source::translation::TranslationActionRequest,
@@ -274,6 +277,7 @@ struct TranslationResponses {
     attempt: tsumugi_core::execution::ExecutionId,
     preview: tsumugi_core::TranslationPreview,
     prepared: tsumugi_core::execution::AdoptionAction,
+    adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
     history: tsumugi_core::TranslationHistory,
     action: Option<tsumugi_core::TranslationSelection>,
     saved: tsumugi_core::TranslationSaveReceipt,
@@ -731,7 +735,7 @@ mod tests {
     fn source_adoption_read_schema_requires_an_explicit_nullable_receipt() {
         let schema = schemas::<
             execution::source::SourceAdoptionActionRequest,
-            tsumugi_core::execution::SourceAdoptionActionRead,
+            tsumugi_core::execution::AdoptionActionRead,
         >();
         let response = &schema["responses"];
         assert!(

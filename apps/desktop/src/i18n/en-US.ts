@@ -2157,6 +2157,7 @@ ai: {
       "continuationItems": "{{count, number}} remaining items",
       "viewContinuation": "View continued work",
       "checkReceipt": "Check recorded outcome",
+      "checkingAdoption": "Checking the saved adoption result…",
       "retryAdoption": "Retry the same application",
       "keepOutput": "Keep output and return",
       "working": "Working…",
