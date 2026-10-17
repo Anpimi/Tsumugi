@@ -3,6 +3,7 @@
 export type ExecutionId = string;
 export type CandidateDisposition = "rejected" | "restored";
 export type TranslationOrigin = "import" | "manual" | "ai";
+export type Revision = string;
 export type UnsignedDecimal = string;
 /**
  * Pinned local decisions are separate from raw SDK facts and the provider projection.
@@ -127,7 +128,6 @@ export type SourceContextCapture =
       kind: "selected";
       value: SelectedSourceContext;
     };
-export type Revision = string;
 export type SourceContextDirection = "before" | "after";
 /**
  * A pointer only; omitted text and rationale never enter the capture.
@@ -153,8 +153,10 @@ export type RecoveryAction =
 
 export interface Responses {
   comparison: ComparisonView;
+  comparisonAction: ComparisonRequest | null;
   comparisons: ComparisonSummary[];
   identity: ExecutionId;
+  mergeAction: ArenaMergeActionRead | null;
   prepared: Prepared;
   reveal: null;
   selection: TranslationSelection;
@@ -187,10 +189,45 @@ export interface ComparisonEntry {
   sourceRevisionId: ExecutionId;
   text: string;
 }
+export interface ComparisonRequest {
+  actionId: ExecutionId;
+  blind: boolean;
+  locale: string;
+  projectId: ExecutionId;
+  revisionIds: ExecutionId[];
+  unitId: ExecutionId;
+}
 export interface ComparisonSummary {
   comparisonId: ExecutionId;
   locale: string;
   nativeKey: string;
+}
+export interface ArenaMergeActionRead {
+  merge: MergeBasis;
+  receipt: TranslationSelection;
+  request: SaveTranslationRevision;
+}
+export interface MergeBasis {
+  contributors: ExecutionId[];
+  expectedBasis: string;
+}
+export interface TranslationSelection {
+  actionId: ExecutionId;
+  eventId: ExecutionId;
+  locale: string;
+  previousEventId: ExecutionId | null;
+  revisionId: ExecutionId;
+  sequence: Revision;
+  unitId: ExecutionId;
+}
+export interface SaveTranslationRevision {
+  actionId: ExecutionId;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
 }
 export interface Prepared {
   attemptId: ExecutionId;
@@ -414,15 +451,6 @@ export interface SharedTerm {
   revisionId: ExecutionId;
   source: string;
   target: string;
-}
-export interface TranslationSelection {
-  actionId: ExecutionId;
-  eventId: ExecutionId;
-  locale: string;
-  previousEventId: ExecutionId | null;
-  revisionId: ExecutionId;
-  sequence: Revision;
-  unitId: ExecutionId;
 }
 /**
  * The recorded start input, independently of provider or worker progress.

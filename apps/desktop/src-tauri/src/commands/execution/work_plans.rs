@@ -2507,6 +2507,58 @@ mod tests {
     }
 
     #[test]
+    fn registered_arena_action_reads_keep_original_creation_merge_and_selection_after_reopen() {
+        let isolated=ProjectFixture::create("en-US");
+        let scope=json!({"actionId":ExecutionId::new(),"unitId":ExecutionId::new(),"locale":"zh-CN"});
+        let mut compare=scope.clone();compare["revisionIds"]=json!([ExecutionId::new(),ExecutionId::new()]);compare["blind"]=json!(true);
+        assert!(call(&isolated.webview,"read_arena_comparison_action",request(&isolated.context,compare)).is_err());
+        let mut merge=scope;merge["sourceRevisionId"]=json!(ExecutionId::new());merge["expectedSelectionId"]=Value::Null;merge["text"]=json!("Merged");
+        merge["merge"]=json!({"contributors":[ExecutionId::new(),ExecutionId::new()],"expectedBasis":"none"});
+        assert!(call(&isolated.webview,"read_arena_merge_action",request(&isolated.context,merge)).is_err());
+        isolated.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+        let mut fixture=Fixture::create();let unit=fixture.unit;let source=fixture.source_revision;
+        let (first,second)=fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let store=&mut sessions.active.as_mut().unwrap().store;
+            let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+            let request=tsumugi_core::SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+                locale:"zh-CN".into(),source_revision_id:source,expected_selection_id:None,text:"First".into()};
+            let first=store.save_translation_revision(&request).unwrap();
+            let second=store.save_translation_revision(&tsumugi_core::SaveTranslationRevision {action_id:ExecutionId::new(),
+                expected_selection_id:Some(first.event_id),text:"Second".into(),..request}).unwrap();(first,second)
+        });
+        let compare=json!({"actionId":ExecutionId::new(),"unitId":unit,"locale":"zh-CN","revisionIds":[first.revision_id,second.revision_id],"blind":true});
+        assert_eq!(fixture.call("read_arena_comparison_action",compare.clone()).unwrap(),Value::Null);
+        let view=fixture.call("create_arena_comparison",compare.clone()).unwrap();
+        let mut expected=compare.clone();expected["projectId"]=fixture.context["projectId"].clone();
+        assert_eq!(fixture.call("read_arena_comparison_action",compare.clone()).unwrap(),expected);
+        let merge=json!({"actionId":ExecutionId::new(),"unitId":unit,"locale":"zh-CN","sourceRevisionId":source,
+            "expectedSelectionId":second.event_id,"text":"Merged","merge":{"contributors":[first.revision_id,second.revision_id],"expectedBasis":view["basis"]}});
+        assert_eq!(fixture.call("read_arena_merge_action",merge.clone()).unwrap(),Value::Null);
+        let receipt=fixture.call("save_arena_merge",merge.clone()).unwrap();
+        let mut original=merge.clone();original.as_object_mut().unwrap().remove("merge");original["projectId"]=fixture.context["projectId"].clone();
+        let merged=json!({"request":original,"merge":merge["merge"],"receipt":receipt});
+        assert_eq!(fixture.call("read_arena_merge_action",merge.clone()).unwrap(),merged);
+        let mut wrong=compare.clone();wrong["revisionIds"]=json!([second.revision_id,first.revision_id]);assert!(fixture.call("read_arena_comparison_action",wrong).is_err());
+        let mut wrong=merge.clone();wrong["text"]=json!("Different");assert!(fixture.call("read_arena_merge_action",wrong).is_err());
+        for (command,value) in [("read_arena_comparison_action",compare.clone()),("read_arena_merge_action",merge.clone())] {
+            let mut wrong=value.clone();wrong["projectId"]=json!(ExecutionId::new());assert!(fixture.call(command,wrong).is_err());
+            let mut wrong=value;wrong["sessionToken"]=json!("old");assert!(fixture.call(command,wrong).is_err());
+        }
+        let sequence=fixture.app.state::<AppState>().sessions.with(|sessions| {
+            let active=sessions.active.as_mut().unwrap();active.execution.as_mut().unwrap().quiescing=true;active.store.execution_sequence().unwrap()
+        });
+        assert_eq!(fixture.call("read_arena_comparison_action",compare.clone()).unwrap(),expected);
+        assert_eq!(fixture.call("read_arena_merge_action",merge.clone()).unwrap(),merged);
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active=sessions.active.as_mut().unwrap();assert_eq!(active.store.execution_sequence().unwrap(),sequence);active.execution.as_mut().unwrap().quiescing=false;
+        });
+        let old=request(&fixture.context,merge.clone());fixture.reopen();
+        assert!(call(&fixture.webview,"read_arena_merge_action",old).is_err());
+        assert_eq!(fixture.call("read_arena_comparison_action",compare).unwrap(),expected);
+        assert_eq!(fixture.call("read_arena_merge_action",merge).unwrap(),merged);
+    }
+
+    #[test]
     fn registered_start_action_reads_confirm_only_enqueued_inputs_without_provider_dispatch() {
         let isolated = ProjectFixture::create("en-US");
         for (command, extra) in [

@@ -911,6 +911,9 @@ arena: {
   "merged": "合并已保存并选择，仍需正常审阅和 QA。",
   "reconciled": "已核实保存行动的结果。",
   "uncertain": "行动可能已提交，请先核对保存结果，再重试同一行动。",
+  "checkingComparison": "正在核对保存的比较…",
+  "checkingSelection": "正在核对选择结果…",
+  "checkingMerge": "正在核对合并结果…",
   "unsaved": "保留 Arena 草稿？",
   "unsavedHelp": "留下保留设置或合并草稿，或明确丢弃后离开。",
   "errors": {

@@ -21,6 +21,26 @@ export function confirmArenaMerge(request:MergeRequest,value:unknown){
   &&value.previousEventId===(request.expectedSelectionId??null)&&BigInt(value.sequence)>0n&&(value.sequence==="1")===(value.previousEventId===null));
  return value;
 }
+export function confirmArenaComparisonAction(request:ComparisonCommand,value:unknown){
+ requireConfirmation(validators.validateResponseComparisonAction(value));
+ if(value!==null)requireConfirmation(value.projectId===request.projectId&&value.actionId===request.actionId
+  &&value.unitId===request.unitId&&value.locale===request.locale&&value.blind===request.blind
+  &&value.revisionIds.length===request.revisionIds.length&&value.revisionIds.every((id,index)=>id===request.revisionIds[index]));
+ return value;
+}
+export function confirmArenaMergeAction(request:MergeRequest,value:unknown){
+ requireConfirmation(validators.validateResponseMergeAction(value));
+ if(value!==null){
+  const saved=value.request,basis=value.merge;
+  requireConfirmation(saved.projectId===request.projectId&&saved.actionId===request.actionId&&saved.unitId===request.unitId
+   &&saved.locale===request.locale&&saved.sourceRevisionId===request.sourceRevisionId
+   &&saved.expectedSelectionId===(request.expectedSelectionId??null)&&saved.text===request.text
+   &&basis.expectedBasis===request.merge.expectedBasis&&basis.contributors.length===request.merge.contributors.length
+   &&basis.contributors.every((id,index)=>id===request.merge.contributors[index]));
+  confirmArenaMerge(request,value.receipt);
+ }
+ return value;
+}
 export const arenaCommands={
  preview:(request:PreviewRequest)=>checkedInvoke("preview_arena_translation",request,validators.validateResponsePrepared),
  start:async(request:StartRequest)=>{
@@ -40,6 +60,8 @@ export const arenaCommands={
   const result=await checkedInvoke("create_arena_comparison",request,validators.validateResponseComparison);
   return confirmArenaComparison(request,result);
  },
+ comparisonAction:async(request:ComparisonCommand)=>confirmArenaComparisonAction(request,
+  await checkedInvoke("read_arena_comparison_action",request,validators.validateResponseComparisonAction)),
  comparison:async(request:ComparisonRead)=>{
   const result=await checkedInvoke("read_arena_comparison",request,validators.validateResponseComparison);
   requireConfirmation(result.comparisonId===request.comparisonId);return result;
@@ -50,4 +72,6 @@ export const arenaCommands={
   const result=await checkedInvoke("save_arena_merge",request,validators.validateResponseSelection);
   return confirmArenaMerge(request,result);
  },
+ mergeAction:async(request:MergeRequest)=>confirmArenaMergeAction(request,
+  await checkedInvoke("read_arena_merge_action",request,validators.validateResponseMergeAction)),
 };

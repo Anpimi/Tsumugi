@@ -188,6 +188,52 @@ pub(super) fn check_merge(
     Ok(())
 }
 impl ProjectStore {
+    /// Confirm creation from the immutable request, independently of current views.
+    pub fn arena_comparison_action_read(
+        &self, request: &ComparisonRequest,
+    ) -> Result<Option<ComparisonRequest>, ExecutionError> {
+        checked_ids(&request.revision_ids)?;
+        let found = super::review::read_snapshot(
+            self.connection().map_err(|_| error(ErrorCode::StorageFailed, "arena-read"))?, |c| {
+            if !super::content::unit_owned_by_project(c,request.project_id,request.unit_id)? {
+                return Err(error(ErrorCode::Unauthorized,"arena-project"));
+            }
+            let row: Option<(String,String,String,i64,String)> = c.query_row(
+                "SELECT project_id,unit_id,locale,blind,request_digest FROM arena_comparisons WHERE comparison_id=?1",
+                [request.action_id.to_string()], |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+            ).optional().map_err(sql)?;
+            let Some((project,unit,locale,blind,digest)) = row else {
+                let orphan:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM arena_entries WHERE comparison_id=?1)",
+                    [request.action_id.to_string()],|row|row.get(0)).map_err(sql)?;
+                return if orphan {Err(error(ErrorCode::CorruptLedger,"arena-comparison-orphan"))} else {Ok(None)};
+            };
+            if project!=request.project_id.to_string() || unit!=request.unit_id.to_string()
+                || locale!=request.locale || blind!=i64::from(request.blind)
+                || digest!=codec::digest(&codec::encode(request,MAX_INPUT_BYTES)?) {
+                return Err(error(ErrorCode::ResultMismatch,"arena-action"));
+            }
+            let mut statement=c.prepare("SELECT e.ordinal,e.revision_id,r.project_id,r.unit_id,r.locale FROM arena_entries e
+                JOIN translation_revisions r USING(revision_id) WHERE e.comparison_id=?1 ORDER BY e.ordinal").map_err(sql)?;
+            let rows=statement.query_map([request.action_id.to_string()],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?,
+                row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?))).map_err(sql)?
+                .collect::<Result<Vec<_>,_>>().map_err(sql)?;
+            let mut ordered=Vec::new();
+            for (index,(ordinal,revision,project,unit,locale)) in rows.into_iter().enumerate() {
+                if ordinal!=index as i64 || project!=request.project_id.to_string() || unit!=request.unit_id.to_string() || locale!=request.locale {
+                    return Err(error(ErrorCode::CorruptLedger,"arena-comparison-entry"));
+                }
+                ordered.push(id(revision)?);
+            }
+            if ordered.len()!=request.revision_ids.len()
+                || ordered.iter().collect::<BTreeSet<_>>()!=request.revision_ids.iter().collect::<BTreeSet<_>>()
+                || !request.blind && ordered!=request.revision_ids {
+                return Err(error(ErrorCode::CorruptLedger,"arena-comparison-entry"));
+            }
+            Ok(Some(request.clone()))
+        })?;
+        if self.is_reconciling() {self.reconcile_execution()?;}
+        Ok(found)
+    }
     pub fn arena_start_action_read(
         &self,
         project: ExecutionId,
@@ -427,7 +473,7 @@ impl ProjectStore {
             if saved != digest {
                 return Err(error(ErrorCode::ResultMismatch, "arena-action"));
             }
-            return self.read_comparison(request.project_id, request.action_id);
+            return self.recorded_comparison_view(request);
         }
         self.preview_comparison(
             request.project_id,
@@ -471,7 +517,14 @@ impl ProjectStore {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "arena-commit")
         })?;
-        self.read_comparison(request.project_id, request.action_id)
+        self.recorded_comparison_view(request)
+    }
+    fn recorded_comparison_view(&self, request: &ComparisonRequest) -> Result<ComparisonView, ExecutionError> {
+        // A failed projection cannot reject an already durable creation.
+        self.read_comparison(request.project_id, request.action_id).map_err(|mut failure| {
+            failure.code = ErrorCode::OutcomeUnknown;
+            failure
+        })
     }
     pub fn read_comparison(
         &self,

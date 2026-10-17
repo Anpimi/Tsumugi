@@ -528,10 +528,12 @@ struct ArenaRequests {
     start_action: execution::arena::StartRequest,
     read: execution::arena::ReadRequest,
     compare: execution::arena::ComparisonCommand,
+    comparison_action: execution::arena::ComparisonCommand,
     comparison: execution::arena::ComparisonRead,
     session: execution::SessionRequest,
     reveal: execution::arena::RevealRequest,
     merge: execution::arena::MergeRequest,
+    merge_action: execution::arena::MergeRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -542,6 +544,8 @@ struct ArenaResponses {
     identity: tsumugi_core::execution::ExecutionId,
     view: execution::arena::View,
     comparison: tsumugi_core::ComparisonView,
+    comparison_action: Option<tsumugi_core::ComparisonRequest>,
+    merge_action: Option<tsumugi_core::ArenaMergeActionRead>,
     comparisons: Vec<tsumugi_core::ComparisonSummary>,
     reveal: (),
     selection: tsumugi_core::TranslationSelection,

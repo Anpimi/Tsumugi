@@ -100,7 +100,7 @@ pub use review::{
     ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use translation::{
-    CandidateDecision, CandidateDecisionWrite, CandidateDisposition, SaveTranslationRevision,
+    ArenaMergeActionRead, CandidateDecision, CandidateDecisionWrite, CandidateDisposition, SaveTranslationRevision,
     SelectTranslationRevision, TranslationAdoptionConfirmation, TranslationAdoptionHandler,
     TranslationEditBasis, TranslationHistory, TranslationMatch, TranslationOrigin,
     TranslationPreview, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,

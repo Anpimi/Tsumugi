@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Confirm uncertain comparison creation, revision selection and merged translations
+  from their original saved actions. Checks preserve newer input and do not repeat
+  writes. A failed view refresh after comparison creation keeps its outcome
+  uncertain until the original record is checked.
+
 - Confirm an uncertain AI work-plan or comparison run start against its original
   saved input before allowing an explicit retry. Result checks do not start work,
   renew permission or send model requests. A recorded start confirms enqueueing,

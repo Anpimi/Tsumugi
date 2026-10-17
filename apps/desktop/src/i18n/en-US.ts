@@ -920,6 +920,9 @@ arena: {
   "merged": "Merge saved and selected; normal review and QA are still required.",
   "reconciled": "The saved action has been confirmed.",
   "uncertain": "The action may have committed. Check its saved result before retrying the same action.",
+  "checkingComparison": "Checking the saved comparison…",
+  "checkingSelection": "Checking the saved selection…",
+  "checkingMerge": "Checking the saved merge…",
   "unsaved": "Keep your Arena draft?",
   "unsavedHelp": "Stay to preserve the settings or merge draft. Discard explicitly to leave.",
   "errors": {

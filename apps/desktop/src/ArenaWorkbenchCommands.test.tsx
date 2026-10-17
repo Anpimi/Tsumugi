@@ -105,6 +105,7 @@ beforeEach(async () => {
     if (command === "reveal_arena_identity") { comparison = { ...comparison, revealed: true }; view = { ...view, revealed: true, variants: prepared.preview.config.variants }; return null; }
     if (command === "select_translation_revision" || command === "save_arena_merge") return selectionFor(request);
     if (command === "read_translation_action") return null;
+    if (command === "read_arena_comparison_action" || command === "read_arena_merge_action" || command === "read_translation_selection_action") return null;
     if (command === "create_execution_identity") return fixtureIdentity(identity++);
     if (command === "prepare_execution_adoption") { action = actionFor(request as unknown as PrepareRequest); return action; }
     if (command === "adopt_execution" || command === "read_execution_receipt") return receiptFor();
@@ -134,6 +135,37 @@ async function compare() {
   await act(async () => { expect(registry.dispatch("arena.create-comparison", scope, comparePayload())).toBe(true); });
   await waitFor(() => expect(registry.describe("arena.begin-merge", scope, comparisonPayload())?.availability.enabled).toBe(true));
 }
+
+it.each([["compare","en-US"],["compare","zh-CN"],["select","en-US"],["select","zh-CN"],["merge","en-US"],["merge","zh-CN"]] as const)("shows the actual %s checking phase in %s and holds the original Registry reservation",async(kind,language)=>{
+  await open();
+  if(kind==="compare"){
+    act(()=>{owner.setUnit(item.unitId);owner.setReferences(comparison.rows.map(row=>row.revisionId));owner.setComparisonBlind(true);});
+    await waitFor(()=>expect(registry.describe("arena.create-comparison",scope,comparePayload())?.availability.enabled).toBe(true));
+  }else{
+    await compare();if(kind==="merge")act(()=>{expect(registry.dispatch("arena.begin-merge",scope,comparisonPayload())).toBe(true);});
+  }
+  const commands={compare:"create_arena_comparison",select:"select_translation_revision",merge:"save_arena_merge"};
+  const lookups={compare:"read_arena_comparison_action",select:"read_translation_selection_action",merge:"read_arena_merge_action"};
+  const original=invoke.getMockImplementation()!,write=deferred<unknown>(),read=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command===commands[kind]?write.promise
+    :command===lookups[kind]?read.promise:original(command,args));
+  await act(async()=>{expect(kind==="compare"?registry.dispatch("arena.create-comparison",scope,comparePayload())
+    :kind==="select"?registry.dispatch("arena.select-candidate",scope,selectPayload()):registry.dispatch("arena.save-merge",scope,mergePayload())).toBe(true);});
+  await waitFor(()=>expect(calls(commands[kind])).toHaveLength(1));
+  const pending=owner.current().pending;if(!pending||pending.kind==="start"||pending.kind==="adopt"||pending.kind==="reveal")throw new Error("Expected original Arena decision");
+  const payload={kind:"arena-pending" as const,pendingKind:pending.kind,actionId:pending.request.actionId,unitId:pending.request.unitId,locale:pending.request.locale};
+  await act(async()=>{await i18n.changeLanguage(language);});
+  const messages={compare:{"en-US":"Checking the saved comparison…","zh-CN":"正在核对保存的比较…"},
+    select:{"en-US":"Checking the saved selection…","zh-CN":"正在核对选择结果…"},merge:{"en-US":"Checking the saved merge…","zh-CN":"正在核对合并结果…"}};
+  const message=messages[kind][language];expect(screen.queryByText(message)).not.toBeInTheDocument();
+  await act(async()=>{write.resolve({});});await screen.findByText(message);
+  expect(owner.current().pending).toMatchObject({kind,checking:true,retryAllowed:false});expect(owner.current().failure).toBeNull();
+  act(()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(false);expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);});
+  await act(async()=>{read.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(screen.queryByText(message)).not.toBeInTheDocument();expect(registry.describe("arena.retry-pending",scope,payload)?.availability.enabled).toBe(true);
+  expect(registry.dispatch("arena.retry-pending",scope,{...payload,actionId:fixtureIdentity(999)})).toBe(false);
+  expect(calls(commands[kind])).toHaveLength(1);expect(payloads(lookups[kind])).toEqual([pending.request]);
+});
 
 it.each(["en-US","zh-CN"] as const)("exposes the real Arena start checking phase and gates the exact Registry retry in %s",async language=>{
   await open();prepared={...prepared,preview:{...prepared.preview,digest:"d".repeat(64)}};
@@ -342,10 +374,11 @@ it("refuses adoption after a failed replacement is removed during prepare and pr
 
 it("recovers an unknown merge using its original request despite changed source, locale, Query and newer text", async () => {
   const { rendered } = await open(); await compare(); act(() => { expect(registry.dispatch("arena.begin-merge", scope, comparisonPayload())).toBe(true); });
-  const original = invoke.getMockImplementation()!; let first = true;
-  invoke.mockImplementation((command: string, payload: unknown) => command === "save_arena_merge" && first ? (first = false, Promise.reject({ code: "outcome-unknown" })) : original(command, payload));
+  const original = invoke.getMockImplementation()!; let first = true,lookups=0;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "save_arena_merge" && first ? (first = false, Promise.reject({ code: "outcome-unknown" }))
+    :command==="read_arena_merge_action"&&++lookups===1?Promise.reject(new Error("Automatic lookup unavailable")):original(command, payload));
   act(() => { expect(registry.dispatch("arena.save-merge", scope, mergePayload())).toBe(true); });
-  await waitFor(() => expect(owner.current().pending?.uncertain).toBe(true));
+  await waitFor(() => expect(owner.current().busy).toBe(false));expect(owner.current().pending?.uncertain).toBe(true);
   const request = payloads("save_arena_merge")[0], identities = calls("create_execution_identity").length;
   act(() => { owner.editMerge("Newer B"); reads.invalidate(["source", "resources"]); });
   const removed = { ...project, metadata: { ...project.metadata, targetLocales: [] } }; rendered.rerender(<Harness project={removed} />, removed);

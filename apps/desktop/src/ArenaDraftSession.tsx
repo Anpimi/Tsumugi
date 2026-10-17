@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type SetStateAction } from "react";
-import { arenaCommands, defaultArenaConfig, confirmArenaComparison, confirmArenaMerge, type ArenaConfig, type ArenaPrepared, type ArenaView, type ComparisonView, type CompareRequest, type MergeRequest } from "./arenaCommands";
+import { arenaCommands, defaultArenaConfig, confirmArenaComparison, confirmArenaMerge, confirmArenaComparisonAction, confirmArenaMergeAction, type ArenaConfig, type ArenaPrepared, type ArenaView, type ComparisonView, type CompareRequest, type MergeRequest } from "./arenaCommands";
 import type { StartRequest, RevealRequest } from "./generated/arena.requests";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt } from "./executionCommands";
 import { translationCommands, confirmTranslationSelection, type TranslationSelectRequest, type TranslationSelection } from "./translationCommands";
@@ -25,10 +25,10 @@ interface Candidate { taskId: string; itemId: string; item: AiItem; resultId: st
 interface PendingState { editSeq: number; uncertain: boolean; retryAllowed: boolean }
 type Pending = PendingState & (
   | { kind: "start"; request: StartRequest; prepared: ArenaPrepared; checking: boolean }
-  | { kind: "compare"; request: CompareRequest }
+  | { kind: "compare"; request: CompareRequest; checking: boolean }
   | { kind: "reveal"; request: RevealRequest; targetKind: "attempt" | "comparison" }
-  | { kind: "select"; request: TranslationSelectRequest; receipt: TranslationSelection | null }
-  | { kind: "merge"; request: MergeRequest; draftSeq: number; receipt: TranslationSelection | null }
+  | { kind: "select"; request: TranslationSelectRequest; receipt: TranslationSelection | null; checking: boolean }
+  | { kind: "merge"; request: MergeRequest; draftSeq: number; receipt: TranslationSelection | null; checking: boolean }
   | { kind: "adopt"; request: PrepareRequest; candidate: Candidate; action: AdoptionAction | null; receipt: Receipt | null; checking: boolean }
 );
 interface State {
@@ -306,8 +306,51 @@ function useArenaOwner(project: ProjectView) {
       if (hasUnknownOutcome(error) && matches(entry)) {
         if (entry.kind === "adopt") { await lookupAdoption(entry,commandFailure(error,"outcome-unknown")); return; }
         if (entry.kind === "start") { await lookupStart(entry,commandFailure(error,"outcome-unknown")); return; }
+        if (entry.kind === "compare") { await lookupComparison(entry,commandFailure(error,"outcome-unknown")); return; }
+        if (entry.kind === "select" || entry.kind === "merge") { await lookupSelection(entry,commandFailure(error,"outcome-unknown")); return; }
       }
       throw error;
+    }
+  }
+  async function lookupComparison(entry: Extract<Pending,{kind:"compare"}>, originalFailure = current().failure) {
+    if (!matches(entry)) return;
+    replace({...entry,checking:true,uncertain:true,retryAllowed:false}); update(before => ({...before,failure:null}));
+    try {
+      const result = await arenaCommands.comparisonAction(entry.request);
+      if (!matches(entry)) return;
+      if (confirmArenaComparisonAction(entry.request,result) !== null) { settle(entry,"reconciled"); return; }
+      replace({...entry,checking:false,uncertain:true,retryAllowed:true}); update(before => ({...before,failure:originalFailure}));
+    } catch (error) {
+      if (!matches(entry)) return;
+      replace({...entry,checking:false,uncertain:true,retryAllowed:false}); update(before => ({...before,failure:commandFailure(error,"outcome-unknown")}));
+    }
+  }
+  async function lookupSelection(entry: Extract<Pending,{kind:"select" | "merge"}>, originalFailure = current().failure) {
+    if (!matches(entry)) return;
+    replace({...entry,checking:true,uncertain:true,retryAllowed:false}); update(before => ({...before,failure:null}));
+    try {
+      let receipt: TranslationSelection | null;
+      if (entry.kind === "select") receipt = await translationCommands.selectionAction(entry.request);
+      else {
+        const result = await arenaCommands.mergeAction(entry.request);
+        if (!matches(entry)) return;
+        const confirmed = confirmArenaMergeAction(entry.request,result);
+        receipt = confirmed === null ? null : confirmed.receipt;
+      }
+      if (!matches(entry)) return;
+      const latest = current().pending;
+      if (!latest || latest.kind !== "select" && latest.kind !== "merge") return;
+      if (receipt === null) { if (latest.receipt) invalidAck(); }
+      else {
+        confirmSelection(latest,receipt); const checked = {...latest,receipt:fixed(receipt)};
+        replace(checked); settle(checked,"reconciled"); return;
+      }
+      replace({...latest,checking:false,uncertain:true,retryAllowed:true}); update(before => ({...before,failure:originalFailure}));
+    } catch (error) {
+      if (!matches(entry)) return;
+      const latest = current().pending;
+      if (latest?.kind === "select" || latest?.kind === "merge") replace({...latest,checking:false,uncertain:true,retryAllowed:false});
+      update(before => ({...before,failure:commandFailure(error,"outcome-unknown")}));
     }
   }
   async function lookupStart(entry: Extract<Pending,{kind:"start"}>, originalFailure = current().failure) {
@@ -418,7 +461,7 @@ function useArenaOwner(project: ProjectView) {
           && (!rows[index] || JSON.stringify(row) === JSON.stringify(rows[index]))))), async proof => {
       const actionId = await executionCommands.identity(session);
       if (!live() || ticket !== version.current || current().editSeq !== before.editSeq || !available(request.locale) || !proof()) return;
-      await dispatch({kind:"compare",request:fixed({...request,actionId}),editSeq:before.editSeq,uncertain:false,retryAllowed:false});
+      await dispatch({kind:"compare",request:fixed({...request,actionId}),editSeq:before.editSeq,uncertain:false,retryAllowed:false,checking:false});
     }));
   }
   function canSelect(view: ComparisonView, revisionId: string) {
@@ -432,7 +475,7 @@ function useArenaOwner(project: ProjectView) {
       const actionId = await executionCommands.identity(session);
       if (!live() || version.current !== ticket || current().comparisonId !== captured.comparisonId || !available(captured.locale) || !proof()) return;
       await dispatch({kind:"select",request:fixed({...session,actionId,unitId:captured.unitId,locale:captured.locale,sourceRevisionId:captured.sourceRevisionId,
-        expectedSelectionId:captured.selectionId,revisionId}),receipt:null,editSeq:before.editSeq,uncertain:false,retryAllowed:false});
+        expectedSelectionId:captured.selectionId,revisionId}),receipt:null,editSeq:before.editSeq,uncertain:false,retryAllowed:false,checking:false});
     }));
   }
   async function reveal(target: string, targetKind: "attempt" | "comparison") {
@@ -482,7 +525,7 @@ function useArenaOwner(project: ProjectView) {
       if (!proof()) return;
       await dispatch({kind:"merge",request:fixed({...session,actionId,unitId:captured.basis.unitId,locale:captured.basis.locale,sourceRevisionId:captured.basis.sourceRevisionId,
         expectedSelectionId:captured.basis.selectionId,text:captured.text,merge:{contributors:captured.basis.rows.map(row => row.revisionId),expectedBasis:captured.basis.basis}}),
-        draftSeq:captured.editSeq,receipt:null,editSeq:before.editSeq,uncertain:false,retryAllowed:false});
+        draftSeq:captured.editSeq,receipt:null,editSeq:before.editSeq,uncertain:false,retryAllowed:false,checking:false});
     }));
   }
   async function refreshMerge() {
@@ -544,19 +587,13 @@ function useArenaOwner(project: ProjectView) {
       if (entry.kind === "start") {
         await lookupStart(entry,originalFailure);
       } else if (entry.kind === "compare") {
-        // The bounded history list cannot prove an older action absent.
-        const view = await readComparison(entry.request.actionId); confirmArenaComparison(entry.request,view);
-        if (!matches(entry)) return;
-        reads.client.setQueryData(reads.key(["arena-comparison",entry.request.actionId]),view); settle(entry,"reconciled");
+        await lookupComparison(entry,originalFailure);
       } else if (entry.kind === "reveal") {
         const view = entry.targetKind === "comparison" ? await readComparison(entry.request.comparisonId) : await readView(entry.request.comparisonId);
         if (!matches(entry)) return;
         if (view.revealed) settle(entry,"reconciled"); else replace({...entry,retryAllowed:true});
       } else if (entry.kind === "select" || entry.kind === "merge") {
-        const receipt = await translationCommands.action({...session,unitId:entry.request.unitId,locale:entry.request.locale,actionId:entry.request.actionId});
-        if (!matches(entry)) return;
-        if (!receipt) { if (entry.receipt) invalidAck(); replace({...entry,retryAllowed:true}); return; }
-        confirmSelection(entry,receipt); const checked = {...entry,receipt:fixed(receipt)}; replace(checked); settle(checked,"reconciled");
+        await lookupSelection(entry,originalFailure);
       } else {
         await lookupAdoption(entry,originalFailure);
       }
@@ -564,7 +601,7 @@ function useArenaOwner(project: ProjectView) {
   }
   async function retryPending() {
     const entry = current().pending;
-    if (entry && (entry.retryAllowed || entry.kind === "compare")) await run(() => dispatch(entry,true),true);
+    if (entry?.retryAllowed) await run(() => dispatch(entry,true),true);
   }
   function showAttempt(attempt: string) {
     if (!live() || reserved() || current().dirty || current().draft || !validateResponseIdentity(attempt)) return false;

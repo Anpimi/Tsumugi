@@ -6,7 +6,9 @@ export type UnsignedDecimal = string;
 export interface Requests {
   compare: ComparisonCommand;
   comparison: ComparisonRead;
+  comparisonAction: ComparisonCommand;
   merge: MergeRequest;
+  mergeAction: MergeRequest;
   preview: PreviewRequest;
   read: ReadRequest;
   reveal: RevealRequest;

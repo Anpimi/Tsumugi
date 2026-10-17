@@ -494,7 +494,13 @@
       "comparison": {
         "$ref": "#/definitions/ComparisonRead"
       },
+      "comparisonAction": {
+        "$ref": "#/definitions/ComparisonCommand"
+      },
       "merge": {
+        "$ref": "#/definitions/MergeRequest"
+      },
+      "mergeAction": {
         "$ref": "#/definitions/MergeRequest"
       },
       "preview": {
@@ -522,10 +528,12 @@
       "startAction",
       "read",
       "compare",
+      "comparisonAction",
       "comparison",
       "session",
       "reveal",
-      "merge"
+      "merge",
+      "mergeAction"
     ],
     "title": "Requests",
     "type": "object",
@@ -853,6 +861,26 @@
         ],
         "type": "object"
       },
+      "ArenaMergeActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "merge": {
+            "$ref": "#/definitions/MergeBasis"
+          },
+          "receipt": {
+            "$ref": "#/definitions/TranslationSelection"
+          },
+          "request": {
+            "$ref": "#/definitions/SaveTranslationRevision"
+          }
+        },
+        "required": [
+          "request",
+          "merge",
+          "receipt"
+        ],
+        "type": "object"
+      },
       "ArenaPreviewView": {
         "additionalProperties": false,
         "properties": {
@@ -1010,6 +1038,41 @@
           "recipe",
           "basisCurrent",
           "candidateDisposition"
+        ],
+        "type": "object"
+      },
+      "ComparisonRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "blind": {
+            "type": "boolean"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "revisionIds",
+          "blind"
         ],
         "type": "object"
       },
@@ -1454,6 +1517,25 @@
         ],
         "type": "object"
       },
+      "MergeBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contributors": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "expectedBasis": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributors",
+          "expectedBasis"
+        ],
+        "type": "object"
+      },
       "ModelConnectionReference": {
         "additionalProperties": false,
         "description": "A persistent data identity, never a credential, execution grant or consent.",
@@ -1806,6 +1888,49 @@
           "label",
           "resultId",
           "output"
+        ],
+        "type": "object"
+      },
+      "SaveTranslationRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "expectedSelectionId",
+          "text"
         ],
         "type": "object"
       },
@@ -2649,6 +2774,16 @@
       "comparison": {
         "$ref": "#/definitions/ComparisonView"
       },
+      "comparisonAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ComparisonRequest"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "comparisons": {
         "items": {
           "$ref": "#/definitions/ComparisonSummary"
@@ -2657,6 +2792,16 @@
       },
       "identity": {
         "$ref": "#/definitions/ExecutionId"
+      },
+      "mergeAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ArenaMergeActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "prepared": {
         "$ref": "#/definitions/Prepared"
@@ -2687,6 +2832,8 @@
       "identity",
       "view",
       "comparison",
+      "comparisonAction",
+      "mergeAction",
       "comparisons",
       "reveal",
       "selection"
