@@ -2,6 +2,7 @@
 //! mechanical waivers, approvals, or build eligibility.
 use super::*;
 use tsumugi_plugin_sdk as sdk;
+use crate::ai::semantic_review::{AiSemanticReviewEvidence, AiSemanticReviewRun, ReviewRunPurpose};
 
 pub(super) const TABLE: (&str, &str) = (
     "review_finding_decisions",
@@ -51,6 +52,8 @@ pub struct ReviewFindingWrite {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewFindingDecision {
+    pub purpose: ReviewRunPurpose,
+    pub ai_origin: Option<AiSemanticReviewEvidence>,
     pub decision_id: ExecutionId,
     pub request: ReviewFindingWrite,
     pub basis_evidence: ReviewBasis,
@@ -62,6 +65,9 @@ pub struct ReviewFindingDecision {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AdvisoryFinding {
+    pub run_id: ExecutionId,
+    pub purpose: ReviewRunPurpose,
+    pub ai_origin: Option<AiSemanticReviewEvidence>,
     pub requirement: sdk::CheckRequirement,
     pub finding: CheckFinding,
     pub decision: Option<ReviewFindingDecision>,
@@ -91,6 +97,7 @@ pub struct ReviewFindingView {
     pub locale: String,
     pub basis: String,
     pub run_id: Option<ExecutionId>,
+    pub semantic_run_id: Option<ExecutionId>,
     pub findings: Vec<AdvisoryFinding>,
     pub repairs: Vec<ReviewFindingRepair>,
     pub history: Vec<ReviewFindingDecision>,
@@ -146,35 +153,56 @@ fn advisory_requirement<'a>(
     })?;
     matches!(result.outcome, sdk::CheckOutcome::Completed { .. }).then_some(requirement)
 }
+struct FindingRun {
+    run_id: ExecutionId,
+    unit_id: ExecutionId,
+    locale: String,
+    basis: String,
+    basis_evidence: ReviewBasis,
+    purpose: ReviewRunPurpose,
+    ai_origin: Option<AiSemanticReviewEvidence>,
+    entries: Vec<(sdk::CheckRequirement, CheckFinding)>,
+}
+fn qa_run(run: &CheckRun) -> FindingRun {
+    let entries = run.rules.iter().filter_map(|rule| advisory_requirement(run, rule).map(|r| (r,rule)))
+        .flat_map(|(requirement,rule)| rule.findings.iter().map(move |finding| (requirement.clone(),finding.clone()))).collect();
+    FindingRun { run_id:run.run_id,unit_id:run.unit_id,locale:run.locale.clone(),basis:run.basis.clone(),
+        basis_evidence:run.basis_evidence.clone(),purpose:ReviewRunPurpose::Qa,ai_origin:None,entries }
+}
+fn semantic_run(run: AiSemanticReviewRun) -> FindingRun {
+    let entries = run.rules.iter().flat_map(|rule| {
+        let requirement = sdk::CheckRequirement { key:rule.key.clone(), input_digest:run.evidence.semantic_input_digest.clone(),
+            scope_digest:run.evidence.scope_digest.clone(),targets:vec![run.unit_id.to_string()],mandatory:false,waivable:false,not_applicable:None };
+        rule.findings.iter().map(move |finding| (requirement.clone(),finding.clone()))
+    }).collect();
+    FindingRun { run_id:run.run_id,unit_id:run.unit_id,locale:run.locale,basis:run.basis,basis_evidence:run.basis_evidence,
+        purpose:ReviewRunPurpose::AiSemantic,ai_origin:Some(run.evidence),entries }
+}
 fn advisory<'a>(
-    run: &'a CheckRun,
+    run: &'a FindingRun,
     issue: &str,
 ) -> Option<(&'a sdk::CheckRequirement, &'a CheckFinding)> {
-    run.rules.iter().find_map(|rule| {
-        let requirement = advisory_requirement(run, rule)?;
-        rule.findings
-            .iter()
-            .find(|f| f.issue_id == issue)
-            .map(|finding| (requirement, finding))
-    })
+    run.entries.iter().find(|(_,finding)| finding.issue_id==issue).map(|(r,f)|(r,f))
 }
 fn run_in(
     c: &Connection,
     project: ExecutionId,
     run: ExecutionId,
-) -> Result<CheckRun, ExecutionError> {
-    let action: String = c
+) -> Result<FindingRun, ExecutionError> {
+    let (action,purpose): (String,String) = c
         .query_row(
-            "SELECT action_id FROM review_checks WHERE project_id=?1 AND run_id=?2",
+            "SELECT action_id,purpose FROM review_checks WHERE project_id=?1 AND run_id=?2",
             params![project.to_string(), run.to_string()],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?,r.get(1)?)),
         )
         .optional()
         .map_err(sql)?
         .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-finding-run"))?;
-    check_by_action(c, project, parse_id(action)?)?
-        .map(|v| v.0)
-        .ok_or_else(corrupt)
+    match purpose.as_str() {
+        "qa" => check_by_action(c,project,parse_id(action)?)?.map(|v|qa_run(&v.0)).ok_or_else(corrupt),
+        "ai-semantic" => super::super::ai_semantic_review::by_action(c,project,parse_id(action)?)?.map(semantic_run).ok_or_else(corrupt),
+        _ => Err(corrupt()),
+    }
 }
 fn load(
     c: &Connection,
@@ -221,6 +249,8 @@ fn load(
         return Err(corrupt());
     }
     Ok(Some(ReviewFindingDecision {
+        purpose: run.purpose,
+        ai_origin: run.ai_origin.clone(),
         decision_id: parse_id(id)?,
         basis_evidence: run.basis_evidence.clone(),
         requirement: requirement.clone(),
@@ -358,11 +388,13 @@ impl ProjectStore {
                 ),
             );
         }
-        let current = target
-            .current_check
-            .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-check-missing"))?;
-        let run = run_in(&tx, r.project_id, current.run_id)?;
-        if run.run_id != r.run_id || advisory(&run, &r.issue_id).is_none() {
+        let run = run_in(&tx, r.project_id, r.run_id)?;
+        let current = match run.purpose {
+            ReviewRunPurpose::Qa => target.current_check.as_ref().map(|run|run.run_id),
+            ReviewRunPurpose::AiSemantic => super::super::ai_semantic_review::current_run(&tx,r.project_id,r.unit_id,&r.locale,&target.basis)?.map(|run|run.run_id),
+        };
+        if current != Some(r.run_id) || advisory(&run, &r.issue_id).is_none()
+            || run.unit_id != r.unit_id || run.locale != r.locale || run.basis != r.expected_basis {
             return Err(failure(
                 ErrorCode::Unauthorized,
                 "review-finding-not-advisory",
@@ -418,28 +450,19 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
         read_snapshot(c, |c| {
             let target = target_in(c, project, unit, locale)?;
-            let mut findings = Vec::new();
+            let semantic = super::super::ai_semantic_review::current_run(c,project,unit,locale,&target.basis)?;
+            let semantic_run_id = semantic.as_ref().map(|run|run.run_id);
+            let mut current_runs = Vec::new();
             if let Some(run) = &target.current_check {
-                for (requirement, finding) in run
-                    .rules
-                    .iter()
-                    .filter_map(|rule| {
-                        advisory_requirement(run, rule).map(|requirement| (requirement, rule))
-                    })
-                    .flat_map(|(requirement, rule)| {
-                        rule.findings
-                            .iter()
-                            .map(move |finding| (requirement, finding))
-                    })
-                    .skip(offset as usize)
-                    .take(limit as usize + 1)
-                {
-                    findings.push(AdvisoryFinding {
-                        requirement: requirement.clone(),
-                        finding: finding.clone(),
-                        decision: latest(c, project, unit, locale, &run.basis, &finding.issue_id)?,
-                    });
-                }
+                current_runs.push(qa_run(run));
+            }
+            if let Some(run) = semantic { current_runs.push(semantic_run(run)); }
+            let mut findings = Vec::new();
+            for (run,requirement,finding) in current_runs.iter().flat_map(|run| run.entries.iter().map(move |(r,f)|(run,r,f)))
+                .skip(offset as usize).take(limit as usize+1) {
+                findings.push(AdvisoryFinding { run_id:run.run_id,purpose:run.purpose,ai_origin:run.ai_origin.clone(),
+                    requirement:requirement.clone(),finding:finding.clone(),
+                    decision:latest(c,project,unit,locale,&run.basis,&finding.issue_id)? });
             }
             let more_findings = findings.len() > limit as usize;
             findings.truncate(limit as usize);
@@ -475,6 +498,25 @@ impl ProjectStore {
                 if latest.as_ref().map(|d|d.decision_id)!=Some(decision.decision_id) {
                     return Ok(ReviewFindingRepair{decision:decision.clone(),status:ReviewRepairStatus::Superseded,recheck_run_id:None});
                 }
+                if decision.purpose == ReviewRunPurpose::AiSemantic {
+                    let run = super::super::ai_semantic_review::current_run(c,project,unit,locale,&target.basis)?;
+                    let recheck = run.filter(|run| run.run_id != decision.request.run_id
+                        && decision.ai_origin.as_ref().is_some_and(|old|old.endpoint==run.evidence.endpoint && old.model==run.evidence.model && old.recipe==run.evidence.recipe)
+                        && run.rules.iter().any(|rule|rule.key==decision.requirement.key));
+                    let recheck = match recheck {
+                        Some(run) => {
+                            let newer:bool=c.query_row("SELECT newer.rowid>original.rowid FROM review_checks newer JOIN review_checks original ON original.run_id=?2 WHERE newer.run_id=?1",
+                                params![run.run_id.to_string(),decision.request.run_id.to_string()],|row|row.get(0)).map_err(sql)?;
+                            newer.then_some(run)
+                        }, None=>None,
+                    };
+                    let status=match recheck.as_ref().and_then(|run|run.rules.iter().find(|rule|rule.key==decision.requirement.key)) {
+                        None=>ReviewRepairStatus::AwaitingCurrentRecheck,
+                        Some(rule) if rule.findings.is_empty()=>ReviewRepairStatus::CurrentRuleClear,
+                        Some(_)=>ReviewRepairStatus::CurrentRuleFindings,
+                    };
+                    return Ok(ReviewFindingRepair { decision:decision.clone(),status,recheck_run_id:recheck.map(|run|run.run_id) });
+                }
                 let recheck = target.current_check.as_ref().filter(|run| run.run_id!=decision.request.run_id && run.basis==target.basis
                     && run.outcome==ReviewCheckOutcome::Completed && checks::coverage_complete(run))
                     .filter(|run| run.evidence.as_ref().is_some_and(|e| e.required_checks.requirements.iter().any(|r|r.key==decision.requirement.key && !r.mandatory && r.not_applicable.is_none())
@@ -499,6 +541,7 @@ impl ProjectStore {
                 locale: locale.into(),
                 basis: target.basis,
                 run_id: target.current_check.map(|r| r.run_id),
+                semantic_run_id,
                 findings,
                 repairs,
                 history,

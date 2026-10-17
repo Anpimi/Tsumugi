@@ -811,10 +811,11 @@ pub(in crate::persistence) fn verify_input_binding(
 ) -> Result<(), ExecutionError> {
     let owner = input.envelope().project_id;
     match input.envelope().operation.as_str() {
-        crate::ai::OPERATION => {
-            let config = crate::ai::settings(input)?.config;
+        crate::ai::OPERATION | crate::ai::semantic_review::OPERATION => {
+            let semantic = input.envelope().operation == crate::ai::semantic_review::OPERATION;
+            let config = if semantic { crate::ai::semantic_review::settings(input)?.config } else { crate::ai::settings(input)?.config };
             for item in &input.envelope().items {
-                let payload = crate::ai::item_payload(input, item.item_id)?;
+                let payload = if semantic { crate::ai::semantic_review::item_payload(input,item.item_id)?.source } else { crate::ai::item_payload(input, item.item_id)? };
                 if config
                     .context_strategy
                     .as_ref()

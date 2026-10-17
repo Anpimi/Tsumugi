@@ -37,7 +37,8 @@ Review history and check evidence live in the project's SQLite database. See the
 In **Advisory findings**, use the same reviewer and reason to **Reject as false
 positive**, **Restore finding**, or **Record repair request and open editor**.
 Only an advisory requirement proven by the saved check's fixed requirement set
-and matching result is eligible. Required format checks, Core checks and
+and matching result, or a separately recorded typed AI semantic review, is
+eligible. Required format checks, mechanical Core checks and
 mechanical waivers remain under their existing policies. A disposition cannot
 change check coverage, remove a mandatory failure, supply approval or make a
 build ready.
@@ -69,3 +70,30 @@ receipt and only retries the unchanged action when no receipt was found. A late
 receipt clears only the submitted reason, so newer reason edits survive. Review
 keeps uncertain actions visible and blocks leaving until their outcome is
 confirmed; the manual editor continues to protect its own drafts independently.
+
+## AI meaning and style review
+
+Expand **AI meaning and style review** for the current selected saved translation
+or the explicit entry/language pairs chosen in Review. Choose meaning, style or
+both. The bounded batch shares one original Task request budget; successful,
+failed and unknown items retain separate outcomes. Model connection settings and
+the existing term/context sharing controls are reused. Preview shows the exact
+saved source, translation, selected guidance, destination and budgets. Confirm
+this review independently before sending; changing the range, rules, connection
+or relevant saved input requires a new preview and consent.
+
+Results are typed review findings rather than candidate translations. A model
+report with no findings is advisory evidence, not independent proof of quality.
+For each successful current item, explicitly prepare and confirm **Record these
+advisory findings** through the original Task adoption flow. No result is automatically
+recorded, selected or approved. Cancellation and lost responses use the same Task
+ledger and original action receipts; an unavailable read does not prove absence
+or authorize a replacement request.
+
+Recorded findings appear beside plugin advisory findings while retaining their
+own current run. Their model, endpoint, recipe and original execution provenance
+remain inspectable. False-positive and repair decisions bind that exact origin;
+a different model or changed prompt does not inherit them. A repair needs a real
+current semantic recheck of the same rule; a saved edit or a completed repair
+task cannot close it. Mechanical QA, human approval and build readiness keep
+their existing independent requirements.

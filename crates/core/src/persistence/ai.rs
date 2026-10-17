@@ -67,6 +67,17 @@ impl ProjectStore {
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "ai-project"))?;
         super::review::read_snapshot(connection, |connection| {
+            preview_ai_configs_in(connection, configs, locale, units)
+        })
+    }
+}
+
+pub(super) fn preview_ai_configs_in(
+    connection: &rusqlite::Connection,
+    configs: Vec<AiConfig>,
+    locale: &str,
+    units: &[ExecutionId],
+) -> Result<Vec<AiPreview>, ExecutionError> {
             let metadata = super::read_metadata_from(connection)
                 .map_err(|_| error(ErrorCode::CorruptLedger, "ai-project"))?;
             if !metadata
@@ -232,8 +243,6 @@ impl ProjectStore {
                     })
                 })
                 .collect()
-        })
-    }
 }
 impl AiPreview {
     pub fn fixed_input(&self, project: crate::ProjectId) -> Result<FixedInput, ExecutionError> {

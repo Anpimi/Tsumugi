@@ -418,7 +418,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       <button className="text-button" disabled={busy} onClick={() => { setConfirmation(null); setShowOwnerDialog(false); }}>{t(activity.continuationRequest ? "execution.deferContinuation" : "execution.keepOutput")}</button>
     </section> : null}
     {activity?.phase === "recorded" && activity.receipt ? <p role="status">{t("execution.adoptionRecorded")}</p> : message ? <p role="status">{t(`execution.${message}`)}</p> : null}</>;
-  const titleFor = (action: Confirmation["action"]) => action === "cancel" ? t("execution.cancel") : t(`execution.actions.${action}`);
+  const titleFor = (action: Confirmation["action"]) => action === "cancel" ? t("execution.cancel")
+    : action === "adopt-result" && activity?.intent.operation === "ai-semantic-review" ? t("semanticReview.confirmRecord") : t(`execution.actions.${action}`);
   const confirmationCount = confirmation?.itemId ? 1 : confirmation?.unit?.itemIds.length ?? 0;
   const blockedKey = (reason: string) => reason === "external-new-consent" ? "externalConsent" : reason === "outcome-unknown" ? "unknown" : reason === "scope-removed" ? "scopeRemoved" : reason === "output-invalid" ? "invalid" : reason === "retry-not-safe" ? "retryUnsafe" : "blocked";
   const navigationBlocked = !gate().enabled;
@@ -434,7 +435,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       {tasks.length > 0 ? <p>{t("execution.listHelp")}</p> : null}
       <ul className="execution-list">{tasks.map(task => <li key={task.taskId}>
         <button className="secondary-button" onClick={() => selectTask(task.taskId)} disabled={navigationBlocked}>
-          {t(task.operation === "source-import" ? "source.title" : task.operation === "translation-import" ? "translation.title" : task.operation === "ai-translation" ? "ai.title" : task.operation === "locale-build" ? "release.title" : task.operation === "sample-update" ? "execution.sampleOperation" : "execution.operation")} · {t("execution.taskNumber", { number: task.sequence })}
+          {t(task.operation === "source-import" ? "source.title" : task.operation === "translation-import" ? "translation.title" : task.operation === "ai-translation" ? "ai.title" : task.operation === "ai-semantic-review" ? "semanticReview.title" : task.operation === "locale-build" ? "release.title" : task.operation === "sample-update" ? "execution.sampleOperation" : "execution.operation")} · {t("execution.taskNumber", { number: task.sequence })}
         </button>
       </li>)}</ul>
       {cursor !== "0" || tasks.length === 50 ? <div className="execution-actions">
@@ -477,7 +478,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
               if(action === "view-receipt"){const payload=receiptPayload(detail,unit);if(payload)registry.dispatch("tasks.view-receipt",commandScope,payload);}
               else if(action === "adopt-result" && previewPayload(detail,unit.unitId)){const payload=previewPayload(detail,unit.unitId);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload);}
               else registry.dispatch(actionCommands[action],commandScope,actionPayload(detail,unit,action));
-            }}>{t(action === "adopt-result" && detail.operation === "source-import" ? "source.preview" : action === "adopt-result" && detail.operation === "translation-import" ? "translation.preview" : `execution.actions.${action}`)}</button>)}</div>
+            }}>{t(action === "adopt-result" && detail.operation === "source-import" ? "source.preview" : action === "adopt-result" && detail.operation === "translation-import" ? "translation.preview" : action === "adopt-result" && detail.operation === "ai-semantic-review" ? "semanticReview.record" : `execution.actions.${action}`)}</button>)}</div>
           </section>)}
         </section>
         <section aria-label={t("execution.continuationHistory")}>
@@ -530,7 +531,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" />
         <Dialog.Content className="confirm-dialog execution-confirm-dialog" onCloseAutoFocus={event => { event.preventDefault(); actionTrigger.current?.focus(); }} onEscapeKeyDown={event => { if (busy || cancelling) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <Dialog.Title>{confirmation ? titleFor(confirmation.action) : t("execution.nextSteps")}</Dialog.Title>
-          <Dialog.Description>{confirmation?.action === "cancel" ? t("execution.cancelHelp") : confirmation ? t(`execution.actionHelp.${confirmation.action}`, {
+          <Dialog.Description>{confirmation?.action === "cancel" ? t("execution.cancelHelp")
+            : confirmation?.action === "adopt-result" && activity?.intent.operation === "ai-semantic-review" ? t("semanticReview.recordHelp") : confirmation ? t(`execution.actionHelp.${confirmation.action}`, {
             count: confirmationCount, remaining: confirmation.unit?.remainingItemIds.length ?? 0,
             reused: (confirmation.unit?.itemIds.length ?? 0) - (confirmation.unit?.remainingItemIds.length ?? 0),
           }) : null}</Dialog.Description>

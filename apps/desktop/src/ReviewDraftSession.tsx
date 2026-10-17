@@ -8,9 +8,10 @@ import { confirmReviewFindingEvidence, confirmReviewFindingBasis, confirmReviewF
 
 import type { ReviewCheckRequest, ReviewCheckStartRequest, ReviewPluginCheckView } from "./reviewCommands";
 import type { PluginTextReviewSelection } from "./pluginCommands";
+import { useAiSemanticReviewSession } from "./AiSemanticReviewSession";
 type ReviewCheckPreparation = { request: ReviewCheckRequest; view: ReviewPluginCheckView };
 export type ReviewPending =
-  | { kind: "finding"; request: ReviewFindingWrite; basisEvidence: ReviewBasis; evidence: Pick<AdvisoryFinding, "requirement" | "finding">; submittedSeq: number }
+  | { kind: "finding"; request: ReviewFindingWrite; basisEvidence: ReviewBasis; evidence: Pick<AdvisoryFinding, "requirement" | "finding" | "runId" | "purpose" | "aiOrigin">; submittedSeq: number }
   | { kind: "decision"; request: ReviewWrite; submittedSeq: number }
   | { kind: "prepare-check"; request: ReviewCheckRequest; submittedSeq: null }
   | { kind: "check"; request: ReviewCheckRequest; executions: ReviewCheckStartRequest["executions"]; submittedSeq: null }
@@ -46,6 +47,7 @@ export interface ReviewDraftState {
 }
 
 interface ReviewSession {
+  semantic: ReturnType<typeof useAiSemanticReviewSession>;
   state: ReviewDraftState;
   current: () => ReviewDraftState;
   inFlight: () => boolean;
@@ -69,7 +71,7 @@ interface ReviewSession {
   prepareCheck: (currentRead: () => boolean) => Promise<void>;
   check: (currentRead: () => boolean) => Promise<void>;
   waive: (issueId: string, grant: boolean, expectedWaiverId: string | null, currentRead: () => boolean) => Promise<void>;
-  finding: (capture: Pick<ReviewFindingWrite, "runId" | "issueId" | "expectedDecisionId" | "disposition"> & { evidence: Pick<AdvisoryFinding, "requirement" | "finding"> }, currentRead: () => boolean) => Promise<ReviewFindingDecision | null>;
+  finding: (capture: Pick<ReviewFindingWrite, "runId" | "issueId" | "expectedDecisionId" | "disposition"> & { evidence: Pick<AdvisoryFinding, "requirement" | "finding" | "runId" | "purpose" | "aiOrigin"> }, currentRead: () => boolean) => Promise<ReviewFindingDecision | null>;
   fallback: (allow: boolean, currentRead: () => boolean) => Promise<void>;
   retryPending: () => Promise<void>;
   cancelCheck: () => Promise<void>;
@@ -94,6 +96,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     batchRunning: false, batchStatus: null, completionVersion: 0, advisoryChecks: [], checkReview: null, checkConsent: [],
   }));
   const currentState = useRef(state);
+  const semantic = useAiSemanticReviewSession(project, state.projection, Object.values(state.chosen), state.locale);
   const projectRef = useRef(project);
   const mounted = useSessionAlive(), reads = useSessionReads();
   useLayoutEffect(() => reads.subscribeChanges(scopes => {
@@ -177,7 +180,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     });
   }
   function clear() {
-    if (running.current || current().pending) return;
+    if (running.current || current().pending || !semantic.clear()) return;
     update(before => ({ ...before, drafts: {}, editSeq: {}, draftTargets: {}, chosen: {}, selected: null, projection: null, notice: null, reasonValue: "", checkReview: null, checkConsent: [], advisoryChecks: [] }));
   }
   function setNotice(notice: ReviewNotice) { update(before => ({ ...before, notice })); }
@@ -364,7 +367,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       request: { projectId: projectRef.current.metadata.projectId, actionId, unitId: target.unitId, locale: target.locale,
         expectedBasis: target.basis, issueId, grant, expectedWaiverId, actor: before.actor.trim(), reason } }));
   }
-  async function finding(capture: Pick<ReviewFindingWrite, "runId" | "issueId" | "expectedDecisionId" | "disposition"> & { evidence: Pick<AdvisoryFinding, "requirement" | "finding"> }, currentRead: () => boolean) {
+  async function finding(capture: Pick<ReviewFindingWrite, "runId" | "issueId" | "expectedDecisionId" | "disposition"> & { evidence: Pick<AdvisoryFinding, "requirement" | "finding" | "runId" | "purpose" | "aiOrigin"> }, currentRead: () => boolean) {
     const before = current(), target = before.selected;
     if (!target || !before.actor.trim() || !(before.drafts[reviewDraftKey(target)] ?? "").trim()) {
       update(value => ({ ...value, notice: "error", reasonValue: "reason-required" })); return null;
@@ -476,7 +479,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     if (next !== before.locale) update(value => ({ ...value, locale: next, selected: null, projection: null }));
   }, [targetScope, state.locale, state.pending, state.busyMutation, state.chosen, state.drafts]);
 
-  const owner: ReviewSession = { state, current, inFlight: () => running.current,
+  const owner: ReviewSession = { state, current, semantic, inFlight: () => running.current || semantic.reserved(),
     setLocale, setActor, setSelected, receiveTarget, observeProjection, editReason, adoptCurrent, toggleChosen, clear, setNotice, setReason,
     decide, prepareCheck, check, setAdvisoryChecks, observeSettingsRevision, slotConsentKey, setCheckerConsent, checkersConfirmed, waive, finding, fallback, retryPending, cancelCheck, approveBatch, stopBatch };
   return <ReviewContext.Provider value={owner}>{children}</ReviewContext.Provider>;

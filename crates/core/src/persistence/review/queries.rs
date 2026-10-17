@@ -198,7 +198,7 @@ pub(in crate::persistence) fn targets_in(
             "{WANTED}, latest AS (
          SELECT r.*,ROW_NUMBER() OVER(PARTITION BY r.unit_id ORDER BY r.rowid DESC) position
          FROM review_checks r JOIN wanted w ON w.unit_id=r.unit_id AND w.basis=r.basis
-         WHERE r.project_id=?1 AND r.locale=?2)
+         WHERE r.project_id=?1 AND r.locale=?2 AND r.purpose='qa')
          SELECT json_object('runId',run_id,'actionId',action_id,'unitId',unit_id,
             'locale',locale,'basis',basis,'basisEvidence',json(basis_json),
             'validatorVersion',validator_version,'outcome','completed','rules',json(rules_json),

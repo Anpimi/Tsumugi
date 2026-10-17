@@ -1,5 +1,16 @@
 # Application versioning and changelog maintenance
 
+Typed AI meaning/style review adds a separate operation within the existing
+Provider and Task owners. Review rows distinguish mechanical QA and AI advisory
+purposes, retaining the frozen model, recipe, input/result and human disposition
+provenance. These persisted associations advance the current-only project format
+to schema 52; schema 51 and earlier directories are preserved and refused without
+migration or reset. Desktop adds prepare/start/read commands and extends finding
+projections. SDK/Process3, WorkPlan3, package artifacts and dependency metadata
+remain unchanged. This stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with synchronized bilingual
+Unreleased entries and no additional version bump.
+
 The opt-in macOS runtime profile explicitly enables `.app` bundling and selects
 the existing macOS icon. This corrects the documented build path without changing
 ordinary builds, runtime authority, dependencies or data formats. It remains in

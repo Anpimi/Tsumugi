@@ -37,5 +37,5 @@ export function reviewCheckFixture(target: ReviewTarget, actionId: string, outco
 /** Empty advisory projection for this exact current Review target. */
 export function reviewFindingViewFixture(target: ReviewTarget): ReviewFindingView {
   return { unitId: target.unitId, locale: target.locale, basis: target.basis, runId: target.currentCheck?.runId ?? null,
-    findings: [], repairs: [], history: [], nextOffset: null };
+    semanticRunId: null, findings: [], repairs: [], history: [], nextOffset: null };
 }

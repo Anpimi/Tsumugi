@@ -191,7 +191,7 @@ fn view_version(targets: &[ReviewTarget]) -> Result<String, ExecutionError> {
 }
 
 impl ProjectStore {
-    /// Converts only original current QA evidence, never caller-supplied text.
+    /// Converts only original current saved evidence, never caller-supplied text.
     pub fn review_diagnostic_location(
         &self,
         project_id: ExecutionId,
@@ -211,7 +211,7 @@ impl ProjectStore {
             // This owner validates original ledger frames and the complete QA
             // material basis, which is distinct from the manual review basis.
             let target = target_in(connection, project_id, unit_id, locale)?;
-            let run = target
+            let qa = target
                 .current_check
                 .as_ref()
                 .filter(|run| {
@@ -220,19 +220,26 @@ impl ProjectStore {
                         && run.locale == locale
                         && run.basis == target.basis
                         && run.basis_evidence == target.basis_evidence
-                })
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?;
-            let evidence = run
-                .evidence
-                .as_ref()
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?;
-            if !evidence.diagnostics.contains(diagnostic)
-                || !evidence.required_checks.requirements.iter().any(|requirement| {
-                    requirement.key == diagnostic.key
-                        && requirement.targets.contains(&diagnostic.target)
-                })
-            {
-                return Err(failure(ErrorCode::InvalidInput, "review-diagnostic-evidence"));
+                });
+            if let Some(run) = qa {
+                let evidence = run.evidence.as_ref()
+                    .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?;
+                if !evidence.diagnostics.contains(diagnostic)
+                    || !evidence.required_checks.requirements.iter().any(|requirement| {
+                        requirement.key == diagnostic.key
+                            && requirement.targets.contains(&diagnostic.target)
+                    }) {
+                    return Err(failure(ErrorCode::InvalidInput, "review-diagnostic-evidence"));
+                }
+            } else {
+                let run = super::super::ai_semantic_review::current_run(connection,project_id,unit_id,locale,&target.basis)?
+                    .filter(|run|run.run_id==run_id)
+                    .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?;
+                if !run.diagnostics.contains(diagnostic)
+                    || diagnostic.target != unit_id.to_string()
+                    || !run.rules.iter().any(|rule|rule.key==diagnostic.key) {
+                    return Err(failure(ErrorCode::InvalidInput, "review-diagnostic-evidence"));
+                }
             }
             let original = diagnostic
                 .location

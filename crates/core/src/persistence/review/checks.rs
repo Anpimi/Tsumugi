@@ -381,8 +381,8 @@ pub(in crate::persistence) fn record_check_in(
     }
     connection.execute(
         "INSERT INTO review_checks
-         (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,request_digest)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+         (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,request_digest,purpose)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'qa')",
         params![ExecutionId::new().to_string(), action_id.to_string(), project_id.to_string(),
             target.unit_id.to_string(), target.locale, target.basis, basis_json,
             CHECK_VERSION, rules_json, request_digest],

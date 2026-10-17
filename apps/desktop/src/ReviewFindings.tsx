@@ -57,12 +57,13 @@ export function ReviewFindings({ project, target, active, available, currentTarg
     if (owner.current().pending) return { enabled: false, reason: "pending-action" as const };
     if (!available().enabled) return { enabled: false, reason: "unavailable" as const };
     const view = currentView(), current = owner.current();
-    const finding = view?.findings.find(value => value.finding.issueId === payload?.issueId);
+    const finding = view?.findings.find(value => value.finding.issueId === payload?.issueId && value.runId === payload?.runId);
     const prior = finding?.decision;
     const validTransition = disposition === "restored" ? prior?.request.disposition === "rejected"
       : prior?.request.disposition !== "rejected" && (disposition !== "repair-requested" || prior?.request.disposition !== "repair-requested");
     return payload && view && finding && validTransition && current.actor.trim() && (current.drafts[reviewDraftKey(target)] ?? "").trim()
-      && payload.unitId === target.unitId && payload.locale === target.locale && payload.basis === target.basis && payload.runId === view.runId
+      && payload.unitId === target.unitId && payload.locale === target.locale && payload.basis === target.basis && payload.runId === finding.runId
+      && finding.runId === (finding.purpose === "ai-semantic" ? view.semanticRunId : view.runId)
       && payload.expectedDecisionId === (prior?.decisionId ?? null) ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
   }
   async function act(payload: ReviewFindingCommandPayload, disposition: ReviewFindingDisposition) {
@@ -71,7 +72,7 @@ export function ReviewFindings({ project, target, active, available, currentTarg
     const cached = reads.client.getQueryCache().find({ queryKey: reads.key(key(target.unitId, target.locale, offset)), exact: true });
     const version = cached?.state.dataUpdateCount;
     const before = owner.current(), seq = before.editSeq[reviewDraftKey(target)] ?? 0;
-    const evidence = view?.findings.find(item => item.finding.issueId === payload.issueId);
+    const evidence = view?.findings.find(item => item.finding.issueId === payload.issueId && item.runId === payload.runId);
     if (!evidence) return;
     const receipt = await owner.finding({ runId: payload.runId, issueId: payload.issueId, expectedDecisionId: payload.expectedDecisionId, disposition, evidence },
       () => parentProof() && currentView() === view && cached?.state.dataUpdateCount === version);
@@ -81,7 +82,7 @@ export function ReviewFindings({ project, target, active, available, currentTarg
       && (owner.current().editSeq[reviewDraftKey(target)] ?? 0) === seq + 1 && !owner.current().drafts[reviewDraftKey(target)]) {
       // The durable request remains awaiting a real recheck even if navigation
       // is declined by the manual editor's existing draft protection.
-      const run = view?.runId === target.currentCheck?.runId ? target.currentCheck : null;
+      const run = evidence.purpose === "qa" && evidence.runId === target.currentCheck?.runId ? target.currentCheck : null;
       const rule = run?.rules.find(rule => ruleIdentity(rule.key) === ruleIdentity(evidence.requirement.key));
       const locations = run && rule ? reviewDiagnostics(run, rule, evidence.finding.code).filter(diagnostic => diagnostic.location) : [];
       const diagnostic = locations.length === 1 ? locations[0] : null;
@@ -119,32 +120,37 @@ export function ReviewFindings({ project, target, active, available, currentTarg
       <dt>{t("review.advisoryFindings.source")}</dt><dd>{sourceRevisionId}</dd>
     </dl></details>;
   }
-  function historyDetails(decision: ReviewFindingDecision) { return evidenceDetails(decision.requirement, decision.request.runId, decision.basisEvidence.sourceRevisionId); }
-  const findingRunId = value?.runId;
+  function modelOrigin(origin: ReviewFindingDecision["aiOrigin"]) {
+    return origin ? <><p>{t("semanticReview.advisoryOrigin", { model: origin.model, endpoint: origin.endpoint, recipe: origin.recipe })}</p><p>{t("semanticReview.help")}</p></> : null;
+  }
+  function historyDetails(decision: ReviewFindingDecision) { return <>{modelOrigin(decision.aiOrigin)}{evidenceDetails(decision.requirement, decision.request.runId, decision.basisEvidence.sourceRevisionId)}</>; }
   return <section aria-label={t("review.advisoryFindings.title")}>
     <h4>{t("review.advisoryFindings.title")}</h4><p>{t("review.advisoryFindings.help")}</p>
     {query.isFetching ? <p role="status">{t("review.currentLoading")}</p> : null}
     {query.error ? <div role="alert">{t("review.advisoryFindings.unavailable")}<CommandFailureDetails failure={commandFailure(query.error)} /></div> : null}
     <button className="secondary-button" disabled={!active || query.isFetching || owner.inFlight()} onClick={() => void query.refetch()}>{t("review.advisoryFindings.refresh")}</button>
     {value?.findings.length === 0 ? <p>{t("review.advisoryFindings.empty")}</p> : null}
-    {findingRunId ? value?.findings.map(item => {
+    {value?.findings.map(item => {
+      const findingRunId = item.runId;
       const payload: ReviewFindingCommandPayload = { kind: "review-finding", unitId: target.unitId, locale: target.locale, basis: value.basis,
         runId: findingRunId, issueId: item.finding.issueId, expectedDecisionId: item.decision?.decisionId ?? null };
-      const rule = diagnosticRun?.rules.find(rule => ruleIdentity(rule.key) === ruleIdentity(item.requirement.key));
+      const run = item.purpose === "qa" && item.runId === diagnosticRun?.runId ? diagnosticRun : null;
+      const rule = run?.rules.find(rule => ruleIdentity(rule.key) === ruleIdentity(item.requirement.key));
       const rejected = item.decision?.request.disposition === "rejected";
-      return <article key={item.finding.issueId}><p><strong>{item.requirement.key.rule.id}</strong>: {item.finding.detail}</p>
+      return <article key={`${findingRunId}:${item.finding.issueId}`}><p><strong>{item.purpose === "ai-semantic" && (item.requirement.key.rule.id === "meaning" || item.requirement.key.rule.id === "style") ? t(`semanticReview.rule.${item.requirement.key.rule.id}`) : item.requirement.key.rule.id}</strong>: {item.finding.detail}</p>
+        {modelOrigin(item.aiOrigin)}
         {evidenceDetails(item.requirement, findingRunId, target.sourceRevisionId)}
         {item.decision && item.decision.request.runId !== findingRunId ? <p>{t("review.advisoryFindings.associated")}</p> : null}
-        {diagnosticRun && rule ? <ReviewDiagnosticDetails run={diagnosticRun} rule={rule} code={item.finding.code}
-          onLocate={onLocateDiagnostic && currentView() && currentDiagnosticRun(target, diagnosticRun)
-            ? diagnostic => { void onLocateDiagnostic(target, diagnosticRun.runId, diagnostic); } : undefined} /> : null}
+        {run && rule ? <ReviewDiagnosticDetails run={run} rule={rule} code={item.finding.code}
+          onLocate={onLocateDiagnostic && currentView() && currentDiagnosticRun(target, run)
+            ? diagnostic => { void onLocateDiagnostic(target, run.runId, diagnostic); } : undefined} /> : null}
         {item.decision ? <><p>{t(item.decision.request.disposition === "rejected" ? "review.advisoryFindings.rejected" : item.decision.request.disposition === "restored" ? "review.advisoryFindings.restored" : "review.advisoryFindings.awaiting")}</p>
           <p>{item.decision.request.actor}: {item.decision.request.reason}</p>{historyDetails(item.decision)}</> : null}
         <div className="form-actions"><button className="secondary-button" disabled={!availability(payload, rejected ? "restored" : "rejected").enabled}
           onClick={() => commands.dispatch(rejected ? "review.restore-finding" : "review.reject-finding", scope, payload)}>{t(rejected ? "review.advisoryFindings.restore" : "review.advisoryFindings.reject")}</button>
           <button className="secondary-button" disabled={!availability(payload, "repair-requested").enabled} onClick={() => commands.dispatch("review.repair-finding", scope, payload)}>{t("review.advisoryFindings.repair")}</button></div>
       </article>;
-    }) : null}
+    })}
     {value?.repairs.map(repair => <article key={repair.decision.decisionId}><p>{repair.decision.finding.detail}</p>
       <p>{t(repair.status === "awaiting-current-recheck" ? "review.advisoryFindings.awaiting" : repair.status === "current-rule-clear" ? "review.advisoryFindings.recheckClear" : repair.status === "superseded" ? "review.advisoryFindings.superseded" : "review.advisoryFindings.recheckFindings")}</p>
       <p>{repair.decision.request.actor}: {repair.decision.request.reason}</p>{historyDetails(repair.decision)}</article>)}

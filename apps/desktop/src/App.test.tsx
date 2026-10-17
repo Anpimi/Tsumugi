@@ -1559,13 +1559,13 @@ describe("project lifecycle workbench", () => {
     mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
       if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(target)]);
       if (command === "read_review_target") return target;
-      if (command === "read_review_findings") return { ...reviewFindingViewFixture(target), findings: [{ finding, requirement, decision: saved }], history: saved ? [saved] : [] };
+      if (command === "read_review_findings") return { ...reviewFindingViewFixture(target), findings: [{ runId: target.currentCheck!.runId, purpose: "qa", aiOrigin: null, finding, requirement, decision: saved }], history: saved ? [saved] : [] };
       if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
       if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [] };
       if (command === "create_execution_identity") return fixtureIdentity(1102);
       if (command === "write_review_finding") {
         if (!validateRequestFinding(args.request)) throw new Error("Invalid finding request");
-        saved = { decisionId: fixtureIdentity(1103), request: structuredClone({ ...args.request.finding, expectedDecisionId: args.request.finding.expectedDecisionId ?? null }), basisEvidence: target.basisEvidence, requirement, finding, createdAt: "2026-10-16T00:00:00Z" };
+        saved = { purpose: "qa", aiOrigin: null, decisionId: fixtureIdentity(1103), request: structuredClone({ ...args.request.finding, expectedDecisionId: args.request.finding.expectedDecisionId ?? null }), basisEvidence: target.basisEvidence, requirement, finding, createdAt: "2026-10-16T00:00:00Z" };
         throw new Error("Lost response after commit");
       }
       if (command === "read_review_finding_action") return saved;

@@ -10,7 +10,8 @@ import {useTranslation} from "react-i18next";
 import type {ProjectView} from "./projectCommands";
 import {executionContext} from "./executionCommands";
 import {sourceReads} from "./sourceQueries";
-import {aiTarget,defaultAiConfig,type AiView} from "./aiCommands";
+import {aiTarget,type AiView} from "./aiCommands";
+import { AiConnectionFields } from "./AiConnectionFields";
 import {useAiPreparation,type WorkPlanContinuation} from "./AiPreparationSession";
 import { WorkPlanControls } from "./WorkPlanControls";
 import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnectionPicker";
@@ -103,10 +104,6 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   function loadPage(next=0){if(next===0){void reads.client.invalidateQueries({queryKey:reads.key(scopeOptions.key),exact:true});void reads.client.invalidateQueries({queryKey:reads.key(sourceReads.content(context,scopeRead.data?.currentSnapshot??"",0,scopeRead.data).key),exact:true});}setAfter(next);}
   function refreshReads(){loadPage();if(attempt)void viewRead.refetch();if(planId)void planRead.refetch();}
   function change<K extends keyof typeof config>(key:K,value:(typeof config)[K]){setConfig(c=>({...c,[key]:value}));}
-  function preset(value:string){setPresetName(value);setConfig(c=>({...c,connectionProfile:null,endpoint:value==="openai"?"https://api.openai.com/v1/chat/completions":value==="local"?"http://127.0.0.1:11434/v1/chat/completions":"",credentialEnv:value==="local"?"":"OPENAI_API_KEY",tokenField:value==="openai"?"max_completion_tokens":"max_tokens"}));}
-  const numeric=[['maxItems',1,100],['concurrency',1,2],['maxRequests',1,300],['maxOutputTokens',1,16384],['maxRetries',0,2],['timeoutSeconds',1,120]] as const;
-  const fieldFailure=(key:string)=>failure===`ai-${key==="credentialEnv"?"credential":key}`;
-  const fieldError=(key:string)=>fieldFailure(key)?<span id={`ai-error-${key}`} className="field-error">{t(`ai.errors.${failure}`,{defaultValue:t("ai.errors.failed")})}</span>:null;
   const commandScope={projectId:project.metadata.projectId,sessionToken:project.sessionToken,area:"ai" as const};
   const unavailable:CommandAvailability={enabled:false,reason:"unavailable"};
   function gate(recovery=false):CommandAvailability {
@@ -327,10 +324,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
 
     }}>{(["candidates-only","missing-only","replace-captured-selection"] as const).map(policy=><option key={policy} value={policy}>{t(`ai.plan.policies.${policy}`)}</option>)}</select></label>
     {options.selectionPolicy!=="candidates-only"?<p>{t("ai.plan.checkedSelection")}</p>:null}</>:null}
-{assisted?<><ModelConnectionPicker config={config} label={t("connections.choose")} active={open} disabled={locked} editSeq={preparation.editSeq} onSelect={preparation.selectConnection} onOpenSettings={onOpenConnections}/><PreparationBudgetSummary config={config}/><details open={connectionOpen} onToggle={event=>setConnectionOpen(event.currentTarget.open)}><summary>{t("ai.connection")}</summary><label className="field">{t("ai.preset")}<select value={presetName} onChange={e=>preset(e.target.value)}><option value="custom">{t("ai.custom")}</option><option value="openai">OpenAI</option><option value="local">{t("ai.local")}</option></select></label>
-    {([['endpoint','url'],['model','text'],['credentialEnv','text']] as const).map(([key,type])=><label className="field" key={key}>{t(`ai.${key}`)}<input type={type} value={config[key]} aria-label={t(`ai.${key}`)} aria-invalid={fieldFailure(key)||undefined} aria-describedby={fieldFailure(key)?`ai-error-${key}`:undefined} onChange={e=>change(key,e.target.value)}/>{fieldError(key)}</label>)}<p>{t("ai.credentialHelp")}</p>
-    <label className="field">{t("ai.tokenField")}<select value={config.tokenField} onChange={e=>change("tokenField",e.target.value)}><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
-    </details><details open={failure==="ai-limits"?true:undefined}><summary>{t("ai.budget")}</summary>{failure==="ai-limits"?<p id="ai-error-limits" className="field-error">{t("ai.errors.ai-limits")}</p>:null}{numeric.map(([key,min,max])=><label className="field" key={key}>{t(`ai.${key}`)}<input type="number" min={min} max={max} value={Number.isFinite(config[key])?config[key]:""} aria-invalid={failure==="ai-limits"&&(!Number.isInteger(config[key])||config[key]<min||config[key]>max)||undefined} aria-describedby={failure==="ai-limits"?"ai-error-limits":undefined} onChange={e=>change(key,e.target.valueAsNumber)}/></label>)}<button className="secondary-button" type="button" onClick={()=>{setConfig(c=>({...c,maxItems:defaultAiConfig.maxItems,concurrency:defaultAiConfig.concurrency,maxRequests:defaultAiConfig.maxRequests,maxOutputTokens:defaultAiConfig.maxOutputTokens,maxRetries:defaultAiConfig.maxRetries,timeoutSeconds:defaultAiConfig.timeoutSeconds}));}}>{t("ai.reset")}</button></details></>:null}
+{assisted?<><ModelConnectionPicker config={config} label={t("connections.choose")} active={open} disabled={locked} editSeq={preparation.editSeq} onSelect={preparation.selectConnection} onOpenSettings={onOpenConnections}/><PreparationBudgetSummary config={config}/><AiConnectionFields config={config} setConfig={setConfig} presetName={presetName} setPresetName={setPresetName} connectionOpen={connectionOpen} setConnectionOpen={setConnectionOpen} failure={failure}/></>:null}
     {assisted?<WorkPlanToolChoice ref={toolChoice} open={open} disabled={locked} value={toolDraft} onChange={setToolDraft}/>:null}
     <label className="field">{t("ai.locale")}<select value={locale} disabled={!!preparation.maintenance} onChange={e=>{setLocale(e.target.value);}}>{!targetAvailable&&locale?<option value={locale} disabled>{locale}</option>:null}{project.metadata.targetLocales.map(l=><option key={l}>{l}</option>)}</select></label>
     {assisted?<><label className="source-check"><input type="checkbox" checked={config.shareTerms} onChange={e=>change("shareTerms",e.target.checked)}/>{t("ai.shareTerms")}</label><label className="source-check"><input type="checkbox" checked={config.shareContext} onChange={e=>change("shareContext",e.target.checked)}/>{t("ai.shareContext")}</label></>:null}

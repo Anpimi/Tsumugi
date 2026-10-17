@@ -82,6 +82,7 @@ macro_rules! handlers {
         resource::decide_context_fact,resource::read_context_fact_decisions,resource::read_context_fact_action,resource::read_context_fact_history,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
         review::read_review_findings,review::read_review_finding_action,review::write_review_finding,
+        review::semantic::prepare_ai_semantic_review,review::semantic::start_ai_semantic_review,review::semantic::read_ai_semantic_review,
         review::read_review_page,review::read_review_target,review::read_review_diagnostic_location,review::read_review_history,review::write_review_decision,
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
         review::plugin::prepare_review_checks,review::plugin::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
@@ -231,6 +232,7 @@ pub(super) struct ExecutionHost {
     source: source::SourceSession,
     release: release::ReleaseSession,
     ai: ai::AiSession,
+    semantic_review: review::semantic::AiSemanticReviewSession,
     review: review::ReviewSession,
     arena: arena::ArenaSession,
     strategy: strategy::StrategySession,
@@ -268,6 +270,7 @@ impl ExecutionHost {
             source: source::SourceSession::default(),
             release: release::ReleaseSession::default(),
             ai: ai::AiSession::default(),
+            semantic_review: review::semantic::AiSemanticReviewSession::default(),
             review: review::ReviewSession::default(),
             arena: arena::ArenaSession::default(),
             strategy: strategy::StrategySession::default(),
@@ -319,6 +322,18 @@ impl ExecutionHost {
         host.handlers.insert(
             tsumugi_core::ai::OPERATION.into(),
             Arc::new(tsumugi_core::AiAdoptionHandler),
+        );
+        host.runtime
+            .register_with_policy(
+                Arc::new(tsumugi_core::ai::semantic_review::AiSemanticReviewRunner::with_service(
+                    provider_service.clone(),
+                )),
+                tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+            )
+            .map_err(map_read)?;
+        host.handlers.insert(
+            tsumugi_core::ai::semantic_review::OPERATION.into(),
+            Arc::new(tsumugi_core::ai::semantic_review::AiSemanticReviewAdoptionHandler),
         );
         host.runtime
             .register_with_policy(

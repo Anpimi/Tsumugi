@@ -482,6 +482,11 @@ fn explicit_subset_pins_and_exact_checker_identities_are_captured_without_changi
     }
     let mut bounded = c.clone();
     bounded.binding.checker.declaration.limits.max_input_bytes = 64;
+    assert!(
+        bounded.validate().is_err(),
+        "changing a declaration alone cannot replace the captured execution binding"
+    );
+    bounded.execution.capability = bounded.binding.checker.clone();
     bounded.validate().unwrap();
     let target = store.review_target(project(&store), unit, "zh-CN").unwrap();
     assert_eq!(
@@ -981,6 +986,11 @@ fn distinct_text_providers_keep_independent_keys_and_origins_when_rule_labels_ma
     let first = choice(&store, unit, false);
     let mut second = first.clone();
     second.binding.checker.provider.package_digest = "f".repeat(64);
+    assert!(
+        second.validate().is_err(),
+        "a provider substitution must not retain the original execution binding"
+    );
+    second.execution.capability = second.binding.checker.clone();
     second.validate().unwrap();
     let prepared = prepare(&store, unit, ExecutionId::new(), &[first, second]);
     assert_eq!(prepared.plan().unwrap().checkers().len(), 3);
@@ -1109,3 +1119,5 @@ mod candidate_checks;
 
 #[path = "review_advisory/diagnostic_location.rs"]
 mod diagnostic_location;
+#[path = "review_advisory/semantic_review.rs"]
+mod semantic_review;

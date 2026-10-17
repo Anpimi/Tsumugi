@@ -618,12 +618,15 @@ pub(in crate::persistence) fn verify_input_records(
     input: &crate::execution::FixedInput,
 ) -> Result<(), ExecutionError> {
     let arena = input.envelope().operation == crate::ai::arena::OPERATION;
-    if !arena && input.envelope().operation != crate::ai::OPERATION {
+    let semantic = input.envelope().operation == crate::ai::semantic_review::OPERATION;
+    if !arena && !semantic && input.envelope().operation != crate::ai::OPERATION {
         return Ok(());
     }
     for slot in &input.envelope().items {
         let item = if arena {
             crate::ai::arena::item_payload(input, slot.item_id)?.item
+        } else if semantic {
+            crate::ai::semantic_review::item_payload(input, slot.item_id)?.source
         } else {
             crate::ai::item_payload(input, slot.item_id)?
         };

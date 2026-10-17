@@ -2,6 +2,18 @@ import type { UiMessages } from "./types";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+semanticReview: {
+  recordItem: "{{entry}} → {{locale}} 的参考发现",
+  errors: { selection: "请在译文中选择一份基于当前源文的已保存译文，再重新准备审校。未保存文本不会发送。", stale: "已保存源文、译文选择或准备的审校已变化。请重新预览并明确同意；原请求与结果仍会保留。", pairs: "请选择非空批次，且条目与语言组合数不得超过预算（最多 100 个）。准备前请增加该预算或减少所选批次。", rules: "准备审校前请选择语义、风格或两者。", output: "模型结果未符合本次固定审校的格式或范围，不能记录此项。其他已完成项会保留，不会自动发送替代模型请求。" },
+  title: "AI 语义与风格审校", help: "模型发现是不可信的参考建议，不会替代机械检查、选择译文或授予批准。可在下方发现中处置误报与修复；修复结果必须由当前审校确认。",
+  prepareTitle: "准备独立审校", scope: "审校范围", current: "当前条目与语言", chosen: "跨语言所选批次", pairs: "{{count}} 个条目与语言组合", maxItems: "最多条目与语言组合数", rules: "审校规则", rule: { meaning: "语义", style: "风格" },
+  prepare: "预览本次审校", preview: "发送给模型的准确审校预览", translation: "发送审校的当前已选译文", disclosure: "模型服务会收到此处显示的已保存源文与所选译文，以及上方单独选择的可选上下文。服务可能保留或转发这些内容。整个审校 Task 共用预算，每个条目与语言组合计为一项。授权仅适用于本次准确预览，不包含后续编辑。",
+  consent: "我同意此模型在显示的分享与预算限制内，审校这些准确的条目与语言组合。", start: "发送本次准确审校", failed: "本次审校操作尚未确认，当前输入与原请求已保留。请查看详情；结果不确定时核对原提交。",
+  busy: { prepare: "正在准备准确的已保存审校内容…", start: "正在等待原审校提交确认…", check: "正在核对原本地 attempt…" },
+  notice: { newer: "新输入已保留，较早的准备结果未应用。请重新预览当前输入。", started: "原审校 Task 已记录，各项结果显示在下方。", absent: "本地读取已确认原 attempt 尚未提交。仅在原预览仍有效时重试准确原请求，或丢弃它并重新准备。", unknown: "提交可能已成功。再次发送前请核对准确的原 attempt，不会自动创建替代 Task。", stale: "已保存数据或审校输入已变化。开始前请重新预览并明确同意。" },
+  original: "尚未确认的原审校", check: "核对原提交", retry: "重试准确原提交", discardAbsent: "丢弃尚未提交的预览", history: "本项目会话中的审校", attempt: "审校 {{count}}", refresh: "读取原审校结果", reading: "正在读取已保存审校结果…", readFailed: "无法读取原审校。请重试本次读取；读取失败不能证明审校未执行。", notFound: "已授权本地读取未找到此准确 attempt。本次读取没有启动模型请求。",
+  results: "不可信模型审校结果", stopHelp: "停止会关闭此 Task 的新工作接纳，并请求取消正在执行的工作。已经发送的内容可能仍保留在模型服务中，已完成结果与其他 Task 会保留。", stop: "停止本次审校 Task", staleResult: "此结果已不再匹配当前源文或所选译文，将保留为历史证据。", noFindings: "模型未报告此规则的发现。这只是参考，不代表批准或机械 QA 通过。", usage: "已报告：输入 {{input}} / 输出 {{output}} tokens；{{requests}} 次请求", record: "审阅并记录这些参考发现", recordTitle: "记录本次准确审校结果", recordHelp: "仅记录已捕获条目的模型参考发现，不编辑或选择译文、授予批准，也不替代机械 QA。请通过原发现控件处置误报、请求修复，并由后续当前审校确认修复结果。", confirmRecord: "记录这些参考发现", recorded: "参考审校已记录，可在审校中查看其发现与修复状态。", recording: "正在记录原审校结果…", recordUnknown: "记录可能已成功。请保留原 action，核对回执后再重试。", checkRecord: "核对原记录回执", retryRecord: "重试原记录 action", closeRecord: "关闭本次记录决定", advisoryOrigin: "模型 {{model}} 的参考建议，端点 {{endpoint}} · 配方 {{recipe}}",
+},
 strategy: strategyZh,
 mcpRetrieval: {
   mode: "查询提供方类型", local: "已安装插件", external: "外部 MCP 服务", title: "外部术语检索",

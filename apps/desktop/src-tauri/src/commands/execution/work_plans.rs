@@ -1435,6 +1435,7 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     mod guidance_tests;
     mod model_connection_admission;
+    mod semantic_review;
     mod settings;
     mod tool_result_reads;
     use super::*;
@@ -1867,6 +1868,19 @@ mod tests {
     fn local_provider_responses_at_request(
         request_count: usize,
         mut response_text: impl FnMut(usize, &Value) -> Option<&'static str> + Send + 'static,
+        gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
+        setup: Option<mpsc::Receiver<()>>,
+        accept_timeout: Duration,
+        gate_timeout: Duration,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_outputs_at_request(request_count, move |ordinal, item| {
+            response_text(ordinal, item).map(|text| json!({"unitId":item["unitId"], "targetLocale":item["targetLocale"], "text":text}))
+        }, gate, setup, accept_timeout, gate_timeout)
+    }
+
+    fn local_provider_outputs_at_request(
+        request_count: usize,
+        mut response_output: impl FnMut(usize, &Value) -> Option<Value> + Send + 'static,
         mut gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
         setup: Option<mpsc::Receiver<()>>,
         accept_timeout: Duration,
@@ -1944,11 +1958,10 @@ mod tests {
                     started.send(()).unwrap();
                     release.recv_timeout(gate_timeout).unwrap();
                 }
-                let Some(text) = response_text(ordinal, &item) else {
+                let Some(output) = response_output(ordinal, &item) else {
                     last = item;
                     continue;
                 };
-                let output = json!({"unitId":item["unitId"], "targetLocale":item["targetLocale"], "text":text});
                 let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string();
                 let _ = write!(
                     stream,

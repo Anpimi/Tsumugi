@@ -90,7 +90,7 @@ beforeEach(async () => {
     if (command === "read_review_history") return { decisions: [], checks: [fixture.run], waivers: [], fallbacks: [], nextOffset: null };
     if (command === "read_review_work") return { total: 51, nextOffset: request.offset === 0 ? 50 : null, coverage: "synthetic finite queue",
       items: [{ unitId: request.offset === 0 ? fixtureIdentity(3798) : target.unitId, locale: target.locale, nativeKey: request.offset === 0 ? "Earlier window" : target.nativeKey, basis: target.basis, reasons: ["qa-findings"] }] };
-    if (command === "read_review_findings") return { ...reviewFindingViewFixture(target), findings: target.currentCheck ? [{ finding: fixture.finding, requirement: fixture.requirement, decision: repairs[0] ?? null }] : [], history: repairs };
+    if (command === "read_review_findings") return { ...reviewFindingViewFixture(target), findings: target.currentCheck ? [{ runId: target.currentCheck.runId, purpose: "qa", aiOrigin: null, finding: fixture.finding, requirement: fixture.requirement, decision: repairs[0] ?? null }] : [], history: repairs };
     if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [] };
     if (command === "read_review_editor_snapshot") { snapshotReads++; return snapshotReads > 1 && holdEditor ? await holdEditor : structuredClone(editor); }
     if (command === "read_review_diagnostic_location") {
@@ -109,7 +109,7 @@ beforeEach(async () => {
     if (command === "write_review_finding") {
       if (!reviewValidation.validateRequestFinding(request)) throw new Error("Invalid repair request fixture");
       const value = request.finding;
-      const receipt: ReviewFindingDecision = { decisionId: fixtureIdentity(serial++), request: { ...value, expectedDecisionId: value.expectedDecisionId ?? null }, finding: fixture.finding,
+      const receipt: ReviewFindingDecision = { decisionId: fixtureIdentity(serial++), request: { ...value, expectedDecisionId: value.expectedDecisionId ?? null }, purpose: "qa", aiOrigin: null, finding: fixture.finding,
         requirement: fixture.requirement, basisEvidence: target.basisEvidence, createdAt: "2026-10-17T00:00:00Z" };
       repairs.unshift(receipt); return structuredClone(receipt);
     }

@@ -644,8 +644,8 @@ impl PreparedReviewAdoption {
         }
         connection.execute(
             "INSERT INTO review_checks (run_id,action_id,project_id,unit_id,locale,basis,basis_json,
-             validator_version,rules_json,qa_basis,evidence_json,request_digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+             validator_version,rules_json,qa_basis,evidence_json,request_digest,purpose)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'qa')",
             params![ExecutionId::new().to_string(),computed.action_id.to_string(),computed.project_id.to_string(),
                 target.unit_id.to_string(),target.locale,target.basis,basis_json,CHECK_VERSION,
                 self.rules_json,self.evidence.qa_basis,self.evidence_json,computed.request_digest],

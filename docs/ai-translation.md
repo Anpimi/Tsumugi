@@ -1,5 +1,10 @@
 # Direct AI translation
 
+For advisory meaning/style review of selected saved translations, use the
+separate [AI review workflow](review-qa.md#ai-meaning-and-style-review).
+It reuses the Provider and Task controls with independent preview and consent,
+and does not turn review findings into translation candidates or approvals.
+
 **Maintain changed work** assesses one explicit window of at most 100 current
 source occurrences. It reuses source correspondence, resource changes, current
 review evidence and manual protection. Keep applicable work, request a current

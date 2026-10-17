@@ -2475,7 +2475,9 @@ impl ProjectStore {
     pub fn execution_input(&self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
         load_input(self.execution_connection()?, attempt)
     }
-    pub(crate) fn execution_input_if_present(
+    /// Read the original immutable input, distinguishing a proven missing
+    /// attempt from storage or ledger validation failures.
+    pub fn execution_input_if_present(
         &self,
         attempt: ExecutionId,
     ) -> Result<Option<FixedInput>, ExecutionError> {

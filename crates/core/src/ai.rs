@@ -9,6 +9,7 @@ use std::{io::Read, sync::Arc};
 pub mod provider;
 
 pub mod arena;
+pub mod semantic_review;
 
 pub const OPERATION: &str = "ai-translation";
 pub const CAPABILITY: &str = "openai-compatible.translation";
@@ -443,14 +444,44 @@ impl AiRunner {
         config: &AiConfig,
         item: &AiItem,
     ) -> Result<AiOutput, ExecutionError> {
+        let completion = execute_completion(
+            &self.service, request, cancel, config, request_body(config, item)?,
+        )?;
+        let model: ModelOutput = codec::decode(completion.content.as_bytes(),
+            provider::ProviderProfile::compatible(config)?.max_output_bytes)
+            .map_err(|_| error(ErrorCode::OutputInvalid, "ai-output"))?;
+        if model.unit_id != item.unit_id || model.target_locale != item.target_locale
+            || model.text.len() > 16384 {
+            return Err(error(ErrorCode::OutputInvalid, "ai-output"));
+        }
+        Ok(AiOutput { unit_id: model.unit_id, target_locale: model.target_locale,
+            text: model.text, usage: completion.usage, requests: completion.requests,
+            usage_incomplete: completion.usage_incomplete })
+    }
+}
+
+/// The original provider transport owns reservations, retry accounting and
+/// uncertain dispatches. Operation adapters validate their own typed content.
+pub(super) struct ProviderCompletion {
+    pub content: String,
+    pub usage: Option<Usage>,
+    pub requests: u32,
+    pub usage_incomplete: bool,
+}
+pub(super) fn execute_completion(
+    service: &provider::ProviderService,
+    request: &DispatchRequest,
+    cancel: &Cancellation,
+    config: &AiConfig,
+    body: Value,
+) -> Result<ProviderCompletion, ExecutionError> {
         request.check_service_dispatch()?;
         let profile = provider::ProviderProfile::compatible(config)?;
-        let client = self.service.client(config)?;
+        let client = service.client(config)?;
         let budget = request
             .provider
             .as_ref()
             .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-budget-host"))?;
-        let body = request_body(config, item)?;
         for retry in 0..=config.max_retries {
             if cancel.is_requested() {
                 return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
@@ -465,7 +496,7 @@ impl AiRunner {
                         .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-credential"))?,
                 )
             };
-            self.service.wait_rate(config, cancel)?;
+            service.wait_rate(config, cancel)?;
             let reservation = budget.reserve(config.max_requests, cancel)?;
             if cancel.is_requested() {
                 return Err(error(
@@ -562,25 +593,17 @@ impl AiRunner {
             let content = choice["message"]["content"]
                 .as_str()
                 .ok_or_else(|| error(ErrorCode::OutputInvalid, "ai-response"))?;
-            let model: ModelOutput = codec::decode(content.as_bytes(), profile.max_output_bytes)
-                .map_err(|_| error(ErrorCode::OutputInvalid, "ai-output"))?;
-            if model.unit_id != item.unit_id
-                || model.target_locale != item.target_locale
-                || model.text.len() > 16384
-            {
+            if content.len() > profile.max_output_bytes {
                 return Err(error(ErrorCode::OutputInvalid, "ai-output"));
             }
-            return Ok(AiOutput {
-                unit_id: model.unit_id,
-                target_locale: model.target_locale,
-                text: model.text,
+            return Ok(ProviderCompletion {
+                content: content.into(),
                 usage_incomplete: retry > 0 || usage.is_none(),
                 usage,
                 requests: retry + 1,
             });
         }
         Err(error(ErrorCode::LimitExceeded, "ai-budget"))
-    }
 }
 impl Runner for AiRunner {
     fn capability_id(&self) -> &str {
@@ -604,10 +627,10 @@ impl Runner for AiRunner {
         send_outcome(request, results, outcome)
     }
 }
-pub(super) fn send_outcome(
+pub(super) fn send_outcome<T: Serialize>(
     request: DispatchRequest,
     results: ResultSender,
-    outcome: Result<AiOutput, ExecutionError>,
+    outcome: Result<T, ExecutionError>,
 ) -> Result<(), ExecutionError> {
     let (state, output, diagnostic) = match outcome {
         Ok(value) => (

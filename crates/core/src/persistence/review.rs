@@ -89,6 +89,11 @@ fn basis_digest(value: &ReviewBasis) -> Result<String, ExecutionError> {
         &value.term_revision_ids,
     ))
 }
+impl ReviewBasis {
+    pub(crate) fn digest(&self) -> Result<String, ExecutionError> {
+        basis_digest(self)
+    }
+}
 fn checked_note(value: &str, required: bool) -> Result<(), ExecutionError> {
     if value.len() > 4_096
         || value.chars().any(|ch| ch == '\0')
@@ -413,8 +418,10 @@ const TABLES: &[(&str, &str)] = &[
         qa_basis TEXT CHECK(qa_basis IS NULL OR length(qa_basis)=64),
         evidence_json TEXT,
         request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
+        purpose TEXT NOT NULL CHECK(purpose IN ('qa','ai-semantic')),
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-        CHECK((qa_basis IS NULL)=(evidence_json IS NULL)))",
+        CHECK((purpose='qa' AND (qa_basis IS NULL)=(evidence_json IS NULL)) OR
+              (purpose='ai-semantic' AND qa_basis IS NULL AND evidence_json IS NOT NULL)))",
     ),
     (
         "review_waivers",
@@ -461,6 +468,7 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(definition)?;
     }
     findings::initialize(connection)?;
+    super::ai_semantic_review::initialize(connection)?;
     Ok(())
 }
 // The open path needs only identities between the metadata pass and the ledger
@@ -553,7 +561,7 @@ pub(super) fn prepare_open(connection: &Connection) -> rusqlite::Result<OpenRevi
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
-    let mut statement = connection.prepare("SELECT project_id,action_id FROM review_checks")?;
+    let mut statement = connection.prepare("SELECT project_id,action_id FROM review_checks WHERE purpose='qa'")?;
     let identities = statement
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -580,6 +588,7 @@ pub(super) fn prepare_open(connection: &Connection) -> rusqlite::Result<OpenRevi
             }
         }
     }
+    super::ai_semantic_review::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     findings::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(OpenReviewValidation { pending })
 }
@@ -691,7 +700,7 @@ fn decode_check_by_action(
 ) -> Result<Option<(CheckRun, String)>, ExecutionError> {
     let row: Option<(String,String,String,String,String,String,String,String,String,String,Option<String>,Option<String>)> = connection.query_row(
         "SELECT run_id,action_id,unit_id,locale,basis,basis_json,validator_version,rules_json,created_at,request_digest,evidence_json,qa_basis
-         FROM review_checks WHERE project_id=?1 AND action_id=?2",
+         FROM review_checks WHERE project_id=?1 AND action_id=?2 AND purpose='qa'",
         params![project_id.to_string(), action_id.to_string()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
                   row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?)),
@@ -973,7 +982,8 @@ impl ProjectStore {
         let read_actions = |table: &str| -> Result<Vec<ExecutionId>, ExecutionError> {
             // Table names come only from this fixed list, never request data.
             let query = format!(
-                "SELECT action_id FROM {table} WHERE project_id=?1 AND unit_id=?2 AND locale=?3 ORDER BY rowid DESC LIMIT ?4 OFFSET ?5"
+                "SELECT action_id FROM {table} WHERE project_id=?1 AND unit_id=?2 AND locale=?3 {} ORDER BY rowid DESC LIMIT ?4 OFFSET ?5",
+                if table=="review_checks" { "AND purpose='qa'" } else { "" }
             );
             let mut statement = connection.prepare(&query).map_err(sql)?;
             statement

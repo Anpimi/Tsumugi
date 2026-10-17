@@ -37,12 +37,12 @@ let issue: string;
 function finding(identity = issue) { return { issueId: identity, rule: "plugin:synthetic.advisory", code: "editorial", detail: "Synthetic advisory detail", severity: "warning", waivable: false }; }
 function requirement() { return { key: pluginRuleKeyFixture("synthetic.advisory"), inputDigest: "b".repeat(64), scopeDigest: "c".repeat(64), targets: [target.unitId], mandatory: false, waivable: false, notApplicable: null }; }
 function receipt(request: ReviewFindingWrite): ReviewFindingDecision {
-  return { decisionId: fixtureIdentity(++nextId), request: structuredClone({ ...request, expectedDecisionId: request.expectedDecisionId ?? null }), finding: finding(request.issueId), requirement: requirement(), basisEvidence: structuredClone(target.basisEvidence), createdAt: "2026-10-16T00:00:00Z" };
+  return { decisionId: fixtureIdentity(++nextId), request: structuredClone({ ...request, expectedDecisionId: request.expectedDecisionId ?? null }), purpose: "qa", aiOrigin: null, finding: finding(request.issueId), requirement: requirement(), basisEvidence: structuredClone(target.basisEvidence), createdAt: "2026-10-16T00:00:00Z" };
 }
 function view(offset = 0): ReviewFindingView {
   const matching = history.find(value => value.request.expectedBasis === target.basis && value.request.issueId === issue) ?? null;
-  return { unitId: target.unitId, locale: target.locale, basis: target.basis, runId: target.currentCheck?.runId ?? null,
-    findings: offset === 0 ? [{ finding: finding(), requirement: requirement(), decision: matching }] : [], repairs: [], history: history.slice(offset,offset+20),
+  return { unitId: target.unitId, locale: target.locale, basis: target.basis, runId: target.currentCheck?.runId ?? null, semanticRunId: null,
+    findings: offset === 0 ? [{ runId: target.currentCheck!.runId, purpose: "qa", aiOrigin: null, finding: finding(), requirement: requirement(), decision: matching }] : [], repairs: [], history: history.slice(offset,offset+20),
     nextOffset: history.length>offset+20 ? offset+20 : null };
 }
 function pending<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
@@ -108,6 +108,31 @@ it("rejects and explicitly restores exact advisory evidence while retaining its 
   await waitFor(()=>expect(history).toHaveLength(2));
   expect(history[0].request).toMatchObject({disposition:"restored",reason:"Restore reason",expectedDecisionId:history[1].decisionId});
   expect(history[1].request.disposition).toBe("rejected");
+});
+
+it("uses the AI finding's independent run while retaining mechanical QA and model provenance",async()=>{
+  const aiRun = fixtureIdentity(2450), aiIssue = "f".repeat(64);
+  const key = { rule: { id: "meaning", schemaVersion: 1, behaviorVersion: 1 },
+    implementation: { kind: "core" as const, validator: { id: "tsumugi.ai-semantic-review", schemaVersion: 1, behaviorVersion: 1 } } };
+  const aiRequirement = { ...requirement(), key };
+  const aiOrigin = { endpoint: "https://model.example/v1/chat/completions", model: "synthetic-review", recipe: "semantic-review-1",
+    attemptId: fixtureIdentity(2451), itemId: fixtureIdentity(2452), inputDigest: "1".repeat(64), resultId: fixtureIdentity(2453),
+    resultDigest: "2".repeat(64), semanticInputDigest: aiRequirement.inputDigest, scopeDigest: aiRequirement.scopeDigest };
+  const aiFinding = { ...finding(aiIssue), rule: "meaning", detail: "Synthetic model meaning advice" };
+  viewOverride = { ...view(), semanticRunId: aiRun,
+    findings: [...view().findings, { runId: aiRun, purpose: "ai-semantic", aiOrigin, finding: aiFinding, requirement: aiRequirement, decision: null }] };
+  write = async request => {
+    const saved: ReviewFindingDecision = { ...receipt(request), purpose: "ai-semantic", aiOrigin, finding: aiFinding, requirement: aiRequirement };
+    history.unshift(saved); return saved;
+  };
+  const { user, panel } = await open();
+  const article = panel().getByText("Synthetic model meaning advice", { exact: false }).closest("article");
+  if (!article) throw new Error("AI finding article required");
+  expect(within(article).getByText("AI advice from synthetic-review at https://model.example/v1/chat/completions · recipe semantic-review-1")).toBeVisible();
+  await user.click(within(article).getByRole("button", { name: "Reject as false positive" }));
+  await waitFor(() => expect(history).toHaveLength(1));
+  expect(history[0].request.runId).toBe(aiRun); expect(history[0].request.runId).not.toBe(target.currentCheck!.runId);
+  expect(history[0].purpose).toBe("ai-semantic"); expect(target.currentCheck!.runId).toBe(fixtureIdentity(976));
 });
 
 it("recovers the original action receipt while preserving newer reason B and independent manual B",async()=>{

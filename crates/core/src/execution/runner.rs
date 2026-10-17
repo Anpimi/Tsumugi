@@ -168,7 +168,7 @@ pub fn result_channel() -> (ResultSender, Receiver<FixedResult>) {
 
 /// A trusted Core operation can query and update domain tables in the owning
 /// adoption transaction. It must not run transaction-control SQL or external IO.
-/// The wrapper deliberately provides no commit, connection or nested transaction.
+/// The public wrapper deliberately provides no commit, connection or nested transaction.
 pub struct AdoptionTransaction<'a> {
     transaction: &'a rusqlite::Transaction<'a>,
     store_epoch: &'a str,
@@ -182,6 +182,9 @@ impl<'a> AdoptionTransaction<'a> {
     }
     pub(crate) fn store_epoch(&self) -> &str {
         self.store_epoch
+    }
+    pub(crate) fn connection(&self) -> &rusqlite::Connection {
+        self.transaction
     }
     pub fn query_row<
         T,

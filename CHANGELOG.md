@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Review the current saved translation or an explicit bounded entry/language
+  batch for meaning and style, with its own exact preview and sharing consent.
+  Typed model findings retain task and model provenance and can be explicitly
+  recorded in the existing advisory finding, false-positive and repair workflow.
+  They never supply mechanical QA coverage, approval or translation selection.
+  The current-only development project format advances to schema 52; earlier
+  directories are preserved and refused without migration.
+
 - Generate a macOS `.app` with the included runtime and extensions when selecting
   the optional bundled-runtime build profile.
 

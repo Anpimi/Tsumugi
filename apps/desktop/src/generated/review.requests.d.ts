@@ -15,6 +15,7 @@ export type CheckImplementation =
 export type TextReviewField = "source" | "translation";
 export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type ReviewFindingDisposition = "rejected" | "restored" | "repair-requested";
+export type AiSemanticReviewRule = "meaning" | "style";
 
 export interface Requests {
   cancelCheck: ReviewCancelCheckRequest;
@@ -31,6 +32,9 @@ export interface Requests {
   page: ReviewPageRequest;
   prepareCheck: ReviewCheckRequest;
   scope: ReviewScopeRequest;
+  semanticPrepare: AiSemanticReviewPrepareRequest;
+  semanticRead: AiSemanticReviewReadRequest;
+  semanticStart: AiSemanticReviewStartRequest;
   summary: ReviewSummaryPageRequest;
   target: ReviewTargetRequest;
   waiver: WaiverRequest;
@@ -236,6 +240,74 @@ export interface ReviewScopeRequest {
   locale: string;
   projectId: ExecutionId;
   scopeId: ExecutionId;
+  sessionToken: string;
+}
+export interface AiSemanticReviewPrepareRequest {
+  config: AiConfig;
+  projectId: ExecutionId;
+  rules: AiSemanticReviewRule[];
+  sessionToken: string;
+  targets: AiSemanticReviewTarget[];
+}
+export interface AiConfig {
+  concurrency: number;
+  /**
+   * Captured non-secret profile identity. Accepted execution keeps this
+   * provenance and the original defaults; it never resolves mutable settings.
+   */
+  connectionProfile?: ModelConnectionReference | null;
+  /**
+   * Immutable project provenance, independent of current defaults or consent.
+   */
+  contextStrategy: ContextStrategyReference | null;
+  credentialEnv: string;
+  endpoint: string;
+  maxItems: number;
+  maxOutputTokens: number;
+  maxRequests: number;
+  maxRetries: number;
+  model: string;
+  shareContext: boolean;
+  shareTerms: boolean;
+  sourceContext: SourceContextSelection;
+  timeoutSeconds: number;
+  tokenField: string;
+}
+/**
+ * A persistent data identity, never a credential, execution grant or consent.
+ */
+export interface ModelConnectionReference {
+  digest: string;
+  profileId: ExecutionId;
+  revision: UnsignedDecimal;
+  storeId: ExecutionId;
+}
+export interface ContextStrategyReference {
+  candidateId: ExecutionId;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+}
+export interface SourceContextSelection {
+  extracted: boolean;
+  inferred: boolean;
+  maxBytes: number;
+  maxItems: number;
+  neighbors: boolean;
+}
+export interface AiSemanticReviewTarget {
+  locale: string;
+  unitId: ExecutionId;
+}
+export interface AiSemanticReviewReadRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface AiSemanticReviewStartRequest {
+  attemptId: ExecutionId;
+  confirmed: boolean;
+  digest: string;
+  projectId: ExecutionId;
   sessionToken: string;
 }
 export interface ReviewSummaryPageRequest {

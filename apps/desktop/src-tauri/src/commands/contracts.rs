@@ -334,6 +334,9 @@ struct ResourceResponses {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReviewRequests {
+    semantic_prepare: execution::review::semantic::AiSemanticReviewPrepareRequest,
+    semantic_start: execution::review::semantic::AiSemanticReviewStartRequest,
+    semantic_read: execution::review::semantic::AiSemanticReviewReadRequest,
     page: execution::review::ReviewPageRequest,
     target: execution::review::ReviewTargetRequest,
     diagnostic_location: execution::review::ReviewDiagnosticLocationRequest,
@@ -357,6 +360,9 @@ struct ReviewRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReviewResponses {
+    semantic_prepare: execution::review::semantic::AiSemanticReviewPrepared,
+    semantic_start: tsumugi_core::execution::ExecutionId,
+    semantic_read: execution::review::semantic::AiSemanticReviewLookup,
     page: tsumugi_core::ReviewPage,
     target: tsumugi_core::ReviewTarget,
     diagnostic_location: tsumugi_core::ReviewDiagnosticLocation,

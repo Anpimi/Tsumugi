@@ -673,7 +673,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       onReturnFromCorrection={capture => navigation.navigate({ kind: "resource-correction-return", capture })}
       contextEditorReturn={view.memory.read<ContextEditorTarget|null>("resources","contextEditorReturn")}
       onReturnToEditor={capture=>navigation.navigate({kind:"resource-context-return",capture})} /> : null}
-    {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openReviewTranslation} onOpenExtensions={onOpenExtensions}
+    {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openReviewTranslation} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections}
       handoff={view.memory.read<ReviewHandoffPresentation>("review", "aiHandoff")}
       onReturnToAi={view.memory.read<boolean>("review", "returnToAi") ? () => navigation.navigate({ kind: "area", area: "ai" }) : undefined} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}

@@ -1,4 +1,5 @@
 import { ReviewFindings } from "./ReviewFindings";
+import { AiSemanticReview } from "./AiSemanticReview";
 import { ReviewCheckerDetails, ReviewDiagnosticDetails, checkerIdentity, capturedRuleLabel, ruleIdentity } from "./ReviewCheckers";
 import { TextReviewSelections } from "./TextReviewSelections";
 import { reviewFindingLabel } from "./reviewLabels";
@@ -41,10 +42,11 @@ const HISTORY_FIRST_SCOPES: ChangeScope[] = ["source", "translation", "resources
 // cannot refetch while that cursor transition is committing.
 const HISTORY_LATER_SCOPES: ChangeScope[] = ["source", "translation", "resources"];
 
-export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenExtensions, onReturnToAi, handoff, ref }: {
+export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenExtensions, onOpenConnections, onReturnToAi, handoff, ref }: {
   project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string, handoff?: ReviewEditorHandoff) => boolean | Promise<boolean>;
   ref?: Ref<ReviewHandle>;
   onOpenExtensions?: () => void;
+  onOpenConnections?: () => void;
   onReturnToAi?: () => Promise<boolean>;
   handoff?: ReviewHandoffPresentation;
 }) {
@@ -181,7 +183,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
   const invalidPendingLocale = pending && !project.metadata.targetLocales.includes(pending.request.locale) ? pending.request.locale : null;
   const removedLocale = targetRemoved ? locale : invalidChosenLocale ?? invalidDraftLocale ?? invalidPendingLocale;
   const retainedReview = hasDraft || chosenCount > 0 || !!pending || owner.inFlight() || batchRunning
-    || !!currentCheckReview || checkConsent.length > 0 || advisoryChecks.length > 0;
+    || !!currentCheckReview || checkConsent.length > 0 || advisoryChecks.length > 0 || owner.semantic.dirty();
   // The primary content belongs to the business capture, including its checked
   // receipts. Query can refresh the comparison without replacing that evidence.
   const displayTarget = selected;
@@ -503,11 +505,11 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
       const currentOwner = owner.current();
       if (owner.inFlight() || currentOwner.batchRunning || currentOwner.pending) { setOpen(true); setNotice("unknown"); return Promise.resolve(false); }
       if (!Object.values(currentOwner.drafts).some(value => value.length > 0) && Object.keys(currentOwner.chosen).length === 0
-        && !currentOwner.checkReview && currentOwner.checkConsent.length === 0 && currentOwner.advisoryChecks.length === 0) return Promise.resolve(true);
+        && !currentOwner.checkReview && currentOwner.checkConsent.length === 0 && currentOwner.advisoryChecks.length === 0 && !owner.semantic.dirty()) return Promise.resolve(true);
       setOpen(true); setLeavePrompt(true);
       return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
     },
-    allowNavigate() { if (owner.current().pending?.kind === "finding") { setOpen(true); setNotice("unknown"); return Promise.resolve(false); } generation.current++; selecting.current = false; setSelectionBusy(false); setCaptureBusy(false); return Promise.resolve(true); },
+    allowNavigate() { if (owner.current().pending?.kind === "finding" || owner.semantic.reserved()) { setOpen(true); setNotice("unknown"); return Promise.resolve(false); } generation.current++; selecting.current = false; setSelectionBusy(false); setCaptureBusy(false); return Promise.resolve(true); },
   }));
 
   async function captureSummary(after = 0) {
@@ -631,6 +633,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
   function finishLeave(discard: boolean) {
     if (discard && leaveProof.current && !leaveProof.current()) { setLeavePrompt(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; }
     setLeavePrompt(false);
+    if (discard && owner.semantic.reserved()) { leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; return; }
     if (discard) { owner.clear(); setOpen(false); }
     leaveResolver.current?.(discard); leaveResolver.current = null; leaveProof.current = null;
   }
@@ -685,6 +688,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
           {batchStatus?.notStarted ? <p role="status">{t("review.batchRemaining", { count: batchStatus.notStarted })}</p> : null}
           {batchRunning ? <button className="secondary-button" disabled={!stopBatchAvailability().enabled} onClick={() => commandRegistry.dispatch("review.stop-batch", commandScope)}>{t("review.batchCancel")}</button> : null}
+          {tab === "review" ? <AiSemanticReview project={project} active={open && tab === "review" && !leavePrompt} disabled={disabled || !!pending || busyMutation || batchRunning} currentTarget={currentTarget} onOpenConnections={onOpenConnections} /> : null}
           {tab === "review" ? <div className="review-columns">
             <section aria-label={t("review.reviewTab")} aria-busy={summaryBusy}>
               <div className="form-actions"><button className="secondary-button" disabled={busy || summaryBusy || !targetAvailable} onClick={refresh}>{t("review.refresh")}</button>

@@ -37,7 +37,7 @@ export function TaskDock({ project, disabled, onOpen }: {
                 <button type="button" className="text-button" disabled={unavailable}
                   onClick={() => { if (!unavailable) onOpen(row); }}>
                   {t(row.operation === "source-import" ? "source.title" : row.operation === "translation-import" ? "translation.title"
-                    : row.operation === "ai-translation" ? "ai.title" : row.operation === "locale-build" ? "release.title" : "execution.operation")}
+                    : row.operation === "ai-translation" ? "ai.title" : row.operation === "ai-semantic-review" ? "semanticReview.title" : row.operation === "locale-build" ? "release.title" : "execution.operation")}
                   {" · "}{t("execution.taskNumber", { number: row.sequence })}
                 </button>
                 <p>{t("execution.dock.progress", { defaultValue: enUS.execution.dock.progress, running: row.progress.running, queued: row.progress.queued,

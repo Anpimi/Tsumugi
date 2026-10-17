@@ -31,6 +31,9 @@ pub(super) fn verify_input_fact_decisions(
     c: &Connection,
     input: &crate::execution::FixedInput,
 ) -> Result<(), ExecutionError> {
+    if input.envelope().operation == crate::ai::semantic_review::OPERATION {
+        super::ai_semantic_review::verify_input_records(c,input)?;
+    }
     context_facts::verify_input_records(c, input)?;
     strategy::verify_input_binding(c, input)
 }

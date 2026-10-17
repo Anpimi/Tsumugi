@@ -39,9 +39,17 @@ export function confirmReviewFindingBasis(receipt: ReviewFindingDecision, expect
     || actual.termRevisionIds.some((id, index) => id !== expected.termRevisionIds[index])) throw invalidFindingReceipt();
 }
 
-export function confirmReviewFindingEvidence(receipt: ReviewFindingDecision, expected: Pick<AdvisoryFinding, "requirement" | "finding">) {
+function sameAiOrigin(left: AdvisoryFinding["aiOrigin"], right: AdvisoryFinding["aiOrigin"]) {
+  if (left === null || right === null) return left === right;
+  return left.endpoint === right.endpoint && left.model === right.model && left.recipe === right.recipe
+    && left.attemptId === right.attemptId && left.itemId === right.itemId && left.inputDigest === right.inputDigest
+    && left.resultId === right.resultId && left.resultDigest === right.resultDigest
+    && left.semanticInputDigest === right.semanticInputDigest && left.scopeDigest === right.scopeDigest;
+}
+export function confirmReviewFindingEvidence(receipt: ReviewFindingDecision, expected: Pick<AdvisoryFinding, "requirement" | "finding" | "runId" | "purpose" | "aiOrigin">) {
   const requirement = receipt.requirement, finding = receipt.finding;
-  if (ruleIdentity(requirement.key) !== ruleIdentity(expected.requirement.key)
+  if (receipt.request.runId !== expected.runId || receipt.purpose !== expected.purpose || !sameAiOrigin(receipt.aiOrigin, expected.aiOrigin)
+    || ruleIdentity(requirement.key) !== ruleIdentity(expected.requirement.key)
     || requirement.inputDigest !== expected.requirement.inputDigest || requirement.scopeDigest !== expected.requirement.scopeDigest
     || requirement.mandatory || requirement.waivable || requirement.notApplicable !== null
     || requirement.targets.length !== expected.requirement.targets.length
@@ -58,8 +66,9 @@ export const reviewCommands = {
   findings: (request: ReviewHistoryRequest) => checkedInvoke("read_review_findings", request,
     (value): value is ReviewFindingView => validators.validateResponseFindings(value)
       && value.unitId === request.unitId && value.locale === request.locale
-      && (value.runId !== null || value.findings.length === 0)
-      && value.findings.every(item => !item.requirement.mandatory && !item.requirement.waivable && item.requirement.notApplicable === null)
+      && value.findings.every(item => item.runId === (item.purpose === "qa" ? value.runId : value.semanticRunId)
+        && (item.purpose === "qa" ? item.aiOrigin === null : item.aiOrigin !== null)
+        && !item.requirement.mandatory && !item.requirement.waivable && item.requirement.notApplicable === null)
       && value.history.every(item => item.request.projectId === request.projectId && item.request.unitId === request.unitId && item.request.locale === request.locale)),
   findingAction: (request: ReviewFindingActionRequest) => checkedInvoke("read_review_finding_action", request,
     (value): value is ReviewFindingDecision | null => validators.validateResponseFindingAction(value)

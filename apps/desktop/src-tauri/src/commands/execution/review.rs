@@ -1,6 +1,7 @@
 use super::*;
 use tsumugi_core::{ReviewFindingDecision, ReviewFindingView, ReviewFindingWrite};
 pub(in crate::commands::execution) mod checkers;
+pub(in crate::commands) mod semantic;
 pub(in crate::commands) mod plugin;
 pub(super) use plugin::ReviewSession;
 

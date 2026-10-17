@@ -101,6 +101,7 @@ export type TermOrigin = "manual" | "external";
 export type Revision = string;
 export type CandidateDisposition = "rejected" | "restored";
 export type TranslationOrigin = "import" | "manual" | "ai";
+export type ReviewRunPurpose = "qa" | "ai-semantic";
 export type ReviewFindingDisposition = "rejected" | "restored" | "repair-requested";
 export type ReviewRepairStatus =
   "awaiting-current-recheck" | "current-rule-clear" | "current-rule-findings" | "superseded";
@@ -123,6 +124,151 @@ export type ReviewCheckerView =
       plugin: PluginTextReviewView;
     };
 export type UnsignedDecimal = string;
+/**
+ * Pinned local decisions are separate from raw SDK facts and the provider projection.
+ */
+export type ProjectFactCapture =
+  | {
+      kind: "not-selected";
+    }
+  | {
+      decisions: ContextFactDecision[];
+      kind: "selected";
+      manual: boolean;
+      scope: SourceContextRequest;
+    };
+/**
+ * Classification for presentation, without interpreting a format's syntax or
+ * normalizing its literal text. Other source-associated information uses Note.
+ */
+export type SourceContextFactKind = "speaker" | "role" | "scene" | "time" | "location" | "note";
+/**
+ * References are observations in captured source, not proof of an inference.
+ * Human project decisions remain in the project's independent revision owner.
+ */
+export type SourceContextFactOrigin =
+  | {
+      kind: "extracted";
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    }
+  | {
+      kind: "inferred";
+      rationale: string;
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    };
+export type ExtensionHandling = "required" | "preserve" | "optional";
+export type ContentTarget =
+  | {
+      kind: "snapshot";
+    }
+  | {
+      id: string;
+      kind: "unit";
+    }
+  | {
+      id: string;
+      kind: "occurrence";
+    };
+export type ContextFactDisposition =
+  | {
+      kind: "replace";
+      text: string;
+    }
+  | {
+      kind: "reject-inference";
+    }
+  | {
+      kind: "restore";
+    };
+export type SourceContextCapture =
+  | {
+      kind: "not-selected";
+    }
+  | {
+      kind: "selected";
+      value: SelectedSourceContext;
+    };
+export type SourceContextDirection = "before" | "after";
+/**
+ * A pointer only; omitted text and rationale never enter the capture.
+ */
+export type SourceContextOmissionSample =
+  | {
+      blockIndex: number;
+      factIndex: number;
+      kind: "fact";
+      reason: SourceContextOmissionReason;
+    }
+  | {
+      kind: "neighbor";
+      occurrenceId: ExecutionId;
+      reason: SourceContextOmissionReason;
+    };
+export type SourceContextOmissionReason = "not-selected" | "byte-budget" | "item-limit";
+export type AiSemanticReviewRule = "meaning" | "style";
+export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
+export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
+export type ValidationState = "absent" | "pending" | "valid" | "invalid";
+export type RecoveryAction =
+  "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
 
 export interface Responses {
   cancelCheck: boolean;
@@ -140,6 +286,9 @@ export interface Responses {
   page: ReviewPage;
   prepareCheck: ReviewCheckPreparation;
   scope: ReviewScopeCapture;
+  semanticPrepare: AiSemanticReviewPrepared;
+  semanticRead: AiSemanticReviewLookup;
+  semanticStart: ExecutionId;
   summary: ReviewSummaryPage;
   target: ReviewTarget;
   waiver: Waiver;
@@ -653,12 +802,26 @@ export interface EligibilityReason {
   unitId: ExecutionId;
 }
 export interface ReviewFindingDecision {
+  aiOrigin: AiSemanticReviewEvidence | null;
   basisEvidence: ReviewBasis;
   createdAt: string;
   decisionId: ExecutionId;
   finding: CheckFinding;
+  purpose: ReviewRunPurpose;
   request: ReviewFindingWrite;
   requirement: CheckRequirement;
+}
+export interface AiSemanticReviewEvidence {
+  attemptId: ExecutionId;
+  endpoint: string;
+  inputDigest: string;
+  itemId: ExecutionId;
+  model: string;
+  recipe: string;
+  resultDigest: string;
+  resultId: ExecutionId;
+  scopeDigest: string;
+  semanticInputDigest: string;
 }
 export interface ReviewFindingWrite {
   actionId: ExecutionId;
@@ -681,12 +844,16 @@ export interface ReviewFindingView {
   nextOffset: number | null;
   repairs: ReviewFindingRepair[];
   runId: ExecutionId | null;
+  semanticRunId: ExecutionId | null;
   unitId: ExecutionId;
 }
 export interface AdvisoryFinding {
+  aiOrigin: AiSemanticReviewEvidence | null;
   decision: ReviewFindingDecision | null;
   finding: CheckFinding;
+  purpose: ReviewRunPurpose;
   requirement: CheckRequirement;
+  runId: ExecutionId;
 }
 export interface ReviewFindingRepair {
   decision: ReviewFindingDecision;
@@ -759,6 +926,313 @@ export interface ReviewScopeUnit {
   expectedBasis: string;
   expectedDecisionId: ExecutionId | null;
   unitId: ExecutionId;
+}
+export interface AiSemanticReviewPrepared {
+  attemptId: ExecutionId;
+  preview: AiSemanticReviewPreviewView;
+}
+export interface AiSemanticReviewPreviewView {
+  config: AiConfig;
+  digest: string;
+  items: AiSemanticReviewItemView[];
+  recipe: string;
+  rules: AiSemanticReviewRule[];
+}
+export interface AiConfig {
+  concurrency: number;
+  /**
+   * Captured non-secret profile identity. Accepted execution keeps this
+   * provenance and the original defaults; it never resolves mutable settings.
+   */
+  connectionProfile?: ModelConnectionReference | null;
+  /**
+   * Immutable project provenance, independent of current defaults or consent.
+   */
+  contextStrategy: ContextStrategyReference | null;
+  credentialEnv: string;
+  endpoint: string;
+  maxItems: number;
+  maxOutputTokens: number;
+  maxRequests: number;
+  maxRetries: number;
+  model: string;
+  shareContext: boolean;
+  shareTerms: boolean;
+  sourceContext: SourceContextSelection;
+  timeoutSeconds: number;
+  tokenField: string;
+}
+/**
+ * A persistent data identity, never a credential, execution grant or consent.
+ */
+export interface ModelConnectionReference {
+  digest: string;
+  profileId: ExecutionId;
+  revision: UnsignedDecimal;
+  storeId: ExecutionId;
+}
+export interface ContextStrategyReference {
+  candidateId: ExecutionId;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+}
+export interface SourceContextSelection {
+  extracted: boolean;
+  inferred: boolean;
+  maxBytes: number;
+  maxItems: number;
+  neighbors: boolean;
+}
+export interface AiSemanticReviewItemView {
+  basis: string;
+  reviewBasis: ReviewBasis;
+  selectionId: ExecutionId;
+  source: AiItemView;
+  translationRevisionId: ExecutionId;
+  translationText: string;
+}
+export interface AiItemView {
+  context: ContextRevision | null;
+  nativeKey: string;
+  omissions: string[];
+  projectContext: ProjectFactCapture;
+  resourceBaseline: UnsignedDecimal;
+  sourceContext: SourceContextCapture;
+  sourceLocale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  sourceText: string;
+  targetLocale: string;
+  terms: SharedTerm[];
+  unitId: ExecutionId;
+}
+export interface ContextFactDecision {
+  request: ContextFactWrite;
+}
+export interface ContextFactWrite {
+  actionId: ExecutionId;
+  actor: string;
+  basis: SourceFactBasis;
+  disposition: ContextFactDisposition;
+  expectedDecisionId: ExecutionId | null;
+  reason: string;
+}
+export interface SourceFactBasis {
+  fact: SelectedSourceFact;
+  scope: SourceContextRequest;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+/**
+ * One whole fact, with the original block target and source references.
+ */
+export interface SelectedSourceFact {
+  blockIndex: number;
+  fact: SourceContextFact;
+  factIndex: number;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextFact {
+  /**
+   * Unique only inside this block; it is not a project revision or entity ID.
+   */
+  id: string;
+  kind: SourceContextFactKind;
+  origin: SourceContextFactOrigin;
+  text: string;
+}
+export interface SourceReference {
+  artifactId: string;
+  range: TextRange;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface SelectedSourceContext {
+  contentRevision: Revision;
+  facts: SelectedSourceFact[];
+  localUnitId: string;
+  neighbors: SourceContextNeighbor[];
+  observations: SourceContextObservations;
+  omissions: SourceContextOmissions;
+  scope: SourceContextRequest;
+  selection: SourceContextSelection;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+export interface SourceContextNeighbor {
+  adjacentTo: SourceContextAdjacency[];
+  occurrence: SourceContextOccurrence;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface SourceContextAdjacency {
+  /**
+   * The neighbor's position relative to this selected occurrence.
+   */
+  direction: SourceContextDirection;
+  occurrenceId: ExecutionId;
+}
+export interface SourceContextOccurrence {
+  localOccurrenceId: string;
+  occurrenceId: ExecutionId;
+  source: SourceReference;
+}
+/**
+ * Missing, explicitly empty and unknown schema observations are distinct.
+ */
+export interface SourceContextObservations {
+  emptyBlocks: number;
+  knownBlocks: number;
+  knownFacts: number;
+  missingBlocks: boolean;
+  neighborOccurrences: number;
+  unknownBlocks: number;
+  unknownRequiredBlocks: number;
+  unknownSamples: UnknownSourceBlockSample[];
+}
+export interface UnknownSourceBlockSample {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextOmissions {
+  byteBudget: number;
+  extracted: number;
+  inferred: number;
+  itemLimit: number;
+  neighbors: number;
+  notSelected: number;
+  samples: SourceContextOmissionSample[];
+}
+export interface SharedTerm {
+  protected: boolean;
+  revisionId: ExecutionId;
+  source: string;
+  target: string;
+}
+/**
+ * An absent task is an explicit successful ledger observation. Storage errors
+ * are still errors, so a lost start response cannot silently clear its intent.
+ */
+export interface AiSemanticReviewLookup {
+  attemptId: ExecutionId;
+  view: AiSemanticReviewView | null;
+}
+export interface AiSemanticReviewView {
+  detail: AttemptDetail;
+  preview: AiSemanticReviewPreviewView;
+  rows: AiSemanticReviewRow[];
+}
+export interface AttemptDetail {
+  attemptId: ExecutionId;
+  items: ItemView[];
+  nextOffset: number | null;
+  operation: string;
+  progress: Progress;
+  recovery: RecoveryPlan;
+  taskId: ExecutionId;
+}
+/**
+ * Read-only execution projection shared by human and bounded consumers.
+ */
+export interface ItemView {
+  resultId: ExecutionId | null;
+  scope: Scope;
+  status: ItemStatus;
+}
+export interface Scope {
+  id: string;
+  kind: string;
+  locale: string | null;
+}
+export interface ItemStatus {
+  adoption: AdoptionState;
+  cancellationRequested: boolean;
+  diagnostic: string | null;
+  execution: ExecutionState;
+  itemId: ExecutionId;
+  retrySafe: boolean;
+  validation: ValidationState;
+}
+export interface Progress {
+  adopted: number;
+  cancelled: number;
+  failed: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  total: number;
+  unknown: number;
+}
+export interface RecoveryPlan {
+  attemptId: ExecutionId;
+  units: RecoveryUnit[];
+}
+export interface RecoveryUnit {
+  actions: RecoveryAction[];
+  blockedReason: string | null;
+  itemIds: ExecutionId[];
+  receiptId: ExecutionId | null;
+  remainingItemIds: ExecutionId[];
+  resultIds: ExecutionId[];
+  scopes: Scope[];
+  unitId: ExecutionId;
+}
+export interface AiSemanticReviewRow {
+  current: boolean;
+  item: AiSemanticReviewItemView;
+  itemId: ExecutionId;
+  output: AiSemanticReviewOutputView | null;
+  run: AiSemanticReviewRun | null;
+}
+export interface AiSemanticReviewOutputView {
+  requests: number;
+  rules: AiSemanticReviewRuleResult[];
+  targetLocale: string;
+  unitId: ExecutionId;
+  usage: AiUsageView | null;
+  usageIncomplete: boolean;
+}
+export interface AiSemanticReviewRuleResult {
+  findings: AiSemanticReviewFinding[];
+  rule: AiSemanticReviewRule;
+}
+export interface AiSemanticReviewFinding {
+  code: string;
+  detail: string;
+  location: TextReviewLocation | null;
+  severity: FindingSeverity;
+  suggestion: string | null;
+}
+export interface AiUsageView {
+  completionTokens: UnsignedDecimal;
+  promptTokens: UnsignedDecimal;
+}
+export interface AiSemanticReviewRun {
+  actionId: ExecutionId;
+  basis: string;
+  basisEvidence: ReviewBasis;
+  createdAt: string;
+  diagnostics: TextReviewDiagnostic[];
+  evidence: AiSemanticReviewEvidence;
+  locale: string;
+  purpose: ReviewRunPurpose;
+  rules: CheckRuleResult[];
+  runId: ExecutionId;
+  unitId: ExecutionId;
+  validatorVersion: string;
 }
 export interface ReviewSummaryPage {
   nextOrdinal: number | null;
