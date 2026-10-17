@@ -793,7 +793,7 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     save["text"] = json!("人工编辑");
     let manual = call(&view, "save_translation_revision", save.clone()).unwrap();
     assert_eq!(
-        call(&view, "save_translation_revision", save).unwrap(),
+        call(&view, "save_translation_revision", save.clone()).unwrap(),
         manual
     );
     let mut select = context.clone();
@@ -803,8 +803,102 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     select["sourceRevisionId"] = page["rows"][0]["sourceRevisionId"].clone();
     select["expectedSelectionId"] = manual["selection"]["eventId"].clone();
     select["revisionId"] = imported["rows"][0]["revisionId"].clone();
-    let restored = call(&view, "select_translation_revision", select).unwrap();
+    let restored = call(&view, "select_translation_revision", select.clone()).unwrap();
     assert_eq!(restored["revisionId"], imported["rows"][0]["revisionId"]);
+    let project_id = ExecutionId::parse(context["projectId"].as_str().unwrap()).unwrap();
+    let unit_id = ExecutionId::parse(history["unitId"].as_str().unwrap()).unwrap();
+    let before_reads = app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &sessions.active.as_ref().unwrap().store;
+        (
+            store
+                .changes_since(tsumugi_core::execution::Revision::new(0).unwrap())
+                .sequence,
+            store
+                .translation_history(project_id, unit_id, "zh-CN", 0, 10)
+                .unwrap()
+                .total,
+        )
+    });
+    assert_eq!(
+        call(&view, "read_translation_save_action", save.clone()).unwrap(),
+        manual
+    );
+    assert_eq!(
+        call(&view, "read_translation_selection_action", select.clone()).unwrap(),
+        restored
+    );
+    let mut missing = save.clone();
+    missing["actionId"] = json!(ExecutionId::new());
+    assert!(call(&view, "read_translation_save_action", missing).unwrap().is_null());
+    let mut missing_selection = select.clone();
+    missing_selection["actionId"] = json!(ExecutionId::new());
+    assert!(call(&view, "read_translation_selection_action", missing_selection)
+        .unwrap()
+        .is_null());
+    let mut altered = save.clone();
+    altered["text"] = json!("Different request");
+    assert_eq!(
+        call(&view, "read_translation_save_action", altered).unwrap_err()["code"],
+        "result-mismatch"
+    );
+    let mut other_kind = save.clone();
+    other_kind["actionId"] = select["actionId"].clone();
+    assert_eq!(
+        call(&view, "read_translation_save_action", other_kind).unwrap_err()["code"],
+        "result-mismatch"
+    );
+    let mut other_kind = select.clone();
+    other_kind["actionId"] = save["actionId"].clone();
+    assert_eq!(
+        call(&view, "read_translation_selection_action", other_kind)
+            .unwrap_err()["code"],
+        "result-mismatch"
+    );
+    for command in [
+        "read_translation_save_action",
+        "read_translation_selection_action",
+    ] {
+        let original = if command == "read_translation_save_action" {
+            &save
+        } else {
+            &select
+        };
+        for field in ["sessionToken", "projectId"] {
+            let mut foreign = original.clone();
+            foreign[field] = if field == "sessionToken" {
+                json!("inactive-session")
+            } else {
+                json!(ExecutionId::new())
+            };
+            assert_eq!(call(&view, command, foreign).unwrap_err()["code"], "session-invalid");
+        }
+        let mut unknown = original.clone();
+        unknown["approved"] = json!(true);
+        assert!(call(&view, command, unknown).is_err());
+    }
+    app.state::<AppState>().sessions.with(|sessions| {
+        let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        host.quiescing = true;
+    });
+    assert_eq!(call(&view, "read_translation_save_action", save.clone()).unwrap(), manual);
+    assert_eq!(call(&view, "read_translation_selection_action", select.clone()).unwrap(), restored);
+    app.state::<AppState>().sessions.with(|sessions| {
+        let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        host.quiescing = false;
+    });
+    let after_reads = app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &sessions.active.as_ref().unwrap().store;
+        (
+            store
+                .changes_since(tsumugi_core::execution::Revision::new(0).unwrap())
+                .sequence,
+            store
+                .translation_history(project_id, unit_id, "zh-CN", 0, 10)
+                .unwrap()
+                .total,
+        )
+    });
+    assert_eq!(after_reads, before_reads);
     wait_for_execution_idle(&view, &context);
     call(
         &view,
@@ -820,6 +914,10 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     .unwrap();
     context["sessionToken"] = reopened["sessionToken"].clone();
     history["sessionToken"] = reopened["sessionToken"].clone();
+    save["sessionToken"] = reopened["sessionToken"].clone();
+    select["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&view, "read_translation_save_action", save).unwrap(), manual);
+    assert_eq!(call(&view, "read_translation_selection_action", select).unwrap(), restored);
     let saved = call(&view, "read_translation_history", history).unwrap();
     assert_eq!(saved["total"], "2");
     assert_eq!(saved["current"]["revisionId"], restored["revisionId"]);

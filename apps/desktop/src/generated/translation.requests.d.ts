@@ -21,7 +21,9 @@ export interface Requests {
   projectionPrepare: TranslationProjectionPrepareRequest;
   projectionStart: TranslationProjectionStartRequest;
   save: TranslationSaveRequest;
+  saveAction: TranslationSaveRequest;
   select: TranslationSelectRequest;
+  selectionAction: TranslationSelectRequest;
   source: TranslationSourceRequest;
 }
 export interface TranslationActionRequest {

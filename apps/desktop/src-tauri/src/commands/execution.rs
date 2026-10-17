@@ -73,6 +73,8 @@ macro_rules! handlers {
         source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_history,
         source::translation::read_translation_action,
+        source::translation::read_translation_save_action,
+        source::translation::read_translation_selection_action,
         source::translation::save_translation_revision,source::translation::select_translation_revision,
         source::translation::decide_translation_candidate,source::translation::read_translation_candidate_action,
         resource::preview_tmx_exchange,resource::preview_tbx_exchange,resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,

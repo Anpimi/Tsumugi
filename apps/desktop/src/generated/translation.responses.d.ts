@@ -79,8 +79,10 @@ export interface Responses {
   prepared: AdoptionAction;
   preview: TranslationPreview;
   projectionReview: TranslationProjectionReview;
+  saveAction: TranslationSaveReceipt | null;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
+  selectionAction: TranslationSelection | null;
   source: TranslationSourceContext;
 }
 export interface TranslationSelection {

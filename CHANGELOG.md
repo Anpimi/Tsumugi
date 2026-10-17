@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Confirm an uncertain saved translation or revision choice from its original
+  action receipt before asking for a retry. Checking a saved result no longer
+  sends a save or selection again, and newer draft text is retained.
+
 - Check the original saved candidate decision once when a rejection or restore
   response is lost or uncertain. Newer reviewer and reason input is retained,
   with manual recovery available when the decision remains unconfirmed.
