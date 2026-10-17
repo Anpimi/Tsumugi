@@ -111,6 +111,7 @@ export interface Requests {
   workPlanGenerationStart: WorkPlanGenerationStartRequest;
   workPlanPrepare: WorkPlanPrepareRequest;
   workPlanStart: WorkPlanStartRequest;
+  workPlanStartAction: WorkPlanStartRequest;
   workPlanStatus: WorkPlanStatusRequest;
   workProtectionRead: WorkProtectionReadRequest;
   workProtectionSet: WorkProtectionSetRequest;

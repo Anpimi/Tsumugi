@@ -27,6 +27,11 @@ export const arenaCommands={
   const result=await checkedInvoke("start_arena_translation",request,validators.validateResponseIdentity);
   requireConfirmation(result===request.attemptId);return result;
  },
+ startAction:async(request:StartRequest)=>{
+  const result=await checkedInvoke("read_arena_start_action",request,validators.validateResponseStartAction);
+  requireConfirmation(result===null||(result.projectId===request.projectId&&result.attemptId===request.attemptId&&result.digest===request.digest));
+  return result;
+ },
  read:async(request:ReadRequest)=>{
   const result=await checkedInvoke("read_arena_translation",request,validators.validateResponseView);
   requireConfirmation(result.detail.attemptId===request.attemptId&&result.rows.every(row=>!row.output||(row.output.unitId===row.item.unitId&&row.output.targetLocale===row.item.targetLocale)));return result;

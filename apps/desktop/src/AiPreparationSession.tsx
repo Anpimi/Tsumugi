@@ -432,10 +432,10 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     if (!canRunChild(recovery)) return;
     await runWorkPlan(work, planId, sourceContentKey);
   }
-  function recordPlanStart(attemptId: string, planId: string, prepared: WorkPlanView, generation: string, editSeq: number) {
+  function recordPlanStart(attemptId: string, planId: string, prepared: WorkPlanView, generation: string, editSeq: number, taskId: string | null = null) {
     if (!live() || !validateResponseIdentity(attemptId) || prepared.planId !== planId) return;
     update(before => ({ ...before,attempt:attemptId,planId,checkedTask:null,started:null,
-      startedPlan:{prepared,attemptId,taskId:null,generation,unitIds:prepared.scope.map(unit=>unit.unitId)},
+      startedPlan:{prepared,attemptId,taskId,generation,unitIds:prepared.scope.map(unit=>unit.unitId)},
       capture:before.capture?.kind === "plan" && before.capture.value.planId === prepared.planId && before.capture.value.digest === prepared.digest ? null : before.capture,
       consent:false,dirty:before.editSeq === editSeq ? false : before.dirty,notice:before.editSeq === editSeq ? "started" : "newer" }));
     reads.invalidate(["execution"]);

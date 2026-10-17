@@ -121,6 +121,12 @@ export const workPlanCommands = {
     if (value !== expectedAttemptId) invalidAcknowledgement();
     return value;
   },
+  startAction: async (request: WorkPlanStartRequest) => {
+    const value = await checkedInvoke("read_work_plan_start_action", request, validators.validateResponseWorkPlanStartAction);
+    if (value !== null && (value.projectId !== request.projectId || value.planId !== request.planId
+      || value.actionId !== request.actionId || value.expectedGeneration !== request.expectedGeneration)) invalidAcknowledgement();
+    return value;
+  },
   control: async (request: WorkPlanControlRequest) => {
     if (!validators.validateRequestWorkPlanControl(request)
       || request.command !== "continue" && request.applicationToolExecutions.length !== 0

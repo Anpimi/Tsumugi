@@ -672,6 +672,66 @@ pub(super) fn check_scope_in(
 }
 
 impl ProjectStore {
+    /// Confirm a historical start without renewing authority or submitting work.
+    pub fn work_plan_start_action_read(
+        &self,
+        project: ExecutionId,
+        plan: ExecutionId,
+        action: ExecutionId,
+        generation: Revision,
+    ) -> Result<Option<WorkPlanStartReceipt>, ExecutionError> {
+        if generation.get() == 0 {
+            return Err(err(ErrorCode::InvalidInput, "work-plan-start-generation"));
+        }
+        let found = super::super::review::read_snapshot(self.connection().map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?, |c| {
+            let row: Option<(String, Vec<u8>, String, Vec<u8>, String)> = c.query_row(
+                "SELECT plan_id,request,request_digest,receipt,receipt_digest FROM application_actions WHERE action_id=?1",
+                [action.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+            ).optional().map_err(sql)?;
+            let Some((stored_plan, bytes, digest, receipt_bytes, receipt_digest)) = row else { return Ok(None); };
+            let request: Request = codec::decode(&bytes, MAX_INPUT_BYTES)?;
+            let receipt: WorkPlanReceipt = codec::decode(&receipt_bytes, MAX_INPUT_BYTES)?;
+            if request.action() != action || request.plan().to_string() != stored_plan
+                || digest != codec::digest(&codec::encode(&request, MAX_INPUT_BYTES)?)
+                || receipt_digest != codec::digest(&receipt_bytes)
+                || receipt.action_id != action || receipt.lease.plan_id != request.plan()
+            {
+                return Err(err(ErrorCode::CorruptLedger, "work-plan-start-action"));
+            }
+            let stored = load(c, request.plan())?;
+            validate_receipt(&request, &receipt, &stored)?;
+            if receipt.lease.generation.get() == 0 || receipt.lease.generation > stored.lease.generation {
+                return Err(err(ErrorCode::CorruptLedger, "work-plan-start-generation"));
+            }
+            if receipt.lease.plan_id != plan || receipt.lease.generation != generation
+                || stored.plan.project_id != project || receipt.state != WorkPlanState::Active
+            {
+                return Err(err(ErrorCode::ResultMismatch, "work-plan-start-request"));
+            }
+            let input = FixedInput::capture(receipt.input.ok_or_else(|| err(ErrorCode::CorruptLedger, "work-plan-start-input"))?)?;
+            let envelope = input.envelope();
+            let exists: bool = c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                [envelope.attempt_id.to_string()], |row| row.get(0),
+            ).map_err(sql)?;
+            if !exists { return Ok(None); }
+            let saved = ledger::load_input(c, envelope.attempt_id)?;
+            if saved.bytes() != input.bytes() {
+                return Err(err(ErrorCode::ResultMismatch, "work-plan-start-input"));
+            }
+            let association: Option<(String, i64, String, String)> = c.query_row(
+                "SELECT plan_id,generation,kind,root_task FROM application_executions WHERE attempt_id=?1",
+                [envelope.attempt_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+            ).optional().map_err(sql)?;
+            if association != Some((plan.to_string(), generation.get() as i64, "model".to_string(), stored.plan.execution_input()?.task_id.to_string())) {
+                return Err(err(ErrorCode::CorruptLedger, "work-plan-start-association"));
+            }
+            Ok(Some(WorkPlanStartReceipt {project_id:project,plan_id:plan,action_id:action,
+                expected_generation:generation,attempt_id:envelope.attempt_id,task_id:envelope.task_id}))
+        })?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
     pub fn work_plan_receipt(
         &self,
         action_id: ExecutionId,

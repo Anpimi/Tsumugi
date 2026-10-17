@@ -165,6 +165,16 @@ pub async fn preview_arena_translation(
         .await
 }
 #[tauri::command]
+pub async fn read_arena_start_action(
+    state: State<'_, AppState>, request: StartRequest,
+) -> Result<Option<ArenaStartReceipt>, CommandError> {
+    state.sessions.run("read_arena_start_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.arena_start_action_read(request.project_id, request.attempt_id, &request.digest, request.confirmed)
+            .map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn start_arena_translation(
     state: State<'_, AppState>,
     request: StartRequest,

@@ -511,11 +511,15 @@
       },
       "start": {
         "$ref": "#/definitions/StartRequest"
+      },
+      "startAction": {
+        "$ref": "#/definitions/StartRequest"
       }
     },
     "required": [
       "preview",
       "start",
+      "startAction",
       "read",
       "compare",
       "comparison",
@@ -868,6 +872,31 @@
         "required": [
           "config",
           "items",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "ArenaStartReceipt": {
+        "additionalProperties": false,
+        "description": "The recorded start input, independently of provider or worker progress.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "taskId",
           "digest"
         ],
         "type": "object"
@@ -2638,12 +2667,23 @@
       "selection": {
         "$ref": "#/definitions/TranslationSelection"
       },
+      "startAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ArenaStartReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "view": {
         "$ref": "#/definitions/View"
       }
     },
     "required": [
       "prepared",
+      "startAction",
       "identity",
       "view",
       "comparison",

@@ -2161,6 +2161,7 @@ ai: {
       "viewContinuation": "View continued work",
       "checkReceipt": "Check recorded outcome",
       "checkingAdoption": "Checking the saved adoption result…",
+      "checkingStart": "Checking whether this task was started…",
       "checkingContinuation": "Checking the saved recovery request…",
       "retryAdoption": "Retry the same application",
       "keepOutput": "Keep output and return",

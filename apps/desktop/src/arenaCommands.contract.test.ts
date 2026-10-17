@@ -3,10 +3,26 @@ import fixture from "../test/fixtures/arenaCommands.contract.json";
 import { arenaCommands, confirmArenaComparison, confirmArenaMerge } from "./arenaCommands";
 import * as validators from "./generated/arena.validators";
 import { hasUnknownOutcome } from "./projectCommands";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
+
+it("reads only the captured Arena start and distinguishes missing from invalid proof", async () => {
+  const request=fixture.requests.start;
+  const receipt={projectId:request.projectId,attemptId:request.attemptId,taskId:fixtureIdentity(702),digest:request.digest};
+  expect(validators.validateResponseStartAction(receipt)).toBe(true);
+  invoke.mockResolvedValueOnce(receipt);
+  expect(await arenaCommands.startAction(request)).toEqual(receipt);
+  expect(invoke).toHaveBeenLastCalledWith("read_arena_start_action",{request});
+  invoke.mockResolvedValueOnce(null);expect(await arenaCommands.startAction(request)).toBeNull();
+  for(const wrong of [undefined,{}, {...receipt,projectId:fixtureIdentity(703)}, {...receipt,attemptId:fixtureIdentity(704)},
+    {...receipt,digest:"f".repeat(64)}, {...receipt,taskId:null}, {...receipt,extra:true}]){
+    invoke.mockResolvedValueOnce(wrong);await expect(arenaCommands.startAction(request)).rejects.toThrow();
+  }
+  expect(invoke.mock.calls.every(([command])=>command==="read_arena_start_action")).toBe(true);
+});
 
 it("validates both directions of every shared Arena contract", async () => {
   for (const [validate, value] of [

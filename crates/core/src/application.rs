@@ -525,6 +525,19 @@ pub struct ControlWorkPlan {
     pub expires_at: Option<u64>,
 }
 
+/// Evidence that the exact authorized fixed input was durably enqueued.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanStartReceipt {
+    pub project_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub expected_generation: Revision,
+    pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkPlanReceipt {

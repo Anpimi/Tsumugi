@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Confirm an uncertain AI work-plan or comparison run start against its original
+  saved input before allowing an explicit retry. Result checks do not start work,
+  renew permission or send model requests. A recorded start confirms enqueueing,
+  independently of worker or model progress.
+
 - Check an uncertain cancellation request or Task continuation against its
   original saved record before offering a retry. Checking sends no replacement
   cancellation or continuation. A recorded cancellation does not confirm that

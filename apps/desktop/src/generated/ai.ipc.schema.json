@@ -2571,6 +2571,9 @@
       "workPlanStart": {
         "$ref": "#/definitions/WorkPlanStartRequest"
       },
+      "workPlanStartAction": {
+        "$ref": "#/definitions/WorkPlanStartRequest"
+      },
       "workPlanStatus": {
         "$ref": "#/definitions/WorkPlanStatusRequest"
       },
@@ -2590,6 +2593,7 @@
       "maintenanceAssessment",
       "workPlanAuthorize",
       "workPlanStart",
+      "workPlanStartAction",
       "workPlanGenerationPrepare",
       "workPlanGenerationStart",
       "workPlanGenerationDiscard",
@@ -8295,6 +8299,39 @@
         ],
         "type": "object"
       },
+      "WorkPlanStartReceipt": {
+        "additionalProperties": false,
+        "description": "Evidence that the exact authorized fixed input was durably enqueued.",
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedGeneration": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "actionId",
+          "expectedGeneration",
+          "attemptId",
+          "taskId"
+        ],
+        "type": "object"
+      },
       "WorkPlanState": {
         "enum": [
           "active",
@@ -8630,6 +8667,16 @@
       "workPlanReceipt": {
         "$ref": "#/definitions/WorkPlanReceiptView"
       },
+      "workPlanStartAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/WorkPlanStartReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "workPlanStatus": {
         "$ref": "#/definitions/WorkPlanStatusView"
       },
@@ -8659,6 +8706,7 @@
       "workPlanReceipt",
       "workPlanStatus",
       "workPlanAction",
+      "workPlanStartAction",
       "workProtection"
     ],
     "title": "Responses",

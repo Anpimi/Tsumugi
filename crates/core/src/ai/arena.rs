@@ -5,6 +5,17 @@ use std::collections::BTreeSet;
 pub const OPERATION: &str = "arena-translation";
 pub const CAPABILITY: &str = "openai-compatible.arena";
 
+/// The recorded start input, independently of provider or worker progress.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ArenaStartReceipt {
+    pub project_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub digest: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

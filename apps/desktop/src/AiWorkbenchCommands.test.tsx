@@ -138,6 +138,8 @@ beforeEach(async () => {
       if (!validateRequestWorkPlanStart(payload.request)) throw new Error("Invalid plan start request");
       return planReceipts.get(payload.request.actionId)?.attemptId;
     }
+    if (command === "read_work_plan_start_action") return {projectId:payload.request.projectId,planId:payload.request.planId,
+      actionId:payload.request.actionId,expectedGeneration:payload.request.expectedGeneration,attemptId:aiAttempt,taskId:aiTask};
     if (command === "read_ai_translation") return structuredClone(view);
     if (command === "create_execution_identity") return fixtureIdentity(nextIdentity++);
     if (command === "prepare_execution_adoption") { if (!validateRequestPrepare(payload.request)) throw new Error("Invalid adoption request"); action = actionFor(payload.request); return action; }
@@ -417,8 +419,10 @@ it("releases the flight witness immediately when its owner is destroyed, before 
 it("retains an unknown start and uses the exact Registry recovery request after rejected replay and locale removal", async () => {
   const { rendered } = await open(); await prepareThroughRegistry();
   const original = invoke.getMockImplementation()!; let starts = 0;
+  let checks=0;
   invoke.mockImplementation((command: string, request: unknown) => command === "start_work_plan"
-    ? Promise.reject(++starts === 1 ? new Error("Lost start acknowledgement") : definiteRejection()) : original(command, request));
+    ? Promise.reject(++starts === 1 ? new Error("Lost start acknowledgement") : definiteRejection())
+    : command === "read_work_plan_start_action" && ++checks===1 ? Promise.resolve(null) : original(command, request));
   await act(async () => { expect(registry.dispatch("ai.start", scope, startPayload())).toBe(true); });
   await waitFor(() => expect(owner.planControl.current().pending?.uncertain).toBe(true));
   const payload = startPendingPayload(), request = payload.request, removed = { ...project, metadata: { ...project.metadata, targetLocales: [] } };
@@ -430,7 +434,128 @@ it("retains an unknown start and uses the exact Registry recovery request after 
   await act(async () => { expect(registry.dispatch("ai.reconcile-start", scope, payload)).toBe(true); });
   await waitFor(() => expect(owner.planControl.current().pending).toBeNull());
   expect(owner.attempt).toBe(payload.attemptId); expect(payloads("start_work_plan")).toEqual([request, request]);
+  expect(payloads("read_work_plan_start_action")).toEqual([request,request]);
   expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+const unknownPlanStart:CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-recover",reason:"start-ack-lost",recoveryRequired:true};
+function planStartReceipt(request:{projectId:string;planId:string;actionId:string;expectedGeneration:string}) {
+  return {projectId:request.projectId,planId:request.planId,actionId:request.actionId,
+    expectedGeneration:request.expectedGeneration,attemptId:aiAttempt,taskId:aiTask};
+}
+it.each(["lost","invalid"] as const)("automatically checks one default AI start after a %s ACK without depending on its result View",async kind=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"
+    ?kind==="lost"?Promise.reject(unknownPlanStart):Promise.resolve(fixtureIdentity(999))
+    :command==="read_ai_translation"?Promise.reject(new Error("Result projection unavailable")):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.attempt).toBe(aiAttempt));
+  expect(owner.planControl.current().pending).toBeNull();expect(owner.current().failure).toBeNull();
+  expect(owner.current().startedPlan?.taskId).toBe(aiTask);
+  expect(payloads("read_work_plan_start_action")).toEqual(payloads("start_work_plan"));
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("read_work_plan_start_action")).toHaveLength(1);
+  expect(calls("authorize_work_plan")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it("pins the default AI task from its start receipt and rejects a later unrelated result View",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(unknownPlanStart):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().attempt).toBe(aiAttempt));
+  expect(owner.current().startedPlan?.taskId).toBe(aiTask);
+  view={...view,detail:{...view.detail,taskId:fixtureIdentity(998)}};
+  await expect(owner.readView(aiAttempt)).rejects.toThrow();
+  expect(owner.current().startedPlan?.taskId).toBe(aiTask);expect(calls("start_work_plan")).toHaveLength(1);
+});
+
+it("does not interpret malformed or unrelated start receipts as missing, and manually checks the same request",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;let proof:unknown=undefined;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(unknownPlanStart)
+    :command==="read_work_plan_start_action"?Promise.resolve(proof):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  const payload=startPendingPayload(),receipt=planStartReceipt(payload.request);
+  for(const wrong of [undefined,{}, {...receipt,projectId:fixtureIdentity(991)}, {...receipt,planId:fixtureIdentity(992)},
+    {...receipt,actionId:fixtureIdentity(993)}, {...receipt,expectedGeneration:"2"}, {...receipt,attemptId:fixtureIdentity(994)}, {...receipt,taskId:null}]){
+    proof=wrong;await act(async()=>{expect(registry.dispatch("ai.reconcile-start",scope,payload)).toBe(true);});
+    await waitFor(()=>expect(owner.current().busy).toBe(false));
+    expect(owner.planControl.current().pending?.request).toBe(payload.request);
+    expect(registry.describe("ai.retry-start",scope,payload)?.availability.enabled).toBe(false);
+    expect(registry.dispatch("ai.retry-start",scope,payload)).toBe(false);
+  }
+  proof=receipt;await act(async()=>{expect(registry.dispatch("ai.reconcile-start",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending).toBeNull());
+  expect(owner.attempt).toBe(aiAttempt);expect(owner.current().failure).toBeNull();expect(calls("start_work_plan")).toHaveLength(1);
+  expect(payloads("read_work_plan_start_action").every(request=>JSON.stringify(request)===JSON.stringify(payload.request))).toBe(true);
+});
+
+it.each(["en-US","zh-CN"] as const)("shows only the actual default AI read phase in %s and keeps the synchronous flight reserved",async language=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!,write=deferred<string>(),lookup=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?write.promise
+    :command==="read_work_plan_start_action"?lookup.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("start_work_plan")).toHaveLength(1));
+  const payload=startPendingPayload();await act(async()=>{await i18n.changeLanguage(language);});
+  const message=language==="en-US"?"Checking whether this task was started…":"正在核对此次任务是否已启动…";
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  await act(async()=>{write.resolve(fixtureIdentity(999));});
+  await screen.findByText(message);
+  expect(owner.planControl.current().pending).toMatchObject({kind:"start",checking:true,retryAllowed:false});
+  expect(owner.current().failure).toBeNull();
+  act(()=>{expect(registry.dispatch("ai.reconcile-start",scope,payload)).toBe(false);expect(registry.dispatch("ai.retry-start",scope,payload)).toBe(false);});
+  await act(async()=>{lookup.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  expect(registry.describe("ai.retry-start",scope,payload)?.availability.enabled).toBe(true);
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("read_work_plan_start_action")).toHaveLength(1);
+});
+
+it("preserves typed original start details after a missing receipt",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(unknownPlanStart)
+    :command==="read_work_plan_start_action"?Promise.resolve(null):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(owner.current().failure).toEqual(unknownPlanStart);expect(owner.planControl.current().pending).toMatchObject({retryAllowed:true,checking:false});
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("read_work_plan_start_action")).toHaveLength(1);
+});
+
+it("does not automatically read a fresh formally rejected default AI start",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(definiteRejection()):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(owner.planControl.current().pending).toBeNull();expect(calls("read_work_plan_start_action")).toHaveLength(0);
+});
+
+it.each(["hidden","unmounted"] as const)("completes a default AI automatic read after its consumer is %s and preserves newer B",async phase=>{
+  const {user,rendered}=await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!,lookup=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(unknownPlanStart)
+    :command==="read_work_plan_start_action"?lookup.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("read_work_plan_start_action")).toHaveLength(1));const payload=startPendingPayload();
+  act(()=>owner.setConfig({...owner.current().config,model:"Newer B"}));
+  if(phase==="hidden")await user.click(screen.getByRole("button",{name:"Project overview"}));
+  else rendered.rerender(<Harness mounted={false}/>,project);
+  await act(async()=>{lookup.resolve(planStartReceipt(payload.request));});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(owner.current().attempt).toBe(aiAttempt);expect(owner.planControl.current().pending).toBeNull();
+  expect(owner.current().config.model).toBe("Newer B");expect(owner.current().dirty).toBe(true);
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("read_work_plan_start_action")).toHaveLength(1);
+});
+
+it.each(["before-read","during-read"] as const)("does not send or accept a default AI start read after owner retirement %s",async phase=>{
+  const {rendered}=await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!,write=deferred<string>(),lookup=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?write.promise
+    :command==="read_work_plan_start_action"?lookup.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("start_work_plan")).toHaveLength(1));const payload=startPendingPayload();
+  if(phase==="during-read"){
+    await act(async()=>{write.resolve(fixtureIdentity(999));});await waitFor(()=>expect(calls("read_work_plan_start_action")).toHaveLength(1));
+  }
+  const before=owner.current(),control=owner.planControl.current();rendered.unmount();
+  await act(async()=>{if(phase==="before-read")write.resolve(fixtureIdentity(999));else lookup.resolve(planStartReceipt(payload.request));});
+  expect(owner.current()).toBe(before);expect(owner.planControl.current()).toBe(control);
+  expect(calls("read_work_plan_start_action")).toHaveLength(phase==="before-read"?0:1);
 });
 
 it("settles a Registry adoption A without replacing newer B even when the subsequent result read fails", async () => {

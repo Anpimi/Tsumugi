@@ -12,6 +12,7 @@ export interface Requests {
   reveal: RevealRequest;
   session: SessionRequest;
   start: StartRequest;
+  startAction: StartRequest;
 }
 export interface ComparisonCommand {
   actionId: ExecutionId;

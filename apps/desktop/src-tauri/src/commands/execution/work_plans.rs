@@ -934,6 +934,16 @@ pub async fn authorize_work_plan(
 }
 
 #[tauri::command]
+pub async fn read_work_plan_start_action(
+    state: State<'_, AppState>, request: WorkPlanStartRequest,
+) -> Result<Option<tsumugi_core::application::WorkPlanStartReceipt>, CommandError> {
+    state.sessions.run("read_work_plan_start_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.work_plan_start_action_read(request.project_id, request.plan_id, request.action_id, request.expected_generation)
+            .map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn start_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanStartRequest,
@@ -2494,6 +2504,78 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fixture.bytes(), before);
+    }
+
+    #[test]
+    fn registered_start_action_reads_confirm_only_enqueued_inputs_without_provider_dispatch() {
+        let isolated = ProjectFixture::create("en-US");
+        for (command, extra) in [
+            ("read_work_plan_start_action",json!({"planId":ExecutionId::new(),"actionId":ExecutionId::new(),"expectedGeneration":"1"})),
+            ("read_arena_start_action",json!({"attemptId":ExecutionId::new(),"digest":"0".repeat(64),"confirmed":true})),
+        ] {
+            assert_eq!(call(&isolated.webview,command,request(&isolated.context,extra)).unwrap(),Value::Null);
+        }
+        isolated.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+
+        let mut fixture=Fixture::create();
+        let wire:Value=serde_json::from_str(include_str!("../../../../test/fixtures/aiCommands.contract.json")).unwrap();
+        let config:AiConfig=serde_json::from_value(wire["requests"]["preview"]["config"].clone()).unwrap();
+        let unit=fixture.unit;
+        let (start,arena_start,input)=fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let store=&mut sessions.active.as_mut().unwrap().store;
+            let plan=store.prepare_work_plan(Some(config.clone()),"zh-CN",&[unit],PlanOptions::default()).unwrap();
+            let authorization=AuthorizeWorkPlan {action_id:ExecutionId::new(),plan_digest:plan.digest.clone(),confirmed:true,
+                effects:plan.authorization_effects().unwrap(),expires_at:std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()+60};
+            let receipt=store.authorize_work_plan(&plan,&authorization).unwrap();
+            let input=FixedInput::capture(receipt.input.unwrap()).unwrap();
+            let arena_wire:Value=serde_json::from_str(include_str!("../../../../test/fixtures/arenaCommands.contract.json")).unwrap();
+            let arena_config:tsumugi_core::ai::arena::ArenaConfig=serde_json::from_value(arena_wire["requests"]["preview"]["config"].clone()).unwrap();
+            let arena=store.preview_arena(arena_config,"zh-CN",&[unit]).unwrap();
+            let fixed=arena.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+            store.enqueue_execution(&fixed).unwrap();
+            (json!({"planId":plan.plan_id,"actionId":authorization.action_id,"expectedGeneration":receipt.lease.generation}),
+                json!({"attemptId":fixed.envelope().attempt_id,"digest":arena.digest,"confirmed":true}),input)
+        });
+        assert_eq!(fixture.call("read_work_plan_start_action",start.clone()).unwrap(),Value::Null);
+        let input_copy=input.clone();
+        fixture.app.state::<AppState>().sessions.with(move |sessions|sessions.active.as_mut().unwrap().store.enqueue_execution(&input_copy).unwrap());
+        let expected=json!({"projectId":fixture.context["projectId"],"planId":start["planId"],"actionId":start["actionId"],
+            "expectedGeneration":start["expectedGeneration"],"attemptId":input.envelope().attempt_id,"taskId":input.envelope().task_id});
+        let sequence=fixture.app.state::<AppState>().sessions.with(|sessions|sessions.active.as_ref().unwrap().store.execution_sequence().unwrap());
+        assert_eq!(fixture.call("read_work_plan_start_action",start.clone()).unwrap(),expected);
+        let arena_expected=fixture.call("read_arena_start_action",arena_start.clone()).unwrap();
+        assert_eq!(arena_expected["attemptId"],arena_start["attemptId"]);
+        assert_eq!(arena_expected["digest"],arena_start["digest"]);
+        for (command, mut bad) in [("read_work_plan_start_action",start.clone()),("read_arena_start_action",arena_start.clone())] {
+            bad["projectId"]=json!(ExecutionId::new());assert!(fixture.call(command,bad).is_err());
+            let mut bad=if command=="read_work_plan_start_action" {start.clone()} else {arena_start.clone()};
+            bad["sessionToken"]=json!("wrong-session");assert!(fixture.call(command,bad).is_err());
+        }
+        let mut bad=start.clone();bad["expectedGeneration"]=json!("2");assert!(fixture.call("read_work_plan_start_action",bad).is_err());
+        let mut bad=arena_start.clone();bad["digest"]=json!("0".repeat(64));assert!(fixture.call("read_arena_start_action",bad).is_err());
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active=sessions.active.as_mut().unwrap();
+            assert_eq!(active.store.execution_sequence().unwrap(),sequence);
+            assert_eq!(active.store.provider_budget(input.envelope().task_id).unwrap().unwrap().dispatched,0);
+            active.execution.as_mut().unwrap().quiescing=true;
+        });
+        assert_eq!(fixture.call("read_work_plan_start_action",start.clone()).unwrap(),expected);
+        assert_eq!(fixture.call("read_arena_start_action",arena_start.clone()).unwrap(),arena_expected);
+        // End only these fixture queues through their ordinary cancellation path.
+        // The manual quiescing probe above did not perform a shutdown.
+        let plan_task:ExecutionId=serde_json::from_value(expected["taskId"].clone()).unwrap();
+        let arena_task:ExecutionId=serde_json::from_value(arena_expected["taskId"].clone()).unwrap();
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active=sessions.active.as_mut().unwrap();
+            active.store.cancel_execution(plan_task,ExecutionId::new()).unwrap();
+            active.store.cancel_execution(arena_task,ExecutionId::new()).unwrap();
+            active.execution.as_mut().unwrap().quiescing=false;
+        });
+        assert_eq!(fixture.call("read_work_plan_start_action",start.clone()).unwrap(),expected);
+        let old=request(&fixture.context,start.clone());fixture.reopen();
+        assert!(call(&fixture.webview,"read_work_plan_start_action",old).is_err());
+        assert_eq!(fixture.call("read_work_plan_start_action",start).unwrap(),expected);
+        assert_eq!(fixture.call("read_arena_start_action",arena_start).unwrap(),arena_expected);
     }
 
     #[test]

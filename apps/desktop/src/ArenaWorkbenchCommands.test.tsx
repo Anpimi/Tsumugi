@@ -135,6 +135,32 @@ async function compare() {
   await waitFor(() => expect(registry.describe("arena.begin-merge", scope, comparisonPayload())?.availability.enabled).toBe(true));
 }
 
+it.each(["en-US","zh-CN"] as const)("exposes the real Arena start checking phase and gates the exact Registry retry in %s",async language=>{
+  await open();prepared={...prepared,preview:{...prepared.preview,digest:"d".repeat(64)}};
+  await act(async()=>{expect(registry.dispatch("arena.preview",scope,preparationPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().prepared).not.toBeNull());act(()=>owner.setConsent(true));
+  const original=invoke.getMockImplementation()!,write=deferred<string>(),lookup=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_arena_translation"?write.promise
+    :command==="read_arena_start_action"?lookup.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("arena.start",scope,startPayload())).toBe(true);});
+  const entry=owner.current().pending;if(entry?.kind!=="start")throw new Error("Expected original start");
+  const payload={kind:"arena-pending" as const,pendingKind:"start" as const,attemptId:entry.request.attemptId};
+  await act(async()=>{await i18n.changeLanguage(language);});
+  const message=language==="en-US"?"Checking whether this task was started…":"正在核对此次任务是否已启动…";
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  await act(async()=>{write.resolve(fixtureIdentity(999));});await screen.findByText(message);
+  act(()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(false);expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);});
+  await act(async()=>{lookup.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  expect(registry.describe("arena.retry-pending",scope,payload)?.availability.enabled).toBe(true);
+  expect(registry.dispatch("arena.retry-pending",scope,{...payload,attemptId:fixtureIdentity(998)})).toBe(false);
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_arena_start_action"?Promise.resolve({projectId:entry.request.projectId,
+    attemptId:entry.request.attemptId,taskId:aiTask,digest:entry.request.digest}):original(command,args));
+  await act(async()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.current().pending).toBeNull());
+  expect(calls("start_arena_translation")).toHaveLength(1);expect(payloads("read_arena_start_action")).toEqual([entry.request,entry.request]);
+});
+
 it("registers scoped Arena commands and routes the visible generation and editor actions", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry, "dispatch");
   expect(registry.list(scope).filter(command => command.category === "arena").map(command => command.id).sort()).toEqual([

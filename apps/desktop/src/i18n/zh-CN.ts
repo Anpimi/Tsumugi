@@ -2152,6 +2152,7 @@ ai: {
       "viewContinuation": "查看已接续工作",
       "checkReceipt": "核对已记录结果",
       "checkingAdoption": "正在核对采纳结果…",
+      "checkingStart": "正在核对此次任务是否已启动…",
       "checkingContinuation": "正在核对恢复请求结果…",
       "retryAdoption": "重试原应用请求",
       "keepOutput": "保留输出并返回",

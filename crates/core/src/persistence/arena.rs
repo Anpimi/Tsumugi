@@ -188,6 +188,35 @@ pub(super) fn check_merge(
     Ok(())
 }
 impl ProjectStore {
+    pub fn arena_start_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        digest: &str,
+        confirmed: bool,
+    ) -> Result<Option<ArenaStartReceipt>, ExecutionError> {
+        if !confirmed {
+            return Err(error(ErrorCode::Unauthorized, "arena-consent"));
+        }
+        let found = super::review::read_snapshot(self.connection().map_err(|_| error(ErrorCode::StorageFailed, "arena-start-read"))?, |connection| {
+            let exists: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                [attempt.to_string()], |row| row.get(0),
+            ).map_err(|_| error(ErrorCode::StorageFailed, "arena-start-read"))?;
+            if !exists { return Ok(None); }
+            let input = super::ledger::load_input(connection, attempt)?;
+            let settings = settings(&input)?;
+            if input.envelope().project_id != project || settings.preview_digest != digest {
+                return Err(error(ErrorCode::ResultMismatch, "arena-start-request"));
+            }
+            Ok(Some(ArenaStartReceipt {
+                project_id: project, attempt_id: attempt, task_id: input.envelope().task_id,
+                digest: settings.preview_digest,
+            }))
+        })?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
     pub fn preview_arena(
         &self,
         config: ArenaConfig,

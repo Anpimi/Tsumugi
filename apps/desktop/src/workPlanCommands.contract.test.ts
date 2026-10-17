@@ -9,6 +9,32 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
+
+it("reads a start using the complete authorization identity without starting work", async () => {
+  const request = fixture.requests.start;
+  const receipt = {projectId:request.projectId,planId:request.planId,actionId:request.actionId,
+    expectedGeneration:request.expectedGeneration,attemptId:fixtureIdentity(701),taskId:fixtureIdentity(702)};
+  expect(validators.validateResponseWorkPlanStartAction(receipt)).toBe(true);
+  invoke.mockResolvedValueOnce(receipt);
+  expect(await workPlanCommands.startAction(request)).toEqual(receipt);
+  expect(invoke).toHaveBeenLastCalledWith("read_work_plan_start_action",{request});
+  invoke.mockResolvedValueOnce(null);
+  expect(await workPlanCommands.startAction(request)).toBeNull();
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it("rejects malformed or differently bound start receipts rather than treating them as absent", async () => {
+  const request = fixture.requests.start;
+  const receipt = {projectId:request.projectId,planId:request.planId,actionId:request.actionId,
+    expectedGeneration:request.expectedGeneration,attemptId:fixtureIdentity(701),taskId:fixtureIdentity(702)};
+  for (const wrong of [undefined,{}, {...receipt,projectId:fixtureIdentity(703)}, {...receipt,planId:fixtureIdentity(704)},
+    {...receipt,actionId:fixtureIdentity(705)}, {...receipt,expectedGeneration:"2"}, {...receipt,taskId:null},
+    {...receipt,attemptId:null}, {...receipt,extra:true}]) {
+    invoke.mockResolvedValueOnce(wrong);
+    await expect(workPlanCommands.startAction(request)).rejects.toThrow();
+  }
+  expect(invoke.mock.calls.every(([command])=>command==="read_work_plan_start_action")).toBe(true);
+});
 const requests: Pick<Requests, "workPlanPrepare" | "workPlanAuthorize" | "workPlanStart" | "workPlanControl" | "workPlanStatus" | "workPlanAction" | "workProtectionRead" | "workProtectionSet"> = {
   workPlanPrepare: { ...fixture.requests.prepare, options: {
     ...fixture.requests.prepare.options,

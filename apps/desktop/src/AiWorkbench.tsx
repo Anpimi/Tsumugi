@@ -341,7 +341,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     <WorkPlanControls context={context} prepared={prepared} status={status} busy={busy} disabled={disabled||!!pendingAdopt} consent={consent}
       session={preparation.planControl} editSeq={preparation.editSeq} run={perform} refresh={refreshPlan} onPlan={preparation.recordPlan}
       open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}
-      onStarted={(id,idPlan)=>{const original=preparation.planControl.current().pending;if(original?.kind==="start")preparation.recordPlanStart(id,idPlan,original.prepared,original.request.expectedGeneration,original.editSeq);}}
+      onStarted={(id,idPlan,taskId)=>{const original=preparation.planControl.current().pending;if(original?.kind==="start")preparation.recordPlanStart(id,idPlan,original.prepared,original.request.expectedGeneration,original.editSeq,taskId??null);}}
       onBlockedChange={()=>{}} onOpenExtensions={onOpenExtensions} onOpenTranslation={onOpenTranslation}/>
     {status?.plan.preview?<WorkPlanAgentControls context={context} status={status} open={open} disabled={disabled||planBlocked||!!pendingAdopt||active} busy={busy}
       session={preparation.agent} component={preparation.component} ownerBusy={()=>preparation.current().busy} run={perform} onBlockedChange={()=>{}} onGenerated={preparation.recordGenerated}

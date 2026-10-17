@@ -443,6 +443,7 @@ export interface Responses {
   workPlanAgentToolOutput: ExecutionOutputView;
   workPlanGenerationPreflight: WorkPlanGenerationPreflight;
   workPlanReceipt: WorkPlanReceiptView;
+  workPlanStartAction: WorkPlanStartReceipt | null;
   workPlanStatus: WorkPlanStatusView;
   workProtection: WorkProtection;
 }
@@ -1532,6 +1533,17 @@ export interface AgentToolRequest {
    * @maxItems 100
    */
   unitIds: [ExecutionId, ...ExecutionId[]];
+}
+/**
+ * Evidence that the exact authorized fixed input was durably enqueued.
+ */
+export interface WorkPlanStartReceipt {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  expectedGeneration: Revision;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface WorkPlanStatusView {
   effects: AutomationEffect[];

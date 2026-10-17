@@ -97,6 +97,7 @@ beforeEach(async()=>{
       return prepared;
     }
     if(command==="start_arena_translation")return prepared.attemptId;
+    if(command==="read_arena_start_action")return null;
     if(command==="read_arena_translation")return viewFor();
     if(command==="create_arena_comparison"){
       comparison={...comparison,comparisonId:request.actionId,unitId:request.unitId,locale:request.locale,blind:request.blind,
@@ -116,6 +117,95 @@ beforeEach(async()=>{
     }
     throw new Error(command);
   });
+});
+
+const unknownStart: CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-read",recoveryRequired:true,reason:"start-ack-lost"};
+function arenaStartReceipt(request:{projectId:string;attemptId:string;digest:string}) {
+  return {projectId:request.projectId,attemptId:request.attemptId,taskId:viewFor().detail.taskId,digest:request.digest};
+}
+it.each(["lost","invalid"] as const)("checks one original Arena start after a %s acknowledgement without reading the result view",async kind=>{
+  render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,payload:{request:Parameters<typeof arenaStartReceipt>[0]})=>command==="start_arena_translation"
+    ?kind==="lost"?Promise.reject(unknownStart):Promise.resolve(fixtureIdentity(999))
+    :command==="read_arena_start_action"?Promise.resolve(arenaStartReceipt(payload.request)):original(command,payload));
+  await act(async()=>owner.start());
+  expect(owner.pending).toBeNull();expect(owner.started?.taskId).toBe(viewFor().detail.taskId);expect(owner.failure).toBeNull();
+  expect(payloads("read_arena_start_action")).toEqual(payloads("start_arena_translation"));
+  expect(calls("start_arena_translation")).toHaveLength(1);expect(calls("read_arena_start_action")).toHaveLength(1);
+  expect(calls("read_arena_translation")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("keeps the original start error on a true missing result and permits only an explicit same-request retry",async()=>{
+  render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!;let writes=0;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"
+    ?Promise.reject(++writes===1?unknownStart:rejected):original(command,payload));
+  await act(async()=>owner.start());const request=owner.pending!.request;
+  expect(owner.pending).toMatchObject({kind:"start",retryAllowed:true,checking:false,uncertain:true});expect(owner.failure).toEqual(unknownStart);
+  expect(calls("start_arena_translation")).toHaveLength(1);expect(calls("read_arena_start_action")).toHaveLength(1);
+  await act(async()=>owner.retryPending());
+  expect(owner.pending?.request).toBe(request);expect(owner.pending?.retryAllowed).toBe(false);expect(owner.pending?.uncertain).toBe(true);
+  await act(async()=>owner.retryPending());expect(calls("start_arena_translation")).toHaveLength(2);expect(calls("read_arena_start_action")).toHaveLength(1);
+});
+
+it("keeps malformed or unrelated start proofs unknown and uses the same pure read for manual recovery",async()=>{
+  render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!;let response:unknown=undefined;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"?Promise.reject(unknownStart)
+    :command==="read_arena_start_action"?Promise.resolve(response):original(command,payload));
+  await act(async()=>owner.start());const entry=owner.pending!;if(entry.kind!=="start")throw new Error("Expected original start");
+  const receipt=arenaStartReceipt(entry.request);
+  for(const wrong of [undefined,{}, {...receipt,projectId:fixtureIdentity(996)}, {...receipt,attemptId:fixtureIdentity(997)},
+    {...receipt,digest:"f".repeat(64)}, {...receipt,taskId:null}]){
+    response=wrong;await act(async()=>owner.checkPending());
+    expect(owner.pending?.request).toBe(entry.request);expect(owner.pending?.retryAllowed).toBe(false);
+    await act(async()=>owner.retryPending());expect(calls("start_arena_translation")).toHaveLength(1);
+  }
+  response=receipt;await act(async()=>owner.checkPending());
+  expect(owner.pending).toBeNull();expect(owner.failure).toBeNull();expect(owner.attempt).toBe(entry.request.attemptId);
+  expect(payloads("read_arena_start_action").every(request=>JSON.stringify(request)===JSON.stringify(entry.request))).toBe(true);
+});
+
+it("keeps a failed Arena start read blocked until a manual missing result permits the original explicit retry",async()=>{
+  render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!;let readsFail=true,writes=0;
+  const readError:CommandError={...unknownStart,reason:"start-read-unavailable"};
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"&&++writes===1?Promise.reject(unknownStart)
+    :command==="read_arena_start_action"&&readsFail?Promise.reject(readError):original(command,payload));
+  await act(async()=>owner.start());const request=owner.pending!.request;
+  expect(owner.failure).toEqual(readError);expect(owner.pending?.retryAllowed).toBe(false);
+  await act(async()=>owner.retryPending());expect(calls("start_arena_translation")).toHaveLength(1);
+  readsFail=false;await act(async()=>owner.checkPending());expect(owner.pending?.retryAllowed).toBe(true);
+  await act(async()=>owner.retryPending());expect(owner.pending).toBeNull();expect(owner.failure).toBeNull();
+  expect(payloads("start_arena_translation")).toEqual([request,request]);expect(payloads("read_arena_start_action")).toEqual([request,request]);
+  expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("holds the Arena start reservation through its automatic read while hidden and preserves newer configuration",async()=>{
+  const rendered=render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!,response=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"?Promise.reject(unknownStart)
+    :command==="read_arena_start_action"?response.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=owner.start();void owner.start();void owner.checkPending();});
+  await waitFor(()=>expect(calls("read_arena_start_action")).toHaveLength(1));
+  const entry=owner.current().pending!;if(entry.kind!=="start")throw new Error("Expected original start");
+  expect(entry.checking).toBe(true);expect(owner.current().busy).toBe(true);expect(owner.current().failure).toBeNull();
+  act(()=>owner.setConfig({...owner.current().config,maxRequests:80}));
+  rendered.rerender(<Harness mounted={false}/>,project);
+  await act(async()=>{response.resolve(arenaStartReceipt(entry.request));await flight;});
+  rendered.rerender(<Harness/>,project);
+  expect(owner.pending).toBeNull();expect(owner.config.maxRequests).toBe(80);expect(owner.dirty).toBe(true);expect(owner.busy).toBe(false);
+  expect(calls("start_arena_translation")).toHaveLength(1);expect(calls("read_arena_start_action")).toHaveLength(1);
+});
+
+it.each(["before-read","during-read"] as const)("does not send or accept an Arena start read after retirement %s",async phase=>{
+  const rendered=render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!,write=deferred<string>(),read=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"?write.promise
+    :command==="read_arena_start_action"?read.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=owner.start();});const request=payloads("start_arena_translation")[0];
+  if(phase==="during-read"){
+    await act(async()=>{write.reject(unknownStart);await Promise.resolve();});
+    await waitFor(()=>expect(calls("read_arena_start_action")).toHaveLength(1));
+  }
+  const before=owner.current();rendered.unmount();
+  await act(async()=>{if(phase==="before-read")write.reject(unknownStart);else read.resolve(arenaStartReceipt(request));await flight;});
+  expect(owner.current()).toBe(before);expect(calls("read_arena_start_action")).toHaveLength(phase==="before-read"?0:1);
 });
 afterEach(cleanup);
 async function prepare(){
@@ -236,6 +326,7 @@ it.each(operations)("releases a fresh definitively rejected %s without discardin
   invoke.mockImplementation((command:string,payload:unknown)=>command===commands[kind]?Promise.reject(rejected):original(command,payload));
   await act(async()=>{await execute(kind);});expect(owner.pending).toBeNull();
   expect(calls("read_execution_adoption_action")).toHaveLength(0);
+  if(kind==="start")expect(calls("read_arena_start_action")).toHaveLength(0);
   if(kind==="start")expect(owner.prepared).not.toBeNull();if(kind==="merge")expect(owner.draft?.text).toBe(comparison.rows[0].text);
   const token=translations.reserveMutation();expect(token).not.toBeNull();act(()=>translations.releaseMutation(token!));
 });

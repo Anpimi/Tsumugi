@@ -4,7 +4,7 @@ import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { useTranslation } from "react-i18next";
 import { enUS } from "./i18n/en-US";
 import { PluginPermissions } from "./PluginPermissions";
-import { aiCommands } from "./aiCommands";
+import { validateResponseWorkPlanStartAction } from "./generated/ai.validators";
 import { executionCommands, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome } from "./projectCommands";
 import type { WorkPlanAuthorizeRequest, WorkPlanControlRequest, WorkPlanStartRequest, AutomationEffect } from "./generated/ai.requests";
@@ -13,13 +13,13 @@ import { useSessionReads } from "./SessionReadProvider";
 import { useWorkbenchCommands, type CommandAvailability, type AiStartCommandPayload, type AiStartPendingCommandPayload,
   type AiPlanControlCommandPayload, type AiPlanStartCommandPayload, type AiPlanPendingCommandPayload, type AiPlanTranslationCommandPayload } from "./workbenchCommands";
 import { jsonIdentity } from "./pluginToolChoices";
-import { confirmPlanStartView, type WorkPlanContinuation } from "./AiPreparationSession";
+import type { WorkPlanContinuation } from "./AiPreparationSession";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { useWorkPlanApplicationTools, WorkPlanApplicationToolDetails, WorkPlanApplicationToolObservation } from "./workPlanApplicationTools";
 
 export type PlanPending = ({ kind: "authorize"; request: WorkPlanAuthorizeRequest }
   | { kind: "control"; request: WorkPlanControlRequest }
-  | { kind: "start"; request: WorkPlanStartRequest; attemptId: string })
+  | { kind: "start"; request: WorkPlanStartRequest; attemptId: string; checking: boolean; retryAllowed: boolean; failure: unknown })
   & { prepared: WorkPlanView; editSeq: number; uncertain: boolean; receipt: WorkPlanReceiptView | null };
 export type PlanReady = { receipt: WorkPlanReceiptView; prepared: WorkPlanView; editSeq: number };
 
@@ -51,7 +51,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   refresh: (planId: string, current: () => boolean) => Promise<WorkPlanStatusView>;
   run: (work: (current: WorkPlanContinuation) => Promise<void>) => Promise<void>;
   onPlan: (id: string) => void;
-  onStarted: (id: string, planId: string) => void;
+  onStarted: (id: string, planId: string, taskId?: string) => void;
   onBlockedChange: (blocked: boolean) => void;
   onOpenTranslation: (target: EditorTarget, locale: string) => Promise<boolean>;
   onOpenExtensions?: () => void;
@@ -116,15 +116,54 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     if (!receipt.attemptId) return;
     const request = { ...context, planId: receipt.lease.planId, actionId: receipt.actionId,
       expectedGeneration: receipt.lease.generation };
-    const entry: PlanPending = { kind: "start", request: structuredClone(request), attemptId: receipt.attemptId, prepared: capture.prepared, editSeq:capture.editSeq, uncertain: false, receipt:structuredClone(receipt) };
-    setPending(entry);
+    const entry: Extract<PlanPending,{kind:"start"}> = { kind: "start", request: structuredClone(request), attemptId: receipt.attemptId, prepared: capture.prepared, editSeq:capture.editSeq, uncertain: false, receipt:structuredClone(receipt), checking:false, retryAllowed:false, failure:null };
+    await dispatchStart(entry,current);
+  }
+  function matchesStart(entry: Extract<PlanPending,{kind:"start"}>, current: WorkPlanContinuation) {
+    return current() && !reads.retired && session.current().pending?.request === entry.request;
+  }
+  function settleStart(entry: Extract<PlanPending,{kind:"start"}>, current: WorkPlanContinuation, taskId?: string) {
+    if (!matchesStart(entry,current)) return;
+    // The enclosing owner captures the original pending preparation and edit sequence.
+    if (taskId === undefined) onStarted(entry.attemptId,entry.request.planId);
+    else onStarted(entry.attemptId,entry.request.planId,taskId);
+    setReady(null); setPending(null); setMissing(false);
+  }
+  async function lookupStart(entry: Extract<PlanPending,{kind:"start"}>, current: WorkPlanContinuation) {
+    if (!matchesStart(entry,current)) return;
+    setPending({...entry,checking:true,uncertain:true,retryAllowed:false});
+    let result: Awaited<ReturnType<typeof workPlanCommands.startAction>>;
     try {
-      const id = await workPlanCommands.start(request, receipt.attemptId);
-      if (current()) { onStarted(id, receipt.lease.planId); setReady(null); setPending(null); }
+      result = await workPlanCommands.startAction(entry.request);
+      if (!matchesStart(entry,current)) return;
+      if (!validateResponseWorkPlanStartAction(result) || result !== null && (result.projectId !== entry.request.projectId
+        || result.planId !== entry.request.planId || result.actionId !== entry.request.actionId
+        || result.expectedGeneration !== entry.request.expectedGeneration || result.attemptId !== entry.attemptId)) {
+        throw {outcome:"unknown",reason:"invalid-work-plan-acknowledgement"};
+      }
     } catch (error) {
-      if (current()) setPending(hasUnknownOutcome(error) ? { ...entry, uncertain:true } : null);
+      if (!matchesStart(entry,current)) return;
+      setPending({...entry,checking:false,uncertain:true,retryAllowed:false,failure:error});
       throw error;
     }
+    if (result !== null) { settleStart(entry,current,result.taskId); return; }
+    setPending({...entry,checking:false,uncertain:true,retryAllowed:true});
+    if (entry.failure !== null) throw entry.failure;
+  }
+  async function dispatchStart(entry: Extract<PlanPending,{kind:"start"}>, current: WorkPlanContinuation, recovering = false) {
+    if (!current() || reads.retired) return;
+    setPending({...entry,checking:false,retryAllowed:false}); setMissing(false);
+    let failed: {error:unknown} | null = null;
+    try { await workPlanCommands.start(entry.request,entry.attemptId); }
+    catch (error) { failed = {error}; }
+    if (!matchesStart(entry,current)) return;
+    if (!failed) { settleStart(entry,current); return; }
+    const unknown = hasUnknownOutcome(failed.error);
+    if (recovering || entry.uncertain || unknown) {
+      const retained = {...entry,checking:false,retryAllowed:false,uncertain:true,failure:failed.error}; setPending(retained);
+      if (unknown) { await lookupStart(retained,current); return; }
+    } else setPending(null);
+    throw failed.error;
   }
 
   async function mutate(action: Exclude<PlanPending, { kind: "start" }>, current: WorkPlanContinuation, enqueue: boolean) {
@@ -164,11 +203,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     const pending = session.current().pending;
     if (!pending) return;
     if (pending.kind === "start") {
-      // Reading the fixed attempt proves enqueue happened; it sends no provider request.
-      const view = await aiCommands.read({ ...context, attemptId: pending.attemptId });
-      confirmPlanStartView(view,pending.prepared,pending.attemptId,pending.request.expectedGeneration);
-      if (current()) { onStarted(pending.attemptId, pending.request.planId); setPending(null); setReady(null); }
-      await refresh(pending.request.planId, current);
+      await lookupStart(pending,current);
     } else {
       const receipt = await workPlanCommands.action({ ...context, actionId: pending.request.actionId });
       if (receipt) { confirmReceipt(receipt,pending); await accept(receipt, current); }
@@ -256,16 +291,16 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     const allowed=gate(true);if(!allowed.enabled)return allowed;
     return payload&&(!retry||session.current().missing)&&jsonIdentity(payload)===jsonIdentity(pendingPayload())?{enabled:true}:unavailable;
   }
-  function startPendingAvailability(payload?:AiStartPendingCommandPayload):CommandAvailability {
+  function startPendingAvailability(payload?:AiStartPendingCommandPayload,retry=false):CommandAvailability {
     const allowed=gate(true);if(!allowed.enabled)return allowed;
-    return payload&&jsonIdentity(payload)===jsonIdentity(startPendingPayload())?{enabled:true}:unavailable;
+    const pending=session.current().pending;
+    return pending?.kind==="start"&&pending.uncertain&&!pending.checking&&(!retry||pending.retryAllowed)
+      &&payload&&jsonIdentity(payload)===jsonIdentity(startPendingPayload())?{enabled:true}:unavailable;
   }
   async function retryPending(current:WorkPlanContinuation) {
     const original=session.current().pending;if(!original)return;
     if(original.kind!=="start") { if(session.current().missing)await mutate({...original,uncertain:true},current,false);return; }
-    setPending({...original,uncertain:true});
-    try { const id=await workPlanCommands.start(original.request,original.attemptId);if(current()){onStarted(id,original.request.planId);setPending(null);setReady(null);} }
-    catch(error) { if(current())setPending({...original,uncertain:true});throw error; }
+    if(original.retryAllowed)await dispatchStart(original,current,true);
   }
   function confirmReceipt(receipt:WorkPlanReceiptView,action:PlanPending) {
     if(action.kind==="start")return;
@@ -302,8 +337,8 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
       registry.register({...metadata,id:"ai.plan.start-authorized",nameKey:"ai.plan.startAuthorized",risk:"runs-ai",payloadKind:"ai-plan-start",availability:readyAvailability,handler:()=>{const value=session.current().ready;if(value)void run(current=>start(value,current));}}),
       registry.register({...metadata,id:"ai.plan.reconcile-action",nameKey:"ai.reconcile",risk:"reconciles-execution-action",payloadKind:"ai-plan-pending",availability:pendingAvailability,handler:()=>{void run(reconcile);}}),
       registry.register({...metadata,id:"ai.plan.retry-action",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"ai-plan-pending",availability:payload=>pendingAvailability(payload,true),handler:()=>{void run(retryPending);}}),
-      registry.register({...metadata,id:"ai.reconcile-start",nameKey:"ai.reconcile",risk:"reconciles-execution-action",payloadKind:"ai-start-pending",availability:startPendingAvailability,handler:()=>{void run(reconcile);}}),
-      registry.register({...metadata,id:"ai.retry-start",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"ai-start-pending",availability:startPendingAvailability,handler:()=>{void run(retryPending);}}),
+      registry.register({...metadata,id:"ai.reconcile-start",nameKey:"ai.reconcile",risk:"reads-execution",payloadKind:"ai-start-pending",availability:startPendingAvailability,handler:()=>{void run(reconcile);}}),
+      registry.register({...metadata,id:"ai.retry-start",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"ai-start-pending",availability:payload=>startPendingAvailability(payload,true),handler:()=>{void run(retryPending);}}),
       registry.register({...metadata,id:"ai.plan.open-translation",nameKey:"ai.plan.edit",risk:"opens-translation",payloadKind:"ai-plan-translation",availability:translationAvailability,handler:payload=>{void openTranslation(payload);}}),
     ];return()=>remove.forEach(dispose=>dispose());
   });
@@ -399,10 +434,11 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     </> : null}
     {ready && !pending ? <div role="status"><p>{t("ai.plan.ready")}</p><button className="primary-button" disabled={!readyAvailability(readyPayload()).enabled}
       onClick={()=>{const payload=readyPayload();if(payload)registry.dispatch("ai.plan.start-authorized",scope,payload);}}>{t("ai.plan.startAuthorized")}</button></div> : null}
-    {pending ? <div role="status"><p>{t(busy ? "ai.plan.pending" : pending.kind === "start" ? "ai.startUnknown" : "ai.plan.actionUnknown")}</p>
+    {pending ? <div role="status"><p>{t(pending.kind === "start" && pending.checking ? "execution.checkingStart" : busy ? "ai.plan.pending" : pending.kind === "start" ? "ai.startUnknown" : "ai.plan.actionUnknown")}</p>
       <button className="secondary-button" disabled={pending.kind==="start"?!startPendingAvailability(startPendingPayload()).enabled:!pendingAvailability(pendingPayload()).enabled} onClick={()=>{if(pending.kind==="start"){const payload=startPendingPayload();if(payload)registry.dispatch("ai.reconcile-start",scope,payload);}else{const payload=pendingPayload();if(payload)registry.dispatch("ai.plan.reconcile-action",scope,payload);}}}>{t("ai.reconcile")}</button>
-      {missing || pending.kind === "start" ? <button className="secondary-button" disabled={pending.kind==="start"?!startPendingAvailability(startPendingPayload()).enabled:!pendingAvailability(pendingPayload(),true).enabled}
-        onClick={()=>{if(pending.kind==="start"){const payload=startPendingPayload();if(payload)registry.dispatch("ai.retry-start",scope,payload);}else{const payload=pendingPayload();if(payload)registry.dispatch("ai.plan.retry-action",scope,payload);}}}>{t("ai.retrySame")}</button> : null}
+      {pending.kind === "start" ? pending.retryAllowed ? <button className="secondary-button" disabled={!startPendingAvailability(startPendingPayload(),true).enabled}
+        onClick={()=>{const payload=startPendingPayload();if(payload)registry.dispatch("ai.retry-start",scope,payload);}}>{t("ai.retrySame")}</button> : null : missing ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload(),true).enabled}
+        onClick={()=>{const payload=pendingPayload();if(payload)registry.dispatch("ai.plan.retry-action",scope,payload);}}>{t("ai.retrySame")}</button> : null}
     </div> : null}
   </section>;
 }

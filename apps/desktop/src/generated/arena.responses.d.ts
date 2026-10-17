@@ -158,6 +158,7 @@ export interface Responses {
   prepared: Prepared;
   reveal: null;
   selection: TranslationSelection;
+  startAction: ArenaStartReceipt | null;
   view: View;
 }
 export interface ComparisonView {
@@ -422,6 +423,15 @@ export interface TranslationSelection {
   revisionId: ExecutionId;
   sequence: Revision;
   unitId: ExecutionId;
+}
+/**
+ * The recorded start input, independently of provider or worker progress.
+ */
+export interface ArenaStartReceipt {
+  attemptId: ExecutionId;
+  digest: string;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface View {
   blind: boolean;

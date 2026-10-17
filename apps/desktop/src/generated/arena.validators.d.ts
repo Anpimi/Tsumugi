@@ -9,10 +9,12 @@ export declare function validateRequestRead(value: unknown): value is Requests["
 export declare function validateRequestReveal(value: unknown): value is Requests["reveal"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
+export declare function validateRequestStartAction(value: unknown): value is Requests["startAction"];
 export declare function validateResponseComparison(value: unknown): value is Responses["comparison"];
 export declare function validateResponseComparisons(value: unknown): value is Responses["comparisons"];
 export declare function validateResponseIdentity(value: unknown): value is Responses["identity"];
 export declare function validateResponsePrepared(value: unknown): value is Responses["prepared"];
 export declare function validateResponseReveal(value: unknown): value is Responses["reveal"];
 export declare function validateResponseSelection(value: unknown): value is Responses["selection"];
+export declare function validateResponseStartAction(value: unknown): value is Responses["startAction"];
 export declare function validateResponseView(value: unknown): value is Responses["view"];

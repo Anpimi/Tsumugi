@@ -463,6 +463,7 @@ struct AiRequests {
     maintenance_assessment: execution::work_plans::MaintenanceAssessmentRequest,
     work_plan_authorize: execution::work_plans::WorkPlanAuthorizeRequest,
     work_plan_start: execution::work_plans::WorkPlanStartRequest,
+    work_plan_start_action: execution::work_plans::WorkPlanStartRequest,
     work_plan_generation_prepare:
         execution::work_plans::generation::WorkPlanGenerationPrepareRequest,
     work_plan_generation_start: execution::work_plans::generation::WorkPlanGenerationStartRequest,
@@ -515,6 +516,7 @@ struct AiResponses {
     work_plan_receipt: execution::work_plans::WorkPlanReceiptView,
     work_plan_status: execution::work_plans::WorkPlanStatusView,
     work_plan_action: Option<execution::work_plans::WorkPlanReceiptView>,
+    work_plan_start_action: Option<tsumugi_core::application::WorkPlanStartReceipt>,
     work_protection: tsumugi_core::application::WorkProtection,
 }
 #[derive(JsonSchema)]
@@ -523,6 +525,7 @@ struct AiResponses {
 struct ArenaRequests {
     preview: execution::arena::PreviewRequest,
     start: execution::arena::StartRequest,
+    start_action: execution::arena::StartRequest,
     read: execution::arena::ReadRequest,
     compare: execution::arena::ComparisonCommand,
     comparison: execution::arena::ComparisonRead,
@@ -535,6 +538,7 @@ struct ArenaRequests {
 #[allow(dead_code)]
 struct ArenaResponses {
     prepared: execution::arena::Prepared,
+    start_action: Option<tsumugi_core::ai::arena::ArenaStartReceipt>,
     identity: tsumugi_core::execution::ExecutionId,
     view: execution::arena::View,
     comparison: tsumugi_core::ComparisonView,

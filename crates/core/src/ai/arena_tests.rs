@@ -366,6 +366,33 @@ fn arena_retry_uses_one_budget_and_invalid_unknown_outputs_never_become_candidat
 }
 
 #[test]
+fn arena_start_reads_confirm_original_fixed_input_without_running_provider() {
+    let (_temp, mut store, rows)=source_project();
+    let preview=store.preview_arena(cfg("http://127.0.0.1:9"),"zh-CN",&[rows[0].unit_id.unwrap()]).unwrap();
+    let input=preview.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+    let project=input.envelope().project_id;
+    let attempt=input.envelope().attempt_id;
+    let sequence=store.execution_sequence().unwrap();
+    assert_eq!(store.arena_start_action_read(project,attempt,&preview.digest,true).unwrap(),None);
+    assert_eq!(store.execution_sequence().unwrap(),sequence);
+    assert_eq!(store.arena_start_action_read(project,attempt,&preview.digest,false).unwrap_err().code,ErrorCode::Unauthorized);
+    // Enqueue alone is enough; this test starts no runtime or network request.
+    store.enqueue_execution(&input).unwrap();
+    let expected=Some(ArenaStartReceipt {project_id:project,attempt_id:attempt,task_id:input.envelope().task_id,digest:preview.digest.clone()});
+    assert_eq!(store.arena_start_action_read(project,attempt,&preview.digest,true).unwrap(),expected);
+    assert_eq!(store.arena_start_action_read(ExecutionId::new(),attempt,&preview.digest,true).unwrap_err().code,ErrorCode::ResultMismatch);
+    assert_eq!(store.arena_start_action_read(project,attempt,&"0".repeat(64),true).unwrap_err().code,ErrorCode::ResultMismatch);
+    store.cancel_execution(input.envelope().task_id,ExecutionId::new()).unwrap();
+    replace_source(&mut store,br#"{"changed":"New source"}"#);
+    let sequence=store.execution_sequence().unwrap();
+    assert_eq!(store.arena_start_action_read(project,attempt,&preview.digest,true).unwrap(),expected);
+    assert_eq!(store.execution_sequence().unwrap(),sequence);
+    let directory=store.directory().to_path_buf();store.close().unwrap();
+    let reopened=ProjectStore::open(&directory).unwrap();
+    assert_eq!(reopened.arena_start_action_read(project,attempt,&preview.digest,true).unwrap(),expected);
+}
+
+#[test]
 fn arena_boundaries_digest_cancellation_and_parent_round_are_checked() {
     let (_temp, mut store, rows) = source_project();
     let wire = controlled("success");

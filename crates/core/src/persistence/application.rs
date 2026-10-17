@@ -1545,6 +1545,55 @@ mod tests {
             .unwrap();
     }
     #[test]
+    fn work_plan_start_reads_require_enqueued_original_input_and_preserve_history() {
+        use crate::application::{WorkPlanCommand, WorkPlanStartReceipt};
+        use crate::execution::{FixedInput, Revision};
+        let (_temp, mut store, units) = fixture();
+        let plan = store.prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default()).unwrap();
+        let project = plan.project_id;
+        let authorization = consent(&plan);
+        let generation = Revision::new(1).unwrap();
+        assert_eq!(store.work_plan_start_action_read(project, plan.plan_id, authorization.action_id, generation).unwrap(), None);
+        let receipt = store.authorize_work_plan(&plan, &authorization).unwrap();
+        let input = FixedInput::capture(receipt.input.unwrap()).unwrap();
+        // Authorization is durable before the actual start transaction.
+        let sequence = store.execution_sequence().unwrap();
+        assert_eq!(store.work_plan_start_action_read(project, plan.plan_id, authorization.action_id, generation).unwrap(), None);
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        store.enqueue_execution(&input).unwrap();
+        let expected = Some(WorkPlanStartReceipt {project_id:project,plan_id:plan.plan_id,
+            action_id:authorization.action_id,expected_generation:generation,
+            attempt_id:input.envelope().attempt_id,task_id:input.envelope().task_id});
+        assert_eq!(store.work_plan_start_action_read(project, plan.plan_id, authorization.action_id, generation).unwrap(), expected);
+        for (p,id,g) in [(ExecutionId::new(),plan.plan_id,generation),(project,ExecutionId::new(),generation),
+            (project,plan.plan_id,Revision::new(2).unwrap())] {
+            assert_eq!(store.work_plan_start_action_read(p,id,authorization.action_id,g).unwrap_err().code, ErrorCode::ResultMismatch);
+        }
+        assert!(store.work_plan_start_action_read(project,plan.plan_id,authorization.action_id,Revision::new(0).unwrap()).is_err());
+        let paused = store.control_work_plan(&control(&plan,1,WorkPlanCommand::Pause)).unwrap();
+        assert_eq!(store.work_plan_start_action_read(project,plan.plan_id,paused.action_id,paused.lease.generation).unwrap_err().code,ErrorCode::ResultMismatch);
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        let sequence = store.execution_sequence().unwrap();
+        let count: i64 = store.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts",[],|row|row.get(0)).unwrap();
+        assert_eq!(store.work_plan_start_action_read(project,plan.plan_id,authorization.action_id,generation).unwrap(),expected);
+        assert!(!store.is_reconciling());
+        assert_eq!(store.execution_sequence().unwrap(),sequence);
+        assert_eq!(store.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts",[],|row|row.get::<_,i64>(0)).unwrap(),count);
+        let c=store.connection().unwrap();
+        let digest:String=c.query_row("SELECT receipt_digest FROM application_actions WHERE action_id=?1",[authorization.action_id.to_string()],|row|row.get(0)).unwrap();
+        c.execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",rusqlite::params![authorization.action_id.to_string(),"0".repeat(64)]).unwrap();
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert_eq!(store.work_plan_start_action_read(project,plan.plan_id,authorization.action_id,generation).unwrap_err().code,ErrorCode::CorruptLedger);
+        assert!(store.is_reconciling());
+        c.execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",rusqlite::params![authorization.action_id.to_string(),digest]).unwrap();
+        assert_eq!(store.work_plan_start_action_read(project,plan.plan_id,ExecutionId::new(),generation).unwrap(),None);
+        assert!(!store.is_reconciling());
+        let directory=store.directory().to_path_buf();store.close().unwrap();
+        let reopened=ProjectStore::open(&directory).unwrap();
+        assert_eq!(reopened.work_plan_start_action_read(project,plan.plan_id,authorization.action_id,generation).unwrap(),expected);
+    }
+
+    #[test]
     fn cancelled_root_requires_new_grant_without_refunding_original_budget() {
         use crate::application::{WorkPlanCommand, WorkPlanState};
         use crate::execution::{FixedInput, RecoveryPolicy};
