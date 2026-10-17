@@ -167,6 +167,7 @@ pub(super) fn check_prepared(
 pub(super) fn bindings(
     prepared: &[PreparedTool],
     project: ExecutionId,
+    caller_scope: &str,
     generation: u32,
     remaining_ms: u32,
 ) -> Result<Vec<sdk::ServiceBinding>, CommandError> {
@@ -186,7 +187,7 @@ pub(super) fn bindings(
                 error_schema: declaration.error_schema.clone(),
                 effect: sdk::EffectKind::ReadOnly,
                 project_id: project.to_string(),
-                scope_id: project.to_string(),
+                scope_id: caller_scope.into(),
                 activation_generation: generation,
                 configuration_digest: tool.view.input_digest.clone(),
                 limits,
@@ -211,6 +212,12 @@ pub(super) fn selected_bindings(
         .get()
         .try_into()
         .map_err(|_| limit())?;
+    let caller_scope = envelope
+        .plugin
+        .as_ref()
+        .ok_or_else(denied)?
+        .scope_id(envelope.project_id, envelope.attempt_id)
+        .map_err(map_recover)?;
     let original = sdk::ServiceBinding {
         handle_id: "work-plan-generation".into(),
         provider_id: "tsumugi.core".into(),
@@ -220,12 +227,7 @@ pub(super) fn selected_bindings(
         error_schema: sdk::generation_service_error_contract(),
         effect: sdk::EffectKind::External,
         project_id: envelope.project_id.to_string(),
-        scope_id: envelope
-            .plugin
-            .as_ref()
-            .ok_or_else(denied)?
-            .scope_id(envelope.project_id, envelope.attempt_id)
-            .map_err(map_recover)?,
+        scope_id: caller_scope.clone(),
         activation_generation: generation,
         configuration_digest: configuration_digest.into(),
         limits: sdk::CapabilityLimits {
@@ -240,6 +242,7 @@ pub(super) fn selected_bindings(
     selected.extend(bindings(
         tools,
         envelope.project_id,
+        &caller_scope,
         generation,
         remaining_ms,
     )?);

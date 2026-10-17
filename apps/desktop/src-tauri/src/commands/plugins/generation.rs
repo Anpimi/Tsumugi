@@ -112,8 +112,7 @@ fn resolve_generation_component(
             .permissions
             .contains(&sdk::PermissionRequest::ProjectService { contract: service })
         || (binding.declaration.input_schema != sdk::generation_service_input_contract()
-            && (binding.declaration.input_schema != sdk::generation_component_input_contract()
-                || component.scope != sdk::ComponentScope::Project))
+            && binding.declaration.input_schema != sdk::generation_component_input_contract())
         || binding.declaration.output_schema != sdk::generation_service_receipt_contract()
         || binding.declaration.error_schema != sdk::generation_service_error_contract()
     {

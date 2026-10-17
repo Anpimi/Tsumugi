@@ -57,6 +57,19 @@ impl ToolFixture {
         application_leases: std::collections::BTreeMap<ExecutionId, ApplicationExecutionLease>,
         runner: impl FnOnce(&WorkPlanToolSpec) -> Arc<dyn Runner>,
     ) -> Self {
+        Self::with_selection_and_scope(
+            tool,
+            application_leases,
+            sdk::ComponentScope::Project,
+            runner,
+        )
+    }
+    fn with_selection_and_scope(
+        tool: WorkPlanToolSpec,
+        application_leases: std::collections::BTreeMap<ExecutionId, ApplicationExecutionLease>,
+        caller_scope: sdk::ComponentScope,
+        runner: impl FnOnce(&WorkPlanToolSpec) -> Arc<dyn Runner>,
+    ) -> Self {
         let (directory, mut store, _) =
             crate::persistence::review::tests::current_release_fixture(false);
         let unit = store
@@ -154,6 +167,7 @@ impl ToolFixture {
             }],
         };
         let mut plugin = super::binding();
+        plugin.component_scope = caller_scope;
         plugin.capability.declaration.input_schema = sdk::generation_component_input_contract();
         plugin.capability.declaration.output_schema = sdk::generation_service_receipt_contract();
         plugin.capability.declaration.error_schema = sdk::generation_service_error_contract();
@@ -292,6 +306,190 @@ impl ToolFixture {
             [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).unwrap()
     }
+}
+
+#[test]
+fn attempt_tool_service_keeps_project_and_application_callees_independent_from_its_scope() {
+    for application in [false, true] {
+        let mut tool = query_tool();
+        let mut leases = std::collections::BTreeMap::new();
+        if application {
+            tool.execution.component_scope = sdk::ComponentScope::Application;
+            tool.execution.application_scope = Some(ApplicationScopeBasis {
+                instance_id: ExecutionId::new(),
+                activation_generation: 1,
+            });
+            tool.application_capabilities = vec![sdk::ProcessCapability {
+                contribution_id: tool.binding.capability.provider.contribution_id.clone(),
+                capability: tool.binding.capability.declaration.clone(),
+            }];
+            leases.insert(
+                tool.handle,
+                ApplicationExecutionLease::capture(
+                    vec![tool.execution.clone()],
+                    true,
+                    Cancellation::default(),
+                    Cancellation::default(),
+                )
+                .unwrap(),
+            );
+        }
+        let original_tool = tool.execution.clone();
+        let mut f = ToolFixture::with_selection_and_scope(
+            tool,
+            leases,
+            sdk::ComponentScope::Attempt,
+            |tool| {
+                Arc::new(Registered {
+                    plugin: Some(tool.execution.clone()),
+                })
+            },
+        );
+        let outer_attempt = f.dispatch.input.envelope().attempt_id;
+        assert_eq!(f.origin.record.service.scope_id, outer_attempt.to_string());
+        assert_eq!(
+            f.origin.record.invocation.context.scope_id,
+            outer_attempt.to_string()
+        );
+        let (prepared, receipt) = f.submit();
+        assert_eq!(
+            prepared.input().envelope().plugin.as_ref(),
+            Some(&original_tool)
+        );
+        let callee_scope = original_tool
+            .scope_id(
+                prepared.input().envelope().project_id,
+                prepared.input().envelope().attempt_id,
+            )
+            .unwrap();
+        assert_ne!(callee_scope, outer_attempt.to_string());
+        assert_eq!(
+            callee_scope,
+            if application {
+                original_tool
+                    .application_scope
+                    .as_ref()
+                    .unwrap()
+                    .instance_id
+                    .to_string()
+            } else {
+                prepared.input().envelope().project_id.to_string()
+            }
+        );
+        assert_ne!(receipt.origin_grant_id, receipt.grant_id);
+        let dispatch = f
+            .store
+            .dispatch_execution_item(
+                receipt.attempt_id,
+                prepared.input().envelope().items[0].item_id,
+            )
+            .unwrap();
+        let permit = dispatch.plugin_permit().unwrap();
+        assert_eq!(permit.grant_id(), receipt.grant_id);
+        assert!(permit.is_work_plan_tool());
+        dispatch.check_service_dispatch().unwrap();
+        f.cancellation.request();
+        assert!(dispatch.check_service_dispatch().is_err());
+        let before = f.counts();
+        assert_eq!(
+            f.runtime
+                .submit_work_plan_service_tool(&mut f.store, &prepared, &f.consent, f.grant,)
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(f.counts(), before);
+        let path = f.store.directory().to_owned();
+        drop(f.runtime);
+        f.store.close().unwrap();
+        let reopened = ProjectStore::open(path).unwrap();
+        assert_eq!(
+            reopened
+                .work_plan_tool_service_receipt(&receipt.identity, &f.call)
+                .unwrap(),
+            Some(receipt)
+        );
+        assert!(reopened.check_plugin_input(prepared.input()).is_err());
+    }
+}
+
+#[test]
+fn attempt_tool_service_refuses_forged_facades_and_other_caller_profiles() {
+    let f = ToolFixture::with_selection_and_scope(
+        query_tool(),
+        Default::default(),
+        sdk::ComponentScope::Attempt,
+        |tool| {
+            Arc::new(Registered {
+                plugin: Some(tool.execution.clone()),
+            })
+        },
+    );
+    let before = f.counts();
+    for variant in ["project-alias", "other-attempt", "other-project"] {
+        let mut invocation = f.origin.record.invocation.clone();
+        let mut service = f.origin.record.service.clone();
+        match variant {
+            "project-alias" => {
+                invocation.context.scope_id = f.origin.record.project_id.to_string();
+                service.scope_id = invocation.context.scope_id.clone();
+            }
+            "other-attempt" => {
+                invocation.context.scope_id = ExecutionId::new().to_string();
+                service.scope_id = invocation.context.scope_id.clone();
+            }
+            _ => {
+                invocation.context.project_id = ExecutionId::new().to_string();
+                service.project_id = invocation.context.project_id.clone();
+            }
+        }
+        assert!(
+            f.store
+                .capture_work_plan_tool_service_origin(
+                    &f.origin.scope,
+                    &f.dispatch,
+                    &invocation,
+                    &service,
+                    f.dispatch.deadline().unwrap(),
+                    &f.cancellation,
+                    &f.settings,
+                )
+                .is_err(),
+            "{variant}"
+        );
+    }
+    for variant in ["legacy-input", "missing-permission", "application-caller"] {
+        let mut envelope = f.dispatch.input.envelope().clone();
+        let binding = envelope.plugin.as_mut().unwrap();
+        match variant {
+            "legacy-input" => {
+                binding.capability.declaration.input_schema =
+                    sdk::generation_service_input_contract()
+            }
+            "missing-permission" => {
+                binding
+                    .capability
+                    .declaration
+                    .permissions
+                    .retain(|permission| {
+                        !matches!(permission, sdk::PermissionRequest::ProjectService { contract }
+                    if contract == &f.origin.record.service.contract)
+                    })
+            }
+            _ => {
+                binding.component_scope = sdk::ComponentScope::Application;
+                binding.application_scope = Some(ApplicationScopeBasis {
+                    instance_id: ExecutionId::new(),
+                    activation_generation: 1,
+                });
+            }
+        }
+        let outer = FixedInput::capture(envelope).unwrap();
+        assert!(
+            check_origin_permission(&outer, &f.origin.record).is_err(),
+            "{variant}"
+        );
+    }
+    assert_eq!(f.counts(), before);
 }
 
 #[test]

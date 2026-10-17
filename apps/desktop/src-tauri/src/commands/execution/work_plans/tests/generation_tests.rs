@@ -82,6 +82,21 @@ fn start_component_for_units(
     grant: &Value,
     units: &[ExecutionId],
 ) -> ComponentAction {
+    start_component_for_units_with_tools(fixture, component, grant, units, Vec::new())
+}
+
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+fn start_component_for_units_with_tools(
+    fixture: &Fixture,
+    component: Value,
+    grant: &Value,
+    units: &[ExecutionId],
+    tool_queries: Vec<Value>,
+) -> ComponentAction {
     let scope = fixture
         .call(
             "open_work_plan_agent_scope",
@@ -91,7 +106,7 @@ fn start_component_for_units(
     let generation =
         json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":units});
     let outer = ExecutionId::new();
-    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation,"toolQueries":[]});
+    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation,"toolQueries":tool_queries});
     let prepared = fixture
         .call("prepare_work_plan_generation_component", preparing.clone())
         .unwrap();

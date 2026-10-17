@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Attempt JavaScript generation components can explicitly consume the existing
+prepared-tool wrapper through their original service boundary. Facades now use
+the caller's actual Project or Attempt scope; tool execution bindings and
+independent authority retain their existing meanings. This adds support without
+changing SDK/Process3, WorkPlan3, IPC fields, schema51 or dependency metadata.
+The independent Philosophy example consumes a newly pinned immutable archive of
+the already saved SDK wrapper and owns its changed input/dependency contract.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain in the same undistributed
+batch; bilingual Unreleased entries are synchronized without an additional bump.
+
 Prepared WorkPlan tools can now retain an exact independently authorized
 Application instance and its complete read-only capability roster. The original
 tool grant and service association preserve their separate authority; required

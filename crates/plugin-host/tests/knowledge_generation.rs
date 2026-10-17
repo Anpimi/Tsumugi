@@ -34,11 +34,15 @@ fn missing_generation_service_refuses_only_its_component_before_staging() {
             assert_eq!(generation.provider.component_id, "generation");
             assert_eq!(
                 generation.declaration.contract,
-                official::contract("org.tsumugi.examples.philosophy-generation-delegate")
+                sdk::ContractRef {
+                    id: "org.tsumugi.examples.philosophy-generation-delegate".into(),
+                    schema_version: 2,
+                    behavior_version: 2
+                }
             );
             assert_eq!(
                 generation.declaration.input_schema,
-                sdk::generation_service_input_contract()
+                sdk::generation_component_input_contract()
             );
             assert_eq!(
                 generation.declaration.output_schema,
@@ -59,11 +63,18 @@ fn missing_generation_service_refuses_only_its_component_before_staging() {
             assert_eq!(component.scope, sdk::ComponentScope::Attempt);
             assert_eq!(
                 component.dependencies,
-                vec![sdk::CapabilityDependency {
-                    contract: sdk::generation_service_contract(),
-                    required: true,
-                    selection: sdk::ProviderSelection::Single,
-                }]
+                vec![
+                    sdk::CapabilityDependency {
+                        contract: sdk::generation_service_contract(),
+                        required: true,
+                        selection: sdk::ProviderSelection::Single,
+                    },
+                    sdk::CapabilityDependency {
+                        contract: official::contract("org.tsumugi.examples.philosophy-query"),
+                        required: true,
+                        selection: sdk::ProviderSelection::Single,
+                    }
+                ]
             );
             let resource = image
                 .resource_bytes(

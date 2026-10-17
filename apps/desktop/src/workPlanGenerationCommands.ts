@@ -17,7 +17,7 @@ function invalidAcknowledgement(): never {
 const preparations = new WeakMap<WorkPlanGenerationPreflight, WorkPlanGenerationPrepareRequest & { inputDigest: string }>();
 const starts = new WeakMap<WorkPlanGenerationPreflight, WorkPlanGenerationStartRequest>();
 export function generationSupportsPreparedTools(component: PluginGenerationComponentView) {
-  return component.componentScope === "project" && component.environment.profile === "node-system-libraries-v1"
+  return (component.componentScope === "project" || component.componentScope === "attempt") && component.environment.profile === "node-system-libraries-v1"
     && contractIdentity(component.binding.declaration.inputSchema) === contractIdentity({ id: "tsumugi.generation-component-input", schemaVersion: 1, behaviorVersion: 1 });
 }
 export function compatiblePreparedTool(tool: WorkPlanToolSpec) {

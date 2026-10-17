@@ -61,7 +61,7 @@ beforeEach(async () => {
     if (command === "read_plugin_package") return structuredClone(installed);
     if (command === "read_plugin_generation_component") {
       const contribution = installed.manifest.contributions[0].contribution;
-      return { ...structuredClone(generationComponent), profile: request.profile,
+      return { ...structuredClone(generationComponent), componentScope: installed.manifest.components[0].scope, profile: request.profile,
         binding: { ...structuredClone(generationComponent.binding), declaration: contribution.kind === "capability" ? contribution.declaration : generationComponent.binding.declaration } };
     }
     if (command === "open_work_plan_agent_scope") return structuredClone(generationFixture.scope);
@@ -71,7 +71,7 @@ beforeEach(async () => {
       return { ...structuredClone(generationFixture.preflight), attemptId: request.attemptId, generation: request.generation,
         preparedTools: request.toolQueries.map(generationToolFixture),
         taskId: fixtureIdentity(200),
-        component: { ...structuredClone(generationComponent), profile: request.component.profile,
+        component: { ...structuredClone(generationComponent), componentScope: installed.manifest.components[0].scope, profile: request.component.profile,
           binding: { ...structuredClone(generationComponent.binding), declaration: installed.manifest.contributions[0].contribution.kind === "capability"
             ? installed.manifest.contributions[0].contribution.declaration : generationComponent.binding.declaration } },
         scope: workPlanToolStatus.plan.scope.filter(unit => request.generation.unitIds.includes(unit.unitId)) };
@@ -370,10 +370,13 @@ async function chooseReference(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(screen.getByRole("combobox", { name: "Original entry for the reference query" }), workPlanToolStatus.plan.scope[0].unitId);
   return tool;
 }
-it("discovers the opt-in input only for Project components while retaining the original Attempt input", async () => {
+it("discovers opt-in Project and Attempt callers while refusing Application callers", async () => {
   usePreparedToolInput();
-  expect((await readPluginGenerationChoices()).choices[0].supportsPreparedTools).toBe(true);
-  installed.manifest.components[0].scope = "attempt";
+  for (const scope of ["project", "attempt"] as const) {
+    installed.manifest.components[0].scope = scope;
+    expect((await readPluginGenerationChoices()).choices[0].supportsPreparedTools).toBe(true);
+  }
+  installed.manifest.components[0].scope = "application";
   expect((await readPluginGenerationChoices()).choices).toEqual([]);
 });
 it("keeps the opt-in input free of reference queries until a human selects a tool and an original entry", async () => {
@@ -402,8 +405,9 @@ it.each(["dependency", "permission", "version"] as const)("keeps a reference too
   expect(original?.toolQueries).toEqual([]);
   expect(invoke.mock.calls.some(([command]) => command.startsWith("authorize_"))).toBe(false);
 });
-it("prepares one exact read-only tool query from the selected original entry and reviews its frozen input before independent component consent", async () => {
-  usePreparedToolInput(); render(controls()); const user = await chooseComponent(), tool = await chooseReference(user);
+it.each(["project", "attempt"] as const)("prepares one exact tool query for a %s caller and reviews its frozen input before independent component consent", async scope => {
+  usePreparedToolInput(); installed.manifest.components[0].scope = scope;
+  render(controls()); const user = await chooseComponent(), tool = await chooseReference(user);
   await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
   const review = await screen.findByRole("region", { name: "Prepared reference query" });
   const query = { taskId: fixtureIdentity(103), attemptId: fixtureIdentity(104), toolHandle: tool.handle, unitIds: [workPlanToolStatus.plan.scope[0].unitId] as [string] };

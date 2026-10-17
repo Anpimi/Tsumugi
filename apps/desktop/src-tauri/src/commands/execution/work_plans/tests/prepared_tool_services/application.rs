@@ -5,6 +5,14 @@ use super::*;
 mod native_fixture;
 
 fn setup(native: bool, pending: bool, no_ready: bool) -> Setup {
+    setup_in_scope(native, pending, no_ready, sdk::ComponentScope::Project)
+}
+fn setup_in_scope(
+    native: bool,
+    pending: bool,
+    no_ready: bool,
+    caller_scope: sdk::ComponentScope,
+) -> Setup {
     let fixture = Fixture::create();
     let observer = fixture.directory.path().join("query-observer.jsonl");
     if native {
@@ -24,7 +32,7 @@ fn setup(native: bool, pending: bool, no_ready: bool) -> Setup {
                 file(&serde_json::to_vec(&declaration).unwrap()),
             );
         }
-        Setup::with_query(fixture, image(manifest, files), "echo-tool")
+        Setup::with_query_in_scope(fixture, image(manifest, files), "echo-tool", caller_scope)
     } else {
         let (mut manifest, mut files) = query_package_parts(&observer, pending);
         manifest.components[0].scope = sdk::ComponentScope::Application;
@@ -59,7 +67,7 @@ export default {async activate(api) {
   api.onDispose(()=>observe('disposed'));
 }};
 "#));
-        Setup::with_query(fixture, image(manifest, files), "query-tool")
+        Setup::with_query_in_scope(fixture, image(manifest, files), "query-tool", caller_scope)
     }
 }
 
@@ -184,8 +192,8 @@ fn reject_missing_or_substituted_lifetime_consent(setup: &Setup, plan: &Value) {
     assert_eq!(instance_state(setup, &application)["state"], "reserved");
 }
 
-fn normal(native: bool) {
-    let mut setup = setup(native, false, false);
+fn normal(native: bool, caller_scope: sdk::ComponentScope) {
+    let mut setup = setup_in_scope(native, false, false, caller_scope);
     let (config, provider) = local_provider_sequence_with_accept_timeout(
         vec!["first root", "first component"],
         None,
@@ -218,11 +226,30 @@ fn normal(native: bool) {
         );
     }
     let (request, preflight, query) = setup.prepare(&grant);
+    assert_eq!(
+        preflight["component"]["componentScope"],
+        json!(caller_scope)
+    );
     let start = setup.start(&request, &preflight);
     let outer = setup.wait_terminal(&request["attemptId"]);
     assert_eq!(
         outer["items"][0]["status"]["execution"], "succeeded",
         "{outer}"
+    );
+    let caller_output = setup
+        .fixture
+        .call(
+            "read_execution_output",
+            json!({"attemptId":request["attemptId"],"resultId":outer["items"][0]["resultId"]}),
+        )
+        .unwrap();
+    assert_eq!(
+        caller_output["plugin"]["result"]["context"]["scopeId"],
+        if caller_scope == sdk::ComponentScope::Attempt {
+            request["attemptId"].clone()
+        } else {
+            setup.fixture.context["projectId"].clone()
+        }
     );
     let saved = setup
         .fixture
@@ -393,17 +420,17 @@ fn normal(native: bool) {
 #[test]
 fn prepared_application_tool_services_js_roster_cross_projects_and_manual_agent_keep_original_instance()
  {
-    normal(false);
+    normal(false, sdk::ComponentScope::Project);
 }
 
 #[test]
 fn prepared_application_tool_services_native_singleton_cross_projects_and_manual_agent_keep_original_instance()
  {
-    normal(true);
+    normal(true, sdk::ComponentScope::Project);
 }
 
-fn cancel(native: bool) {
-    let setup = setup(native, true, false);
+fn cancel(native: bool, caller_scope: sdk::ComponentScope) {
+    let setup = setup_in_scope(native, true, false, caller_scope);
     let (mut config, provider) = local_provider("root candidate");
     config.max_requests = 2;
     let (plan, grant) = setup.start_plan(config);
@@ -469,12 +496,12 @@ fn cancel(native: bool) {
 
 #[test]
 fn prepared_application_tool_services_js_caller_cancel_retires_the_exact_shared_instance() {
-    cancel(false);
+    cancel(false, sdk::ComponentScope::Project);
 }
 
 #[test]
 fn prepared_application_tool_services_native_caller_cancel_retires_the_exact_shared_instance() {
-    cancel(true);
+    cancel(true, sdk::ComponentScope::Project);
 }
 
 #[test]
@@ -526,4 +553,17 @@ fn prepared_application_tool_services_missing_ready_never_launches_caller_and_re
             .status
             .success()
     );
+}
+
+#[test]
+fn prepared_attempt_tool_services_js_application_roster_keeps_exact_shared_instance() {
+    normal(false, sdk::ComponentScope::Attempt);
+}
+#[test]
+fn prepared_attempt_tool_services_native_application_keeps_exact_shared_instance() {
+    normal(true, sdk::ComponentScope::Attempt);
+}
+#[test]
+fn prepared_attempt_tool_services_caller_cancel_retires_exact_shared_application() {
+    cancel(false, sdk::ComponentScope::Attempt);
 }

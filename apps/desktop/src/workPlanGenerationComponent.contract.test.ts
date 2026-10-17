@@ -36,8 +36,9 @@ function toolPreparation() {
   const preflight = { ...structuredClone(fixture.preflight), component, preparedTools: [generationToolFixture(query)] };
   return { component, query, request, preflight, tools: workPlanToolStatus.plan.tools!.entries };
 }
-it("keeps exact tool identities, original scope and frozen Host input without accepting caller payloads", async () => {
+it.each(["project", "attempt"] as const)("keeps a %s caller's exact tool identities and frozen Host input without accepting payloads", async scope => {
   const { request, component, preflight, tools } = toolPreparation(), original = structuredClone(request);
+  component.componentScope = scope;
   invoke.mockResolvedValueOnce(structuredClone(preflight));
   const pending = workPlanGenerationCommands.prepare(request, fixture.scope, component, tools);
   request.toolQueries[0].unitIds[0] = fixtureIdentity(999);
@@ -48,8 +49,9 @@ it("keeps exact tool identities, original scope and frozen Host input without ac
   expect(validators.validateRequestWorkPlanGenerationPrepare({ ...original, toolQueries: [{ ...original.toolQueries[0], payload: {} }] })).toBe(false);
 });
 
-it.each([false, true])("pins the prepared Application service instance and full roster (Native: %s)", async native => {
+it.each([["project", false], ["project", true], ["attempt", false], ["attempt", true]] as const)("pins the %s caller's Application service and full roster (Native: %s)", async (scope, native) => {
   const { request, component, preflight } = toolPreparation(), tool = applicationWorkPlanTool(undefined, native);
+  component.componentScope = scope;
   preflight.preparedTools[0].tool = structuredClone(tool);
   invoke.mockResolvedValueOnce(structuredClone(preflight));
   expect((await workPlanGenerationCommands.prepare(request, fixture.scope, component, [tool])).preparedTools[0].tool).toEqual(tool);
@@ -78,6 +80,13 @@ it("rejects legacy tool queries, duplicate tools or identities and units outside
   ];
   for (const toolQueries of invalidQueries) await expect(workPlanGenerationCommands.prepare({ ...request, toolQueries }, fixture.scope, component, tools)).rejects.toThrow("reference selection");
   await expect(workPlanGenerationCommands.prepare(request, fixture.scope, component, [])).rejects.toThrow("reference selection");
+  expect(invoke.mock.calls.length).toBe(before);
+});
+it("refuses an Application caller or Attempt tool before invoking Host", async () => {
+  const { request, component, tools } = toolPreparation(), before = invoke.mock.calls.length;
+  await expect(workPlanGenerationCommands.prepare(request, fixture.scope, { ...component, componentScope: "application" }, tools)).rejects.toThrow("reference selection");
+  const attemptTool = structuredClone(tools[0]); attemptTool.execution.componentScope = "attempt";
+  await expect(workPlanGenerationCommands.prepare(request, fixture.scope, component, [attemptTool])).rejects.toThrow("reference selection");
   expect(invoke.mock.calls.length).toBe(before);
 });
 it("rejects substituted tool preflights even when each response separately matches the generated schema", async () => {

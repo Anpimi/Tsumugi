@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Let explicitly selected Attempt JavaScript generation components call the
+  work plan's prepared read-only tools. Service facades retain the caller's
+  exact attempt while each tool keeps its own scope and independent authority;
+  missing dependencies, cancellation and historical execution guards remain.
+
 - Let work plans select existing read-only Application tools for generation
   components and manual Agent queries. Each exact shared instance needs separate
   lifetime consent; its complete capability set and shared cancellation impact

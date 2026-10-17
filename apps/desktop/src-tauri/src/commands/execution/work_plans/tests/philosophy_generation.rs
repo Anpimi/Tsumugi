@@ -177,16 +177,43 @@ fn assert_original_service_association(
         [action.outer.to_string(), action.generation["attemptId"].as_str().unwrap().to_owned()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
     ).unwrap();
+    let mut statement = connection
+        .prepare("SELECT child_attempt,origin FROM application_service_calls")
+        .unwrap();
+    let associations = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM application_service_calls",
-                [],
-                |row| row.get::<_, i64>(0)
-            )
-            .unwrap(),
-        1
+        associations.len(),
+        2,
+        "one query and one generation association"
     );
+    let mut kinds = std::collections::BTreeSet::new();
+    for (child, bytes) in associations {
+        let captured: Value = serde_json::from_slice(&bytes).unwrap();
+        let kind = captured["kind"].as_str().unwrap();
+        assert!(kinds.insert(kind.to_owned()));
+        let expected = match kind {
+            "generation" => &action.generation["attemptId"],
+            "plugin-tool" => &action.preparing["toolQueries"][0]["attemptId"],
+            other => panic!("unexpected service association kind: {other}"),
+        };
+        assert_eq!(json!(child), *expected);
+        assert_eq!(captured["grantId"], action.starting["grantId"]);
+        assert_eq!(
+            captured["outerInputDigest"],
+            action.preflight["inputDigest"]
+        );
+        assert_eq!(captured["service"]["scopeId"], action.outer.to_string());
+        assert_eq!(
+            captured["invocation"]["context"]["scopeId"],
+            action.outer.to_string()
+        );
+    }
     let origin: Value = serde_json::from_slice(&origin).unwrap();
     let call: WorkPlanServiceCall = serde_json::from_slice(&call).unwrap();
     assert_eq!(origin["grantId"], action.starting["grantId"]);
@@ -445,11 +472,24 @@ fn exercise(outcome: ChildOutcome) {
         // original five-second service-origin deadline is never extended.
         config.timeout_seconds = 5;
     }
-    let (plan, grant) = fixture.start_candidates(config);
+    let tool = knowledge.capability_tool("agent-query-tool").unwrap();
+    let handle = ExecutionId::new();
+    let selection = json!({"maxInvocations":1,"entries":[{"handle":handle,
+        "tool":{"package":{"plugin":knowledge.manifest().manifest().plugin,"packageDigest":knowledge.package_digest()},
+            "resourceId":"agent-query-tool","environmentDigest":environment},"target":"zh-CN","selections":["soundness"]}]});
+    let (plan, grant) =
+        fixture.start_candidates_with_tools(config, &[fixture.unit], Some(selection));
     let root = fixture.wait_saved(&plan["attemptId"]);
     assert_eq!(root["budget"]["dispatched"], 1);
     let count = fixture.attempt_count();
-    let action = start_component_for_units(&fixture, component.clone(), &grant, &[fixture.unit]);
+    let query = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"toolHandle":handle,"unitIds":[fixture.unit]});
+    let action = start_component_for_units_with_tools(
+        &fixture,
+        component.clone(),
+        &grant,
+        &[fixture.unit],
+        vec![query.clone()],
+    );
     if outcome == ChildOutcome::Cancelled {
         waiting.recv_timeout(Duration::from_secs(15)).unwrap();
     }
@@ -532,7 +572,72 @@ fn exercise(outcome: ChildOutcome) {
             assert_eq!(child["budget"]["completionTokens"], reported);
         }
     }
-    assert_eq!(fixture.attempt_count(), count + 2);
+    assert_eq!(fixture.attempt_count(), count + 3);
+    let queried = completed_output(&fixture, &query["attemptId"]);
+    assert_eq!(queried["outcome"], "succeeded");
+    assert_ne!(
+        queried["plugin"]["authorizationId"],
+        action.starting["grantId"]
+    );
+    assert_eq!(
+        queried["plugin"]["result"]["outcome"]["output"]["schema"],
+        json!(tool.capability.declaration.output_schema)
+    );
+    let reference: Value = serde_json::from_str(
+        queried["plugin"]["result"]["outcome"]["output"]["utf8"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        reference["results"][0]["entries"][0]["preferredTarget"],
+        "可靠性"
+    );
+    assert_eq!(
+        queried["plugin"]["result"]["context"]["scopeId"], fixture.context["projectId"],
+        "B retains its own Project scope"
+    );
+    let query_identity = WorkPlanServiceCallIdentity {
+        outer_attempt_id: action.outer,
+        outer_item_id: serde_json::from_value(
+            outer["plugin"]["result"]["context"]["itemId"].clone(),
+        )
+        .unwrap(),
+        outer_dispatch_id: serde_json::from_value(
+            outer["plugin"]["result"]["context"]["dispatchId"].clone(),
+        )
+        .unwrap(),
+        handle_id: action.preflight["preparedTools"][0]["handleId"]
+            .as_str()
+            .unwrap()
+            .into(),
+        call_id: action.preflight["preparedTools"][0]["callId"]
+            .as_str()
+            .unwrap()
+            .into(),
+    };
+    let query_call = WorkPlanServiceCall {
+        handle_id: query_identity.handle_id.clone(),
+        call_id: query_identity.call_id.clone(),
+        input: serde_json::from_value(action.preflight["preparedTools"][0]["input"].clone())
+            .unwrap(),
+    };
+    let caller_grant = action.starting["grantId"].clone();
+    let tool_grant = queried["plugin"]["authorizationId"].clone();
+    let query_origin = fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let store = &sessions.active.as_ref().unwrap().store;
+            let receipt = store
+                .work_plan_tool_service_receipt(&query_identity, &query_call)
+                .unwrap()
+                .unwrap();
+            assert_eq!(json!(receipt.grant_id), tool_grant);
+            assert_eq!(json!(receipt.origin_grant_id), caller_grant);
+            receipt
+        });
     let origin = assert_original_service_association(&fixture, &action, &component, &outer, &plan);
     let before = fixture.bytes();
     assert_eq!(
@@ -545,7 +650,7 @@ fn exercise(outcome: ChildOutcome) {
         json!(action.outer)
     );
     assert_eq!(fixture.bytes(), before);
-    assert_eq!(fixture.attempt_count(), count + 2);
+    assert_eq!(fixture.attempt_count(), count + 3);
     assert_eq!(requests.lock().unwrap().len(), 2);
     let mut replacement = action.starting.clone();
     replacement["grantId"] = json!(ExecutionId::new());
@@ -660,6 +765,12 @@ fn exercise(outcome: ChildOutcome) {
     assert_eq!(
         assert_original_service_association(&fixture, &action, &component, &outer, &plan),
         origin
+    );
+    let historical_query = completed_output(&fixture, &query["attemptId"]);
+    assert_eq!(historical_query, queried);
+    assert_eq!(
+        json!(query_origin.grant_id),
+        historical_query["plugin"]["authorizationId"]
     );
     assert_eq!(requests.lock().unwrap().len(), 2);
 }

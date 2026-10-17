@@ -2023,12 +2023,23 @@ mod tests {
             config: AiConfig,
             units: &[ExecutionId],
         ) -> (Value, Value) {
+            self.start_candidates_with_tools(config, units, None)
+        }
+
+        fn start_candidates_with_tools(
+            &self,
+            config: AiConfig,
+            units: &[ExecutionId],
+            tool_selection: Option<Value>,
+        ) -> (Value, Value) {
+            let tool_execution = tool_selection.is_some();
+            let effects = if tool_execution { json!(["save-candidate", "query-tools"]) } else { json!(["save-candidate"]) };
             let plan = self.call("prepare_work_plan", json!({
-                "config":config,"locale":"zh-CN","unitIds":units,"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null
+                "config":config,"locale":"zh-CN","unitIds":units,"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":tool_selection
             })).unwrap();
             let grant = self.call("authorize_work_plan", json!({
                 "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
-                "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"applicationToolExecutions":[],"effects":["save-candidate"],"expiresAt":expiry()
+                "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":tool_execution,"applicationToolExecutions":[],"effects":effects,"expiresAt":expiry()
             })).unwrap();
             assert!(
                 self.call(

@@ -18,7 +18,7 @@ export async function readPluginGenerationChoices() {
         && contractIdentity(dependency.contract) === generationContract(""))
       || contribution.contribution.kind !== "capability") return [];
     const declaration = contribution.contribution.declaration;
-    const supportsPreparedTools = component.scope === "project" && contractIdentity(declaration.inputSchema) === contractIdentity({ id: "tsumugi.generation-component-input", schemaVersion: 1, behaviorVersion: 1 });
+    const supportsPreparedTools = contractIdentity(declaration.inputSchema) === contractIdentity({ id: "tsumugi.generation-component-input", schemaVersion: 1, behaviorVersion: 1 });
     if (declaration.effect !== "external"
       || !declaration.permissions.some(permission => permission.kind === "project-service" && contractIdentity(permission.contract) === generationContract(""))
       || !item.manifest.permissions.some(permission => permission.kind === "project-service" && contractIdentity(permission.contract) === generationContract(""))

@@ -92,7 +92,7 @@ the complete JSON encoding, including escaped payload text, is at most 1 MiB.
 An empty array is valid. The old generation-service input keeps exactly its
 original three fields and is not implicitly upgraded.
 
-The Desktop adapter supports Project JavaScript callers and selected read-only
+The Desktop adapter supports Project and Attempt JavaScript callers and selected read-only
 Project JavaScript or supported Application query tools from the same
 human-authorized WorkPlan. Application tools retain their existing JavaScript
 capability roster or Native singleton profile. Their exact instance and complete
@@ -127,3 +127,10 @@ Rust consumers use `parse_generation_component_input`. The contract harness
 exports `schema-generation-component-input` and
 `validate-generation-component-input`; the existing generator produces
 `generation-component.d.ts` and its standalone structural validator from Rust.
+
+An explicitly declared component input can also be used by an Attempt JavaScript
+caller. Its captured query-service descriptors use that exact outer attempt;
+the selected tool still executes with its own Project or Application binding
+and independent grant. Legacy generation input retains its original service
+shape. Application callers and recursively assembled dependency graphs remain
+unsupported by this prepared-tool path.

@@ -432,7 +432,9 @@ fn check_origin_permission(
     }
     let binding = outer.envelope().plugin.as_ref().ok_or_else(corrupt)?;
     let capability = &binding.capability.declaration;
-    if !project_javascript(binding)
+    if !matches!(binding.component_scope, sdk::ComponentScope::Project | sdk::ComponentScope::Attempt)
+        || binding.application_scope.is_some()
+        || !matches!(&binding.environment, sdk::ExecutionEnvironmentDescriptor::Captured(_))
         || capability.effect != sdk::EffectKind::External
         || record.service.effect != sdk::EffectKind::ReadOnly
         || capability.input_schema != sdk::generation_component_input_contract()

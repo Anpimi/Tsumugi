@@ -72,11 +72,16 @@ export default {activate(api) {
         ]),
     )
 }
-fn caller_package(query: &sdk::CapabilityToolBinding, observer: &Path) -> PackageImage {
+fn caller_package(
+    query: &sdk::CapabilityToolBinding,
+    observer: &Path,
+    caller_scope: sdk::ComponentScope,
+) -> PackageImage {
     let mut manifest = generation_package_with_timeout(None, 60_000)
         .manifest()
         .manifest()
         .clone();
+    manifest.components[0].scope = caller_scope;
     let permission = sdk::PermissionRequest::ProjectService {
         contract: query.capability.declaration.contract.clone(),
     };
@@ -136,10 +141,24 @@ impl Setup {
         Self::with_query(fixture, query_image, "query-tool")
     }
     fn with_query(fixture: Fixture, query_image: PackageImage, resource_id: &str) -> Self {
+        Self::with_query_in_scope(
+            fixture,
+            query_image,
+            resource_id,
+            sdk::ComponentScope::Project,
+        )
+    }
+    fn with_query_in_scope(
+        fixture: Fixture,
+        query_image: PackageImage,
+        resource_id: &str,
+        caller_scope: sdk::ComponentScope,
+    ) -> Self {
         let query = query_image.capability_tool(resource_id).unwrap();
         let caller = caller_package(
             &query,
             &fixture.directory.path().join("caller-observer.jsonl"),
+            caller_scope,
         );
         let runtime = approved_runtime();
         let approval = RuntimeApproval {

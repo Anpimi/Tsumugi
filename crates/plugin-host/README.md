@@ -963,3 +963,10 @@ root/role/time progress and exact original-action recovery; a read projection or
 installation receipt cannot create a verified repository witness. Failed later
 metadata cannot discard previously verified progress. Only a verified exact
 member can supply its repository origin to a separate package decision.
+
+Attempt JavaScript generation components may explicitly opt into the existing
+component-input wrapper and declared read-only prepared query services. Every
+facade is bound to the caller's exact dispatch scope; callee grants and execution
+scopes remain independent. The legacy Attempt generation input retains its
+Core-generation-only service boundary. Missing declared providers and mismatched
+scope or permissions are rejected before activation.
