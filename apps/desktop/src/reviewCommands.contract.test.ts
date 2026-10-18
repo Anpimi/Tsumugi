@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/reviewCommands.contract.json";
 import nativeEnvironment from "../test/fixtures/nativeRuntime.contract.json";
-import { reviewCommands, confirmReviewFindingBasis, confirmReviewFindingEvidence, type ReviewFindingWrite, type ReviewFindingDecision } from "./reviewCommands";
+import { reviewCommands, confirmReviewFindingBasis, confirmReviewFindingEvidence, type ReviewCheckRequest, type ReviewFindingWrite, type ReviewFindingDecision } from "./reviewCommands";
 import * as validators from "./generated/review.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 import { reviewDiagnosticFixture } from "./testSupport/reviewDiagnosticFixture";
@@ -300,4 +300,40 @@ it.each(["decision", "waiver", "fallback"] as const)("rejects incomplete or diff
   invoke.mockResolvedValueOnce({ request: changed, receipt });
   await expect(read()).rejects.toSatisfy(hasUnknownOutcome);
   expect(invoke.mock.calls.every(([command]) => command.startsWith("read_review_"))).toBe(true);
+});
+
+
+it("reads only the complete original normalized checker request and nullable final receipt", async () => {
+  const request: ReviewCheckRequest = fixture.requests.prepareCheck;
+  const expected = { projectId: request.projectId, actionId: request.actionId, unitId: request.unitId,
+    locale: request.locale, expectedBasis: request.expectedBasis, advisoryChecks: request.advisoryChecks.map(choice => ({
+      plugin: choice.package.plugin, packageDigest: choice.package.packageDigest, resourceId: choice.resourceId,
+      environmentDigest: choice.environmentDigest, rules: choice.rules })) };
+  const response = { request: expected, receipt: { ...fixture.responses.check, actionId: request.actionId,
+    unitId: request.unitId, locale: request.locale, basis: request.expectedBasis } };
+  expect(validators.validateRequestCheckAction(request)).toBe(true);
+  expect(validators.validateResponseCheckAction(response)).toBe(true);
+  invoke.mockResolvedValueOnce(response); expect(await reviewCommands.checkAction(request)).toEqual(response);
+  expect(invoke).toHaveBeenLastCalledWith("read_review_check_action", { request });
+  invoke.mockResolvedValueOnce(null); expect(await reviewCommands.checkAction(request)).toBeNull();
+  for (const field of ["projectId", "actionId", "unitId", "locale", "expectedBasis"] as const) {
+    invoke.mockResolvedValueOnce({ ...response, request: { ...expected, [field]: field.endsWith("Id") ? fixtureIdentity(3599) : "wrong" } });
+    await expect(reviewCommands.checkAction(request)).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  // Use an actual typed text selection to exercise every original advisory field.
+  const text = (await import("./testSupport/textReviewFixture")).textReviewViewFixture();
+  const choice = { package: { plugin: text.binding.checker.provider.plugin, packageDigest: text.binding.checker.provider.packageDigest },
+    resourceId: text.resourceId, environmentDigest: text.environmentDigest, rules: text.rules };
+  const withChoice = { ...request, advisoryChecks: [choice] };
+  const selected = { plugin: choice.package.plugin, packageDigest: choice.package.packageDigest, resourceId: choice.resourceId,
+    environmentDigest: choice.environmentDigest, rules: choice.rules };
+  const chosenResponse = { ...response, request: { ...expected, advisoryChecks: [selected] } };
+  invoke.mockResolvedValueOnce(chosenResponse); expect(await reviewCommands.checkAction(withChoice)).toEqual(chosenResponse);
+  for (const changed of [{ ...selected, environmentDigest: "0".repeat(64) }, { ...selected, packageDigest: "0".repeat(64) },
+    { ...selected, resourceId: "another" }, { ...selected, rules: [] }, { ...selected, plugin: { ...selected.plugin, version: "99.0.0" } }]) {
+    invoke.mockResolvedValueOnce({ ...chosenResponse, request: { ...expected, advisoryChecks: [changed] } });
+    await expect(reviewCommands.checkAction(withChoice)).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  invoke.mockResolvedValueOnce({ ...response, executions: [] });
+  await expect(reviewCommands.checkAction(request)).rejects.toSatisfy(hasUnknownOutcome);
 });

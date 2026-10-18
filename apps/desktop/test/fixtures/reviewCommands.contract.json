@@ -143,6 +143,15 @@
       "actionId": "40000000-0000-4000-8000-000000000022",
       "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "advisoryChecks": []
+    },
+    "checkAction": {
+      "locale": "zh-CN",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "actionId": "40000000-0000-4000-8000-000000000022",
+      "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "advisoryChecks": []
     }
   },
   "responses": {
@@ -1391,6 +1400,415 @@
             }
           }
         ]
+      }
+    },
+    "checkAction": {
+      "request": {
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "actionId": "40000000-0000-4000-8000-000000000022",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "advisoryChecks": []
+      },
+      "receipt": {
+        "outcome": "completed",
+        "basisEvidence": {
+          "termRevisionIds": [
+            "40000000-0000-4000-8000-000000000008"
+          ],
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+        },
+        "createdAt": "2026-10-03T00:00:00Z",
+        "rules": [
+          {
+            "rule": "required-translation",
+            "status": "passed",
+            "reason": null,
+            "findings": [],
+            "key": {
+              "rule": {
+                "id": "required-translation",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "implementation": {
+                "kind": "core",
+                "validator": {
+                  "id": "tsumugi.core-review",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              }
+            },
+            "mandatory": true
+          },
+          {
+            "rule": "terminology",
+            "status": "passed",
+            "reason": null,
+            "findings": [],
+            "key": {
+              "rule": {
+                "id": "terminology",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "implementation": {
+                "kind": "core",
+                "validator": {
+                  "id": "tsumugi.core-review",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              }
+            },
+            "mandatory": true
+          },
+          {
+            "rule": "plugin:synthetic-domain-rule",
+            "status": "passed",
+            "reason": null,
+            "findings": [],
+            "key": {
+              "rule": {
+                "id": "synthetic-domain-rule",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "implementation": {
+                "kind": "plugin",
+                "provider": {
+                  "plugin": {
+                    "id": "example.review",
+                    "publisher": "example",
+                    "version": "0.1.0-alpha.1"
+                  },
+                  "componentId": "review",
+                  "contributionId": "checker",
+                  "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              }
+            },
+            "mandatory": true
+          }
+        ],
+        "actionId": "40000000-0000-4000-8000-000000000022",
+        "validatorVersion": "tsumugi.core-review:1:1",
+        "runId": "40000000-0000-4000-8000-000000000010",
+        "locale": "zh-CN",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "evidence": {
+          "qaBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "requiredChecks": {
+            "policy": {
+              "id": "tsumugi.policy.balanced",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "requirements": [
+              {
+                "key": {
+                  "rule": {
+                    "id": "required-translation",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "implementation": {
+                    "kind": "core",
+                    "validator": {
+                      "id": "tsumugi.core-review",
+                      "schemaVersion": 1,
+                      "behaviorVersion": 1
+                    }
+                  }
+                },
+                "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "targets": [
+                  "synthetic-unit"
+                ],
+                "mandatory": true,
+                "waivable": false,
+                "notApplicable": null
+              },
+              {
+                "key": {
+                  "rule": {
+                    "id": "terminology",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "implementation": {
+                    "kind": "core",
+                    "validator": {
+                      "id": "tsumugi.core-review",
+                      "schemaVersion": 1,
+                      "behaviorVersion": 1
+                    }
+                  }
+                },
+                "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "targets": [
+                  "synthetic-unit"
+                ],
+                "mandatory": true,
+                "waivable": true,
+                "notApplicable": null
+              },
+              {
+                "key": {
+                  "rule": {
+                    "id": "synthetic-domain-rule",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "implementation": {
+                    "kind": "plugin",
+                    "provider": {
+                      "plugin": {
+                        "id": "example.review",
+                        "publisher": "example",
+                        "version": "0.1.0-alpha.1"
+                      },
+                      "componentId": "review",
+                      "contributionId": "checker",
+                      "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    }
+                  }
+                },
+                "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "targets": [
+                  "synthetic-unit"
+                ],
+                "mandatory": true,
+                "waivable": false,
+                "notApplicable": null
+              }
+            ]
+          },
+          "results": [
+            {
+              "key": {
+                "rule": {
+                  "id": "required-translation",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                },
+                "implementation": {
+                  "kind": "core",
+                  "validator": {
+                    "id": "tsumugi.core-review",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  }
+                }
+              },
+              "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "coveredTargets": [
+                "synthetic-unit"
+              ],
+              "outcome": {
+                "kind": "completed",
+                "findings": []
+              }
+            },
+            {
+              "key": {
+                "rule": {
+                  "id": "terminology",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                },
+                "implementation": {
+                  "kind": "core",
+                  "validator": {
+                    "id": "tsumugi.core-review",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  }
+                }
+              },
+              "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "coveredTargets": [
+                "synthetic-unit"
+              ],
+              "outcome": {
+                "kind": "completed",
+                "findings": []
+              }
+            },
+            {
+              "key": {
+                "rule": {
+                  "id": "synthetic-domain-rule",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                },
+                "implementation": {
+                  "kind": "plugin",
+                  "provider": {
+                    "plugin": {
+                      "id": "example.review",
+                      "publisher": "example",
+                      "version": "0.1.0-alpha.1"
+                    },
+                    "componentId": "review",
+                    "contributionId": "checker",
+                    "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              },
+              "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "coveredTargets": [
+                "synthetic-unit"
+              ],
+              "outcome": {
+                "kind": "completed",
+                "findings": []
+              }
+            }
+          ],
+          "sourceBinding": {
+            "declaration": {
+              "profile": {
+                "id": "example.plain-text",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "checker": "checker",
+              "rules": [
+                {
+                  "rule": {
+                    "id": "synthetic-domain-rule",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "requiresTranslation": true
+                }
+              ]
+            },
+            "checker": {
+              "capability": {
+                "provider": {
+                  "plugin": {
+                    "id": "example.review",
+                    "publisher": "example",
+                    "version": "0.1.0-alpha.1"
+                  },
+                  "componentId": "review",
+                  "contributionId": "checker",
+                  "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "declaration": {
+                  "contract": {
+                    "id": "example.review-check",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "inputSchema": {
+                    "id": "tsumugi.review-check-input",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "outputSchema": {
+                    "id": "tsumugi.check-results",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "errorSchema": {
+                    "id": "tsumugi.review-check-error",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "profiles": [
+                    {
+                      "id": "example.plain-text",
+                      "schemaVersion": 1,
+                      "behaviorVersion": 1
+                    }
+                  ],
+                  "effect": "read-only",
+                  "permissions": [
+                    {
+                      "kind": "captured-input"
+                    }
+                  ],
+                  "limits": {
+                    "maxInputBytes": 4194304,
+                    "maxOutputBytes": 2097152,
+                    "concurrency": 1,
+                    "timeoutMs": 30000
+                  }
+                }
+              },
+              "environment": {
+                "protocolVersion": 1,
+                "platform": {
+                  "operatingSystem": "macos",
+                  "architecture": "aarch64"
+                },
+                "sdkVersion": "0.1.0-alpha.1",
+                "processProtocol": 3,
+                "profile": "node-system-libraries-v1",
+                "toolVersion": "26.10.0",
+                "tool": {
+                  "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+                  "entrypoint": "bin/node"
+                },
+                "host": {
+                  "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+                  "entrypoint": "dist/main.js"
+                }
+              },
+              "profile": {
+                "id": "example.plain-text",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "componentScope": "project",
+              "applicationScope": null
+            }
+          },
+          "advisoryChecks": [],
+          "origins": [
+            {
+              "checker": {
+                "provider": {
+                  "plugin": {
+                    "id": "example.review",
+                    "publisher": "example",
+                    "version": "0.1.0-alpha.1"
+                  },
+                  "componentId": "review",
+                  "contributionId": "checker",
+                  "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "profile": {
+                  "id": "example.plain-text",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              },
+              "attemptId": "00000000-0000-4000-8000-000000000051",
+              "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "resultId": "00000000-0000-4000-8000-000000000052",
+              "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": "succeeded"
+            }
+          ],
+          "diagnostics": []
+        }
       }
     }
   }

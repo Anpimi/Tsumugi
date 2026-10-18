@@ -91,6 +91,7 @@ pub use review::{
     AdvisoryFinding, AdvisoryReviewCheck, CapturedReviewCheckExecution, CheckFinding,
     CheckRuleResult, CheckRun, ComputedReviewEvidence, Eligibility, EligibilityLocale,
     EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
+    ReviewCheckActionRequest, ReviewCheckActionSelection, ReviewCheckActionRead,
     ReviewCheckEvidence, ReviewCheckOrigin, ReviewCheckOriginEvidence, ReviewCheckOutcome,
     ReviewCheckPlan, ReviewChecker, ReviewCheckerKey, ReviewCheckerKind, ReviewDecision,
     ReviewDecisionKind, ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead, ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewFindingDecision,

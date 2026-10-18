@@ -42,7 +42,7 @@ fn owned(c: &Connection, project: ExecutionId, unit: ExecutionId) -> Result<(), 
 }
 
 impl ProjectStore {
-    fn read_human_review_action<T>(&self, project: ExecutionId,
+    pub(super) fn read_review_action<T>(&self, project: ExecutionId,
         read: impl FnOnce(&Connection) -> Result<Option<T>, ExecutionError>,
     ) -> Result<Option<T>, ExecutionError> {
         let value = read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"review-read"))?, |c| {
@@ -56,7 +56,7 @@ impl ProjectStore {
     }
 
     pub fn review_decision_action_read(&self, r: &ReviewWrite) -> Result<Option<ReviewDecisionActionRead>, ExecutionError> {
-        self.read_human_review_action(r.project_id, |c| {
+        self.read_review_action(r.project_id, |c| {
             if !action_exists(c,"review_decisions",r.project_id,r.action_id)? { return Ok(None); }
             let (receipt,saved) = decision_by_action(c,r.project_id,r.action_id)?.ok_or_else(corrupt)?;
             if saved != digest(r)? { return Err(failure(ErrorCode::ResultMismatch,"review-action")); }
@@ -66,30 +66,19 @@ impl ProjectStore {
                 || receipt.basis_evidence.selection_id != Some(receipt.selection_id)
                 || receipt.basis_evidence.revision_id != Some(receipt.revision_id)
                 || receipt.basis_evidence.source_revision_id != receipt.source_revision_id { return Err(corrupt()); }
-            // A selected translation can predate the captured source revision.
-            // Validate each historical association without imposing currentness.
-            let valid: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM translation_selections s
-                JOIN translation_revisions t ON t.revision_id=s.revision_id
-                WHERE s.event_id=?1 AND s.project_id=?2 AND s.unit_id=?3 AND s.locale=?4
-                AND s.revision_id=?5 AND t.project_id=s.project_id AND t.unit_id=s.unit_id AND t.locale=s.locale)",
-                params![receipt.selection_id.to_string(),r.project_id.to_string(),r.unit_id.to_string(),r.locale,receipt.revision_id.to_string()],
-                |row|row.get(0)).map_err(sql)?;
-            let source: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences
-                WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",
-                params![receipt.basis_evidence.source_snapshot_id.to_string(),r.unit_id.to_string(),receipt.source_revision_id.to_string()],
-                |row|row.get(0)).map_err(sql)?;
+            validate_historical_basis(c,r.project_id,r.unit_id,&r.locale,&receipt.basis_evidence)?;
             let previous: Option<String> = c.query_row("SELECT decision_id FROM review_decisions
                 WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND basis=?4
                 AND rowid<(SELECT rowid FROM review_decisions WHERE action_id=?5) ORDER BY rowid DESC LIMIT 1",
                 params![r.project_id.to_string(),r.unit_id.to_string(),r.locale,r.expected_basis,r.action_id.to_string()],
                 |row|row.get(0)).optional().map_err(sql)?;
-            if !valid || !source || previous.map(parse_id).transpose()? != r.expected_decision_id { return Err(corrupt()); }
+            if previous.map(parse_id).transpose()? != r.expected_decision_id { return Err(corrupt()); }
             Ok(Some(ReviewDecisionActionRead { request:r.clone(),receipt }))
         })
     }
 
     pub fn review_waiver_action_read(&self, r: &WaiverWrite) -> Result<Option<ReviewWaiverActionRead>, ExecutionError> {
-        self.read_human_review_action(r.project_id, |c| {
+        self.read_review_action(r.project_id, |c| {
             if !action_exists(c,"review_waivers",r.project_id,r.action_id)? { return Ok(None); }
             let (receipt,saved) = waiver_by_action(c,r.project_id,r.action_id)?.ok_or_else(corrupt)?;
             if saved != digest(r)? { return Err(failure(ErrorCode::ResultMismatch,"review-waiver-action")); }
@@ -121,7 +110,7 @@ impl ProjectStore {
     }
 
     pub fn review_fallback_action_read(&self, r: &FallbackWrite) -> Result<Option<ReviewFallbackActionRead>, ExecutionError> {
-        self.read_human_review_action(r.project_id, |c| {
+        self.read_review_action(r.project_id, |c| {
             if !action_exists(c,"review_fallbacks",r.project_id,r.action_id)? { return Ok(None); }
             let (receipt,saved) = fallback_by_action(c,r.project_id,r.action_id)?.ok_or_else(corrupt)?;
             if saved != digest(r)? { return Err(failure(ErrorCode::ResultMismatch,"review-fallback-action")); }

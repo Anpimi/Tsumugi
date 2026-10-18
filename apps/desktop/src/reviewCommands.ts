@@ -2,6 +2,7 @@ import type { SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import type { Requests, ReviewFindingWrite, ReviewFindingActionRequest, ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
 import * as validators from "./generated/review.validators";
+import { jsonIdentity } from "./pluginToolChoices";
 import { checkerIdentity, contractIdentity, ruleIdentity } from "./reviewIdentity";
 import type { Responses, AdvisoryFinding, ReviewBasis, ReviewFindingDecision, ReviewFindingView, ReviewSummaryPage, ReviewScopeCapture } from "./generated/review.responses";
 export type ReviewDiagnosticLocation = Responses["diagnosticLocation"];
@@ -54,7 +55,7 @@ function sameReviewRequest(actual: ReviewWrite | WaiverWrite | FallbackWrite, ex
 function invalidFindingReceipt() {
   return Object.assign(new Error("Invalid review finding acknowledgement"), { outcome: "unknown", reason: "invalid-review-finding-receipt" });
 }
-export function confirmReviewFindingBasis(receipt: ReviewFindingDecision, expected: ReviewBasis) {
+export function confirmReviewFindingBasis(receipt: { basisEvidence: ReviewBasis }, expected: ReviewBasis) {
   const actual = receipt.basisEvidence;
   if (actual.sourceSnapshotId !== expected.sourceSnapshotId || actual.sourceRevisionId !== expected.sourceRevisionId
     || actual.selectionId !== expected.selectionId || actual.revisionId !== expected.revisionId
@@ -143,6 +144,19 @@ export const reviewCommands = {
   history: (request: ReviewHistoryRequest) => checkedInvoke("read_review_history", request, validators.validateResponseHistory),
   decide: async (session: SessionRequest, decision: ReviewWrite) => {
     return confirmReviewDecision(await checkedInvoke("write_review_decision", { ...session, decision }, validators.validateResponseDecision), decision);
+  },
+  checkAction: async (request: ReviewCheckRequest) => {
+    const value = await checkedInvoke("read_review_check_action", request, validators.validateResponseCheckAction);
+    if (value !== null) {
+      const expected = { projectId: request.projectId, actionId: request.actionId, unitId: request.unitId,
+        locale: request.locale, expectedBasis: request.expectedBasis,
+        advisoryChecks: request.advisoryChecks.map(choice => ({ plugin: choice.package.plugin,
+          packageDigest: choice.package.packageDigest, resourceId: choice.resourceId,
+          environmentDigest: choice.environmentDigest, rules: choice.rules })) };
+      requireConfirmation(jsonIdentity(value.request) === jsonIdentity(expected)
+        && sameAction(value.receipt, request) && value.receipt.basis === request.expectedBasis);
+    }
+    return value;
   },
   prepareCheck: async (request: ReviewCheckRequest) => {
     const result = await checkedInvoke("prepare_review_checks", request, validators.validateResponsePrepareCheck);

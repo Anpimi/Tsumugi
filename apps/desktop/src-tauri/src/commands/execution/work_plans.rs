@@ -2622,6 +2622,42 @@ mod tests {
     }
 
     #[test]
+    fn registered_review_check_action_reads_are_scoped_pure_and_survive_reopen() {
+        let isolated=ProjectFixture::create("en-US");
+        let absent=json!({"actionId":ExecutionId::new(),"unitId":ExecutionId::new(),"locale":"zh-CN","expectedBasis":"none","advisoryChecks":[]});
+        assert_eq!(call(&isolated.webview,"read_review_check_action",request(&isolated.context,absent)).unwrap(),Value::Null);
+        isolated.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+        let mut fixture=Fixture::create_with_source(br#"{"first":"Hello"}"#);let unit=fixture.unit;
+        let run=fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let store=&mut sessions.active.as_mut().unwrap().store;let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+            let target=store.review_target(project,unit,"zh-CN").unwrap();
+            store.run_review_checks(project,unit,"zh-CN",&target.basis,ExecutionId::new()).unwrap()
+        });
+        let business=json!({"projectId":fixture.context["projectId"],"actionId":run.action_id,"unitId":unit,"locale":"zh-CN","expectedBasis":run.basis,"advisoryChecks":[]});
+        let mut expected=json!({"request":business,"receipt":run});
+        assert_eq!(fixture.call("read_review_check_action",business.clone()).unwrap(),expected);
+        for field in ["projectId","sessionToken","expectedBasis"] {
+            let mut wrong=business.clone();wrong[field]=if field=="projectId" {json!(ExecutionId::new())} else {json!("wrong")};
+            assert!(fixture.call("read_review_check_action",wrong).is_err());
+        }
+        let mut extra=business.clone();extra["executions"]=json!([]);assert!(fixture.call("read_review_check_action",extra).is_err());
+        Fixture::capture_source(&fixture.app,br#"{"replacement":"Changed source"}"#.to_vec());
+        let sequence=fixture.app.state::<AppState>().sessions.with(|sessions| {
+            let active=sessions.active.as_mut().unwrap();let revision=active.store.metadata().unwrap().metadata_revision();active.store.set_target_locales(revision,&["ja".into()]).unwrap();
+            active.execution.as_mut().unwrap().quiescing=true;active.store.execution_sequence().unwrap()
+        });
+        assert_eq!(fixture.call("read_review_check_action",business.clone()).unwrap(),expected);
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active=sessions.active.as_mut().unwrap();assert_eq!(active.store.execution_sequence().unwrap(),sequence);active.execution.as_mut().unwrap().quiescing=false;
+        });
+        let old_context=fixture.context.clone();fixture.reopen();
+        assert!(call(&fixture.webview,"read_review_check_action",request(&old_context,business.clone())).is_err());
+        expected["request"]["projectId"]=fixture.context["projectId"].clone();
+        assert_eq!(fixture.call("read_review_check_action",business).unwrap(),expected);
+        fixture.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    }
+
+    #[test]
     fn registered_review_human_action_reads_preserve_exact_requests_after_history_changes() {
         let wire:Value=serde_json::from_str(include_str!("../../../../test/fixtures/reviewCommands.contract.json")).unwrap();
         let isolated=ProjectFixture::create("en-US");

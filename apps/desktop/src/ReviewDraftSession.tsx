@@ -15,9 +15,11 @@ export type ReviewHumanPending = (
   | { kind: "decision"; request: ReviewWrite; submittedSeq: number }
   | { kind: "waiver"; request: WaiverWrite; submittedSeq: number }
   | { kind: "fallback"; request: FallbackWrite; submittedSeq: number }) & { session: SessionRequest };
-export type ReviewPending = ReviewHumanPending
+type ReviewCheckPending = (
   | { kind: "prepare-check"; request: ReviewCheckRequest; submittedSeq: null }
-  | { kind: "check"; request: ReviewCheckRequest; executions: ReviewCheckStartRequest["executions"]; submittedSeq: null };
+  | { kind: "check"; request: ReviewCheckRequest; executions: ReviewCheckStartRequest["executions"]; submittedSeq: null }
+) & { previousRunId: string | null; basisEvidence: ReviewBasis };
+export type ReviewPending = ReviewHumanPending | ReviewCheckPending;
 export function isHumanReviewPending(action: ReviewPending): action is ReviewHumanPending {
   return action.kind !== "check" && action.kind !== "prepare-check";
 }
@@ -208,7 +210,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     delete draftTargets[key];
     return { drafts: { ...before.drafts, [key]: "" }, editSeq: { ...before.editSeq, [key]: action.submittedSeq + 1 }, draftTargets };
   }
-  function matchingSelected(before: ReviewDraftState, action: ReviewPending) {
+  function matchingSelected(before: ReviewDraftState, action: Pick<ReviewPending, "request">) {
     return !!before.selected && before.selected.unitId === action.request.unitId
       && before.selected.locale === action.request.locale && before.selected.basis === action.request.expectedBasis;
   }
@@ -222,7 +224,10 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
           return observed === action.request.expectedDecisionId || observed === decision.decisionId
             ? { ...target, currentDecision: decision } : target;
         }
-        if (action.kind === "check") return { ...target, currentCheck: receipt as CheckRun };
+        if (action.kind === "check") {
+          const run = receipt as CheckRun, observed = target.currentCheck?.runId ?? null;
+          return observed === action.previousRunId || observed === run.runId ? { ...target, currentCheck: run } : target;
+        }
         if (action.kind === "waiver") {
           const waiver = receipt as Waiver;
           const observed = target.currentWaivers.find(value => value.issueId === action.request.issueId)?.waiverId ?? null;
@@ -256,7 +261,9 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         ? { ...before.batchStatus, applied: before.batchStatus.applied + 1, failed: before.batchStatus.failed - 1 } : before.batchStatus;
       return { ...before, ...nextReason, selected, projection, chosen, batchStatus, pending: null, pendingUncertain: false, checkingAction: false, retryAllowed: false,
         notice: checkOutcome === "failed" ? "checkFailed" : checkOutcome === "cancelled" ? "checkCancelled" : checkOutcome === "unknown" ? "checkUnknown" : "saved",
-        reasonValue: "", completionVersion: before.completionVersion + (before.batchRunning ? 0 : 1) };
+        reasonValue: "", checkReview: action.kind === "check" ? null : before.checkReview,
+        checkConsent: action.kind === "check" ? [] : before.checkConsent,
+        completionVersion: before.completionVersion + (before.batchRunning ? 0 : 1) };
     });
   }
   function matchesHuman(action: ReviewHumanPending) {
@@ -326,36 +333,68 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     if (unknown) return lookupHuman(action, failure);
     return uncertain ? { kind: "pending" } : { kind: "rejected", error };
   }
+  async function lookupCheck(action: ReviewCheckPending, originalFailure: CommandFailure = current().reasonValue) {
+    const matches = () => mounted.current && !reads.retired && current().pending === action;
+    if (!matches()) return;
+    update(before => ({ ...before, checkingAction: true, retryAllowed: false, pendingUncertain: true, notice: null, reasonValue: "" }));
+    try {
+      const found = await reviewCommands.checkAction(action.request);
+      if (!matches()) return;
+      if (found !== null) {
+        confirmReviewFindingBasis(found.receipt, action.basisEvidence);
+        confirmed({ ...action, kind: "check", executions: [] }, found.receipt, action);
+        return;
+      }
+      // Absence of a final run does not prove preparation or execution stopped.
+      update(before => ({ ...before, checkingAction: false, retryAllowed: true, pendingUncertain: true,
+        notice: "unknown", reasonValue: originalFailure }));
+    } catch (error) {
+      if (!matches()) return;
+      update(before => ({ ...before, checkingAction: false, retryAllowed: false, pendingUncertain: true,
+        notice: "unknown", reasonValue: commandFailure(error) }));
+    }
+  }
   async function dispatch(action: ReviewPending) {
-    if (!mounted.current) return;
+    if (!mounted.current || reads.retired) return;
     if (isHumanReviewPending(action)) {
       const outcome = await dispatchHuman(action);
       return action.kind === "finding" && outcome.kind === "saved" ? outcome.receipt as ReviewFindingDecision : undefined;
     }
-    update(before => ({ ...before, pending: action, notice: null,
+    const uncertain = current().pending === action && current().pendingUncertain;
+    update(before => ({ ...before, pending: action, checkingAction: false, retryAllowed: false, notice: null,
       activeCheckId: action.kind === "check" ? action.request.actionId : null }));
     try {
-      const session = executionContext(projectRef.current);
+      const session = { sessionToken: action.request.sessionToken, projectId: action.request.projectId };
       if (action.kind === "prepare-check") {
         const preparation = await reviewCommands.prepareCheck(action.request);
-        if (preparation.kind === "recorded") confirmed({ ...action, kind: "check", executions: [] }, preparation.run, action);
+        if (!mounted.current || reads.retired || current().pending !== action) return;
+        if (preparation.kind === "recorded") {
+          confirmReviewFindingBasis(preparation.run, action.basisEvidence);
+          confirmed({ ...action, kind: "check", executions: [] }, preparation.run, action);
+        }
         else update(before => {
           if (before.pending !== action) return before;
           const captureCurrent = matchingSelected(before, action) && localeAvailable(action.request.locale)
             && JSON.stringify(before.advisoryChecks) === JSON.stringify(action.request.advisoryChecks);
-          return { ...before, pending: null, pendingUncertain: false, checkReview: captureCurrent ? { request: action.request, view: preparation.view } : null,
+          return { ...before, pending: null, pendingUncertain: false, checkingAction: false, retryAllowed: false, checkReview: captureCurrent ? { request: action.request, view: preparation.view } : null,
             checkConsent: [], notice: null, completionVersion: before.completionVersion + 1 };
         });
       }
-      if (action.kind === "check") confirmed(action, await reviewCommands.check({ ...session, check: action.request, executions: action.executions }));
+      if (action.kind === "check") {
+        const receipt = await reviewCommands.check({ ...session, check: action.request, executions: action.executions });
+        if (mounted.current && !reads.retired && current().pending === action) {
+          confirmReviewFindingBasis(receipt, action.basisEvidence); confirmed(action, receipt);
+        }
+      }
     } catch (error) {
-      update(before => before.pending !== action ? before : { ...before,
-        pending: hasUnknownOutcome(error) || before.pendingUncertain ? action : null,
-        pendingUncertain: hasUnknownOutcome(error) || before.pendingUncertain,
-        notice: hasUnknownOutcome(error) || before.pendingUncertain ? "unknown"
+      if (!mounted.current || reads.retired || current().pending !== action) return;
+      const unknown = hasUnknownOutcome(error), failure = commandFailure(error);
+      update(before => ({ ...before, pending: unknown || uncertain ? action : null,
+        pendingUncertain: unknown || uncertain, retryAllowed: false,
+        notice: unknown || uncertain ? "unknown"
           : action.kind === "check" && isCommandError(error) && error.code === "cancelled" && error.reason === "review-check-cancelled" ? "checkCancelled"
-          : isConflict(error) ? "conflict" : "error",
-        reasonValue: commandFailure(error) });
+          : isConflict(error) ? "conflict" : "error", reasonValue: failure }));
+      if (unknown) await lookupCheck(action, failure);
     } finally { update(before => ({ ...before, activeCheckId: null })); }
   }
   async function fresh(target: ReviewTarget, currentRead: () => boolean,
@@ -414,14 +453,14 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   function checkersConfirmed() {
     const before = current(), capture = before.checkReview;
-    return !!capture && capture.view.checkers.length > 0 && matchingSelected(before, { kind: "prepare-check", request: capture.request, submittedSeq: null })
+    return !!capture && capture.view.checkers.length > 0 && matchingSelected(before, { request: capture.request })
       && localeAvailable(capture.request.locale) && JSON.stringify(before.advisoryChecks) === JSON.stringify(capture.request.advisoryChecks)
       && capture.view.checkers.every(slot => before.checkConsent.includes(slotConsentKey(slot)));
   }
   async function prepareCheck(currentRead: () => boolean) {
     const before = current(), target = before.selected;
     if (!target) return;
-    await fresh(target, () => currentRead() && JSON.stringify(current().advisoryChecks) === JSON.stringify(before.advisoryChecks), actionId => ({ kind: "prepare-check", submittedSeq: null,
+    await fresh(target, () => currentRead() && JSON.stringify(current().advisoryChecks) === JSON.stringify(before.advisoryChecks), actionId => ({ kind: "prepare-check", submittedSeq: null, previousRunId: target.currentCheck?.runId ?? null, basisEvidence: structuredClone(target.basisEvidence),
       request: { ...executionContext(projectRef.current), actionId, unitId: target.unitId, locale: target.locale,
         expectedBasis: target.basis, advisoryChecks: structuredClone(before.advisoryChecks) } }));
   }
@@ -437,7 +476,8 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         executions.push({ ...session, grantId, attemptId: slot.attemptId, inputDigest: slot.inputDigest,
           expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true });
       }
-      const action: ReviewPending = { kind: "check", request: capture.request, executions, submittedSeq: null };
+      const action: ReviewPending = { kind: "check", request: capture.request, executions, submittedSeq: null, previousRunId: current().selected?.currentCheck?.runId ?? null,
+        basisEvidence: structuredClone(current().selected!.basisEvidence) };
       update(value => ({ ...value, checkReview: null, checkConsent: [] }));
       await dispatch(action);
     } catch(error) { fail(error); }
@@ -478,7 +518,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   async function retryPending() {
     const action = current().pending;
-    if (!mounted.current || reads.retired || !action || running.current || isHumanReviewPending(action) && !current().retryAllowed) return;
+    if (!mounted.current || reads.retired || !action || running.current || !current().retryAllowed) return;
     running.current = true;
     update(before => ({ ...before, busyMutation: true, notice: null }));
     try {
@@ -489,10 +529,10 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   async function checkPending() {
     const action = current().pending;
-    if (!mounted.current || reads.retired || running.current || !action || !isHumanReviewPending(action)) return;
+    if (!mounted.current || reads.retired || running.current || !action) return;
     running.current = true;
     update(before => ({ ...before, busyMutation: true }));
-    try { await lookupHuman(action); }
+    try { if (isHumanReviewPending(action)) await lookupHuman(action); else await lookupCheck(action); }
     finally { running.current = false; update(before => ({ ...before, busyMutation: false })); }
   }
   async function cancelCheck() {

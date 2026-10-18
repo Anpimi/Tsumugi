@@ -1669,6 +1669,8 @@ ai: {
       unknown: "The result may have committed. Retry the same action to check its receipt.",
       retry: "Retry the same action",
       checkSaved: "Check saved result",
+      checkingCheck: "Checking the original saved check result…",
+      checkActionUnknown: "The check result is unconfirmed. Check its saved result first. No saved result does not mean preparation or checking has stopped; retrying the original request may repeat checking. Your request and drafts are kept.",
       checkingSaved: "Checking the saved review result…",
       actionUnknown: "The decision may have been recorded. Check its saved result before retrying the original action. Your request and drafts are kept.",
       conflict: "The selected revision or related guidance changed. Your reason draft is preserved; refresh and compare.",

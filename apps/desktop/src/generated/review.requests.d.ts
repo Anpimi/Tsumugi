@@ -20,6 +20,7 @@ export type AiSemanticReviewRule = "meaning" | "style";
 export interface Requests {
   cancelCheck: ReviewCancelCheckRequest;
   check: ReviewCheckStartRequest;
+  checkAction: ReviewCheckRequest;
   decision: ReviewWriteRequest;
   decisionAction: ReviewWriteRequest;
   diagnosticLocation: ReviewDiagnosticLocationRequest;

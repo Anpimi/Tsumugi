@@ -2085,6 +2085,7 @@ it("keeps the original checker grant and complete request when a reply is uncert
   const original = invoke.getMockImplementation()!;
   let checks = 0;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_check_action") return null;
     if (command === "run_review_checks") {
       if (++checks === 1) throw { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown" };
       const check = args.request.check as { actionId: string };
@@ -2103,6 +2104,8 @@ it("keeps the original checker grant and complete request when a reply is uncert
   await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
   await waitFor(() => expect(checks).toBe(2));
   const requests = invoke.mock.calls.filter(([command]) => command === "run_review_checks").map(([, args]) => args.request);
+  const reads = invoke.mock.calls.filter(([command]) => command === "read_review_check_action");
+  expect(reads).toHaveLength(1); expect(reads[0][1].request).toEqual(requests[0].check);
   expect(requests[1]).toEqual(requests[0]);
   expect(requests[0].executions[0].unsandboxedExecution).toBe(true);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
@@ -2124,6 +2127,7 @@ it("captures explicit text rules and requires each checker consent while replayi
       return { ...response, view: { ...response.view, checkers: [...response.view.checkers,
         textReviewSlotFixture({ ...text, rules: choices[0].rules })] } };
     }
+    if (command === "read_review_check_action") return null;
     if (command === "run_review_checks") {
       if (++runs === 1) throw { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown" };
       const check = args.request.check as { actionId: string };
@@ -2152,6 +2156,8 @@ it("captures explicit text rules and requires each checker consent while replayi
   await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
   await waitFor(() => expect(runs).toBe(2));
   const requests = invoke.mock.calls.filter(([command]) => command === "run_review_checks").map(([, args]) => args.request);
+  const reads = invoke.mock.calls.filter(([command]) => command === "read_review_check_action");
+  expect(reads).toHaveLength(1); expect(reads[0][1].request).toEqual(requests[0].check);
   expect(requests[1]).toEqual(requests[0]);
   expect(requests[0].check.advisoryChecks[0].rules).toHaveLength(2);
   expect(requests[0].executions).toHaveLength(2);

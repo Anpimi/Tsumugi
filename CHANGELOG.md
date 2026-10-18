@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check the original saved QA result after an uncertain preparation or checking
+  response, preserving drafts and newer observed results. Confirmation does not
+  prepare or run checks; a missing saved result does not mean checking stopped,
+  and an explicit retry may repeat checking.
+
 - Check the original saved plan authorization or control after an uncertain
   response, preserving newer input before an explicit retry. Confirmation covers
   the recorded plan action; it does not restore execution permissions or

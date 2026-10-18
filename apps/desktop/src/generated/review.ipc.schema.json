@@ -1350,6 +1350,9 @@
       "check": {
         "$ref": "#/definitions/ReviewCheckStartRequest"
       },
+      "checkAction": {
+        "$ref": "#/definitions/ReviewCheckRequest"
+      },
       "decision": {
         "$ref": "#/definitions/ReviewWriteRequest"
       },
@@ -1433,6 +1436,7 @@
       "findings",
       "decision",
       "decisionAction",
+      "checkAction",
       "prepareCheck",
       "check",
       "cancelCheck",
@@ -4012,6 +4016,88 @@
           "revisionId",
           "contextRevisionId",
           "termRevisionIds"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/CheckRun"
+          },
+          "request": {
+            "$ref": "#/definitions/ReviewCheckActionRequest"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "advisoryChecks": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckActionSelection"
+            },
+            "type": "array"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "advisoryChecks"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckActionSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest",
+          "resourceId",
+          "environmentDigest",
+          "rules"
         ],
         "type": "object"
       },
@@ -6877,6 +6963,16 @@
       "check": {
         "$ref": "#/definitions/CheckRun"
       },
+      "checkAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ReviewCheckActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "decision": {
         "$ref": "#/definitions/ReviewDecision"
       },
@@ -6991,6 +7087,7 @@
       "findings",
       "decision",
       "decisionAction",
+      "checkAction",
       "prepareCheck",
       "check",
       "cancelCheck",

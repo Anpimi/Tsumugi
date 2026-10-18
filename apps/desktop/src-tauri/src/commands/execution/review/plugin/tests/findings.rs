@@ -212,9 +212,26 @@ pub(super) fn record_dispositions(
             .unwrap()
             .is_empty()
     );
-    json!({"first":saved,"latest":latest,"historyCount":26,"issue":issue})
+    json!({"first":saved,"latest":latest,"historyCount":26,"issue":issue,"checkRequest":intent,"checkRun":run})
 }
 pub(super) fn assert_reopened(window: &Window, context: &Value, facts: &Value) {
+    let mut original=facts["checkRequest"].clone();
+    original["sessionToken"]=context["sessionToken"].clone();original["projectId"]=context["projectId"].clone();
+    let saved=call(window,"read_review_check_action",Some(original.clone())).unwrap();
+    assert_eq!(saved["receipt"],facts["checkRun"]);
+    assert_eq!(saved["request"]["actionId"],original["actionId"]);
+    let selections=original["advisoryChecks"].as_array().unwrap();assert!(!selections.is_empty());
+    for (selected,echo) in selections.iter().zip(saved["request"]["advisoryChecks"].as_array().unwrap()) {
+        assert_eq!(*echo,json!({"plugin":selected["package"]["plugin"],"packageDigest":selected["package"]["packageDigest"],
+            "resourceId":selected["resourceId"],"environmentDigest":selected["environmentDigest"],"rules":selected["rules"]}));
+    }
+    for field in ["environmentDigest","resourceId"] {
+        let mut wrong=original.clone();wrong["advisoryChecks"][0][field]=json!("0".repeat(64));
+        assert_eq!(call(window,"read_review_check_action",Some(wrong)).unwrap_err()["code"],"result-mismatch");
+    }
+    let mut wrong=original.clone();wrong["advisoryChecks"][0]["rules"]=json!([]);
+    assert_eq!(call(window,"read_review_check_action",Some(wrong)).unwrap_err()["code"],"result-mismatch");
+
     for name in ["first", "latest"] {
         assert_eq!(
             call(

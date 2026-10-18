@@ -273,6 +273,7 @@ export type RecoveryAction =
 export interface Responses {
   cancelCheck: boolean;
   check: CheckRun;
+  checkAction: ReviewCheckActionRead | null;
   decision: ReviewDecision;
   decisionAction: ReviewDecisionActionRead | null;
   diagnosticLocation: ReviewDiagnosticLocation;
@@ -612,6 +613,25 @@ export interface CheckFinding {
   rule: string;
   severity: string;
   waivable: boolean;
+}
+export interface ReviewCheckActionRead {
+  receipt: CheckRun;
+  request: ReviewCheckActionRequest;
+}
+export interface ReviewCheckActionRequest {
+  actionId: ExecutionId;
+  advisoryChecks: ReviewCheckActionSelection[];
+  expectedBasis: string;
+  locale: string;
+  projectId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ReviewCheckActionSelection {
+  environmentDigest: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+  resourceId: string;
+  rules: ContractRef[];
 }
 export interface ReviewDecision {
   actionId: ExecutionId;

@@ -33,6 +33,8 @@ mod contracts {
         round_trip!("requests", "history", ReviewHistoryRequest);
         round_trip!("requests", "decision", ReviewWriteRequest);
         round_trip!("requests", "prepareCheck", ReviewCheckRequest);
+        round_trip!("requests", "checkAction", ReviewCheckRequest);
+        round_trip!("responses", "checkAction", Option<tsumugi_core::ReviewCheckActionRead>);
         round_trip!("requests", "check", plugin::ReviewCheckStartRequest);
         round_trip!("responses", "prepareCheck", plugin::ReviewCheckPreparation);
         round_trip!("requests", "cancelCheck", ReviewCancelCheckRequest);
@@ -437,6 +439,24 @@ pub async fn read_review_history(
             },
         )
         .await
+}
+
+#[tauri::command]
+pub async fn read_review_check_action(
+    state: State<'_, AppState>, request: ReviewCheckRequest,
+) -> Result<Option<tsumugi_core::ReviewCheckActionRead>, CommandError> {
+    state.sessions.run("read_review_check_action",CommandStage::ExecutionRead,move |sessions| {
+        let session = authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?;
+        let original = tsumugi_core::ReviewCheckActionRequest {
+            project_id: request.project_id, action_id: request.action_id, unit_id: request.unit_id,
+            locale: request.locale, expected_basis: request.expected_basis,
+            advisory_checks: request.advisory_checks.into_iter().map(|selected| tsumugi_core::ReviewCheckActionSelection {
+                plugin: selected.package.plugin, package_digest: selected.package.package_digest,
+                resource_id: selected.resource_id, environment_digest: selected.environment_digest, rules: selected.rules,
+            }).collect(),
+        };
+        session.store.review_check_action_read(&original).map_err(map_read)
+    }).await
 }
 
 #[tauri::command]

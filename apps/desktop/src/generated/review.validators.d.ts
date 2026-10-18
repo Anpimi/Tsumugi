@@ -3,6 +3,7 @@ import type { Requests } from "./review.requests";
 import type { Responses } from "./review.responses";
 export declare function validateRequestCancelCheck(value: unknown): value is Requests["cancelCheck"];
 export declare function validateRequestCheck(value: unknown): value is Requests["check"];
+export declare function validateRequestCheckAction(value: unknown): value is Requests["checkAction"];
 export declare function validateRequestDecision(value: unknown): value is Requests["decision"];
 export declare function validateRequestDecisionAction(value: unknown): value is Requests["decisionAction"];
 export declare function validateRequestDiagnosticLocation(value: unknown): value is Requests["diagnosticLocation"];
@@ -27,6 +28,7 @@ export declare function validateRequestWaiverAction(value: unknown): value is Re
 export declare function validateRequestWork(value: unknown): value is Requests["work"];
 export declare function validateResponseCancelCheck(value: unknown): value is Responses["cancelCheck"];
 export declare function validateResponseCheck(value: unknown): value is Responses["check"];
+export declare function validateResponseCheckAction(value: unknown): value is Responses["checkAction"];
 export declare function validateResponseDecision(value: unknown): value is Responses["decision"];
 export declare function validateResponseDecisionAction(value: unknown): value is Responses["decisionAction"];
 export declare function validateResponseDiagnosticLocation(value: unknown): value is Responses["diagnosticLocation"];
