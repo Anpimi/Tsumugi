@@ -502,6 +502,27 @@ impl From<WorkPlanReceipt> for WorkPlanReceiptView {
     }
 }
 
+/// Only the persisted Core transition; Host-local execution consent is independent.
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum WorkPlanRecordedAction {
+    #[serde(rename_all = "camelCase")]
+    Authorize { plan_id:ExecutionId, action_id:ExecutionId, digest:String, confirmed:bool,
+        effects:Vec<AutomationEffect>, expires_at:UnsignedDecimal },
+    #[serde(rename_all = "camelCase")]
+    Control { plan_id:ExecutionId, action_id:ExecutionId, expected_generation:Revision,
+        command:WorkPlanCommand, confirmed:bool, expires_at:Option<UnsignedDecimal> },
+}
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanActionReadView {
+    pub project_id:ExecutionId,
+    pub request:WorkPlanRecordedAction,
+    pub receipt:WorkPlanReceiptView,
+}
+
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1345,6 +1366,37 @@ pub async fn read_work_plan_status(
     })
     .await
     .map_err(|_| CommandError::unknown(CommandStage::ExecutionRead))?
+}
+
+#[tauri::command]
+pub async fn read_work_plan_authorization_action(
+    state: State<'_,AppState>, request:WorkPlanAuthorizeRequest,
+) -> Result<Option<WorkPlanActionReadView>,CommandError> {
+    state.sessions.run("read_work_plan_authorization_action",CommandStage::ExecutionRead,move |sessions| {
+        let active=authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?;
+        let receipt=active.store.work_plan_authorization_action_read(request.project_id,request.plan_id,&AuthorizeWorkPlan {
+            action_id:request.action_id,plan_digest:request.digest.clone(),confirmed:request.confirmed,
+            effects:request.effects.clone(),expires_at:request.expires_at.get(),
+        }).map_err(map_read)?;
+        Ok(receipt.map(|receipt|WorkPlanActionReadView {project_id:request.project_id,
+            request:WorkPlanRecordedAction::Authorize {plan_id:request.plan_id,action_id:request.action_id,digest:request.digest,
+                confirmed:request.confirmed,effects:request.effects,expires_at:request.expires_at},receipt:receipt.into()}))
+    }).await
+}
+#[tauri::command]
+pub async fn read_work_plan_control_action(
+    state: State<'_,AppState>, request:WorkPlanControlRequest,
+) -> Result<Option<WorkPlanActionReadView>,CommandError> {
+    state.sessions.run("read_work_plan_control_action",CommandStage::ExecutionRead,move |sessions| {
+        let active=authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?;
+        let receipt=active.store.work_plan_control_action_read(request.project_id,&ControlWorkPlan {
+            action_id:request.action_id,plan_id:request.plan_id,expected_generation:request.expected_generation,
+            command:request.command,confirmed:request.confirmed,expires_at:request.expires_at.map(UnsignedDecimal::get),
+        }).map_err(map_read)?;
+        Ok(receipt.map(|receipt|WorkPlanActionReadView {project_id:request.project_id,
+            request:WorkPlanRecordedAction::Control {plan_id:request.plan_id,action_id:request.action_id,expected_generation:request.expected_generation,
+                command:request.command,confirmed:request.confirmed,expires_at:request.expires_at},receipt:receipt.into()}))
+    }).await
 }
 
 #[tauri::command]
@@ -2504,6 +2556,69 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fixture.bytes(), before);
+    }
+
+    #[test]
+    fn registered_work_plan_action_reads_prove_only_persisted_transitions_without_host_grants() {
+        let wire:Value=serde_json::from_str(include_str!("../../../../test/fixtures/workPlanCommands.contract.json")).unwrap();
+        let isolated=ProjectFixture::create("en-US");
+        for (kind,command) in [("authorize","read_work_plan_authorization_action"),("control","read_work_plan_control_action")] {
+            let mut body=wire["requests"][kind].clone();body["projectId"]=isolated.context["projectId"].clone();body["sessionToken"]=isolated.context["sessionToken"].clone();
+            assert_eq!(call(&isolated.webview,command,body).unwrap(),Value::Null);
+        }
+        isolated.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+        let mut fixture=Fixture::create();let unit=fixture.unit;
+        let config:AiConfig=serde_json::from_value(wire["requests"]["prepare"]["config"].clone()).unwrap();
+        let facts=fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active=sessions.active.as_mut().unwrap();let store=&mut active.store;
+            let plan=store.prepare_work_plan(Some(config),"zh-CN",&[unit],PlanOptions::default()).unwrap();
+            let expires=expiry().parse::<u64>().unwrap();
+            let authorization=AuthorizeWorkPlan {action_id:ExecutionId::new(),plan_digest:plan.digest.clone(),confirmed:true,
+                effects:plan.authorization_effects().unwrap(),expires_at:expires};
+            let receipt=store.authorize_work_plan(&plan,&authorization).unwrap();
+            let body=json!({"planId":plan.plan_id,"actionId":authorization.action_id,"digest":authorization.plan_digest,"confirmed":true,
+                "effects":authorization.effects,"expiresAt":authorization.expires_at.to_string(),"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]});
+            let recorded=json!({"kind":"authorize","planId":plan.plan_id,"actionId":authorization.action_id,"digest":authorization.plan_digest,
+                "confirmed":true,"effects":authorization.effects,"expiresAt":authorization.expires_at.to_string()});
+            let mut facts=vec![("read_work_plan_authorization_action",body,json!({"projectId":plan.project_id,"request":recorded,"receipt":WorkPlanReceiptView::from(receipt)}))];
+            for (index,command) in [WorkPlanCommand::Pause,WorkPlanCommand::Continue,WorkPlanCommand::TakeOver,WorkPlanCommand::Continue,WorkPlanCommand::Stop].into_iter().enumerate() {
+                let request=ControlWorkPlan {action_id:ExecutionId::new(),plan_id:plan.plan_id,expected_generation:Revision::new(index as u64+1).unwrap(),
+                    command,confirmed:command==WorkPlanCommand::Continue,expires_at:(command==WorkPlanCommand::Continue).then_some(expires)};
+                let receipt=store.control_work_plan(&request).unwrap();
+                let body=json!({"planId":request.plan_id,"actionId":request.action_id,"expectedGeneration":request.expected_generation,"command":request.command,
+                    "confirmed":request.confirmed,"expiresAt":request.expires_at.map(|value|value.to_string()),"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]});
+                let recorded=json!({"kind":"control","planId":request.plan_id,"actionId":request.action_id,"expectedGeneration":request.expected_generation,
+                    "command":request.command,"confirmed":request.confirmed,"expiresAt":request.expires_at.map(|value|value.to_string())});
+                facts.push(("read_work_plan_control_action",body,json!({"projectId":plan.project_id,"request":recorded,"receipt":WorkPlanReceiptView::from(receipt)})));
+            }
+            active.execution.as_mut().unwrap().quiescing=true;facts
+        });
+        let count=fixture.attempt_count();let sequence=fixture.app.state::<AppState>().sessions.with(|sessions|sessions.active.as_ref().unwrap().store.execution_sequence().unwrap());
+        for (command,body,expected) in &facts {
+            assert_eq!(fixture.call(command,body.clone()).unwrap(),*expected);
+            let mut temporary=body.clone();temporary["toolExecution"]=json!(true);
+            assert_eq!(fixture.call(command,temporary).unwrap(),*expected,"proof does not attest to Host-local consent");
+            for field in ["projectId","sessionToken"] {
+                let mut wrong=body.clone();wrong[field]=if field=="sessionToken" {json!("old")} else {json!(ExecutionId::new())};assert!(fixture.call(command,wrong).is_err());
+            }
+            let mut wrong=body.clone();wrong["confirmed"]=json!(!body["confirmed"].as_bool().unwrap());assert_eq!(fixture.call(command,wrong).unwrap_err()["code"],"result-mismatch");
+            let mut extra=body.clone();extra["restoreConsent"]=json!(true);assert!(fixture.call(command,extra).is_err());
+            let request=&expected["request"];assert!(request.get("checkerExecutions").is_none()&&request.get("toolExecution").is_none()&&request.get("applicationToolExecutions").is_none());
+        }
+        assert_eq!(fixture.attempt_count(),count);
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active=sessions.active.as_mut().unwrap();assert_eq!(active.store.execution_sequence().unwrap(),sequence);
+            let host=active.execution.as_mut().unwrap();assert!(host.work_plans.checker_consents.is_empty()&&host.work_plans.tool_consents.is_empty()&&host.work_plans.agent_scopes.is_empty());host.quiescing=false;
+        });
+        Fixture::capture_source(&fixture.app,br#"{"replacement":"Changed source"}"#.to_vec());
+        fixture.app.state::<AppState>().sessions.with(|sessions| {
+            let store=&mut sessions.active.as_mut().unwrap().store;let revision=store.metadata().unwrap().metadata_revision();store.set_target_locales(revision,&["ja".into()]).unwrap();
+        });
+        let old_context=fixture.context.clone();fixture.reopen();
+        for (command,body,expected) in &facts {
+            assert!(call(&fixture.webview,command,request(&old_context,body.clone())).is_err());assert_eq!(fixture.call(command,body.clone()).unwrap(),*expected);
+        }
+        fixture.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
     }
 
     #[test]

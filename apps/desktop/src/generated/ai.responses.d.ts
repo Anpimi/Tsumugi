@@ -411,6 +411,28 @@ export type WorkPlanGuidanceContent =
       text: string;
     };
 /**
+ * Only the persisted Core transition; Host-local execution consent is independent.
+ */
+export type WorkPlanRecordedAction =
+  | {
+      actionId: ExecutionId;
+      confirmed: boolean;
+      digest: string;
+      effects: AutomationEffect[];
+      expiresAt: UnsignedDecimal;
+      kind: "authorize";
+      planId: ExecutionId;
+    }
+  | {
+      actionId: ExecutionId;
+      command: WorkPlanCommand;
+      confirmed: boolean;
+      expectedGeneration: Revision;
+      expiresAt: UnsignedDecimal | null;
+      kind: "control";
+      planId: ExecutionId;
+    };
+/**
  * Requested automatic effects, never a human language-review approval.
  */
 export type AutomationEffect =
@@ -421,6 +443,7 @@ export type AutomationEffect =
   | "adopt-resources"
   | "deliver"
   | "query-tools";
+export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
 
 export interface Responses {
   effectRetry: boolean;
@@ -441,6 +464,8 @@ export interface Responses {
   workPlanAgentTool: WorkPlanAgentToolView;
   workPlanAgentToolAttempt: AttemptDetail;
   workPlanAgentToolOutput: ExecutionOutputView;
+  workPlanAuthorizationAction: WorkPlanActionReadView | null;
+  workPlanControlAction: WorkPlanActionReadView | null;
   workPlanGenerationPreflight: WorkPlanGenerationPreflight;
   workPlanReceipt: WorkPlanReceiptView;
   workPlanStartAction: WorkPlanStartReceipt | null;
@@ -1480,6 +1505,11 @@ export interface WorkPlanAgentToolView {
   scopeId: ExecutionId;
   taskId: ExecutionId;
   toolHandle: ExecutionId;
+}
+export interface WorkPlanActionReadView {
+  projectId: ExecutionId;
+  receipt: WorkPlanReceiptView;
+  request: WorkPlanRecordedAction;
 }
 export interface WorkPlanGenerationPreflight {
   attemptId: ExecutionId;

@@ -1050,6 +1050,8 @@ ai: {
   "ready": "Authorization saved. The work has not been confirmed as queued. Start this authorized action, or pause or stop it.",
   "startAuthorized": "Start authorized work",
   "actionUnknown": "The control or authorization may have been saved. Check the original action before retrying.",
+  "checkingAction": "Checking the original plan action…",
+  "actionRecorded": "The original action is recorded. Refresh its current plan status; execution permissions remain independent.",
   "pending": "Recording the action…",
   "states": {
     "active": "Automation authorized",

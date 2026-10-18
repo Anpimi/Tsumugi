@@ -8,7 +8,7 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-beforeEach(() => invoke.mockReset());
+beforeEach(() => { invoke.mockReset(); });
 
 it("reads a start using the complete authorization identity without starting work", async () => {
   const request = fixture.requests.start;
@@ -197,4 +197,47 @@ it("rejects an acknowledgement which replaces the captured maintenance choices",
   const changed={...response,maintenance:{...maintenance,choices:[{...maintenance.choices[0],action:"keep" as const}]}};
   expect(validators.validateResponseWorkPlan(changed)).toBe(true);invoke.mockResolvedValueOnce(changed);
   await expect(workPlanCommands.prepare(request)).rejects.toMatchObject({reason:"invalid-work-plan-acknowledgement",outcome:"unknown"});
+});
+
+it("reads only the original persisted authorization fields without treating Host-local consent as a recorded grant",async()=>{
+  const request={...requests.workPlanAuthorize,expiresAt:"9007199254740994"};
+  const recorded={kind:"authorize",planId:request.planId,actionId:request.actionId,digest:request.digest,
+    confirmed:request.confirmed,effects:request.effects,expiresAt:request.expiresAt};
+  const proof={projectId:request.projectId,request:recorded,receipt:{...fixture.responses.receipt,actionId:request.actionId}};
+  invoke.mockResolvedValueOnce(proof);expect(await workPlanCommands.authorizationAction(request)).toEqual(proof);
+  expect(invoke).toHaveBeenLastCalledWith("read_work_plan_authorization_action",{request});
+  expect(proof.request).not.toHaveProperty("checkerExecutions");expect(proof.request).not.toHaveProperty("toolExecution");
+  expect(proof.request).not.toHaveProperty("applicationToolExecutions");
+  invoke.mockResolvedValueOnce(null);expect(await workPlanCommands.authorizationAction(request)).toBeNull();
+  const missing={...recorded} as Record<string,unknown>;delete missing.expiresAt;
+  for(const wrong of [undefined,{}, {...proof,projectId:fixtureIdentity(1700)}, {...proof,request:missing},
+    {...proof,request:{...recorded,expiresAt:"9007199254740993"}}, {...proof,request:{...recorded,digest:"different"}},
+    {...proof,request:{...recorded,confirmed:false}}, {...proof,request:{...recorded,effects:[]}},
+    {...proof,request:{...recorded,applicationToolExecutions:request.applicationToolExecutions}},
+    {...proof,receipt:{...proof.receipt,lease:{...proof.receipt.lease,generation:"2"}}}]) {
+    invoke.mockResolvedValueOnce(wrong);await expect(workPlanCommands.authorizationAction(request)).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  expect(invoke.mock.calls.every(([name])=>name==="read_work_plan_authorization_action")).toBe(true);
+});
+
+it.each(["pause","stop","take-over","continue"] as const)("confirms the complete original %s transition without control or start writes",async command=>{
+  const request:WorkPlanControlRequest={...requests.workPlanControl,command,confirmed:command==="continue",expiresAt:command==="continue"?"9007199254740994":null};
+  const recorded={kind:"control",planId:request.planId,actionId:request.actionId,expectedGeneration:request.expectedGeneration,
+    command,confirmed:request.confirmed,expiresAt:request.expiresAt};
+  const state=({pause:"paused",stop:"stopped","take-over":"taken-over",continue:"active"} as const)[command];
+  const receipt={...fixture.responses.control,actionId:request.actionId,lease:{planId:request.planId,generation:(BigInt(request.expectedGeneration)+1n).toString()},state,
+    attemptId:command==="continue"?fixtureIdentity(1701):null,parentTask:command==="continue"?fixtureIdentity(1702):null};
+  const proof={projectId:request.projectId,request:recorded,receipt};
+  invoke.mockResolvedValueOnce(proof);expect(await workPlanCommands.controlAction(request)).toEqual(proof);
+  expect(invoke).toHaveBeenLastCalledWith("read_work_plan_control_action",{request});
+  invoke.mockResolvedValueOnce(null);expect(await workPlanCommands.controlAction(request)).toBeNull();
+  const missing={...recorded} as Record<string,unknown>;delete missing.expiresAt;
+  for(const wrong of [undefined,{}, {...proof,projectId:fixtureIdentity(1700)}, {...proof,request:missing},
+    {...proof,request:{...recorded,expectedGeneration:"0"}}, {...proof,request:{...recorded,command:"other"}},
+    {...proof,request:{...recorded,confirmed:!recorded.confirmed}}, {...proof,request:{...recorded,checkerExecutions:[]}},
+    {...proof,receipt:{...receipt,lease:{...receipt.lease,generation:"99"}}},
+    {...proof,receipt:{...receipt,attemptId:command==="continue"?null:fixtureIdentity(1703)}}]) {
+    invoke.mockResolvedValueOnce(wrong);await expect(workPlanCommands.controlAction(request)).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  expect(invoke.mock.calls.every(([name])=>name==="read_work_plan_control_action")).toBe(true);
 });

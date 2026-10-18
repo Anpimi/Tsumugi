@@ -1041,6 +1041,8 @@ ai: {
   "ready": "授权已保存，尚未确认工作已进入队列。可启动此已授权操作，或暂停、停止计划。",
   "startAuthorized": "启动已授权工作",
   "actionUnknown": "控制或授权可能已保存。重试前请核对原操作。",
+  "checkingAction": "正在核对原计划操作…",
+  "actionRecorded": "原操作已记录。请刷新当前计划状态；执行权限仍需独立核验。",
   "pending": "正在记录操作…",
   "states": {
     "active": "自动化已获授权",

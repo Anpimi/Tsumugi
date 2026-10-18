@@ -58,12 +58,13 @@ function receiptFor(action=originalAction):Receipt {
 let plan:WorkPlanView;
 let authority:WorkPlanStatusView|null;
 let actions:Map<string,WorkPlanReceiptView>;
+let recordedPlanRequests:Map<string,Record<string,unknown>>;
 let identity:number;
 let startedGeneration:string;
 function workPlanAiView(){const value=aiViewFixture(item,prepared.preview.config);value.planId=authority?planId:null;value.planGeneration=authority?startedGeneration:null;return value;}
 const planId=fixtureIdentity(501);
 beforeEach(async()=>{
- await i18n.changeLanguage("en-US");currentReads=null;authority=null;actions=new Map();identity=510;startedGeneration="1";
+ await i18n.changeLanguage("en-US");currentReads=null;authority=null;actions=new Map();recordedPlanRequests=new Map();identity=510;startedGeneration="1";
  prepared={attemptId:aiAttempt,preview:{config:{...defaultAiConfig,endpoint:"http://127.0.0.1:4000/v1/chat/completions",model:"test-model",credentialEnv:""},recipe:"direct-translation-1",digest:aiFixture.responses.prepared.preview.digest,items:[item]}};
  invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
   if(command==="read_context_strategy_default")return null;
@@ -77,15 +78,18 @@ beforeEach(async()=>{
   }
   if(command==="authorize_work_plan"){
    const receipt:WorkPlanReceiptView={actionId:String(request.actionId),lease:{planId,generation:"1"},state:"active",attemptId:aiAttempt,parentTask:null};
+   recordedPlanRequests.set(receipt.actionId,{kind:"authorize",planId:request.planId,actionId:request.actionId,digest:request.digest,confirmed:request.confirmed,effects:structuredClone(request.effects),expiresAt:request.expiresAt});
    actions.set(receipt.actionId,receipt);authority={plan,lease:receipt.lease,state:"active",effects:request.effects as WorkPlanStatusView["effects"],expiresAt:String(request.expiresAt),toolInvocations:null};return receipt;
   }
   if(command==="control_work_plan"){
    const state=({pause:"paused",stop:"stopped","take-over":"taken-over",continue:"active"} as const)[request.command as "pause"];
    const receipt:WorkPlanReceiptView={actionId:String(request.actionId),lease:{planId,generation:(BigInt(String(request.expectedGeneration))+1n).toString()},state,attemptId:request.command==="continue"?fixtureIdentity(403):null,parentTask:request.command==="continue"?fixtureIdentity(402):null};
+   recordedPlanRequests.set(receipt.actionId,{kind:"control",planId:request.planId,actionId:request.actionId,expectedGeneration:request.expectedGeneration,command:request.command,confirmed:request.confirmed,expiresAt:request.expiresAt??null});
    actions.set(receipt.actionId,receipt);authority={...authority!,lease:receipt.lease,state,expiresAt:request.expiresAt?String(request.expiresAt):authority!.expiresAt};return receipt;
   }
   if(command==="read_work_plan_status")return authority;
   if(command==="read_work_plan_action")return actions.get(String(request.actionId))??null;
+  if(command==="read_work_plan_authorization_action"||command==="read_work_plan_control_action"){const receipt=actions.get(String(request.actionId));return receipt?{projectId:request.projectId,request:recordedPlanRequests.get(receipt.actionId),receipt}:null;}
   if(command==="start_work_plan"){startedGeneration=String(request.expectedGeneration);return actions.get(String(request.actionId))!.attemptId;}
   if(command==="read_work_plan_start_action"){startedGeneration=String(request.expectedGeneration);return {projectId:request.projectId,planId:request.planId,actionId:request.actionId,expectedGeneration:request.expectedGeneration,attemptId:aiAttempt,taskId:workPlanAiView().detail.taskId};}
   if(command==="read_ai_translation"){
@@ -494,8 +498,9 @@ it("reconciles lost authorization against newer stopped authority without queuin
  const user=await preview(),original=invoke.getMockImplementation()!;
  invoke.mockImplementation(async(c:string,a:unknown)=>{const result=await original(c,a);if(c==="authorize_work_plan"){authority={...authority!,state:"stopped",lease:{planId,generation:"2"}};throw {code:"outcome-unknown"};}return result;});
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
- await screen.findByText(/control or authorization may have been saved/);expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
- await user.click(screen.getByRole("button",{name:"Check saved result"}));await screen.findByText("Plan stopped");
+ await screen.findByText("Plan stopped");
+ expect(invoke.mock.calls.filter(([c])=>c==="read_work_plan_authorization_action")).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([c])=>c==="read_work_plan_action")).toHaveLength(0);
  expect(screen.queryByRole("button",{name:"Start authorized work"})).not.toBeInTheDocument();
  expect(screen.queryByRole("button",{name:"Continue with renewed authorization"})).not.toBeInTheDocument();
  expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);
@@ -504,13 +509,16 @@ it("reconciles lost authorization against newer stopped authority without queuin
 
 it("retains an unknown control action and retries it only after its receipt is missing",async()=>{
  const user=await preview(),original=invoke.getMockImplementation()!;let lost=true;
- invoke.mockImplementation((c:string,a:unknown)=>{if(c==="control_work_plan"&&lost){lost=false;return Promise.reject({code:"outcome-unknown"});}return original(c,a);});
+ let lookups=0;
+ invoke.mockImplementation((c:string,a:unknown)=>{if(c==="control_work_plan"&&lost){lost=false;return Promise.reject({code:"outcome-unknown"});}
+   if(c==="read_work_plan_control_action"&&++lookups===1)return Promise.reject(new Error("Automatic read unavailable"));return original(c,a);});
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
  await user.click(await screen.findByRole("button",{name:"Pause automation"}));await screen.findByText(/control or authorization may have been saved/);
  expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();
  await user.click(screen.getByRole("button",{name:"Check saved result"}));await user.click(await screen.findByRole("button",{name:"Retry same action"}));await screen.findByText("Automation paused");
  const controls=invoke.mock.calls.filter(([c])=>c==="control_work_plan");expect(controls).toHaveLength(2);expect(controls[1][1].request).toEqual(controls[0][1].request);
  expect(invoke.mock.calls.filter(([c])=>c==="create_execution_identity")).toHaveLength(2);
+ expect(invoke.mock.calls.filter(([c])=>c==="read_work_plan_control_action")).toHaveLength(2);
 });
 
 it("reopens a persisted plan through its execution view and reads current control authority without dispatch",async()=>{

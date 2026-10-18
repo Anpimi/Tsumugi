@@ -21,8 +21,10 @@ export declare function validateRequestWorkPlanAgentToolAttempt(value: unknown):
 export declare function validateRequestWorkPlanAgentToolOutput(value: unknown): value is Requests["workPlanAgentToolOutput"];
 export declare function validateRequestWorkPlanAgentToolPrepare(value: unknown): value is Requests["workPlanAgentToolPrepare"];
 export declare function validateRequestWorkPlanAgentToolStart(value: unknown): value is Requests["workPlanAgentToolStart"];
+export declare function validateRequestWorkPlanAuthorizationAction(value: unknown): value is Requests["workPlanAuthorizationAction"];
 export declare function validateRequestWorkPlanAuthorize(value: unknown): value is Requests["workPlanAuthorize"];
 export declare function validateRequestWorkPlanControl(value: unknown): value is Requests["workPlanControl"];
+export declare function validateRequestWorkPlanControlAction(value: unknown): value is Requests["workPlanControlAction"];
 export declare function validateRequestWorkPlanGenerationDiscard(value: unknown): value is Requests["workPlanGenerationDiscard"];
 export declare function validateRequestWorkPlanGenerationPrepare(value: unknown): value is Requests["workPlanGenerationPrepare"];
 export declare function validateRequestWorkPlanGenerationStart(value: unknown): value is Requests["workPlanGenerationStart"];
@@ -50,6 +52,8 @@ export declare function validateResponseWorkPlanAgentSkill(value: unknown): valu
 export declare function validateResponseWorkPlanAgentTool(value: unknown): value is Responses["workPlanAgentTool"];
 export declare function validateResponseWorkPlanAgentToolAttempt(value: unknown): value is Responses["workPlanAgentToolAttempt"];
 export declare function validateResponseWorkPlanAgentToolOutput(value: unknown): value is Responses["workPlanAgentToolOutput"];
+export declare function validateResponseWorkPlanAuthorizationAction(value: unknown): value is Responses["workPlanAuthorizationAction"];
+export declare function validateResponseWorkPlanControlAction(value: unknown): value is Responses["workPlanControlAction"];
 export declare function validateResponseWorkPlanGenerationPreflight(value: unknown): value is Responses["workPlanGenerationPreflight"];
 export declare function validateResponseWorkPlanReceipt(value: unknown): value is Responses["workPlanReceipt"];
 export declare function validateResponseWorkPlanStartAction(value: unknown): value is Responses["workPlanStartAction"];

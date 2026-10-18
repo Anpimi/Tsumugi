@@ -11,7 +11,7 @@ import { useSessionReads } from "./SessionReadProvider";
 import { useWorkbenchCommands, type AiCandidateCommandPayload, type AiTranslationCommandPayload, type AiStartCommandPayload } from "./workbenchCommands";
 import { defaultAiConfig, type AiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
 import { validateRequestPrepare } from "./generated/execution.validators";
-import { validateRequestWorkPlanPrepare, validateRequestWorkPlanAuthorize, validateRequestWorkPlanStart, validateResponseWorkPlan } from "./generated/ai.validators";
+import { validateRequestWorkPlanPrepare, validateRequestWorkPlanAuthorize, validateRequestWorkPlanControl, validateRequestWorkPlanStart, validateResponseWorkPlan } from "./generated/ai.validators";
 import type { WorkPlanView, WorkPlanStatusView, WorkPlanReceiptView, MaintenanceAssessment } from "./workPlanCommands";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
 import { isCommandError, type CommandError, type ProjectView } from "./projectCommands";
@@ -37,6 +37,7 @@ const item: AiItem = { unitId: fixtureIdentity(301), sourceRevisionId: fixtureId
 let owner: ReturnType<typeof useAiPreparation>, reads: ReturnType<typeof useSessionReads>, registry: ReturnType<typeof useWorkbenchCommands>;
 let tasks: ReturnType<typeof useExecutionTaskSession>, prepared: AiPrepared, view: AiView, action: AdoptionAction;
 let plan: WorkPlanView, status: WorkPlanStatusView | null, planReceipts: Map<string,WorkPlanReceiptView>;
+let recordedPlanRequests:Map<string,Record<string,unknown>>;
 let application: ReturnType<typeof useApplicationQueryClient>;
 const navigate = vi.fn(async () => true);
 function Probe() {
@@ -106,7 +107,7 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US"); navigate.mockClear();
   prepared = { attemptId: aiAttempt, preview: { config: { ...defaultAiConfig, endpoint: "http://127.0.0.1:4000/v1/chat/completions", model: "test-model", credentialEnv: "" },
     recipe: "direct-translation-1", digest: ai.responses.prepared.preview.digest, items: [item] } };
-  plan=aiWorkPlanFixture(prepared,saveOnlyOptions);status=null;planReceipts=new Map();
+  plan=aiWorkPlanFixture(prepared,saveOnlyOptions);status=null;planReceipts=new Map();recordedPlanRequests=new Map();
   view = aiViewFixture(item, prepared.preview.config);view.planId=plan.planId;view.planGeneration="1";
   let nextIdentity = 910;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
@@ -129,11 +130,24 @@ beforeEach(async () => {
       if (!validateRequestWorkPlanAuthorize(payload.request)) throw new Error("Invalid authorization request");
       const receipt:WorkPlanReceiptView={actionId:payload.request.actionId,attemptId:plan.attemptId,parentTask:null,lease:{planId:plan.planId,generation:"1"},state:"active"};
       planReceipts.set(receipt.actionId,receipt);
+      recordedPlanRequests.set(receipt.actionId,{kind:"authorize",planId:payload.request.planId,actionId:payload.request.actionId,digest:payload.request.digest,confirmed:payload.request.confirmed,effects:structuredClone(payload.request.effects),expiresAt:payload.request.expiresAt});
       status={plan,lease:receipt.lease,state:"active",effects:payload.request.effects,expiresAt:payload.request.expiresAt,toolInvocations:null};
       return receipt;
     }
+    if(command==="control_work_plan") {
+      if(!status||!validateRequestWorkPlanControl(payload.request))throw new Error("Invalid plan control fixture");
+      const request=payload.request,state=({pause:"paused",stop:"stopped","take-over":"taken-over",continue:"active"} as const)[request.command];
+      const receipt:WorkPlanReceiptView={actionId:request.actionId,lease:{planId:request.planId,generation:(BigInt(request.expectedGeneration)+1n).toString()},state,
+        attemptId:request.command==="continue"?fixtureIdentity(930):null,parentTask:request.command==="continue"?aiTask:null};
+      planReceipts.set(receipt.actionId,receipt);recordedPlanRequests.set(receipt.actionId,{kind:"control",planId:request.planId,actionId:request.actionId,
+        expectedGeneration:request.expectedGeneration,command:request.command,confirmed:request.confirmed,expiresAt:request.expiresAt??null});
+      status={...status,lease:receipt.lease,state,expiresAt:request.expiresAt??status.expiresAt};return receipt;
+    }
     if (command === "read_work_plan_status") return status;
     if (command === "read_work_plan_action") return planReceipts.get(String(payload.request.actionId))??null;
+    if(command==="read_work_plan_authorization_action"||command==="read_work_plan_control_action") {
+      const receipt=planReceipts.get(String(payload.request.actionId));return receipt?{projectId:payload.request.projectId,request:recordedPlanRequests.get(receipt.actionId),receipt}:null;
+    }
     if (command === "start_work_plan") {
       if (!validateRequestWorkPlanStart(payload.request)) throw new Error("Invalid plan start request");
       return planReceipts.get(payload.request.actionId)?.attemptId;
@@ -704,9 +718,10 @@ it.each(["eviction","replacement-error","replacement-basis","retired"] as const)
 
 it("retains an unknown authorization across valid rejected replay and permits only explicit original receipt recovery",async()=>{
   await open();await prepareThroughRegistry();
-  const original=invoke.getMockImplementation()!;let attempts=0;
+  const original=invoke.getMockImplementation()!;let attempts=0,checks=0;
   invoke.mockImplementation((command:string,args:unknown)=>command==="authorize_work_plan"&&++attempts<=2
-    ?Promise.reject(attempts===1?new Error("Authorization acknowledgement lost"):definiteRejection()):original(command,args));
+    ?Promise.reject(attempts===1?new Error("Authorization acknowledgement lost"):definiteRejection())
+    :command==="read_work_plan_authorization_action"&&++checks===1?Promise.reject(new Error("Automatic read unavailable")):original(command,args));
   await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
   await waitFor(()=>expect(owner.planControl.current().pending?.uncertain).toBe(true));
   const entry=owner.planControl.current().pending;
@@ -733,12 +748,14 @@ it("retains an unknown authorization across valid rejected replay and permits on
   await act(async()=>{expect(registry.dispatch("ai.plan.start-authorized",scope,start)).toBe(true);});
   await waitFor(()=>expect(owner.attempt).toBe(aiAttempt));
   expect(payloads("start_work_plan")).toEqual([start.request]);
+  expect(payloads("read_work_plan_authorization_action")).toEqual([entry.request,entry.request,entry.request]);
+  expect(calls("read_work_plan_action")).toHaveLength(0);
 });
 
 it("does not treat a missing lookup after a checked authorization receipt and failed status read as permission to replay",async()=>{
   await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
   invoke.mockImplementation((command:string,args:unknown)=>command==="read_work_plan_status"?Promise.reject(new Error("Status unavailable"))
-    :command==="read_work_plan_action"?Promise.resolve(null):original(command,args));
+    :command==="read_work_plan_authorization_action"?Promise.resolve(null):original(command,args));
   await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
   await waitFor(()=>expect(owner.current().busy).toBe(false));
   const entry=owner.planControl.current().pending;
@@ -943,4 +960,74 @@ it("prepares an explicitly adjusted maintenance subset through the original type
   expect(payloads("prepare_work_plan")[0]).toMatchObject({unitIds:[item.unitId],maintenance:captured});
   expect(owner.preparedPlan?.maintenance).toEqual(captured);
   expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("start_work_plan")).toHaveLength(0);
+});
+
+
+function planActionPayload() {
+  const entry=owner.planControl.current().pending;if(!entry||entry.kind==="start")throw new Error("Expected original plan action");
+  return entry.kind==="authorize"?{kind:"ai-plan-pending" as const,action:{kind:"authorize" as const,request:entry.request}}
+    :{kind:"ai-plan-pending" as const,action:{kind:"control" as const,request:entry.request}};
+}
+it.each(["lost","invalid"] as const)("checks one original authorization after a %s ACK and never automatically starts from that read",async ack=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{const result=await original(command,args);
+    if(command==="authorize_work_plan"){if(ack==="lost")throw new Error("Lost authorization ACK");return {...result,actionId:fixtureIdentity(999)};}return result;});
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().ready).not.toBeNull());
+  expect(owner.planControl.current().pending).toBeNull();expect(calls("authorize_work_plan")).toHaveLength(1);
+  expect(payloads("read_work_plan_authorization_action")).toEqual(payloads("authorize_work_plan"));
+  expect(calls("start_work_plan")).toHaveLength(0);expect(calls("read_work_plan_action")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+it.each(["lost","invalid"] as const)("checks the original pause after a %s ACK without another control or a new start",async ack=>{
+  await open();await startThroughRegistry();const original=invoke.getMockImplementation()!,starts=calls("start_work_plan").length;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{const result=await original(command,args);
+    if(command==="control_work_plan"){if(ack==="lost")throw new Error("Lost pause ACK");return {...result,state:"stopped"};}return result;});
+  const payload={kind:"ai-plan-control" as const,command:"pause" as const,planId:status!.lease.planId,expectedGeneration:status!.lease.generation,
+    minutes:null,confirmed:false,checkerExecutions:[],toolExecution:false,applicationToolExecutions:[]};
+  await waitFor(()=>expect(registry.describe("ai.plan.pause",scope,payload)?.availability.enabled).toBe(true));
+  await act(async()=>{expect(registry.dispatch("ai.plan.pause",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending).toBeNull());
+  expect(payloads("read_work_plan_control_action")).toEqual(payloads("control_work_plan"));expect(calls("control_work_plan")).toHaveLength(1);
+  expect(calls("start_work_plan")).toHaveLength(starts);expect(calls("read_work_plan_action")).toHaveLength(0);await screen.findByText("Automation paused");
+});
+it("keeps authorization lookup failure unknown, then permits only an explicit original retry after a true missing read",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;let writes=0,lookups=0;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{
+    if(command==="authorize_work_plan"&&++writes===1)throw new Error("Disconnected before result");
+    if(command==="read_work_plan_authorization_action"&&++lookups===1)throw new Error("Automatic read unavailable");
+    return original(command,args);
+  });
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.busy).toBe(false));const pending=owner.planControl.current().pending!,payload=planActionPayload();
+  expect(owner.planControl.current().missing).toBe(false);expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(false);
+  await act(async()=>{expect(registry.dispatch("ai.plan.reconcile-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().missing).toBe(true));
+  act(()=>{owner.setConfig(config=>({...config,model:"newer-B"}));owner.setSelected([fixtureIdentity(998)]);});
+  await act(async()=>{expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending).toBeNull());
+  expect(payloads("authorize_work_plan")).toEqual([pending.request,pending.request]);expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("read_work_plan_authorization_action")).toHaveLength(2);expect(calls("start_work_plan")).toHaveLength(0);
+  expect(owner.config.model).toBe("newer-B");expect(owner.selected).toEqual([fixtureIdentity(998)]);expect(owner.dirty).toBe(true);
+});
+it("shows bilingual checking, keeps B and a hidden owner, and reads no replacement permissions or starts",async()=>{
+  const {user,rendered}=await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!,read=deferred<unknown>();
+  invoke.mockImplementation(async(command:string,args:unknown)=>{
+    if(command==="read_work_plan_authorization_action")return read.promise;
+    const result=await original(command,args);if(command==="authorize_work_plan")throw new Error("Lost ACK");return result;
+  });
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending?.checking).toBe(true));const payload=planActionPayload(),request=payload.action.request;
+  await screen.findByText("Checking the original plan action…");
+  expect(registry.describe("ai.plan.reconcile-action",scope,payload)?.risk).toBe("reads-execution");
+  expect(registry.dispatch("ai.plan.reconcile-action",scope,payload)).toBe(false);expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(false);
+  await act(async()=>{await i18n.changeLanguage("zh-CN");});await screen.findByText("正在核对原计划操作…");
+  await act(async()=>{await i18n.changeLanguage("en-US");});
+  act(()=>{owner.setConfig(config=>({...config,model:"B"}));owner.setSelected([fixtureIdentity(998)]);});
+  await user.click(screen.getByRole("button",{name:"Project overview"}));
+  const removed={...project,metadata:{...project.metadata,targetLocales:[]}};
+  rendered.rerender(<Harness project={removed} mounted={false}/>,removed);
+  await act(async()=>{read.resolve({projectId:request.projectId,request:recordedPlanRequests.get(request.actionId),receipt:planReceipts.get(request.actionId)});});
+  await waitFor(()=>expect(owner.planControl.current().pending).toBeNull());
+  expect(owner.config.model).toBe("B");expect(owner.selected).toEqual([fixtureIdentity(998)]);expect(owner.dirty).toBe(true);
+  expect(calls("read_work_plan_authorization_action")).toHaveLength(1);expect(calls("authorize_work_plan")).toHaveLength(1);expect(calls("start_work_plan")).toHaveLength(0);
 });

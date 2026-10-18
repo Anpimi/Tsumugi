@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check the original saved plan authorization or control after an uncertain
+  response, preserving newer input before an explicit retry. Confirmation covers
+  the recorded plan action; it does not restore execution permissions or
+  automatically start work.
+
 - Check original saved approval, waiver, source fallback and advisory-finding
   decisions after an uncertain response. Checking preserves newer reasons and
   does not repeat the action; an uncertain batch resumes only its original

@@ -17,8 +17,8 @@ import type { WorkPlanContinuation } from "./AiPreparationSession";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { useWorkPlanApplicationTools, WorkPlanApplicationToolDetails, WorkPlanApplicationToolObservation } from "./workPlanApplicationTools";
 
-export type PlanPending = ({ kind: "authorize"; request: WorkPlanAuthorizeRequest }
-  | { kind: "control"; request: WorkPlanControlRequest }
+export type PlanPending = ({ kind: "authorize"; request: WorkPlanAuthorizeRequest; checking:boolean; failure:unknown }
+  | { kind: "control"; request: WorkPlanControlRequest; checking:boolean; failure:unknown }
   | { kind: "start"; request: WorkPlanStartRequest; attemptId: string; checking: boolean; retryAllowed: boolean; failure: unknown })
   & { prepared: WorkPlanView; editSeq: number; uncertain: boolean; receipt: WorkPlanReceiptView | null };
 export type PlanReady = { receipt: WorkPlanReceiptView; prepared: WorkPlanView; editSeq: number };
@@ -166,8 +166,35 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     throw failed.error;
   }
 
+  function matchesAction(entry:Exclude<PlanPending,{kind:"start"}>,current:WorkPlanContinuation) {
+    return current()&&!reads.retired&&session.current().pending?.request===entry.request;
+  }
+  async function lookupAction(entry:Exclude<PlanPending,{kind:"start"}>,current:WorkPlanContinuation) {
+    if(!matchesAction(entry,current))return;
+    setPending({...entry,checking:true});setMissing(false);
+    let result:Awaited<ReturnType<typeof workPlanCommands.authorizationAction>>;
+    try {
+      result=entry.kind==="authorize"?await workPlanCommands.authorizationAction(entry.request):await workPlanCommands.controlAction(entry.request);
+      if(!matchesAction(entry,current))return;
+      if(result!==null)confirmReceipt(result.receipt,entry);
+      else if(entry.receipt)throw {outcome:"unknown",reason:"invalid-work-plan-acknowledgement"};
+    } catch(error) {
+      if(!matchesAction(entry,current))return;
+      setPending({...entry,checking:false,failure:error});throw error;
+    }
+    if(result===null) {
+      setPending({...entry,checking:false});setMissing(true);
+      if(entry.failure!=null)throw entry.failure;
+      return;
+    }
+    // A recorded Core transition does not restore Host-local grants, and this
+    // recovery path never automatically submits its fixed execution input.
+    setPending({...entry,receipt:structuredClone(result.receipt),uncertain:false,checking:false,failure:null});
+    await accept(result.receipt,current);
+  }
   async function mutate(action: Exclude<PlanPending, { kind: "start" }>, current: WorkPlanContinuation, enqueue: boolean) {
     action = structuredClone(action);
+    action={...action,checking:false,failure:null};
     setPending(action); setMissing(false);
     let committed = false;
     try {
@@ -182,7 +209,13 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     } catch (error) {
       // Once the action has committed, a failed read must be reconciled using the
       // same receipt. A later start failure is handled by start's own pending state.
-      if (current() && !committed) setPending(action.uncertain || hasUnknownOutcome(error) ? { ...action, uncertain:true } : null);
+      if (current() && !reads.retired && !committed) {
+        const unknown=hasUnknownOutcome(error);
+        if(action.uncertain||unknown) {
+          const retained={...action,uncertain:true,checking:false,failure:error};setPending(retained);
+          if(unknown) {await lookupAction(retained,current);return;}
+        } else setPending(null);
+      }
       throw error;
     }
   }
@@ -196,7 +229,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     const prepared = structuredClone(status.plan), capturedSeq=editSeq;
     const actionId = await executionCommands.identity(context);
     if (!current.fresh()) return;
-    await mutate({kind:"control",prepared,editSeq:capturedSeq,uncertain:false,receipt:null,request:{...original,actionId}},current,payload.command==="continue");
+    await mutate({kind:"control",prepared,editSeq:capturedSeq,uncertain:false,receipt:null,checking:false,failure:null,request:{...original,actionId}},current,payload.command==="continue");
   }
 
   async function reconcile(current: WorkPlanContinuation) {
@@ -205,12 +238,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     if (pending.kind === "start") {
       await lookupStart(pending,current);
     } else {
-      const receipt = await workPlanCommands.action({ ...context, actionId: pending.request.actionId });
-      if (receipt) { confirmReceipt(receipt,pending); await accept(receipt, current); }
-      else if (current()) {
-        if(pending.receipt)throw {outcome:"unknown",reason:"invalid-work-plan-acknowledgement"};
-        if(pending.uncertain || session.current().pending===pending)setMissing(true);
-      }
+      await lookupAction(pending,current);
     }
   }
 
@@ -252,7 +280,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         toolExecution:payload.toolExecution,applicationToolExecutions:structuredClone(payload.applicationToolExecutions),effects:[...payload.effects],expiresAt:expiry()}};
     const actionId=await executionCommands.identity(context);
     if(!current.fresh())return;
-    await mutate({kind:"authorize",...capture,request:{...capture.request,actionId}},current,true);
+    await mutate({kind:"authorize",...capture,checking:false,failure:null,request:{...capture.request,actionId}},current,true);
   }
   function controlPayload(command:WorkPlanCommand):AiPlanControlCommandPayload|undefined {
     return status?{kind:"ai-plan-control",command,planId:status.lease.planId,expectedGeneration:status.lease.generation,
@@ -335,7 +363,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
       registry.register({...metadata,id:"ai.plan.take-over",nameKey:"ai.plan.takeOver",risk:"runs-ai",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="take-over"?controlAvailability(payload):unavailable,handler:payload=>{void run(current=>control(payload,current));}}),
       registry.register({...metadata,id:"ai.plan.continue",nameKey:"ai.plan.continue",risk:"runs-ai",confirmation:"required",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="continue"?controlAvailability(payload):unavailable,handler:payload=>{void run(current=>control(payload,current));}}),
       registry.register({...metadata,id:"ai.plan.start-authorized",nameKey:"ai.plan.startAuthorized",risk:"runs-ai",payloadKind:"ai-plan-start",availability:readyAvailability,handler:()=>{const value=session.current().ready;if(value)void run(current=>start(value,current));}}),
-      registry.register({...metadata,id:"ai.plan.reconcile-action",nameKey:"ai.reconcile",risk:"reconciles-execution-action",payloadKind:"ai-plan-pending",availability:pendingAvailability,handler:()=>{void run(reconcile);}}),
+      registry.register({...metadata,id:"ai.plan.reconcile-action",nameKey:"ai.reconcile",risk:"reads-execution",payloadKind:"ai-plan-pending",availability:pendingAvailability,handler:()=>{void run(reconcile);}}),
       registry.register({...metadata,id:"ai.plan.retry-action",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"ai-plan-pending",availability:payload=>pendingAvailability(payload,true),handler:()=>{void run(retryPending);}}),
       registry.register({...metadata,id:"ai.reconcile-start",nameKey:"ai.reconcile",risk:"reads-execution",payloadKind:"ai-start-pending",availability:startPendingAvailability,handler:()=>{void run(reconcile);}}),
       registry.register({...metadata,id:"ai.retry-start",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"ai-start-pending",availability:payload=>startPendingAvailability(payload,true),handler:()=>{void run(retryPending);}}),
@@ -434,7 +462,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     </> : null}
     {ready && !pending ? <div role="status"><p>{t("ai.plan.ready")}</p><button className="primary-button" disabled={!readyAvailability(readyPayload()).enabled}
       onClick={()=>{const payload=readyPayload();if(payload)registry.dispatch("ai.plan.start-authorized",scope,payload);}}>{t("ai.plan.startAuthorized")}</button></div> : null}
-    {pending ? <div role="status"><p>{t(pending.kind === "start" && pending.checking ? "execution.checkingStart" : busy ? "ai.plan.pending" : pending.kind === "start" ? "ai.startUnknown" : "ai.plan.actionUnknown")}</p>
+    {pending ? <div role="status"><p>{t(pending.checking ? pending.kind === "start" ? "execution.checkingStart" : "ai.plan.checkingAction" : busy ? "ai.plan.pending" : pending.kind === "start" ? "ai.startUnknown" : pending.receipt ? "ai.plan.actionRecorded" : "ai.plan.actionUnknown")}</p>
       <button className="secondary-button" disabled={pending.kind==="start"?!startPendingAvailability(startPendingPayload()).enabled:!pendingAvailability(pendingPayload()).enabled} onClick={()=>{if(pending.kind==="start"){const payload=startPendingPayload();if(payload)registry.dispatch("ai.reconcile-start",scope,payload);}else{const payload=pendingPayload();if(payload)registry.dispatch("ai.plan.reconcile-action",scope,payload);}}}>{t("ai.reconcile")}</button>
       {pending.kind === "start" ? pending.retryAllowed ? <button className="secondary-button" disabled={!startPendingAvailability(startPendingPayload(),true).enabled}
         onClick={()=>{const payload=startPendingPayload();if(payload)registry.dispatch("ai.retry-start",scope,payload);}}>{t("ai.retrySame")}</button> : null : missing ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload(),true).enabled}

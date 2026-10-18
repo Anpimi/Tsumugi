@@ -1545,6 +1545,51 @@ mod tests {
             .unwrap();
     }
     #[test]
+    fn work_plan_action_reads_confirm_original_transitions_without_granting_or_starting() {
+        use crate::application::WorkPlanCommand;
+        let (_temp,mut store,units)=fixture();
+        let plan=store.prepare_work_plan(Some(config()),"zh-CN",&units,PlanOptions::default()).unwrap();
+        let project=plan.project_id;let authorization=consent(&plan);
+        assert_eq!(store.work_plan_authorization_action_read(project,plan.plan_id,&authorization).unwrap(),None);
+        let mut absent_control=control(&plan,1,WorkPlanCommand::Pause);
+        assert_eq!(store.work_plan_control_action_read(project,&absent_control).unwrap(),None);
+        let before:i64=store.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts",[],|r|r.get(0)).unwrap();
+        let authorized=store.authorize_work_plan(&plan,&authorization).unwrap();
+        let mut history=Vec::new();
+        for (index,command) in [WorkPlanCommand::Pause,WorkPlanCommand::Continue,WorkPlanCommand::TakeOver,WorkPlanCommand::Continue,WorkPlanCommand::Stop].into_iter().enumerate() {
+            let request=control(&plan,index as u64+1,command);let receipt=store.control_work_plan(&request).unwrap();history.push((request,receipt));
+        }
+        let assert_history=|store:&ProjectStore| {
+            assert_eq!(store.work_plan_authorization_action_read(project,plan.plan_id,&authorization).unwrap(),Some(authorized.clone()));
+            for (request,receipt) in &history {assert_eq!(store.work_plan_control_action_read(project,request).unwrap(),Some(receipt.clone()));}
+        };
+        let sequence=store.execution_sequence().unwrap();assert_history(&store);
+        assert_eq!(store.execution_sequence().unwrap(),sequence);
+        assert_eq!(store.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts",[],|r|r.get::<_,i64>(0)).unwrap(),before);
+        let mut wrong=authorization.clone();wrong.confirmed=false;assert_eq!(store.work_plan_authorization_action_read(project,plan.plan_id,&wrong).unwrap_err().code,ErrorCode::ResultMismatch);
+        wrong=authorization.clone();wrong.expires_at+=1;assert!(store.work_plan_authorization_action_read(project,plan.plan_id,&wrong).is_err());
+        wrong=authorization.clone();wrong.plan_digest="0".repeat(64);assert!(store.work_plan_authorization_action_read(project,plan.plan_id,&wrong).is_err());
+        wrong=authorization.clone();wrong.effects.clear();assert!(store.work_plan_authorization_action_read(project,plan.plan_id,&wrong).is_err());
+        assert_eq!(store.work_plan_authorization_action_read(ExecutionId::new(),plan.plan_id,&authorization).unwrap_err().code,ErrorCode::Unauthorized);
+        assert!(store.work_plan_authorization_action_read(project,ExecutionId::new(),&authorization).is_err());
+        let mut wrong=history[0].0.clone();wrong.expected_generation=crate::execution::Revision::new(2).unwrap();assert_eq!(store.work_plan_control_action_read(project,&wrong).unwrap_err().code,ErrorCode::ResultMismatch);
+        wrong=history[0].0.clone();wrong.command=WorkPlanCommand::Stop;assert!(store.work_plan_control_action_read(project,&wrong).is_err());
+        wrong=history[1].0.clone();wrong.confirmed=false;assert!(store.work_plan_control_action_read(project,&wrong).is_err());
+        absent_control.action_id=authorization.action_id;assert_eq!(store.work_plan_control_action_read(project,&absent_control).unwrap_err().code,ErrorCode::ResultMismatch);
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert_eq!(store.work_plan_receipt(authorization.action_id).unwrap(),Some(authorized.clone()));assert!(store.is_reconciling(),"raw mutation lookup does not clear recovery");
+        let c=store.connection().unwrap();let saved:String=c.query_row("SELECT receipt_digest FROM application_actions WHERE action_id=?1",[authorization.action_id.to_string()],|r|r.get(0)).unwrap();
+        c.execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",rusqlite::params![authorization.action_id.to_string(),"0".repeat(64)]).unwrap();
+        assert_eq!(store.work_plan_authorization_action_read(project,plan.plan_id,&authorization).unwrap_err().code,ErrorCode::CorruptLedger);assert!(store.is_reconciling());
+        c.execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",rusqlite::params![authorization.action_id.to_string(),saved]).unwrap();
+        assert_history(&store);assert!(!store.is_reconciling());
+        super::super::review::tests::adopt_source(&mut store,br#"{"replacement":"Changed source"}"#);
+        let revision=store.metadata().unwrap().metadata_revision();store.set_target_locales(revision,&["ja".into()]).unwrap();
+        let sequence=store.execution_sequence().unwrap();assert_history(&store);assert_eq!(store.execution_sequence().unwrap(),sequence);
+        let directory=store.directory().to_path_buf();store.close().unwrap();let reopened=ProjectStore::open(&directory).unwrap();assert_history(&reopened);
+    }
+
+    #[test]
     fn work_plan_start_reads_require_enqueued_original_input_and_preserve_history() {
         use crate::application::{WorkPlanCommand, WorkPlanStartReceipt};
         use crate::execution::{FixedInput, Revision};

@@ -2550,10 +2550,16 @@
       "workPlanAgentToolStart": {
         "$ref": "#/definitions/WorkPlanAgentToolStartRequest"
       },
+      "workPlanAuthorizationAction": {
+        "$ref": "#/definitions/WorkPlanAuthorizeRequest"
+      },
       "workPlanAuthorize": {
         "$ref": "#/definitions/WorkPlanAuthorizeRequest"
       },
       "workPlanControl": {
+        "$ref": "#/definitions/WorkPlanControlRequest"
+      },
+      "workPlanControlAction": {
         "$ref": "#/definitions/WorkPlanControlRequest"
       },
       "workPlanGenerationDiscard": {
@@ -2594,6 +2600,8 @@
       "workPlanAuthorize",
       "workPlanStart",
       "workPlanStartAction",
+      "workPlanControlAction",
+      "workPlanAuthorizationAction",
       "workPlanGenerationPrepare",
       "workPlanGenerationStart",
       "workPlanGenerationDiscard",
@@ -7820,6 +7828,26 @@
         ],
         "type": "string"
       },
+      "WorkPlanActionReadView": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "receipt": {
+            "$ref": "#/definitions/WorkPlanReceiptView"
+          },
+          "request": {
+            "$ref": "#/definitions/WorkPlanRecordedAction"
+          }
+        },
+        "required": [
+          "projectId",
+          "request",
+          "receipt"
+        ],
+        "type": "object"
+      },
       "WorkPlanAgentExecutionIdentity": {
         "additionalProperties": false,
         "description": "Human recovery identity. It contains no scope or execution authority.",
@@ -8119,6 +8147,15 @@
           }
         ]
       },
+      "WorkPlanCommand": {
+        "enum": [
+          "pause",
+          "stop",
+          "take-over",
+          "continue"
+        ],
+        "type": "string"
+      },
       "WorkPlanGenerationPreflight": {
         "additionalProperties": false,
         "properties": {
@@ -8298,6 +8335,95 @@
           "parentTask"
         ],
         "type": "object"
+      },
+      "WorkPlanRecordedAction": {
+        "description": "Only the persisted Core transition; Host-local execution consent is independent.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actionId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "confirmed": {
+                "type": "boolean"
+              },
+              "digest": {
+                "type": "string"
+              },
+              "effects": {
+                "items": {
+                  "$ref": "#/definitions/AutomationEffect"
+                },
+                "type": "array"
+              },
+              "expiresAt": {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              "kind": {
+                "const": "authorize",
+                "type": "string"
+              },
+              "planId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "planId",
+              "actionId",
+              "digest",
+              "confirmed",
+              "effects",
+              "expiresAt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actionId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "command": {
+                "$ref": "#/definitions/WorkPlanCommand"
+              },
+              "confirmed": {
+                "type": "boolean"
+              },
+              "expectedGeneration": {
+                "$ref": "#/definitions/Revision"
+              },
+              "expiresAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/UnsignedDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "control",
+                "type": "string"
+              },
+              "planId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "planId",
+              "actionId",
+              "expectedGeneration",
+              "command",
+              "confirmed",
+              "expiresAt"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "WorkPlanStartReceipt": {
         "additionalProperties": false,
@@ -8661,6 +8787,26 @@
       "workPlanAgentToolOutput": {
         "$ref": "#/definitions/ExecutionOutputView"
       },
+      "workPlanAuthorizationAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/WorkPlanActionReadView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "workPlanControlAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/WorkPlanActionReadView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "workPlanGenerationPreflight": {
         "$ref": "#/definitions/WorkPlanGenerationPreflight"
       },
@@ -8707,6 +8853,8 @@
       "workPlanStatus",
       "workPlanAction",
       "workPlanStartAction",
+      "workPlanControlAction",
+      "workPlanAuthorizationAction",
       "workProtection"
     ],
     "title": "Responses",

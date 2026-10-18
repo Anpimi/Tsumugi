@@ -104,8 +104,10 @@ export interface Requests {
   workPlanAgentToolOutput: WorkPlanAgentToolOutputRequest;
   workPlanAgentToolPrepare: WorkPlanAgentToolPrepareRequest;
   workPlanAgentToolStart: WorkPlanAgentToolStartRequest;
+  workPlanAuthorizationAction: WorkPlanAuthorizeRequest;
   workPlanAuthorize: WorkPlanAuthorizeRequest;
   workPlanControl: WorkPlanControlRequest;
+  workPlanControlAction: WorkPlanControlRequest;
   workPlanGenerationDiscard: WorkPlanGenerationDiscardRequest;
   workPlanGenerationPrepare: WorkPlanGenerationPrepareRequest;
   workPlanGenerationStart: WorkPlanGenerationStartRequest;

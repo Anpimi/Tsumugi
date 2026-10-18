@@ -671,7 +671,46 @@ pub(super) fn check_scope_in(
     Ok(())
 }
 
+fn recorded_action_read(
+    c: &Connection, project: ExecutionId, request: &Request,
+) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
+    if super::super::read_metadata_from(c).map_err(|_|err(ErrorCode::CorruptLedger,"work-plan-project"))?
+        .project_id().to_string()!=project.to_string() {
+        return Err(err(ErrorCode::Unauthorized,"work-plan-project"));
+    }
+    let Some(receipt)=existing(c,request)? else {return Ok(None);};
+    let row_plan:String=c.query_row("SELECT plan_id FROM application_actions WHERE action_id=?1",
+        [request.action().to_string()],|row|row.get(0)).map_err(sql)?;
+    if row_plan!=request.plan().to_string() {return Err(err(ErrorCode::CorruptLedger,"work-plan-action"));}
+    let stored=load(c,request.plan())?;
+    if stored.plan.project_id!=project {return Err(err(ErrorCode::Unauthorized,"work-plan-project"));}
+    validate_receipt(request,&receipt,&stored)?;
+    if receipt.lease.generation.get()==0 || receipt.lease.generation>stored.lease.generation {
+        return Err(err(ErrorCode::CorruptLedger,"work-plan-action-generation"));
+    }
+    // The durable transition does not attest to Host-local checker or tool grants.
+    Ok(Some(receipt))
+}
+
 impl ProjectStore {
+    pub fn work_plan_authorization_action_read(
+        &self, project: ExecutionId, plan: ExecutionId, request: &AuthorizeWorkPlan,
+    ) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
+        let request=Request::Authorize {plan_id:plan,request:request.clone()};
+        let value=super::super::review::read_snapshot(self.connection().map_err(|_|err(ErrorCode::StorageFailed,"work-plan-read"))?,
+            |c|recorded_action_read(c,project,&request))?;
+        if self.is_reconciling() {self.reconcile_execution()?;}
+        Ok(value)
+    }
+    pub fn work_plan_control_action_read(
+        &self, project: ExecutionId, request: &ControlWorkPlan,
+    ) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
+        let request=Request::Control {request:request.clone()};
+        let value=super::super::review::read_snapshot(self.connection().map_err(|_|err(ErrorCode::StorageFailed,"work-plan-read"))?,
+            |c|recorded_action_read(c,project,&request))?;
+        if self.is_reconciling() {self.reconcile_execution()?;}
+        Ok(value)
+    }
     /// Confirm a historical start without renewing authority or submitting work.
     pub fn work_plan_start_action_read(
         &self,

@@ -114,6 +114,27 @@ export const workPlanCommands = {
       || typeof value.attemptId !== "string" || value.parentTask != null) invalidAcknowledgement();
     return value;
   },
+  authorizationAction: async (request:WorkPlanAuthorizeRequest) => {
+    const value=await checkedInvoke("read_work_plan_authorization_action",request,validators.validateResponseWorkPlanAuthorizationAction);
+    const recorded={kind:"authorize",planId:request.planId,actionId:request.actionId,digest:request.digest,
+      confirmed:request.confirmed,effects:request.effects,expiresAt:request.expiresAt};
+    if(value!==null && (value.projectId!==request.projectId || jsonIdentity(value.request)!==jsonIdentity(recorded)
+      || value.receipt.actionId!==request.actionId || value.receipt.lease.planId!==request.planId
+      || value.receipt.lease.generation!=="1" || value.receipt.state!=="active" || typeof value.receipt.attemptId!=="string"
+      || value.receipt.parentTask!==null)) invalidAcknowledgement();
+    return value;
+  },
+  controlAction: async (request:WorkPlanControlRequest) => {
+    const value=await checkedInvoke("read_work_plan_control_action",request,validators.validateResponseWorkPlanControlAction);
+    const recorded={kind:"control",planId:request.planId,actionId:request.actionId,expectedGeneration:request.expectedGeneration,
+      command:request.command,confirmed:request.confirmed,expiresAt:request.expiresAt??null};
+    const state={pause:"paused",stop:"stopped","take-over":"taken-over",continue:"active"}[request.command];
+    if(value!==null && (value.projectId!==request.projectId || jsonIdentity(value.request)!==jsonIdentity(recorded)
+      || value.receipt.actionId!==request.actionId || value.receipt.lease.planId!==request.planId
+      || value.receipt.lease.generation!==(BigInt(request.expectedGeneration)+1n).toString() || value.receipt.state!==state
+      || (request.command==="continue"?typeof value.receipt.attemptId!=="string":value.receipt.attemptId!==null||value.receipt.parentTask!==null))) invalidAcknowledgement();
+    return value;
+  },
   start: async (request: WorkPlanStartRequest, expectedAttemptId: string) => {
     // The attempt identity is returned by authorization or continuation. The
     // backend resolves it from the action receipt and rechecks current authority.
