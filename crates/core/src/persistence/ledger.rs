@@ -2519,6 +2519,27 @@ impl ProjectStore {
         operation: &str,
         digest: &str,
     ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
+        self.plugin_start_input_read(project, Some(task), attempt, operation, digest)
+    }
+    /// A captured full input digest also binds its original task when a producer
+    /// preview does not expose that task before enqueueing.
+    pub fn plugin_input_start_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+    ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
+        self.plugin_start_input_read(project, None, attempt, operation, digest)
+    }
+    fn plugin_start_input_read(
+        &self,
+        project: ExecutionId,
+        expected_task: Option<ExecutionId>,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+    ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
         let found = super::review::read_snapshot(self.execution_connection()?, |c| {
             if super::read_metadata_from(c)
                 .map_err(|_| error(ErrorCode::CorruptLedger, "plugin-start-project"))?
@@ -2527,6 +2548,9 @@ impl ProjectStore {
                 != project.to_string()
             {
                 return Err(error(ErrorCode::ResultMismatch, "plugin-start-project"));
+            }
+            if tsumugi_plugin_sdk::validate_package_digest(digest).is_err() {
+                return Err(error(ErrorCode::InvalidInput, "plugin-start-digest"));
             }
             let exists: bool = c
                 .query_row(
@@ -2541,7 +2565,7 @@ impl ProjectStore {
             let input = load_input(c, attempt)?;
             let envelope = input.envelope();
             if envelope.project_id != project
-                || envelope.task_id != task
+                || expected_task.is_some_and(|task| envelope.task_id != task)
                 || envelope.operation != operation
                 || input.digest() != digest
                 || envelope.plugin.is_none()
@@ -2552,7 +2576,7 @@ impl ProjectStore {
             }
             Ok(Some(PluginStartActionRead {
                 project_id: project,
-                task_id: task,
+                task_id: envelope.task_id,
                 attempt_id: attempt,
                 operation: envelope.operation.clone(),
                 input_digest: input.digest().into(),

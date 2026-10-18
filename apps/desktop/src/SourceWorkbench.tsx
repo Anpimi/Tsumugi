@@ -170,11 +170,12 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   }
   function pendingPayload(kind: "start" | "apply"): SourcePendingCommandPayload { const value = owner.current();
     return { kind: "source-pending", pendingKind: kind, attemptId: (kind === "start" ? value.pendingStart : value.pendingApply)?.attemptId ?? "",
-      actionId: kind === "apply" ? value.pendingApply?.actionId ?? null : null }; }
+      actionId: kind === "apply" ? value.pendingApply?.actionId ?? null : null, ...(kind === "start" && value.pendingStart ? { request: value.pendingStart } : {}) }; }
   function pendingAvailability(input?: SourcePendingCommandPayload, checked = false, rendering = false) {
+    if (reads.retired) return { enabled: false, reason: "hidden" as const };
     const allowed = common(true, rendering); if (!allowed.enabled) return allowed;
     if (!input) return unavailable; const expected = pendingPayload(input.pendingKind);
-    return expected.attemptId && input.attemptId === expected.attemptId && input.actionId === expected.actionId && (!checked || owner.current().receiptChecked) ? allowed : unavailable;
+    return expected.attemptId && input.attemptId === expected.attemptId && input.actionId === expected.actionId && (input.pendingKind !== "start" || JSON.stringify(input.request) === JSON.stringify(expected.request)) && (!checked || owner.current().receiptChecked) ? allowed : unavailable;
   }
   function taskPayload(): SourceTaskCommandPayload { return { kind: "source-task", attemptId: attempt ?? "", taskId: detail?.taskId ?? "" }; }
   function taskAvailability(input?: SourceTaskCommandPayload, rendering = false) {
@@ -249,7 +250,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
       registry.register({ ...meta, id: "source.estimate", nameKey: "source.reviewImpact", payloadKind: "source-basis", availability: input => fixedComparison ? basisAvailability(input) : unavailable, handler: () => void owner.estimate(viewCurrent) }),
       registry.register({ ...meta, id: "source.search-comparison", nameKey: "source.search", payloadKind: "source-comparison", availability: input => comparisonAvailability(input), handler: setComparisonIntent }),
       registry.register({ ...meta, id: "source.refresh-comparison", nameKey: "source.refreshComparison", payloadKind: "source-comparison", availability: input => comparisonAvailability(input, true), handler: input => void refreshComparison(input) }),
-      registry.register({ ...meta, id: "source.retry-start", nameKey: "source.checkStart", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "start" ? pendingAvailability(input) : unavailable, handler: () => void owner.retryStart() }),
+      registry.register({ ...meta, id: "source.check-start", nameKey: "execution.checkPluginStart", risk: "reads-source", payloadKind: "source-pending", availability: input => input?.pendingKind === "start" ? pendingAvailability(input) : unavailable, handler: () => void owner.checkStart() }),
+      registry.register({ ...meta, id: "source.retry-start", nameKey: "execution.retryPluginStart", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "start" && owner.current().startRetryAllowed ? pendingAvailability(input) : unavailable, handler: () => void owner.retryStart() }),
       registry.register({ ...meta, id: "source.check-receipt", nameKey: "execution.checkReceipt", risk: "reads-source", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input) : unavailable, handler: () => void owner.checkReceipt() }),
       registry.register({ ...meta, id: "source.retry-apply", nameKey: "execution.retryAdoption", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: () => void owner.retryApply() }),
       registry.register({ ...meta, id: "source.keep-output", nameKey: "execution.keepOutput", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: owner.keepOutput }),
@@ -371,7 +373,10 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
                 if (viewCurrent() && owner.current().attempt === attempt) setCaptureVersion(value => value + 1);
               }
             }} onOpenExtensions={onOpenExtensions} />
-          {pendingStart && !busy ? <section><p>{t("source.startUnknown")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("start"), false, true).enabled} onClick={() => registry.dispatch("source.retry-start", commandScope, pendingPayload("start"))}>{t("source.checkStart")}</button></section> : null}
+          {pendingStart ? <section role="status"><p>{t(owner.state.checkingStart ? "execution.checkingPluginStart" : "source.startUnknown")}</p>
+            <button className="secondary-button" disabled={!pendingAvailability(pendingPayload("start"), false, true).enabled} onClick={() => registry.dispatch("source.check-start", commandScope, pendingPayload("start"))}>{t("execution.checkPluginStart")}</button>
+            {owner.state.startRetryAllowed ? <><p>{t("execution.pluginStartMissing")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("start"), false, true).enabled} onClick={() => registry.dispatch("source.retry-start", commandScope, pendingPayload("start"))}>{t("execution.retryPluginStart")}</button></> : null}
+          </section> : null}
           {attempt && !page && !comparison ? <section><p role="status">{t("source.savedTask")}</p><p>{t("source.taskHelp")}</p>
             {detail ? <button className="secondary-button" disabled={!taskAvailability(taskPayload(), true).enabled} onClick={() => registry.dispatch("source.cancel-task", commandScope, taskPayload())}>{t("execution.cancel")}</button> : null}
             <button className="secondary-button" disabled={!common(false, true).enabled || detailRead.isFetching} onClick={() => registry.dispatch("source.refresh-attempt", commandScope)}>{t("execution.refresh")}</button>

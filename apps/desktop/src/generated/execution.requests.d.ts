@@ -7,6 +7,13 @@ export type Revision = string;
  * action reads its original receipt; it never refreshes this cancellation basis.
  */
 export type ContinuationKind = "resume-undispatched" | "retry-safe-failure";
+export type PluginStartOperation =
+  | "source-import"
+  | "source-semantic-check"
+  | "translation-extract"
+  | "translation-semantic-check"
+  | "locale-build"
+  | "artifact-semantic-check";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
 export type UnsignedDecimal = string;
@@ -26,6 +33,7 @@ export interface Requests {
   continuationRead: ContinuationReadRequest;
   list: ListRequest;
   output: OutputRequest;
+  pluginStartAction: PluginStartReadRequest;
   prepare: PrepareRequest;
   recovery: RecoveryRequest;
   session: SessionRequest;
@@ -120,6 +128,13 @@ export interface OutputRequest {
   attemptId: ExecutionId;
   projectId: ExecutionId;
   resultId: ExecutionId;
+  sessionToken: string;
+}
+export interface PluginStartReadRequest {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  operation: PluginStartOperation;
+  projectId: ExecutionId;
   sessionToken: string;
 }
 export interface RecoveryRequest {

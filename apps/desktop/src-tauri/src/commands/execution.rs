@@ -53,7 +53,7 @@ macro_rules! handlers {
         super::plugins::runtimes::set_plugin_native_host_approval,
         list_execution_tasks,read_execution_task_activity,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,read_execution_cancellation_action,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,read_execution_adoption_action,adopt_execution,
-        read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
+        read_execution_receipt,execution_status,read_plugin_execution_start,quiesce_execution,create_execution_identity,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         crate::commands::plugins::application::read_application_plugin_instance,
         crate::commands::plugins::application::stop_application_plugin_instance,
@@ -785,6 +785,66 @@ macro_rules! request {
         $(#[$schema])*
         pub struct $name { pub session_token:String, pub project_id:ExecutionId, $($(#[$attribute])* pub $field:$kind,)* }
     }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum PluginStartOperation {
+    SourceImport,
+    SourceSemanticCheck,
+    TranslationExtract,
+    TranslationSemanticCheck,
+    LocaleBuild,
+    ArtifactSemanticCheck,
+}
+impl PluginStartOperation {
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::SourceImport => tsumugi_core::content::OPERATION,
+            Self::SourceSemanticCheck => tsumugi_core::execution::SOURCE_CHECK_OPERATION,
+            Self::TranslationExtract => tsumugi_core::content::TRANSLATION_EXTRACTION_OPERATION,
+            Self::TranslationSemanticCheck => tsumugi_core::execution::TRANSLATION_CHECK_OPERATION,
+            Self::LocaleBuild => tsumugi_core::content::BUILD_OPERATION,
+            Self::ArtifactSemanticCheck => tsumugi_core::execution::ARTIFACT_CHECK_OPERATION,
+        }
+    }
+}
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    PluginStartReadRequest {
+        attempt_id: ExecutionId,
+        input_digest: String,
+        operation: PluginStartOperation
+    }
+);
+#[tauri::command]
+pub async fn read_plugin_execution_start(
+    state: State<'_, AppState>,
+    request: PluginStartReadRequest,
+) -> Result<Option<PluginStartActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_plugin_execution_start",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .plugin_input_start_action_read(
+                    request.project_id,
+                    request.attempt_id,
+                    request.operation.operation(),
+                    &request.input_digest,
+                )
+                .map_err(map_read)
+            },
+        )
+        .await
 }
 request!(
     #[derive(PartialEq, Eq)]

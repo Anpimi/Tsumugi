@@ -218,6 +218,7 @@ export interface Responses {
   continuations: ContinuationPage;
   identity: ExecutionId;
   output: ExecutionOutputView;
+  pluginStartAction: PluginStartActionRead | null;
   receipt: AdoptionReceipt | null;
   recovery: RecoveryView;
   status: RuntimeStatus;
@@ -476,6 +477,17 @@ export interface SourceExtractionError {
   artifactId: string | null;
   code: SourceExtractionErrorCode;
   detail: string;
+}
+/**
+ * Evidence of one exact ordinary plugin input in the durable execution ledger.
+ * This proves enqueueing, never current scope, worker completion or live consent.
+ */
+export interface PluginStartActionRead {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  operation: string;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface RecoveryView {
   attemptId: ExecutionId;

@@ -190,7 +190,7 @@ it.each(["en-US", "zh-CN"])("shows only the real selection read phase and preser
 it("registers import and content row commands and confirms an ordered complete multi-page import batch through the UI",async()=>{
   preview=translationPreviewFixture([translationRowFixture(0),translationRowFixture(1),translationRowFixture(2)]);const {user}=await readyImport(),dispatch=vi.spyOn(registry,"dispatch");
   expect(registry.list(scope).filter(value=>value.payloadKind?.startsWith("translation-")).map(value=>value.id).sort()).toEqual([
-    "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-candidate-decision","translation.check-import-receipt","translation.check-selection",
+    "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-candidate-decision","translation.check-import-start","translation.check-import-plugin-start","translation.check-import-receipt","translation.check-selection",
     "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.decide-candidate","translation.edit-context","translation.inspect-import","translation.open-comparison","translation.retry-candidate-decision","translation.retry-import-action",
     "translation.retry-import-start","translation.retry-selection","translation.select-revision","translation.start-import","translation.toggle-content-selection",
     "translation.prepare-import-check","translation.start-import-check","translation.finish-import-check","translation.prepare-import-projection","translation.start-import-projection","translation.retry-import-plugin","translation.propose-term",
@@ -397,4 +397,27 @@ it("opens an exact saved revision for offline comparison without saving the newe
   await waitFor(()=>expect(button).toBeEnabled());await user.click(button);
   expect(compare).toHaveBeenCalledWith(expect.objectContaining({unitId:candidate.unitId,sourceRevisionId:candidate.sourceRevisionId}),"zh-CN",expect.objectContaining({revisionId:candidate.revisionId,ordinal:candidate.ordinal}));
   expect(drafts.current()?.text).toBe("Newer manual B");expect(calls("save_translation_revision")).toHaveLength(0);expect(calls("select_translation_revision")).toHaveLength(0);
+});
+
+it("separates the typed translation start read from explicit retry and rejects stale, hidden and busy recovery commands", async () => {
+  const {user,view} = await openImport();
+  await user.click(screen.getByRole("checkbox",{name:i18n.t("translationPlugin.producerConsent")}));
+  const original=invoke.getMockImplementation()!;let reads=0,resolve!:(value:unknown)=>void;
+  invoke.mockImplementation((name,args)=>name==="start_plugin_translation"?Promise.reject(new Error("Lost ACK"))
+    :name==="read_plugin_execution_start"?++reads===1?Promise.reject(new Error("Read unavailable")):new Promise(done=>{resolve=done;}):original(name,args));
+  await act(async()=>{await imports.start();});
+  const request=imports.current().pendingStart!;expect(request).not.toBeNull();
+  const payload={kind:"translation-import-start-pending" as const,request};
+  expect(registry.describe("translation.retry-import-start",scope,payload)?.availability.enabled).toBe(false);
+  expect(registry.dispatch("translation.check-import-start",scope,{...payload,request:{...request,inputDigest:"b".repeat(64)}})).toBe(false);
+  expect(registry.dispatch("translation.check-import-start",{...scope,projectId:fixtureIdentity(999)},payload)).toBe(false);
+  act(()=>{expect(registry.dispatch("translation.check-import-start",scope,payload)).toBe(true);expect(registry.dispatch("translation.check-import-start",scope,payload)).toBe(false);});
+  await waitFor(()=>expect(imports.current().checkingStart).toBe(true));
+  await act(async()=>{resolve(null);});
+  await screen.findByRole("button",{name:i18n.t("execution.retryPluginStart")});
+  expect(invoke.mock.calls.filter(([name])=>name==="start_plugin_translation")).toHaveLength(1);
+  expect(registry.describe("translation.retry-import-start",scope,payload)?.availability.enabled).toBe(true);
+  view.rerender(<Probe/>);
+  expect(registry.dispatch("translation.retry-import-start",scope,payload)).toBe(false);
+  expect(imports.current().pendingStart).toBe(request);
 });

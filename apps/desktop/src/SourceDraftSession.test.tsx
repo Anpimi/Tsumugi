@@ -46,6 +46,7 @@ function Probe() {
 beforeEach(() => {
   invoke.mockReset(); scope = preview.scope; originalRequest = null;
   invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_execution_start") return null;
     if (command === "read_content_scope") return scope;
     if (command === "create_execution_identity") return sourceFixture.prepare.actionId;
     if (command === "select_plugin_source") return pluginSourceWorkflow.selection;
@@ -628,7 +629,7 @@ it("bridges Source cancellation to the shared original request without using Sou
   const original = invoke.getMockImplementation()!;
   let cancelCount = 0;
   invoke.mockImplementation((command: string, payload: unknown) => command === "cancel_execution_task"
-    ? ++cancelCount === 1 ? Promise.reject(new Error("Disconnected")) : Promise.resolve("3") : original(command, payload));
+    ? ++cancelCount === 1 ? Promise.reject(new Error("Disconnected")) : Promise.resolve("3") : command === "read_execution_cancellation_action" ? Promise.resolve(null) : original(command, payload));
   await act(async () => { await owner.cancelTask(fixtureIdentity(150)); });
   expect(owner.current().pendingStart).toBeNull(); expect(owner.current().pendingApply).toBeNull();
   expect(owner.current().busyMutation).toBe(false);
@@ -636,6 +637,7 @@ it("bridges Source cancellation to the shared original request without using Sou
   view.rerender(null, project); view.rerender(<Probe />, project);
   await act(async () => { await owner.cancelTask(fixtureIdentity(150)); await tasks.retry(fixtureIdentity(150)); });
   const requests = invoke.mock.calls.filter(([name]) => name === "cancel_execution_task").map(([, payload]) => payload.request);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_execution_cancellation_action")).toHaveLength(1);
   expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
   expect(tasks.current(fixtureIdentity(150))).toMatchObject({ phase: "recorded", revision: "3" });
@@ -854,4 +856,71 @@ it("explicitly ends only the local unknown stop wait after another lifecycle sto
   expect(owner.hook.current().waitEnded).toBe(true); expect(owner.hook.current().stop?.notKnown).toBe(false);
   vi.mocked(hookCommands.read).mockResolvedValue({ ...closed, callbacksDrained: true });
   await act(async () => { ack.resolve(sourceReceiptFixture(pending!)); await applying; }); expect(owner.current().receipt).not.toBeNull();
+});
+
+async function ordinarySourceStart(checker: boolean) {
+  if (checker) return prepareSourcePluginPhase("start-check");
+  await act(async () => { owner.setSource(pluginSourceRequest); await owner.select(); owner.declare(true); await owner.preflight(); owner.consentProducer(true); });
+  return () => owner.start();
+}
+it.each([false, true])("settles the exact original Source start from one automatic proof (checker=%s)", async checker => {
+  const view = render(<Probe/>, project), work = await ordinarySourceStart(checker), original = invoke.getMockImplementation()!;
+  const command = checker ? "start_source_check" : "start_plugin_source";
+  let resolve!: (value: unknown) => void;
+  const response = new Promise<unknown>(done => { resolve = done; });
+  invoke.mockImplementation((name, args) => name === command ? Promise.resolve(fixtureIdentity(999))
+    : name === "read_plugin_execution_start" ? response : original(name,args));
+  let running!: Promise<void>; act(() => { running = work(); });
+  await waitFor(() => expect(owner.current().checkingStart).toBe(true));
+  const pending = owner.current().pendingPlugin;
+  if (checker && pending?.pendingKind !== "start-check") throw new Error("Expected original source checker start");
+  const request = checker && pending?.pendingKind === "start-check" ? pending.request : owner.current().pendingStart!;
+  const read = invoke.mock.calls.filter(([name]) => name === "read_plugin_execution_start").at(-1)![1].request;
+  expect(read).toEqual({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: request.attemptId,
+    inputDigest: request.inputDigest, operation: checker ? "source-semantic-check" : "source-import" });
+  act(() => { owner.edit("actor", "Newer B"); owner.edit("lineage", { 70: { newOrdinal: 70, oldOccurrenceId: fixtureIdentity(370), decision: "continue", reason: "Newer reason" } }); });
+  view.rerender(null, { ...project, metadata: { ...project.metadata, sourceLocale: "fr" } });
+  await act(async () => { await owner.checkStart(); await owner.checkPluginStart(); await owner.retryStart(); await owner.retryPlugin(); });
+  expect(invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(1);
+  await act(async () => { resolve({ projectId: read.projectId, taskId: fixtureIdentity(888), attemptId: read.attemptId, operation: read.operation, inputDigest: read.inputDigest }); await running; });
+  view.rerender(<Probe/>);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().pendingPlugin).toBeNull();
+  expect(checker ? owner.current().checkAttempt : owner.current().attempt).toBe(request.attemptId);
+  expect(owner.current().actor).toBe("Newer B"); expect(owner.current().lineage[70].reason).toBe("Newer reason");
+  expect(owner.current().confirmed).toBe(false); if (!checker) expect(owner.current().stale).toBe(true);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_plugin_execution_start")).toHaveLength(1);
+});
+it.each([false, true])("blocks Source replay after a bad proof, checks absence, and retains the original grant on explicit retry (checker=%s)", async checker => {
+  render(<Probe/>, project); const work = await ordinarySourceStart(checker), original = invoke.getMockImplementation()!;
+  const command = checker ? "start_source_check" : "start_plugin_source";
+  let reads = 0, sends = 0;
+  invoke.mockImplementation((name,args) => {
+    if (name === command) return Promise.reject(++sends === 1 ? new Error("Lost ACK") : { code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false });
+    if (name === "read_plugin_execution_start") return Promise.resolve(++reads === 1 ? { ...args.request, taskId: fixtureIdentity(888), inputDigest: "b".repeat(64) }
+      : reads === 2 ? null : { projectId: args.request.projectId, taskId: fixtureIdentity(888), attemptId: args.request.attemptId, operation: args.request.operation, inputDigest: args.request.inputDigest });
+    return original(name,args);
+  });
+  await act(async () => { await work(); });
+  const pending = checker ? owner.current().pendingPlugin : owner.current().pendingStart;
+  expect(pending).not.toBeNull(); expect(owner.current().startRetryAllowed).toBe(false);
+  await act(async () => { await owner.retryStart(); await owner.retryPlugin(); }); expect(sends).toBe(1); expect(reads).toBe(1);
+  await act(async () => { if (checker) await owner.checkPluginStart(); else await owner.checkStart(); });
+  expect(owner.current().startRetryAllowed).toBe(true); expect(sends).toBe(1);
+  await act(async () => { if (checker) await owner.retryPlugin(); else await owner.retryStart(); });
+  expect(sends).toBe(2); expect(reads).toBe(3);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().pendingPlugin).toBeNull();
+  const sent = invoke.mock.calls.filter(([name]) => name === command).map(([,args]) => args.request); expect(sent[1]).toEqual(sent[0]);
+});
+
+it.each([false,true])("ignores a late original Source proof after session replacement (checker=%s)", async checker => {
+  const view = render(<Probe/>,project), work = await ordinarySourceStart(checker), original = invoke.getMockImplementation()!;
+  let resolve!: (value:unknown)=>void;const response=new Promise<unknown>(done=>{resolve=done;});
+  invoke.mockImplementation((name,args)=>name===(checker?"start_source_check":"start_plugin_source")?Promise.reject(new Error("Lost ACK"))
+    :name==="read_plugin_execution_start"?response:original(name,args));
+  let running!:Promise<void>;act(()=>{running=work();});await waitFor(()=>expect(owner.current().checkingStart).toBe(true));
+  const old=owner,read=invoke.mock.calls.find(([name])=>name==="read_plugin_execution_start")![1].request;
+  view.rerender(<Probe/>,{...project,sessionToken:"replacement-session"});
+  await act(async()=>{resolve({projectId:read.projectId,taskId:fixtureIdentity(888),attemptId:read.attemptId,operation:read.operation,inputDigest:read.inputDigest});await running;});
+  expect(owner.current().attempt).toBeNull();expect(owner.current().checkAttempt).toBeNull();expect(owner.hasPending()).toBe(false);
+  expect(checker?old.current().pendingPlugin:old.current().pendingStart).not.toBeNull();
 });

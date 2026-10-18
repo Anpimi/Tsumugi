@@ -290,3 +290,17 @@ it("accepts a zero continuation basis while checking the original TaskView scope
   expect(await executionCommands.taskView(fixture.taskViewRequest)).toEqual(task);
   expect(invoke).toHaveBeenLastCalledWith("read_execution_task_view", { request: fixture.taskViewRequest });
 });
+
+it.each(["source-import", "source-semantic-check", "translation-extract", "translation-semantic-check", "locale-build", "artifact-semantic-check"] as const)("strictly reads the original %s input without adding execution authority", async operation => {
+  const request = { ...session, attemptId: fixture.detail.attemptId, inputDigest: "a".repeat(64), operation };
+  const proof = { projectId: request.projectId, attemptId: request.attemptId, inputDigest: request.inputDigest, operation, taskId: fixture.detail.taskId };
+  expect(validators.validateRequestPluginStartAction(request)).toBe(true);
+  for (const value of [null, proof]) { invoke.mockResolvedValueOnce(value); expect(await executionCommands.pluginStartAction(request)).toEqual(value); }
+  for (const value of [undefined, { ...proof, inputDigest: "b".repeat(64) }, { ...proof, attemptId: fixture.prepare.unitId },
+    { ...proof, operation: "unrelated" }, { ...proof, projectId: fixture.prepare.unitId }, { ...proof, taskId: "invalid" },
+    { ...proof, grantId: fixture.prepare.actionId }, { ...proof, inputDigest: undefined }]) {
+    invoke.mockResolvedValueOnce(value);
+    expect(hasUnknownOutcome(await executionCommands.pluginStartAction(request).catch(error => error))).toBe(true);
+  }
+  expect(invoke.mock.calls.every(([command]) => command === "read_plugin_execution_start")).toBe(true);
+});

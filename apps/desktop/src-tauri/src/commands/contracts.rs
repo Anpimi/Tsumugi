@@ -142,6 +142,7 @@ struct PluginResponses {
 #[allow(dead_code)]
 struct ExecutionRequests {
     session: execution::SessionRequest,
+    plugin_start_action: execution::PluginStartReadRequest,
     list: execution::ListRequest,
     activity: execution::TaskActivityRequest,
     task: execution::TaskRequest,
@@ -169,6 +170,7 @@ struct ExecutionRequests {
 #[allow(dead_code)]
 struct ExecutionResponses {
     identity: tsumugi_core::execution::ExecutionId,
+    plugin_start_action: Option<tsumugi_core::execution::PluginStartActionRead>,
     status: execution::RuntimeStatus,
     tasks: Vec<tsumugi_core::TaskView>,
     activity: tsumugi_core::TaskActivity,

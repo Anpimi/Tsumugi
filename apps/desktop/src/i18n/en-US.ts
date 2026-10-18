@@ -2100,6 +2100,9 @@ ai: {
   }
 },
     execution: {
+      checkPluginStart: "Check original task start", checkingPluginStart: "Checking whether the original task started…",
+      retryPluginStart: "Retry the exact original start",
+      pluginStartMissing: "No saved input was found for this original start. This does not stop an in-flight request. You can explicitly retry the same request with its original permission; the backend may refuse an expired permission.",
       dock: {
         title: "Background tasks", unavailable: "Status unavailable", empty: "No tasks yet",
         counts: "{{active}} active or queued · {{attention}} need review · {{saved}} have saved outputs",

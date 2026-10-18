@@ -1850,6 +1850,13 @@ fn original_plugin_start_read_validates_exact_input_before_reconciling() {
         None
     );
     assert!(!store.is_reconciling());
+    for digest in ["invalid", "", "A".repeat(64).as_str()] {
+        store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+        assert!(store.plugin_input_start_action_read(owner, attempt, "fixture", digest).is_err());
+        assert!(store.is_reconciling());
+    }
+    assert_eq!(store.plugin_input_start_action_read(owner, attempt, "fixture", input.digest()).unwrap(), None);
+    assert!(!store.is_reconciling());
     assert_eq!(
         store.enqueue_execution(&input).unwrap_err().code,
         ErrorCode::Unauthorized
@@ -1905,6 +1912,14 @@ fn original_plugin_start_read_validates_exact_input_before_reconciling() {
             .unwrap(),
         Some(expected.clone())
     );
+    assert_eq!(store.plugin_input_start_action_read(owner, attempt, "fixture", input.digest()).unwrap(), Some(expected.clone()));
+    for (project, operation, digest) in [(ExecutionId::new(), "fixture", input.digest().to_owned()),
+        (owner, "another-operation", input.digest().to_owned()), (owner, "fixture", "0".repeat(64))] {
+        store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+        assert!(store.plugin_input_start_action_read(project, attempt, operation, &digest).is_err());
+        assert!(store.is_reconciling());
+    }
+    assert_eq!(store.plugin_input_start_action_read(owner, attempt, "fixture", input.digest()).unwrap(), Some(expected.clone()));
     assert!(!store.is_reconciling());
     store
         .execution_unknown
@@ -1922,6 +1937,7 @@ fn original_plugin_start_read_validates_exact_input_before_reconciling() {
             .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())
             .is_err()
     );
+    assert!(store.plugin_input_start_action_read(owner, attempt, "fixture", input.digest()).is_err());
     assert!(store.is_reconciling());
     store
         .connection()
@@ -1955,7 +1971,8 @@ fn original_plugin_start_read_validates_exact_input_before_reconciling() {
         reopened
             .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())
             .unwrap(),
-        Some(expected)
+        Some(expected.clone())
     );
+    assert_eq!(reopened.plugin_input_start_action_read(owner, attempt, "fixture", input.digest()).unwrap(), Some(expected));
     assert_eq!(reopened.execution_sequence().unwrap(), sequence);
 }

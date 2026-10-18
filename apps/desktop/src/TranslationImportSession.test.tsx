@@ -36,6 +36,7 @@ beforeEach(() => {
   const checkedWrites = new Map<string,number>();
   invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
     const request = payload.request;
+    if (command === "read_plugin_execution_start") return null;
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: preview.currentSourceSnapshotId };
     if (command === "create_execution_identity") return fixtureIdentity(nextIdentity++);
     if (command === "select_plugin_translation") return translationSelectionFixture(preview.fixedSourceSnapshotId);
@@ -493,4 +494,61 @@ it.each(["capture", "prepare-check", "prepare-projection"] as const)("retains a 
   if (phase === "prepare-check") expect(owner.current().checkReview).toBeNull();
   if (phase === "prepare-projection") expect(owner.current().projection).toBeNull();
   expect(owner.current().attempt).toBeNull(); expect(drafts.mutationReserved).toBe(true);
+});
+
+async function ordinaryTranslationStart(checker: boolean) {
+  if (checker) return preparePluginPhase("start-check");
+  await act(async () => { await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId)); owner.setFile("zh.json"); owner.confirmLanguage(true); await owner.preflight(); owner.consentProducer(true); });
+  return () => owner.start();
+}
+it.each([false, true])("confirms an ordinary translation start once across hidden consumers and changed locales (checker=%s)", async checker => {
+  const view = render(<Probe/>, project), work = await ordinaryTranslationStart(checker), original = invoke.getMockImplementation()!;
+  const command = checker ? "start_translation_check" : "start_plugin_translation";
+  let resolve!: (value: unknown) => void; const response = new Promise<unknown>(done => { resolve = done; });
+  invoke.mockImplementation((name,args) => name === command ? Promise.reject(new Error("Lost ACK")) : name === "read_plugin_execution_start" ? response : original(name,args));
+  let running!: Promise<void>; act(() => { running = work(); }); await waitFor(() => expect(owner.current().checkingStart).toBe(true));
+  const request = calls(command).at(-1)![1].request, read = calls("read_plugin_execution_start").at(-1)![1].request;
+  expect(read).toEqual({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: request.attemptId,
+    inputDigest: request.inputDigest, operation: checker ? "translation-semantic-check" : "translation-extract" });
+  view.rerender(null, { ...project, metadata: { ...project.metadata, sourceLocale: "fr", targetLocales: [] } });
+  await act(async () => { await owner.checkStart(); await owner.checkPluginStart(); await owner.retryStart(); await owner.retryPlugin(); });
+  await act(async () => { resolve({ projectId: read.projectId, taskId: fixtureIdentity(888), attemptId: read.attemptId, operation: read.operation, inputDigest: read.inputDigest }); await running; });
+  view.rerender(<Probe/>);
+  expect(checker ? owner.current().checkAttempt : owner.current().extractionAttempt).toBe(request.attemptId);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().pendingPlugin).toBeNull();
+  expect(calls(command)).toHaveLength(1); expect(calls("read_plugin_execution_start")).toHaveLength(1);
+  expect(owner.current().confirmed).toBe(false); if (!checker) expect(owner.current().stale).toBe(true);
+});
+it.each([false, true])("requires a pure translation absence read before exact retry and preserves unknown on a later rejection (checker=%s)", async checker => {
+  render(<Probe/>, project); const work = await ordinaryTranslationStart(checker), original = invoke.getMockImplementation()!;
+  const command = checker ? "start_translation_check" : "start_plugin_translation";
+  let reads = 0, sends = 0;
+  invoke.mockImplementation((name,args) => {
+    if (name === command) return Promise.reject(++sends === 1 ? new Error("Lost ACK") : mutationRejection());
+    if (name === "read_plugin_execution_start") return ++reads === 1 || reads === 3 ? Promise.reject(new Error("Read unavailable")) : Promise.resolve(null);
+    return original(name,args);
+  });
+  await act(async () => { await work(); });
+  const pending = checker ? owner.current().pendingPlugin : owner.current().pendingStart;
+  expect(owner.current().startRetryAllowed).toBe(false);
+  await act(async () => { await owner.retryStart(); await owner.retryPlugin(); }); expect(sends).toBe(1); expect(reads).toBe(1);
+  await act(async () => { if (checker) await owner.checkPluginStart(); else await owner.checkStart(); });
+  expect(owner.current().startRetryAllowed).toBe(true); expect(sends).toBe(1);
+  await act(async () => { if (checker) await owner.retryPlugin(); else await owner.retryStart(); });
+  expect(sends).toBe(2); expect(reads).toBe(3); expect(owner.current().startRetryAllowed).toBe(false);
+  expect(checker ? owner.current().pendingPlugin : owner.current().pendingStart).toBe(pending); expect(drafts.mutationReserved).toBe(true);
+  expect(calls(command).map(([,args]) => args.request)).toEqual([calls(command)[0][1].request, calls(command)[0][1].request]);
+});
+
+it.each([false,true])("ignores a late original translation proof after session replacement (checker=%s)", async checker => {
+  const view=render(<Probe/>,project),work=await ordinaryTranslationStart(checker),original=invoke.getMockImplementation()!;
+  let resolve!:(value:unknown)=>void;const response=new Promise<unknown>(done=>{resolve=done;});
+  invoke.mockImplementation((name,args)=>name===(checker?"start_translation_check":"start_plugin_translation")?Promise.reject(new Error("Lost ACK"))
+    :name==="read_plugin_execution_start"?response:original(name,args));
+  let running!:Promise<void>;act(()=>{running=work();});await waitFor(()=>expect(owner.current().checkingStart).toBe(true));
+  const old=owner,read=calls("read_plugin_execution_start")[0][1].request;
+  view.rerender(<Probe/>,{...project,sessionToken:"replacement-session"});
+  await act(async()=>{resolve({projectId:read.projectId,taskId:fixtureIdentity(888),attemptId:read.attemptId,operation:read.operation,inputDigest:read.inputDigest});await running;});
+  expect(owner.current().extractionAttempt).toBeNull();expect(owner.current().checkAttempt).toBeNull();expect(owner.hasPending()).toBe(false);
+  expect(checker?old.current().pendingPlugin:old.current().pendingStart).not.toBeNull();
 });

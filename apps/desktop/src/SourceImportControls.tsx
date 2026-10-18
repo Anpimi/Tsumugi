@@ -130,7 +130,8 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
       registry.register({ ...meta, id: "source.prepare-check", nameKey: "sourcePlugin.prepareCheck", payloadKind: "source-check", availability: input => checkAvailability(input, "prepare"), handler: input => { const captured = proof(); void owner.prepareCheck({ attemptId: input.sourceAttemptId, resultId: input.sourceResultId }, captured.current, captured.dispose); } }),
       registry.register({ ...meta, id: "source.start-check", nameKey: "sourcePlugin.startCheck", payloadKind: "source-check", availability: input => checkAvailability(input, "start"), handler: () => { const captured = proof(); void owner.startCheck(captured.current, captured.dispose); } }),
       registry.register({ ...meta, id: "source.finish-check", nameKey: "sourcePlugin.recordCheck", payloadKind: "source-check", availability: input => checkAvailability(input, "finish"), handler: input => { if (input.checkResultId) void owner.finishCheck(input.checkResultId).then(() => { if (sameView()) return onValidated(); }); } }),
-      registry.register({ ...meta, id: "source.retry-plugin-request", nameKey: "sourcePlugin.retryOriginal", payloadKind: "source-plugin-pending", availability: retryAvailability, handler: () => void owner.retryPlugin().then(() => { if (sameView()) return onValidated(); }) }),
+      registry.register({ ...meta, id: "source.check-plugin-start", nameKey: "execution.checkPluginStart", risk: "reads-source", payloadKind: "source-plugin-pending", availability: input => input?.pendingKind === "start-check" ? retryAvailability(input) : unavailable, handler: () => void owner.checkPluginStart() }),
+      registry.register({ ...meta, id: "source.retry-plugin-request", nameKey: "sourcePlugin.retryOriginal", payloadKind: "source-plugin-pending", availability: input => input?.pendingKind !== "start-check" || owner.current().startRetryAllowed ? retryAvailability(input) : unavailable, handler: () => void owner.retryPlugin().then(() => { if (sameView()) return onValidated(); }) }),
     ];
     return () => unregister.forEach(cleanup => cleanup());
   });
@@ -190,6 +191,10 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
       </> : null}
     </section> : null}
     {proposal ? <button className="text-button" disabled={locked || !discardAvailability().enabled} onClick={() => registry.dispatch("source.discard", commandScope)}>{t("sourcePlugin.newInput")}</button> : null}
-    {retryCommand ? <section role="status"><p>{t(retryCommand.pendingKind === "finish-check" ? "sourcePlugin.checkCommitUnknown" : "sourcePlugin.operationUnknown")}</p><button className="secondary-button" disabled={!retryAvailability(retryCommand, true).enabled} onClick={() => registry.dispatch("source.retry-plugin-request", commandScope, retryCommand)}>{t(retryCommand.pendingKind === "finish-check" ? "sourcePlugin.reconcileCheck" : "sourcePlugin.retryOriginal")}</button></section> : null}
+    {retryCommand ? <section role="status"><p>{t(state.checkingStart ? "execution.checkingPluginStart" : retryCommand.pendingKind === "finish-check" ? "sourcePlugin.checkCommitUnknown" : "sourcePlugin.operationUnknown")}</p>
+      {retryCommand.pendingKind === "start-check" ? <><button className="secondary-button" disabled={!retryAvailability(retryCommand, true).enabled} onClick={() => registry.dispatch("source.check-plugin-start", commandScope, retryCommand)}>{t("execution.checkPluginStart")}</button>
+        {state.startRetryAllowed ? <><p>{t("execution.pluginStartMissing")}</p><button className="secondary-button" disabled={!retryAvailability(retryCommand, true).enabled} onClick={() => registry.dispatch("source.retry-plugin-request", commandScope, retryCommand)}>{t("execution.retryPluginStart")}</button></> : null}</>
+        : <button className="secondary-button" disabled={!retryAvailability(retryCommand, true).enabled} onClick={() => registry.dispatch("source.retry-plugin-request", commandScope, retryCommand)}>{t(retryCommand.pendingKind === "finish-check" ? "sourcePlugin.reconcileCheck" : "sourcePlugin.retryOriginal")}</button>}
+    </section> : null}
   </section>;
 }

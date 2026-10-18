@@ -15,6 +15,7 @@ export declare function validateRequestContinuationList(value: unknown): value i
 export declare function validateRequestContinuationRead(value: unknown): value is Requests["continuationRead"];
 export declare function validateRequestList(value: unknown): value is Requests["list"];
 export declare function validateRequestOutput(value: unknown): value is Requests["output"];
+export declare function validateRequestPluginStartAction(value: unknown): value is Requests["pluginStartAction"];
 export declare function validateRequestPrepare(value: unknown): value is Requests["prepare"];
 export declare function validateRequestRecovery(value: unknown): value is Requests["recovery"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
@@ -38,6 +39,7 @@ export declare function validateResponseContinuationReceipt(value: unknown): val
 export declare function validateResponseContinuations(value: unknown): value is Responses["continuations"];
 export declare function validateResponseIdentity(value: unknown): value is Responses["identity"];
 export declare function validateResponseOutput(value: unknown): value is Responses["output"];
+export declare function validateResponsePluginStartAction(value: unknown): value is Responses["pluginStartAction"];
 export declare function validateResponseReceipt(value: unknown): value is Responses["receipt"];
 export declare function validateResponseRecovery(value: unknown): value is Responses["recovery"];
 export declare function validateResponseStatus(value: unknown): value is Responses["status"];

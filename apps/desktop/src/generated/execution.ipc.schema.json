@@ -333,6 +333,45 @@
         ],
         "type": "object"
       },
+      "PluginStartOperation": {
+        "enum": [
+          "source-import",
+          "source-semantic-check",
+          "translation-extract",
+          "translation-semantic-check",
+          "locale-build",
+          "artifact-semantic-check"
+        ],
+        "type": "string"
+      },
+      "PluginStartReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/definitions/PluginStartOperation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "operation"
+        ],
+        "type": "object"
+      },
       "PluginToolDiscardRequest": {
         "additionalProperties": false,
         "properties": {
@@ -681,6 +720,9 @@
       "output": {
         "$ref": "#/definitions/OutputRequest"
       },
+      "pluginStartAction": {
+        "$ref": "#/definitions/PluginStartReadRequest"
+      },
       "prepare": {
         "$ref": "#/definitions/PrepareRequest"
       },
@@ -708,6 +750,7 @@
     },
     "required": [
       "session",
+      "pluginStartAction",
       "list",
       "activity",
       "task",
@@ -2457,6 +2500,35 @@
         ],
         "type": "object"
       },
+      "PluginStartActionRead": {
+        "additionalProperties": false,
+        "description": "Evidence of one exact ordinary plugin input in the durable execution ledger.\nThis proves enqueueing, never current scope, worker completion or live consent.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "attemptId",
+          "operation",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
       "PluginToolItem": {
         "additionalProperties": false,
         "properties": {
@@ -3392,6 +3464,16 @@
       "output": {
         "$ref": "#/definitions/ExecutionOutputView"
       },
+      "pluginStartAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginStartActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "receipt": {
         "anyOf": [
           {
@@ -3426,6 +3508,7 @@
     },
     "required": [
       "identity",
+      "pluginStartAction",
       "status",
       "tasks",
       "activity",

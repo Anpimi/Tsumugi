@@ -63,6 +63,7 @@ beforeEach(() => {
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_plugin_build") return pluginBuildView;
+    if (command === "read_plugin_execution_start") return null;
     if (command === "read_content_scope") return { currentSnapshot: release.sourceSnapshotId, revision: "1" };
     if (command === "read_review_eligibility") return { policyVersion: release.policyVersion, sourceSnapshotId: release.sourceSnapshotId,
       basis: release.eligibilityBasis, ready: true, locales: (args.request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 })) };
@@ -523,4 +524,63 @@ it("keeps a prepared acknowledgement with a different source snapshot unknown in
   await act(async()=>owner.checkBuild());
   expect(owner.prepared?.request).toEqual(request);expect(owner.prepared?.review.sourceSnapshotId).toBe(release.sourceSnapshotId);
   expect(payloads<PluginBuildPrepareRequest>("prepare_plugin_build")).toEqual([request,request]);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+async function ordinaryReleaseStart(checker: boolean) {
+  await prepare(); await act(async () => { await owner.build(); owner.setConsent(false,true); });
+  if (checker) {
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((name,args) => name === "start_plugin_build" ? Promise.resolve(args.request.attemptId)
+      : name === "prepare_artifact_check" ? Promise.resolve({ ...pluginBuildWorkflow.checkReview, attemptId: args.request.attemptId,
+        buildAttemptId: args.request.buildAttemptId, buildResultId: args.request.buildResultId, build: pluginBuildView }) : original(name,args));
+    await act(async () => { await owner.startBuild(); await owner.prepareCheck(owner.current().attempt!,fixtureIdentity(444)); owner.setConsent(true,true); });
+    expect(owner.checkReview).not.toBeNull();
+  }
+  return () => owner.startBuild(checker);
+}
+it.each([false,true])("confirms an original Release start without replay and keeps newer mapping B (checker=%s)",async checker => {
+  const view = mount(), work = await ordinaryReleaseStart(checker), original = invoke.getMockImplementation()!;
+  const command = checker ? "start_artifact_check" : "start_plugin_build", response = deferred<unknown>();
+  invoke.mockImplementation((name,args) => name === command ? Promise.resolve(fixtureIdentity(999))
+    : name === "read_plugin_execution_start" ? response.promise : original(name,args));
+  let running!: Promise<void>; act(() => { running = work(); }); await waitFor(() => expect(owner.checkingStart).toBe(true));
+  const sent = calls(command).at(-1)![1].request, read = calls("read_plugin_execution_start").at(-1)![1].request;
+  expect(read).toEqual({projectId:project.metadata.projectId,sessionToken:project.sessionToken,attemptId:sent.attemptId,inputDigest:sent.inputDigest,
+    operation:checker ? "artifact-semantic-check" : "locale-build"});
+  act(() => { owner.setName("zh-CN","newer-B.json"); owner.setLanguage("fr-FR",false); }); view.rerender(null);
+  await act(async () => { await owner.checkBuild(); await owner.retryBuild(); }); expect(calls(command)).toHaveLength(1);
+  await act(async () => { response.resolve({projectId:read.projectId,taskId:fixtureIdentity(888),attemptId:read.attemptId,inputDigest:read.inputDigest,operation:read.operation}); await running; });
+  view.rerender(<Probe/>);
+  expect(owner.pending).toBeNull(); expect(checker ? owner.checkAttempt : owner.attempt).toBe(sent.attemptId);
+  expect(owner.names["zh-CN"]).toBe("newer-B.json"); expect(owner.languages).toEqual(["zh-CN"]); expect(owner.buildDirty).toBe(true);
+  if (!checker) expect(owner.earlierBuild).toBe(true);
+  expect(calls(command)).toHaveLength(1); expect(calls("read_plugin_execution_start")).toHaveLength(1);
+});
+it.each([false,true])("keeps an unknown Release start until checked and only retries its original permission (checker=%s)",async checker => {
+  mount(); const work = await ordinaryReleaseStart(checker), original = invoke.getMockImplementation()!;
+  const command = checker ? "start_artifact_check" : "start_plugin_build";
+  let sent = 0, read = 0;
+  invoke.mockImplementation((name,args) => {
+    if (name === command) return Promise.reject(++sent === 1 ? new Error("Lost ACK") : {code:"busy",stage:"execution-recover",outcome:"rejected",recoveryRequired:false});
+    if (name === "read_plugin_execution_start") return ++read === 2 ? Promise.resolve(null) : Promise.reject(new Error("Original read unavailable"));
+    return original(name,args);
+  });
+  await act(async () => { await work(); }); expect(owner.pending?.kind).toBe("build");
+  await act(async () => { await owner.retryBuild(); }); expect(sent).toBe(1); expect(read).toBe(1);
+  await act(async () => { await owner.checkBuild(); }); expect(sent).toBe(1);
+  expect(owner.pending?.kind === "build" && owner.pending.retryAllowed).toBe(true);
+  await act(async () => { await owner.retryBuild(); }); expect(sent).toBe(2); expect(read).toBe(3);
+  expect(owner.pending?.kind === "build" && owner.pending.uncertain && !owner.pending.retryAllowed).toBe(true);
+  expect(payloads(command)[1]).toEqual(payloads(command)[0]);
+});
+
+it.each([false,true])("ignores a late original Release proof after session replacement (checker=%s)", async checker => {
+  const view=mount(),work=await ordinaryReleaseStart(checker),original=invoke.getMockImplementation()!,response=deferred<unknown>();
+  invoke.mockImplementation((name,args)=>name===(checker?"start_artifact_check":"start_plugin_build")?Promise.reject(new Error("Lost ACK"))
+    :name==="read_plugin_execution_start"?response.promise:original(name,args));
+  let running!:Promise<void>;act(()=>{running=work();});await waitFor(()=>expect(owner.checkingStart).toBe(true));
+  const old=owner,read=calls("read_plugin_execution_start")[0][1].request;
+  view.rerender(<Probe/>,{...project,sessionToken:"replacement-session"});
+  await act(async()=>{response.resolve({projectId:read.projectId,taskId:fixtureIdentity(888),attemptId:read.attemptId,operation:read.operation,inputDigest:read.inputDigest});await running;});
+  expect(owner.attempt).toBeNull();expect(owner.checkAttempt).toBeNull();expect(owner.pending).toBeNull();expect(old.current().pending).not.toBeNull();
 });

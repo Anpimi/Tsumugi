@@ -41,6 +41,8 @@ export interface SourceDraftState {
   stale: boolean;
   editSeq: number;
   pendingStart: StartRequest | null;
+  checkingStart: boolean;
+  startRetryAllowed: boolean;
   pendingPlugin: SourcePluginPending | null;
   producerConsent: string | null;
   checkReview: SourceCheckReview | null;
@@ -76,6 +78,8 @@ interface SourceSession {
   preflight: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   start: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   retryStart: () => Promise<void>;
+  checkStart: () => Promise<void>;
+  checkPluginStart: () => Promise<void>;
   prepareCheck: (proposal: { attemptId: string; resultId: string }, proof?: () => boolean, dispose?: () => void) => Promise<void>;
   startCheck: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   finishCheck: (resultId: string) => Promise<void>;
@@ -117,13 +121,13 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   const [state, setState] = useState<SourceDraftState>(() => ({ domain: "", source: null, selection: null,
     sourceLanguage: project.metadata.sourceLocale, declared: false, preflight: null, attempt: null, preview: null,
     comparison: null, updating: false, lineage: {}, actor: "", filter: "", appliedFilter: "", manualOrdinal: null,
-    historicalQuery: "", previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: 0, pendingStart: null,
+    historicalQuery: "", previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: 0, pendingStart: null, checkingStart: false, startRetryAllowed: false,
     pendingApply: null, pendingApplyUnitId: null, pendingPlugin: null, producerConsent: null, checkReview: null, checkerConsent: null, checkAttempt: null,
     preparedAction: null, receiptChecked: false, checkingReceipt: false, busyMutation: false, failure: null, receipt: null, completionVersion: 0 }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(0);
   const readCleanup = useRef<(() => void) | null>(null);
   const captureFlight = useRef(0), pendingReceipt = useRef<{ request: SourceAdoptRequest; receipt: Receipt } | null>(null);
-  const basisVersion = useRef(0), identity = useRef<ReadyIdentity | null>(null), submittedSeq = useRef(0);
+  const basisVersion = useRef(0), identity = useRef<ReadyIdentity | null>(null), submittedSeq = useRef(0), submittedVersion = useRef(0);
   const metadata = metadataKey(project), committedMetadata = useRef(metadata);
   function current() { return stateRef.current; }
   function live() { return mounted.current && !reads.retired && projectRef.current.sessionToken === session.sessionToken && projectRef.current.metadata.projectId === session.projectId; }
@@ -249,19 +253,44 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       && current().editSeq === start.editSeq && current().selection === start.selection && current().declared === start.declared
       && current().preview === start.preview && current().comparison === start.comparison && current().confirmed === start.confirmed;
   }
+  function acceptStart(request: StartRequest) {
+    if (!live() || current().pendingStart !== request) return;
+    identity.current = null;
+    update(before => ({ ...before, attempt: request.attemptId, pendingStart: null, startRetryAllowed: false, selection: null, preflight: null,
+      preview: null, comparison: null, ...(before.editSeq === submittedSeq.current ? { lineage: {}, filter: "", appliedFilter: "", manualOrdinal: null } : {}),
+      estimate: null, confirmed: false, stale: submittedVersion.current !== basisVersion.current, receipt: null, failure: null,
+      completionVersion: before.completionVersion + 1 }));
+  }
+  async function readStart(request: PluginStartRequest, checker: boolean) {
+    const intent = current().pendingPlugin;
+    const original = () => live() && (checker ? intent?.pendingKind === "start-check" && current().pendingPlugin === intent : current().pendingStart === request);
+    if (!original()) return;
+    update(before => ({ ...before, checkingStart: true, startRetryAllowed: false }));
+    try {
+      const value = await executionCommands.pluginStartAction({ ...session, attemptId: request.attemptId, inputDigest: request.inputDigest,
+        operation: checker ? "source-semantic-check" : "source-import" });
+      if (!original()) return;
+      if (value) {
+        if (checker) update(before => ({ ...before, checkAttempt: request.attemptId, pendingPlugin: null, startRetryAllowed: false, failure: null }));
+        else acceptStart(request);
+        reads.invalidate(["execution"], false);
+      } else update(before => ({ ...before, startRetryAllowed: true }));
+    } finally { if (live()) update(before => ({ ...before, checkingStart: false })); }
+  }
   async function dispatchStart(request: StartRequest, recovering = false) {
     if (!live()) return;
-    update(before => ({ ...before, pendingStart: request }));
+    update(before => ({ ...before, pendingStart: request, startRetryAllowed: false }));
     try {
       const attempt = await sourceCommands.startPlugin(request);
       if (!live()) return;
       if (attempt !== request.attemptId) invalidAcknowledgement();
-      identity.current = null;
-      update(before => before.pendingStart !== request ? before : ({ ...before, attempt, pendingStart: null, selection: null, preflight: null,
-        preview: null, comparison: null, ...(before.editSeq === submittedSeq.current ? { lineage: {}, filter: "", appliedFilter: "", manualOrdinal: null } : {}), estimate: null, confirmed: false,
-        stale: false, receipt: null, failure: null, completionVersion: before.completionVersion + 1 }));
+      acceptStart(request);
     } catch (error) {
       if (!recovering && !hasUnknownOutcome(error)) update(before => before.pendingStart === request ? { ...before, pendingStart: null } : before);
+      else {
+        await readStart(request, false);
+        if (!live() || current().pendingStart !== request) return;
+      }
       throw error;
     }
   }
@@ -277,7 +306,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       if (!proof() || !freshCurrent(before, version, meta)) return;
       const latest = await sourceCommands.scope(session);
       if (!proof() || !freshCurrent(before, version, meta) || !sameScope(scope, latest)) { revoke(); return; }
-      submittedSeq.current = before.editSeq;
+      submittedSeq.current = before.editSeq; submittedVersion.current = version;
       await dispatchStart({ ...session, attemptId: before.preflight!.attemptId, inputDigest: before.preflight!.inputDigest,
         grantId, expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true });
     });
@@ -285,7 +314,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   }
   async function dispatchPlugin(intent: SourcePluginPending, recovering = false) {
     if (!live()) return;
-    update(before => ({ ...before, pendingPlugin: intent }));
+    update(before => ({ ...before, pendingPlugin: intent, startRetryAllowed: false }));
     try {
       switch (intent.pendingKind) {
         case "capture": {
@@ -323,6 +352,10 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       if (live()) update(before => before.pendingPlugin === intent ? { ...before, pendingPlugin: null } : before);
     } catch (error) {
       if (!recovering && !hasUnknownOutcome(error)) update(before => before.pendingPlugin === intent ? { ...before, pendingPlugin: null } : before);
+      else if (intent.pendingKind === "start-check") {
+        await readStart(intent.request, true);
+        if (!live() || current().pendingPlugin !== intent) return;
+      }
       throw error;
     }
   }
@@ -359,7 +392,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   }
   async function retryPlugin() {
     const original = current().pendingPlugin;
-    if (original) await run(() => dispatchPlugin(original, true), true);
+    if (original && (original.pendingKind !== "start-check" || current().startRetryAllowed)) await run(() => dispatchPlugin(original, true), true);
   }
   function verifyReceipt(request: SourceAdoptRequest, receipt: Receipt, unitId: string) {
     const snapshotId = confirmSourceReceipt(request, unitId, receipt);
@@ -456,7 +489,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       const scope = await sourceCommands.scope(session);
       const basis = before.comparison ?? before.preview!;
       if (!proof() || !freshCurrent(before, version, meta) || !sameScope(scope, basis.scope)) { revoke(); return; }
-      submittedSeq.current = before.editSeq;
+      submittedSeq.current = before.editSeq; submittedVersion.current = version;
       await dispatchApply({ ...request, actionId }, unitId);
     });
     });
@@ -569,7 +602,9 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     await tasks.cancel({ taskId, attemptId: originalAttempt, origin: "source" }, () => live() && proof());
   }
   return <SourceContext.Provider value={{ state, hook, current, inFlight: () => !!flight.current, hasPending, qualified: () => identity.current?.qualified === true, setSource, consentProducer, consentChecker, setDomain, declare, edit, confirm,
-    select, preflight, start, retryStart: async () => { const request = current().pendingStart; if (request) await run(() => dispatchStart(request, true), true); },
+    select, preflight, start, retryStart: async () => { const request = current().pendingStart; if (request && current().startRetryAllowed) await run(() => dispatchStart(request, true), true); },
+    checkStart: async () => { const request = current().pendingStart; if (request) await run(() => readStart(request, false), true); },
+    checkPluginStart: async () => { const pending = current().pendingPlugin; if (pending?.pendingKind === "start-check") await run(() => readStart(pending.request, true), true); },
     prepareCheck, startCheck, finishCheck, retryPlugin,
     apply, checkReceipt, retryApply, keepOutput, estimate, discard, canDiscard, showAttempt, beginUpdate, ready, page, pageIntent, historyIntent, showCurrent, cancelTask }}>{children}</SourceContext.Provider>;
 }

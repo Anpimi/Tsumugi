@@ -379,6 +379,32 @@ fn setup() -> (
 }
 
 #[test]
+fn ordinary_plugin_start_ipc_reads_all_fixed_operations_without_runtime_or_grant() {
+    let (temp, app, webview, context) = setup();
+    let mut original = request(&context, json!({"attemptId":ExecutionId::new(),"inputDigest":"a".repeat(64),"operation":"source-import"}));
+    for operation in ["source-import", "source-semantic-check", "translation-extract", "translation-semantic-check", "locale-build", "artifact-semantic-check"] {
+        original["operation"] = json!(operation);
+        assert_eq!(call(&webview, "read_plugin_execution_start", original.clone()).unwrap(), Value::Null);
+    }
+    for (field, value) in [("projectId", json!(ExecutionId::new())), ("sessionToken", json!(ExecutionId::new())),
+        ("attemptId", json!("bad")), ("inputDigest", json!("bad")), ("operation", json!("translation-import")), ("grantId", json!(ExecutionId::new()))] {
+        let mut wrong = original.clone(); wrong[field] = value;
+        assert!(call(&webview, "read_plugin_execution_start", wrong).is_err());
+    }
+    app.state::<AppState>().sessions.with(|sessions| {
+        let active = sessions.active.as_ref().unwrap();
+        assert!(active.execution.is_none());
+        assert_eq!(active.store.execution_sequence().unwrap().get(), 0);
+    });
+    call(&webview, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview, "open_project", json!({"locator":temp.path().join("project")})).unwrap();
+    assert!(call(&webview, "read_plugin_execution_start", original.clone()).is_err());
+    original["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&webview, "read_plugin_execution_start", original).unwrap(), Value::Null);
+    app.state::<AppState>().sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+}
+
+#[test]
 fn cancellation_action_ipc_reads_exact_requests_without_initializing_or_replaying_runtime() {
     let (temp, app, webview, context) = setup();
     let missing = request(&context, json!({"taskId":ExecutionId::new(),"requestId":ExecutionId::new()}));

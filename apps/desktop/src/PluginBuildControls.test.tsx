@@ -330,15 +330,17 @@ it.each(["en-US", "zh-CN"])("records all languages and multiple exact paths only
 it("reconciles an unrelated build acknowledgement using the same attempt, grant and expiry", async () => {
   const { user, ref, view } = await ready();
   const original = invoke.getMockImplementation()!;
-  let starts = 0;
-  invoke.mockImplementation(async (command, args) => { const value = await original(command, args); return command === "start_plugin_build" && ++starts === 1 ? fixtureIdentity(999) : value; });
+  let starts = 0, reads = 0;
+  invoke.mockImplementation(async (command, args) => { if (command === "read_plugin_execution_start") { if (++reads === 1) throw new Error("Original read unavailable"); return null; } const value = await original(command, args); return command === "start_plugin_build" && ++starts === 1 ? fixtureIdentity(999) : value; });
   await start(user);
   await screen.findByText(i18n.t("releasePlugin.unknown"));
   expect(await ref.current!.allowLeave()).toBe(false);
   expect(await ref.current!.allowNavigate()).toBe(true);
   view.rerender(null,project);view.rerender(<ReleaseWorkbench ref={ref} project={project} disabled={false}/>);
   await screen.findByText(i18n.t("releasePlugin.unknown"));
-  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.reconcile") }));
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.checkPluginStart") }));
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_build")).toHaveLength(1);
+  await user.click(await screen.findByRole("button", { name: i18n.t("execution.retryPluginStart") }));
   await screen.findByRole("button", { name: i18n.t("releasePlugin.prepareCheck", { locale: "zh-CN" }) });
   const calls = invoke.mock.calls.filter(([command]) => command === "start_plugin_build");
   expect(calls).toHaveLength(2); expect(calls[0][1]).toEqual(calls[1][1]);
@@ -460,7 +462,7 @@ it.each(["prepared", "consented", "busy", "unknown"] as const)("preserves the or
       ? phase === "busy" ? deferred : Promise.reject({ code: "outcome-unknown" }) : original(command, args));
     await user.click(screen.getByRole("button", { name: i18n.t("release.build") }));
     await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(true));
-    if (phase === "unknown") await screen.findByRole("button", { name: i18n.t("releasePlugin.reconcile") });
+    if (phase === "unknown") await screen.findByRole("button", { name: i18n.t("execution.checkPluginStart") });
   }
   await act(async () => { expect(ref.current!.showSavedBuild(fixtureIdentity(890))).toBe(false); });
   expect(captured).toEqual(request);

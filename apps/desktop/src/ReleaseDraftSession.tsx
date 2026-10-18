@@ -52,7 +52,7 @@ interface State {
   savedAttempt: string | null; buildReceipt: Receipt | null;
   workflow: WorkflowCapture | null; workflowControlBusy: boolean; workflowStopBusy: boolean;
   chosen: ReleaseView | null; selection: DeliverySelection | null; preview: DeliveryPreview | null; overwrite: boolean;
-  attempt: string | null; result: DeliveryView | null; pending: Pending | null; busy: boolean; checkingDelivery: boolean;
+  attempt: string | null; result: DeliveryView | null; pending: Pending | null; busy: boolean; checkingDelivery: boolean; checkingStart: boolean;
   failure: CommandFailure | null; failureArea: "build" | "delivery" | null; exportMissing: boolean; earlierBuild: boolean;
 }
 function freeze<T>(value: T): T {
@@ -64,7 +64,7 @@ function initial(): State {
   return { languages: [], names: {}, configuration: {}, choiceKey: "", runtimeDigest: "", buildChoice: null,
     editSeq: 0, buildDirty: false, deliveryDirty: false, stale: false, eligibility: null, assessment: null,
     prepared: null, buildConsent: null, checkReview: null, checkConsent: null, checkAttempt: null, savedAttempt: null, buildReceipt: null, workflow: null, workflowControlBusy: false, workflowStopBusy: false,
-    chosen: null, selection: null, preview: null, overwrite: false, attempt: null, result: null, pending: null, busy: false, checkingDelivery: false,
+    chosen: null, selection: null, preview: null, overwrite: false, attempt: null, result: null, pending: null, busy: false, checkingDelivery: false, checkingStart: false,
     failure: null, failureArea: null, exportMissing: false, earlierBuild: false };
 }
 const sameScope = (a: ContentScope, b: ContentScope) => a.revision === b.revision && a.currentSnapshot === b.currentSnapshot;
@@ -175,6 +175,27 @@ function useReleaseOwner(project: ProjectView) {
       && projectRef.current.metadata.sourceLocale === assessment.sourceLocale && same(projectRef.current.metadata.targetLocales,assessment.targetLocales);
   }
   function original(pending: BuildPending) { return live() && current().pending === pending; }
+  function acceptBuildStart(sent: BuildPending) {
+    if (!original(sent)) return;
+    const intent = sent.intent;
+    if (intent.kind !== "start-build" && intent.kind !== "start-check") return;
+    update(before => ({ ...before, ...(intent.kind === "start-build" ? { attempt: intent.request.attemptId,
+      buildDirty: before.editSeq !== sent.editSeq || version.current !== sent.version,
+      earlierBuild: before.editSeq !== sent.editSeq || version.current !== sent.version, eligibility: null, assessment: null }
+      : { checkAttempt: intent.request.attemptId }), pending: null, failure: null }));
+  }
+  async function readBuildStart(pending: BuildPending) {
+    if (!original(pending) || (pending.intent.kind !== "start-build" && pending.intent.kind !== "start-check")) return;
+    const sent = fixed({ ...pending, retryAllowed: false }), intent = pending.intent;
+    update(before => ({ ...before, pending: sent, checkingStart: true }));
+    try {
+      const value = await executionCommands.pluginStartAction({ ...session, attemptId: intent.request.attemptId,
+        inputDigest: intent.request.inputDigest, operation: intent.kind === "start-build" ? "locale-build" : "artifact-semantic-check" });
+      if (!original(sent)) return;
+      if (value) { acceptBuildStart(sent); reads.invalidate(["execution", "release"], false); }
+      else update(before => ({ ...before, pending: fixed({ ...sent, retryAllowed: true }) }));
+    } finally { if (live()) update(before => ({ ...before, checkingStart: false })); }
+  }
   async function submitBuild(pending: BuildPending, proof?: ReleaseReadProof): Promise<void> {
     const sent = fixed({ ...pending, retryAllowed: false });
     update(before => ({ ...before, pending: sent }));
@@ -195,9 +216,8 @@ function useReleaseOwner(project: ProjectView) {
         }
         case "start-build": case "start-check": {
           const id = intent.kind === "start-build" ? await releaseCommands.startPlugin(intent.request) : await releaseCommands.startCheck(intent.request);
-          if (original(sent)) update(before => ({ ...before, ...(intent.kind === "start-build" ? { attempt: id,
-            buildDirty: before.editSeq !== sent.editSeq || version.current !== sent.version,
-            earlierBuild: before.editSeq !== sent.editSeq || version.current !== sent.version, eligibility: null, assessment: null } : { checkAttempt: id }), pending: null }));
+          if (id !== intent.request.attemptId) invalidAck();
+          acceptBuildStart(sent);
           break;
         }
         case "finish-check": {
@@ -222,8 +242,16 @@ function useReleaseOwner(project: ProjectView) {
         }
       }
     } catch (failure) {
-      if (original(sent)) update(before => ({ ...before, pending: sent.uncertain || hasUnknownOutcome(failure) ? fixed({ ...sent, uncertain: true }) : null,
-        ...(!sent.uncertain && !hasUnknownOutcome(failure) ? intent.kind === "start-build" ? { buildConsent: null } : intent.kind === "start-check" ? { checkConsent: null } : {} : {}) }));
+      if (original(sent)) {
+        const uncertain = sent.uncertain || hasUnknownOutcome(failure);
+        const retained = uncertain ? fixed({ ...sent, uncertain: true }) : null;
+        update(before => ({ ...before, pending: retained,
+          ...(!uncertain ? intent.kind === "start-build" ? { buildConsent: null } : intent.kind === "start-check" ? { checkConsent: null } : {} : {}) }));
+        if (retained && (intent.kind === "start-build" || intent.kind === "start-check")) {
+          await readBuildStart(retained);
+          if (!live() || !current().pending) return;
+        }
+      }
       throw failure;
     } finally { if (live()) reads.invalidate(["execution", "release"], false); }
   }
@@ -479,6 +507,7 @@ function useReleaseOwner(project: ProjectView) {
   async function checkBuild() {
     const pending = current().pending; if (pending?.kind !== "build") return;
     await runBuild(async () => {
+      if (pending.intent.kind === "start-build" || pending.intent.kind === "start-check") { await readBuildStart(pending); return; }
       if (pending.intent.kind !== "adopt") { await submitBuild(pending); return; }
       const intent = pending.intent;
       const sent = fixed({ ...pending, retryAllowed: false }); update(before => ({ ...before,pending: sent }));
@@ -490,7 +519,7 @@ function useReleaseOwner(project: ProjectView) {
     },true);
   }
   async function retryBuild() { const pending = current().pending;
-    if (pending?.kind === "build" && pending.intent.kind === "adopt" && pending.retryAllowed) await runBuild(() => submitBuild(pending),true);
+    if (pending?.kind === "build" && ["adopt", "start-build", "start-check"].includes(pending.intent.kind) && pending.retryAllowed) await runBuild(() => submitBuild(pending),true);
   }
   async function discardBuild(clearDraft = false) {
     const pending = current().pending;

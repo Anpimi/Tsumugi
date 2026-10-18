@@ -5,6 +5,8 @@ import type { SessionRequest, ListRequest, TaskActivityRequest, TaskRequest, Att
 import { validateResponseIdentity, validateResponseStatus, validateResponseTasks, validateResponseActivity, validateResponseAttempts, validateResponseAttempt, validateResponseOutput, validateResponseCancellation, validateResponseRecovery, validateResponseContinuation, validateResponseContinuationReceipt, validateResponseContinuations, validateResponseTaskView, validateResponseAction, validateResponseAdoption, validateResponseReceipt, validateResponseToolPreflight, validateResponseToolDiscarded, validateResponseApplicationInstance, validateResponseApplicationShutdown } from "./generated/execution.validators";
 import type { AdoptionAction, AdoptionReceipt, ApplicationInstanceView, ApplicationShutdownView, Responses } from "./generated/execution.responses";
 import { validateResponseAdoptionAction } from "./generated/execution.validators";
+import { validateResponsePluginStartAction } from "./generated/execution.validators";
+import type { PluginStartReadRequest } from "./generated/execution.requests";
 import { validateResponseCancellationAction } from "./generated/execution.validators";
 
 export type { SessionRequest, ListRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest, PluginToolPrepareRequest, PluginToolStartRequest, ApplicationInstanceRequest, StopApplicationInstanceRequest, ApplicationShutdownRequest, PluginToolDiscardRequest } from "./generated/execution.requests";
@@ -107,6 +109,12 @@ async function readCancellationAction(request: CancelRequest): Promise<Responses
 }
 
 export const executionCommands = {
+  pluginStartAction: async (request: PluginStartReadRequest): Promise<Responses["pluginStartAction"]> => {
+    const value = await checkedInvoke("read_plugin_execution_start", request, validateResponsePluginStartAction);
+    if (value !== null && (value.projectId !== request.projectId || value.attemptId !== request.attemptId
+      || value.operation !== request.operation || value.inputDigest !== request.inputDigest)) throw new Error("Invalid original plugin start proof");
+    return value;
+  },
   identity: (request: SessionRequest) => checkedInvoke("create_execution_identity", request, validateResponseIdentity),
   status: (request: SessionRequest) => checkedInvoke("execution_status", request, validateResponseStatus),
   list: (request: ListRequest) => checkedInvoke("list_execution_tasks", request, validateResponseTasks),

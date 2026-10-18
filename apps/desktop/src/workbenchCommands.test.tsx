@@ -273,6 +273,7 @@ describe("source command payloads", () => {
       checkAttemptId: sourceWorkflow.checkReview.attemptId, inputDigest: sourceWorkflow.checkReview.inputDigest, checkResultId: null, checkerConsent: true }, [{ checkerConsent: "yes" }, { inputDigest: null }]],
     ["source.finish-check", { kind: "source-check", source: sourceWorkflow.prepareCheck.source, sourceAttemptId: sourceWorkflow.prepareCheck.sourceAttemptId, sourceResultId: sourceWorkflow.prepareCheck.sourceResultId,
       checkAttemptId: sourceWorkflow.checkReview.attemptId, inputDigest: sourceWorkflow.checkReview.inputDigest, checkResultId: sourceWorkflow.finishCheck.resultId, checkerConsent: false }, [{ checkResultId: "" }]],
+    ["source.check-plugin-start", { kind: "source-plugin-pending", pendingKind: "start-check", request: sourceWorkflow.start }, [{ request: {} }]],
     ["source.retry-plugin-request", { kind: "source-plugin-pending", pendingKind: "capture", request: sourceWorkflow.capture }, [{ request: {} }, { pendingKind: "other" }]],
 
     ["source.select", { kind: "source-selection", request: sourceWorkflow.select }, [{ request: null }, { request: { ...sourceWorkflow.select, source: {} } }]],
@@ -282,7 +283,8 @@ describe("source command payloads", () => {
     ["source.estimate", { kind: "source-basis", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", base: "base", editSeq: 1 }, [{ base: "" }, { editSeq: -1 }]],
     ["source.search-comparison", { kind: "source-comparison", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", originalBase: "base", base: "base", filter: "A", after: 1, editSeq: 1 }, [{ filter: [] }, { after: -1 }, { originalBase: null }]],
     ["source.refresh-comparison", { kind: "source-comparison", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", originalBase: "base", base: null, filter: "", after: 0, editSeq: 1 }, [{ base: undefined }]],
-    ["source.retry-start", { kind: "source-pending", pendingKind: "start", attemptId: "attempt", actionId: null }, [{ actionId: "action" }, { pendingKind: "other" }]],
+    ["source.check-start", { kind: "source-pending", pendingKind: "start", attemptId: sourceWorkflow.start.attemptId, actionId: null, request: sourceWorkflow.start }, [{ request: undefined }, { request: { ...sourceWorkflow.start, attemptId: "other" } }]],
+    ["source.retry-start", { kind: "source-pending", pendingKind: "start", attemptId: sourceWorkflow.start.attemptId, actionId: null, request: sourceWorkflow.start }, [{ actionId: "action" }, { pendingKind: "other" }]],
     ["source.check-receipt", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action" }, [{ actionId: null }]],
     ["source.retry-apply", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action" }, [{ actionId: undefined }]],
     ["source.cancel-task", { kind: "source-task", attemptId: "attempt", taskId: "task" }, [{ taskId: "" }]],

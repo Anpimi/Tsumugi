@@ -13,6 +13,7 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture, sourceAttemptFixture, sourceActionFixture, sourceReceiptFixture, sourceHistoryFixture } from "./testSupport/sourceFixture";
 import { hookObservation } from "./testSupport/sourceMaintenanceHookFixture";
 import { pluginSourceView, pluginSourceWorkflow, pluginSourceRequest, pluginSourceInventory, pluginSourcePackage } from "./testSupport/pluginSourceFixture";
+import { useSessionReads } from "./SessionReadProvider";
 import { useSourceDraftSession } from "./SourceDraftSession";
 import { useWorkbenchCommands, type SourceBasisCommandPayload } from "./workbenchCommands";
 import { validateRequestAdoptionAction } from "./generated/source.validators";
@@ -710,9 +711,11 @@ it("clears producer consent on a fresh material capture after a rejected grant",
 it("reconciles an uncertain producer start with its original input, grant and expiry", async () => {
   const ref = createRef<SourceHandle>();
   const original = invoke.getMockImplementation()!;
-  let rejected = false;
-  invoke.mockImplementation((command: string, args: unknown) => {
+  let rejected = false, reads = 0;
+  invoke.mockImplementation((command, args) => {
     if (command === "start_plugin_source" && !rejected) { rejected = true; return Promise.reject({ code: "outcome-unknown" }); }
+    if (command === "read_plugin_execution_start") return ++reads === 1 ? Promise.reject(new Error("Original read unavailable"))
+      : Promise.resolve({ projectId: args.request.projectId, taskId: fixtureIdentity(888), attemptId: args.request.attemptId, inputDigest: args.request.inputDigest, operation: args.request.operation });
     return original(command, args);
   });
   render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
@@ -725,9 +728,10 @@ it("reconciles an uncertain producer start with its original input, grant and ex
   expect(await ref.current!.allowNavigate()).toBe(false);
   expect(await ref.current!.allowLeave()).toBe(false);
   const first = invoke.mock.calls.find(([name]) => name === "start_plugin_source")![1];
-  await user.click(screen.getByRole("button", { name: "Check or resume this import" }));
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.checkPluginStart") }));
   await screen.findByRole("heading", { name: "Review imported strings" });
-  expect(invoke.mock.calls.filter(([name]) => name === "start_plugin_source")[1][1]).toEqual(first);
+  expect(invoke.mock.calls.filter(([name]) => name === "start_plugin_source")).toEqual([["start_plugin_source",first]]);
+  expect(reads).toBe(2);
 });
 
 it("retains pending proposals and requires separate checker consent and recorded proof before adoption", async () => {
@@ -1010,8 +1014,8 @@ it("keeps a Native source unavailable while only Node has an approval", async ()
 
 });
 
-let draft: ReturnType<typeof useSourceDraftSession>, registry: ReturnType<typeof useWorkbenchCommands>;
-function SourceProbe() { const value = useSourceDraftSession(), commands = useWorkbenchCommands(); useLayoutEffect(() => { draft = value; registry = commands; }); return null; }
+let draft: ReturnType<typeof useSourceDraftSession>, registry: ReturnType<typeof useWorkbenchCommands>, sourceSessionReads: ReturnType<typeof useSessionReads>;
+function SourceProbe() { const value = useSourceDraftSession(), commands = useWorkbenchCommands(), reads = useSessionReads(); useLayoutEffect(() => { draft = value; registry = commands; sourceSessionReads = reads; }); return null; }
 const sourceScope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "source" as const };
 
 it("distinguishes current source from an earlier applied receipt without discarding its confirmed outcome", async () => {
@@ -1243,4 +1247,22 @@ it("checks the original pending application even when current scope queries fail
   await screen.findByText("Source content was applied. If reading it fails, retry the read below.");
   expect(draft.current().pendingApply).toBeNull(); expect(draft.current().receipt?.actionId).toBe(request?.actionId);
   expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+});
+
+it("binds both Source start recovery commands to the full original request and refuses a retired session", async () => {
+  render(<><SourceProbe/><SourceWorkbench project={project} disabled={false}/></>,project);
+  await userEvent.setup().click(screen.getByRole("button",{name:"Source content"}));
+  await act(async()=>{draft.setSource(pluginSourceRequest);await draft.select();draft.declare(true);await draft.preflight();draft.consentProducer(true);});
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((name,args)=>name==="start_plugin_source"?Promise.reject(new Error("Lost ACK")):name==="read_plugin_execution_start"?Promise.resolve(null):original(name,args));
+  await act(async()=>{await draft.start();});
+  const request=draft.current().pendingStart!;expect(request).not.toBeNull();
+  const payload={kind:"source-pending" as const,pendingKind:"start" as const,attemptId:request.attemptId,actionId:null,request};
+  for(const id of ["source.check-start","source.retry-start"] as const){
+    expect(registry.describe(id,sourceScope,payload)?.availability.enabled).toBe(true);
+    expect(registry.dispatch(id,sourceScope,{...payload,request:{...request,inputDigest:"b".repeat(64)}})).toBe(false);
+  }
+  act(()=>sourceSessionReads.retire());
+  expect(registry.dispatch("source.check-start",sourceScope,payload)).toBe(false);expect(registry.dispatch("source.retry-start",sourceScope,payload)).toBe(false);
+  expect(invoke.mock.calls.filter(([name])=>name==="start_plugin_source")).toHaveLength(1);expect(draft.current().pendingStart).toBe(request);
 });
