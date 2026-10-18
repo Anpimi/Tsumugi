@@ -4,9 +4,10 @@ import { enUS } from "./i18n/en-US";
 import { createToolQuery } from "../../../crates/plugin-sdk/javascript/tool-query.mjs";
 import { executionCommands, type SessionRequest } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
+import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
-import { openWorkPlanAgent, type WorkPlanStatusView } from "./workPlanCommands";
+import { openWorkPlanAgent, workPlanCommands, type WorkPlanStatusView } from "./workPlanCommands";
 import type { WorkPlanContinuation } from "./AiPreparationSession";
 import { jsonIdentity } from "./pluginToolChoices";
 import { useWorkbenchCommands, type CommandAvailability, type AiAgentCommandPayload, type AiAgentPendingCommandPayload } from "./workbenchCommands";
@@ -19,8 +20,10 @@ type ToolCapture = Awaited<ReturnType<AgentConsumer["prepareTool"]>>;
 type GenerationCapture = Awaited<ReturnType<AgentConsumer["prepare"]>>;
 export type AgentPending = ({ kind: "tool"; consumer: AgentConsumer; prepared: ToolCapture }
   | { kind: "generation"; consumer: AgentConsumer; prepared: GenerationCapture })
-  & { plan: WorkPlanStatusView["plan"]; generation: string; unitIds: string[]; uncertain: boolean };
-export type ToolRun = { prepared: ToolCapture; plan: WorkPlanStatusView["plan"] };
+  & { plan: WorkPlanStatusView["plan"]; generation: string; unitIds: string[]; uncertain: boolean; checking: boolean; retryAllowed: boolean;
+    request: Parameters<typeof workPlanCommands.reconcileAgent>[0];
+    reconciliation: Awaited<ReturnType<typeof workPlanCommands.reconcileAgent>> | null; failure: CommandFailure | null };
+export type ToolRun = { prepared: ToolCapture; plan: WorkPlanStatusView["plan"]; confirmed?: boolean };
 
 export interface AgentState { selected: string[]; toolHandle: string; pending: AgentPending | null; toolRun: ToolRun | null; child: ChildAgentState }
 const initialAgent = (): AgentState => ({ selected: [], toolHandle: "", pending: null, toolRun: null, child: initialChildAgentState() });
@@ -80,40 +83,73 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
     const [taskId, attemptId] = await Promise.all([executionCommands.identity(context), executionCommands.identity(context)]);
     if (!current.fresh()) return;
     const fixed = { taskId, attemptId, unitIds: captured.unitIds };
-    const common={plan:captured.plan,generation:captured.lease.generation,unitIds:captured.unitIds,uncertain:false};
-    const action: AgentPending = captured.toolHandle !== null
-      ? { kind:"tool", consumer, ...common, prepared: await consumer.prepareTool({ ...fixed, toolHandle:captured.toolHandle }) }
-      : { kind:"generation", consumer, ...common, prepared: await consumer.prepare(fixed) };
+    const common={plan:captured.plan,generation:captured.lease.generation,unitIds:captured.unitIds,uncertain:false,
+      checking:false,retryAllowed:false,reconciliation:null,failure:null};
+    const capture = captured.toolHandle !== null
+      ? {kind:"tool" as const, prepared:await consumer.prepareTool({ ...fixed, toolHandle:captured.toolHandle })}
+      : {kind:"generation" as const, prepared:await consumer.prepare(fixed)};
     if (!current.fresh()) return;
+    const request = Object.freeze({...context,lease:Object.freeze({...captured.lease}),taskId,attemptId,inputDigest:capture.prepared.inputDigest});
+    const action: AgentPending = {...capture,consumer,...common,request};
     setPending(action);
-    if (action.kind === "tool") setToolRun({ prepared: action.prepared, plan: captured.plan });
+    if (action.kind === "tool") setToolRun({prepared:action.prepared,plan:captured.plan,confirmed:false});
+    await dispatch(action,current);
+  }
+  function matches(entry:AgentPending,current:WorkPlanContinuation) {
+    return current() && !reads.retired && session.current().pending?.request === entry.request;
+  }
+  function complete(entry:AgentPending,current:WorkPlanContinuation) {
+    if(!matches(entry,current))return;
+    if(entry.kind === "generation") onGenerated(entry.request.attemptId);
+    else session.update(before=>({...before,toolRun:before.toolRun?.prepared === entry.prepared ? {...before.toolRun,confirmed:true}:before.toolRun}));
+    setPending(null);reads.invalidate(["execution"]);
+  }
+  async function lookupOriginal(entry:AgentPending,current:WorkPlanContinuation,originalFailure:CommandFailure|null=entry.failure) {
+    if(!matches(entry,current) || session.current().pending?.checking)return;
+    const retained={...entry,uncertain:true,checking:true,retryAllowed:false,reconciliation:null,failure:null};
+    setPending(retained);
     try {
-      if (action.kind === "tool") await action.consumer.startTool(action.prepared);
-      else await action.consumer.start(action.prepared);
-      if (current()) {
-        if (action.kind === "generation") onGenerated(action.prepared.attemptId);
-        setPending(null); reads.invalidate(["execution"]);
-      }
-    } catch (error) {
-      if (current()) {
-        if (hasUnknownOutcome(error)) setPending({...action,uncertain:true});
-        else { setPending(null); if (action.kind === "tool") setToolRun(null); }
-      }
-      throw error;
+      const receipt=await workPlanCommands.reconcileAgent(entry.request);
+      if(!matches(retained,current))return;
+      setPending({...retained,checking:false,reconciliation:receipt,retryAllowed:receipt.outcome === "active",failure:originalFailure});
+      if(receipt.outcome === "enqueued")complete(retained,current);
+    } catch(error) {
+      if(matches(retained,current))setPending({...retained,checking:false,retryAllowed:false,failure:commandFailure(error,"outcome-unknown")});
     }
   }
-  async function reconcile(current: WorkPlanContinuation) {
-    const pending=session.current().pending;
-    if (!pending) return;
-    // Read-only reconciliation never renews a permit or sends the call again.
-    const result = await readCompleteAttempt(context, pending.prepared.attemptId,
-      pending.kind === "tool" ? "plugin-tool-query" : "ai-translation");
-    if (!result) throw { outcome: "unknown", reason: "work-plan-pending" };
-    if (result.taskId !== pending.prepared.taskId || result.progress.total !== pending.prepared.scope.length
-      || new Set(result.items.map(item=>item.scope.id)).size!==pending.unitIds.length
-      || result.items.some(item=>!pending.unitIds.includes(item.scope.id)))
-      throw { outcome: "unknown", reason: "invalid-work-plan-acknowledgement" };
-    if (current()) { if (pending.kind === "generation") onGenerated(pending.prepared.attemptId); setPending(null); reads.invalidate(["execution"]); }
+  async function dispatch(entry:AgentPending,current:WorkPlanContinuation) {
+    if(!matches(entry,current))return;
+    const retained={...entry,retryAllowed:false,checking:false,reconciliation:null,failure:null};setPending(retained);
+    try {
+      if(entry.kind === "tool")await entry.consumer.startTool(entry.prepared);
+      else await entry.consumer.start(entry.prepared);
+      complete(retained,current);
+    } catch(error) {
+      if(!matches(retained,current))return;
+      const unknown=hasUnknownOutcome(error), failure=commandFailure(error,"outcome-unknown");
+      if(unknown || entry.uncertain) {
+        const pending={...retained,uncertain:true,failure};setPending(pending);
+        if(unknown)await lookupOriginal(pending,current,failure);
+      } else {
+        setPending(null);
+        if(entry.kind === "tool")session.update(before=>({...before,toolRun:before.toolRun?.prepared === entry.prepared ? null:before.toolRun}));
+        throw error;
+      }
+    }
+  }
+  async function reconcile(current:WorkPlanContinuation) {
+    const entry=session.current().pending;
+    if(entry?.uncertain)await lookupOriginal(entry,current);
+  }
+  async function retry(current:WorkPlanContinuation) {
+    const entry=session.current().pending;
+    if(entry?.retryAllowed && current.fresh() && retryAvailability(pendingPayload()).enabled)await dispatch(entry,current);
+  }
+  async function endUnqueued(current:WorkPlanContinuation) {
+    const entry=session.current().pending;
+    if(!entry || entry.checking || !matches(entry,current) || entry.reconciliation?.outcome !== "not-enqueued")return;
+    if(entry.kind === "tool")session.update(before=>({...before,toolRun:before.toolRun?.prepared === entry.prepared ? null:before.toolRun}));
+    setPending(null);
   }
   const scope={projectId:context.projectId,sessionToken:context.sessionToken,area:"ai" as const};
   const unavailable:CommandAvailability={enabled:false,reason:"unavailable"};
@@ -124,7 +160,7 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
     unitIds:[...session.current().selected],toolHandle:kind==="tool"?session.current().toolHandle:null};}
   function availability(value?:AiAgentCommandPayload):CommandAvailability {
     if(!open||reads.retired)return{enabled:false,reason:"hidden"};
-    if(ownerBusy()||busy)return{enabled:false,reason:"busy"};
+    if(ownerBusy()||busy||session.current().pending?.checking)return{enabled:false,reason:"busy"};
     if(!value||disabled||session.current().pending||working||componentBlocked||!currentStatus()
       ||status.state!=="active"||BigInt(status.expiresAt)<=BigInt(Math.floor(Date.now()/1000))
       ||!value.unitIds.length||value.unitIds.some(id=>!status.plan.scope.some(unit=>unit.unitId===id))
@@ -138,14 +174,25 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
   }
   function recoveryAvailability(value?:AiAgentPendingCommandPayload):CommandAvailability {
     if(!open||reads.retired)return{enabled:false,reason:"hidden"};
-    if(ownerBusy()||busy)return{enabled:false,reason:"busy"};
+    if(ownerBusy()||busy||session.current().pending?.checking)return{enabled:false,reason:"busy"};
     return value&&jsonIdentity(value)===jsonIdentity(pendingPayload())?{enabled:true}:unavailable;
+  }
+  function retryAvailability(value?:AiAgentPendingCommandPayload):CommandAvailability {
+    const available=recoveryAvailability(value);if(!available.enabled)return available;
+    const pending=session.current().pending;
+    return !disabled && pending?.retryAllowed && active && currentStatus()
+      && jsonIdentity(pending.request.lease) === jsonIdentity(status.lease) && pending.plan.digest === status.plan.digest ? {enabled:true}:unavailable;
+  }
+  function endAvailability(value?:AiAgentPendingCommandPayload):CommandAvailability {
+    const available=recoveryAvailability(value);return available.enabled && session.current().pending?.reconciliation?.outcome !== "not-enqueued" ? unavailable:available;
   }
   useLayoutEffect(()=>{
     const metadata={category:"ai" as const,scope,binding:null,confirmation:"none" as const};
     const remove=[registry.register({...metadata,id:"ai.agent.generate",nameKey:"ai.tools.generateSubset",risk:"runs-ai",payloadKind:"ai-agent",availability:value=>value?.toolHandle===null?availability(value):unavailable,handler:value=>{void run(current=>start(value,current));}}),
       registry.register({...metadata,id:"ai.agent.query-tool",nameKey:"ai.tools.query",risk:"runs-ai",payloadKind:"ai-agent",availability:value=>value?.toolHandle!==null?availability(value):unavailable,handler:value=>{void run(current=>start(value,current));}}),
-      registry.register({...metadata,id:"ai.agent.reconcile",nameKey:"ai.reconcile",risk:"reconciles-execution-action",payloadKind:"ai-agent-pending",availability:recoveryAvailability,handler:()=>{void run(reconcile);}})];
+      registry.register({...metadata,id:"ai.agent.reconcile",nameKey:"ai.tools.checkOriginal",risk:"reads-execution",payloadKind:"ai-agent-pending",availability:recoveryAvailability,handler:()=>{void run(reconcile);}}),
+      registry.register({...metadata,id:"ai.agent.retry",nameKey:"ai.retrySame",risk:"runs-ai",payloadKind:"ai-agent-pending",availability:retryAvailability,handler:()=>{void run(retry);}}),
+      registry.register({...metadata,id:"ai.agent.end-unqueued",nameKey:"ai.children.endUnqueued",risk:"reads-execution",payloadKind:"ai-agent-pending",availability:endAvailability,handler:()=>{void run(endUnqueued);}})];
     return()=>remove.forEach(dispose=>dispose());
   });
   function resultRows(resultId: string, itemId: string) {
@@ -176,8 +223,14 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
     <WorkPlanGenerationControls context={context} status={status} selected={selected} open={open}
       disabled={disabled || !!pending || working} busy={busy} run={run} session={component} ownerBusy={ownerBusy} onBlockedChange={() => {}} onGenerated={onGenerated} />
     {!active ? <p role="status">{t("ai.tools.inactive")}</p> : null}
-    {pending ? <div role="status"><p>{t("ai.tools.unknown")}</p><button type="button" className="secondary-button" disabled={!recoveryAvailability(pendingPayload()).enabled}
-      onClick={()=>{const value=pendingPayload();if(value)registry.dispatch("ai.agent.reconcile",scope,value);}}>{t("ai.reconcile")}</button></div> : null}
+    {toolRun?.confirmed ? <p role="status">{t("ai.tools.startRecorded")}</p> : null}
+    {pending ? <div role="status"><p>{t(pending.checking ? "ai.tools.checkingOriginal" : pending.reconciliation?.outcome === "active" ? "ai.tools.originalMissing" : pending.reconciliation?.outcome === "not-enqueued" ? "ai.children.notEnqueuedHelp" : "ai.tools.unknown")}</p><button type="button" className="secondary-button" disabled={!recoveryAvailability(pendingPayload()).enabled}
+      onClick={()=>{const value=pendingPayload();if(value)registry.dispatch("ai.agent.reconcile",scope,value);}}>{t("ai.tools.checkOriginal")}</button>
+      {pending.retryAllowed ? <button type="button" className="secondary-button" disabled={!retryAvailability(pendingPayload()).enabled}
+        onClick={()=>{const value=pendingPayload();if(value)registry.dispatch("ai.agent.retry",scope,value);}}>{t("ai.retrySame")}</button> : null}
+      {pending.reconciliation?.outcome === "not-enqueued" ? <button type="button" className="secondary-button" disabled={!endAvailability(pendingPayload()).enabled}
+        onClick={()=>{const value=pendingPayload();if(value)registry.dispatch("ai.agent.end-unqueued",scope,value);}}>{t("ai.children.endUnqueued")}</button> : null}
+      {pending.failure ? <div role="alert"><CommandFailureDetails failure={pending.failure}/></div> : null}</div> : null}
     {detail.error || output.error ? <div role="alert"><p>{t("toolQuery.failed")}</p><button type="button" className="secondary-button" disabled={busy}
       onClick={() => reads.invalidate(["execution"])}>{t("ai.refresh")}</button></div> : null}
     {working ? <p role="status">{t("execution.working")}</p> : null}

@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Confirm uncertain bounded Agent generation and tool starts from their original
+  recorded inputs. Root and child recovery preserve the exact call, newer input
+  and original permission; checking never submits work or renews a lease.
+
 - Confirm uncertain generation component starts from their original recorded input,
   keeping execution progress separate. Explicit retries retain the original
   preparation and permission; recovery never starts work or renews permission.

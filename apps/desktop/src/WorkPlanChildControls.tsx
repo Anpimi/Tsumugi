@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore, useLayoutEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { enUS } from "./i18n/en-US";
 import { executionCommands, type AttemptDetail, type SessionRequest } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
+import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
+import { useWorkbenchCommands, type AiAgentPendingCommandPayload, type CommandAvailability } from "./workbenchCommands";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -19,7 +21,7 @@ type ChildCapture = { kind: "generation"; prepared: Generation } | { kind: "tool
 export type ChildRun = ChildCapture
   & { phase: "sending" | "unknown" | "queued" | "not-enqueued"; retryAllowed: boolean;
     request: Parameters<typeof workPlanCommands.reconcileAgent>[0];
-    reconciliation?: Awaited<ReturnType<typeof workPlanCommands.reconcileAgent>> };
+    reconciliation?: Awaited<ReturnType<typeof workPlanCommands.reconcileAgent>>; checking?: boolean; failure?: CommandFailure | null };
 export interface ChildAgent {
   consumer: WorkPlanAgentLeaf; status: WorkPlanStatusView; accepted: boolean; toolHandle: string; runs: ChildRun[];
 }
@@ -51,7 +53,7 @@ export function WorkPlanChildControls({ context, status, open, disabled, busy, s
   canRun: (recovery?: boolean) => boolean; run: (work: (current: WorkPlanContinuation) => Promise<void>, recovery?: boolean) => Promise<void>;
   onOpenTask: (taskId: string, attemptId: string) => Promise<boolean>;
 }) {
-  const { t } = useTranslation(), reads = useSessionReads(), state = session.state.child;
+  const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands(), state = session.state.child;
   const expiresAt = state.pending?.status.expiresAt ?? status.expiresAt;
   const subscribe = useCallback((notify: () => void) => {
     const stop = reads.client.getQueryCache().subscribe(notify), remaining = BigInt(expiresAt) * 1000n - BigInt(Date.now());
@@ -119,15 +121,24 @@ export function WorkPlanChildControls({ context, status, open, disabled, busy, s
   function updateRun(child: ChildAgent, original: ChildRun, fn: (before: ChildRun) => ChildRun | null) {
     updateChild(child, before => ({ ...before, runs: before.runs.flatMap(value => value.prepared === original.prepared ? fn(value) ?? [] : [value]) }));
   }
+  function matchesRun(child:ChildAgent,action:ChildRun,current:WorkPlanContinuation) {
+    const latest=currentChild(child)?.runs.find(value=>value.prepared === action.prepared);
+    return current() && !reads.retired && latest?.request === action.request;
+  }
   async function dispatch(child: ChildAgent, action: ChildRun, current: WorkPlanContinuation) {
+    if(!matchesRun(child,action,current))return;
+    updateRun(child,action,before=>({...before,phase:"sending",retryAllowed:false,checking:false,reconciliation:undefined,failure:null}));
     try {
       if (action.kind === "generation") await child.consumer.start(action.prepared);
       else await child.consumer.startTool(action.prepared);
-      if (current()) { updateRun(child, action, before => ({ ...before, phase: "queued", retryAllowed: false })); reads.invalidate(["execution"]); }
+      if (matchesRun(child,action,current)) { updateRun(child, action, before => ({ ...before, phase: "queued", retryAllowed: false })); reads.invalidate(["execution"]); }
     } catch (error) {
-      if (current()) updateRun(child, action, before => action.phase === "unknown" || hasUnknownOutcome(error)
-        ? { ...before, phase: "unknown", retryAllowed: false } : null);
-      throw error;
+      if(!matchesRun(child,action,current))return;
+      const unknown=hasUnknownOutcome(error),failure=commandFailure(error,"outcome-unknown");
+      updateRun(child, action, before => action.phase === "unknown" || unknown
+        ? { ...before, phase: "unknown", retryAllowed: false, failure } : null);
+      if(unknown)await reconcile(child,action,current,failure);
+      else throw error;
     }
   }
   async function start(child: ChildAgent, kind: "generation" | "tool", current: WorkPlanContinuation) {
@@ -148,18 +159,59 @@ export function WorkPlanChildControls({ context, status, open, disabled, busy, s
     updateChild(child, before => ({ ...before, runs: [...before.runs, action] }));
     await dispatch(child, action, current);
   }
-  async function reconcile(child: ChildAgent, action: ChildRun, current: WorkPlanContinuation) {
+  async function reconcile(child: ChildAgent, action: ChildRun, current: WorkPlanContinuation, originalFailure:CommandFailure|null=action.failure??null) {
     const original = currentChild(child)?.runs.find(value => value.prepared === action.prepared);
-    if (!original || original.phase !== "unknown") return;
-    updateRun(child, original, before => ({ ...before, retryAllowed: false, reconciliation: undefined }));
-    const receipt = await workPlanCommands.reconcileAgent(original.request);
-    const latest = currentChild(child)?.runs.find(value => value.prepared === original.prepared);
-    if (!current() || latest?.phase !== "unknown" || latest.request !== original.request
-      || original.prepared.taskId !== original.request.taskId || original.prepared.attemptId !== original.request.attemptId
-      || original.prepared.inputDigest !== original.request.inputDigest) return;
-    updateRun(child, original, before => ({ ...before, phase: receipt.outcome === "enqueued" ? "queued" : "unknown",
-      retryAllowed: receipt.outcome === "active", reconciliation: receipt }));
-    reads.invalidate(["execution"]);
+    if (!original || original.phase !== "unknown" || original.checking || !matchesRun(child,original,current)) return;
+    updateRun(child, original, before => ({ ...before, checking:true, retryAllowed:false,reconciliation:undefined,failure:null }));
+    try {
+      const receipt = await workPlanCommands.reconcileAgent(original.request);
+      if(!matchesRun(child,original,current))return;
+      const latest=currentChild(child)?.runs.find(value=>value.prepared === original.prepared);
+      if(latest?.phase !== "unknown")return;
+      if(original.prepared.taskId !== original.request.taskId || original.prepared.attemptId !== original.request.attemptId
+        || original.prepared.inputDigest !== original.request.inputDigest)throw new Error("Original Agent preparation changed");
+      updateRun(child, original, before => ({ ...before, checking:false,phase:receipt.outcome === "enqueued" ? "queued" : "unknown",
+        retryAllowed:receipt.outcome === "active",reconciliation:receipt,failure:receipt.outcome === "enqueued" ? null:originalFailure }));
+      reads.invalidate(["execution"]);
+    } catch(error) {
+      if(matchesRun(child,original,current))updateRun(child,original,before=>({...before,checking:false,retryAllowed:false,reconciliation:undefined,failure:commandFailure(error,"outcome-unknown")}));
+    }
+  }
+  function recoveryPayload(child:ChildAgent,action:ChildRun):AiAgentPendingCommandPayload {
+    return {kind:"ai-agent-pending",operation:action.kind,scopeId:child.consumer.scope.scopeId,taskId:action.request.taskId,
+      attemptId:action.request.attemptId,inputDigest:action.request.inputDigest,unitIds:action.prepared.scope.map(unit=>unit.unitId),
+      toolHandle:action.kind === "tool" ? action.prepared.toolHandle:null};
+  }
+  function recoveryTarget(payload?:AiAgentPendingCommandPayload) {
+    for(const child of session.current().child.children)for(const action of child.runs)
+      if(payload && jsonIdentity(payload) === jsonIdentity(recoveryPayload(child,action)))return {child,action};
+    return null;
+  }
+  function recoveryAvailability(payload?:AiAgentPendingCommandPayload,kind:"check"|"retry"|"end"="check"):CommandAvailability {
+    if(!open||reads.retired)return {enabled:false,reason:"hidden"};
+    const target=recoveryTarget(payload);
+    if(busy||!canRun(true)||target?.action.checking)return {enabled:false,reason:"busy"};
+    if(!target||target.action.phase !== "unknown")return {enabled:false,reason:"unavailable"};
+    if(kind === "retry" && (!target.action.retryAllowed||!permitted||!target.child.accepted||!currentStatus(target.child.status)))return {enabled:false,reason:"unavailable"};
+    if(kind === "end" && target.action.reconciliation?.outcome !== "not-enqueued")return {enabled:false,reason:"unavailable"};
+    return {enabled:true};
+  }
+  useLayoutEffect(()=>{
+    const metadata={category:"ai" as const,scope:{...context,area:"ai" as const},binding:null,confirmation:"none" as const,payloadKind:"ai-agent-pending" as const};
+    const remove=[registry.register({...metadata,id:"ai.children.check-start",nameKey:"ai.tools.checkOriginal",risk:"reads-execution",availability:value=>recoveryAvailability(value),handler:value=>{
+      const target=recoveryTarget(value);if(target)void run(current=>reconcile(target.child,target.action,current),true);
+    }}),registry.register({...metadata,id:"ai.children.retry-start",nameKey:"ai.retrySame",risk:"runs-ai",availability:value=>recoveryAvailability(value,"retry"),handler:value=>{
+      const target=recoveryTarget(value);if(target)void run(async current=>{if(current.fresh())await dispatch(target.child,target.action,current);},true);
+    }}),registry.register({...metadata,id:"ai.children.end-unqueued",nameKey:"ai.children.endUnqueued",risk:"reads-execution",availability:value=>recoveryAvailability(value,"end"),handler:value=>{
+      const target=recoveryTarget(value);if(target)void run(async current=>{
+        if(matchesRun(target.child,target.action,current) && target.action.reconciliation?.outcome === "not-enqueued")
+          updateRun(target.child,target.action,before=>({...before,phase:"not-enqueued",retryAllowed:false}));
+      },true);
+    }})];
+    return()=>remove.forEach(dispose=>dispose());
+  });
+  function dispatchRecovery(id:"ai.children.check-start"|"ai.children.retry-start"|"ai.children.end-unqueued",child:ChildAgent,action:ChildRun) {
+    registry.dispatch(id,{...context,area:"ai"},recoveryPayload(child,action));
   }
   return <section aria-label={t("ai.children.title")}>
     <h4>{t("ai.children.title")}</h4><p>{t("ai.children.help")}</p>
@@ -195,15 +247,9 @@ export function WorkPlanChildControls({ context, status, open, disabled, busy, s
         <button type="button" disabled={!allowed} onClick={() => { void run(current => start(child, "generation", current)); }}>{t("ai.children.generate")}</button>
         {tools.length ? <button type="button" disabled={!allowed || !tools.some(tool => tool.handle === child.toolHandle)} onClick={() => { void run(current => start(child, "tool", current)); }}>{t("ai.children.query")}</button> : null}
         {child.runs.map(action => <ChildResult key={action.prepared.attemptId} context={context} child={child} action={action} open={open} active={same && child.accepted} busy={busy}
-          onHistory={() => onOpenTask(action.request.taskId, action.request.attemptId)} onCheck={() => run(current => reconcile(child, action, current), true)}
-          onRetry={() => run(current => dispatch(child, action, current), true)} recoveryAllowed={canRun(true)} onEnd={() => {
-            const latest = currentChild(child)?.runs.find(value => value.prepared === action.prepared);
-            if (!busy && canRun(true) && latest?.phase === "unknown" && latest.request === action.request
-              && latest.reconciliation === action.reconciliation && latest.reconciliation?.outcome === "not-enqueued"
-              && latest.prepared.taskId === latest.request.taskId && latest.prepared.attemptId === latest.request.attemptId
-              && latest.prepared.inputDigest === latest.request.inputDigest)
-              updateRun(child, latest, before => ({ ...before, phase: "not-enqueued", retryAllowed: false }));
-          }} />)}
+          onHistory={() => onOpenTask(action.request.taskId, action.request.attemptId)} onCheck={async()=>{dispatchRecovery("ai.children.check-start",child,action);}}
+          onRetry={async()=>{dispatchRecovery("ai.children.retry-start",child,action);}} recoveryAllowed={recoveryAvailability(recoveryPayload(child,action)).enabled}
+          onEnd={()=>{dispatchRecovery("ai.children.end-unqueued",child,action);}} />)}
       </section>;
     })}
   </section>;
@@ -231,11 +277,12 @@ function ChildResult({ context, child, action, open, active, busy, onHistory, on
     <p>{action.kind === "generation" ? child.status.plan.preview?.config.model
       : child.status.plan.tools?.entries.find(tool => tool.handle === toolHandle)?.binding.declaration.title}</p>
     <p>{t("ai.children.resultHelp")}</p>
-    {action.phase === "unknown" ? <div role="status"><p>{t("ai.tools.unknown")}</p>
-      <button type="button" disabled={busy || !recoveryAllowed} onClick={() => { void onCheck(); }}>{t("ai.reconcile")}</button>
-      {action.retryAllowed ? <button type="button" disabled={busy || !recoveryAllowed || !active} onClick={() => { void onRetry(); }}>{t("ai.retrySame")}</button> : null}</div> : null}
+    {action.phase === "unknown" ? <div role="status"><p>{t(action.checking ? "ai.tools.checkingOriginal" : "ai.tools.unknown")}</p>
+      <button type="button" disabled={busy || action.checking || !recoveryAllowed} onClick={() => { void onCheck(); }}>{t("ai.tools.checkOriginal")}</button>
+      {action.retryAllowed ? <button type="button" disabled={busy || action.checking || !recoveryAllowed || !active} onClick={() => { void onRetry(); }}>{t("ai.retrySame")}</button> : null}</div> : null}
+    {action.failure ? <div role="alert"><CommandFailureDetails failure={action.failure}/></div> : null}
     {action.phase === "unknown" && action.reconciliation?.outcome === "not-enqueued" ? <><p>{t("ai.children.notEnqueuedHelp")}</p>
-      <button type="button" disabled={busy || !recoveryAllowed} onClick={onEnd}>{t("ai.children.endUnqueued")}</button></> : null}
+      <button type="button" disabled={busy || action.checking || !recoveryAllowed} onClick={onEnd}>{t("ai.children.endUnqueued")}</button></> : null}
     {action.phase === "unknown" && action.reconciliation?.outcome === "active" ? <p role="status">{t("ai.children.activeUnknown")}</p> : null}
     {action.phase === "not-enqueued" ? <p role="status">{t("ai.children.endedUnqueued")}</p> : null}
     {childRunWorking(action, lifecycle.data) ? <p role="status">{t("execution.working")}</p> : null}
@@ -260,6 +307,6 @@ function ChildResult({ context, child, action, open, active, busy, onHistory, on
       </div>;
     }) : null}
     {!active && action.phase !== "not-enqueued" ? <p>{t("ai.children.historyOnly")}</p> : null}
-    {action.phase !== "not-enqueued" ? <button type="button" disabled={busy || !recoveryAllowed} onClick={() => { void onHistory(); }}>{t("ai.children.history")}</button> : null}
+    {action.phase !== "not-enqueued" ? <button type="button" disabled={busy || action.checking || !recoveryAllowed} onClick={() => { void onHistory(); }}>{t("ai.children.history")}</button> : null}
   </article>;
 }

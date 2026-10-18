@@ -170,7 +170,7 @@ impl ProjectStore {
         let c = self
             .connection()
             .map_err(|_| fail(ErrorCode::StorageFailed, "work-plan-agent-reconcile"))?;
-        super::super::review::read_snapshot(c, |c| {
+        let found = super::super::review::read_snapshot(c, |c| {
             if identity.input_digest.len() != 64
                 || !identity
                     .input_digest
@@ -222,7 +222,10 @@ impl ProjectStore {
                 if occupied {
                     return Err(fail(ErrorCode::ResultMismatch, "work-plan-agent-reconcile"));
                 }
-                if stored.lease == identity.lease && stored.state == WorkPlanState::Active {
+                if stored.lease == identity.lease
+                    && stored.state == WorkPlanState::Active
+                    && stored.expires_at > control::now()?
+                {
                     WorkPlanAgentReconciliationOutcome::Active
                 } else {
                     WorkPlanAgentReconciliationOutcome::NotEnqueued
@@ -232,9 +235,12 @@ impl ProjectStore {
                 identity: identity.clone(),
                 outcome,
             })
-        })
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
     }
-
     pub fn delegate_work_plan_agent_scope(
         &self,
         parent: &WorkPlanAgentScope,

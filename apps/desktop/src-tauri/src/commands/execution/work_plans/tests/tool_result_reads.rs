@@ -335,6 +335,29 @@ fn registered_tool_reads_revoke_with_control_and_reopen_but_human_history_remain
     let result = enqueue(&fixture, &reading);
     let read = output(&reading, &result);
     let scope_id: ExecutionId = serde_json::from_value(reading["scopeId"].clone()).unwrap();
+    let lease = fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            sessions
+                .active
+                .as_ref()
+                .unwrap()
+                .execution
+                .as_ref()
+                .unwrap()
+                .work_plans
+                .agent_scopes[&scope_id]
+                .lease()
+        });
+    let identity = json!({"lease":lease,"taskId":prepared["taskId"],"attemptId":prepared["attemptId"],"inputDigest":prepared["inputDigest"]});
+    assert_eq!(
+        fixture
+            .call("reconcile_work_plan_agent_execution", identity.clone())
+            .unwrap(),
+        json!({"identity":identity,"outcome":"enqueued"})
+    );
     fixture
         .app
         .state::<AppState>()
@@ -378,6 +401,20 @@ fn registered_tool_reads_revoke_with_control_and_reopen_but_human_history_remain
     );
     let old_context = fixture.context.clone();
     fixture.reopen();
+    let original = fixture.bytes();
+    assert_eq!(
+        fixture
+            .call("reconcile_work_plan_agent_execution", identity.clone())
+            .unwrap(),
+        json!({"identity":identity,"outcome":"enqueued"})
+    );
+    fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    assert_eq!(fixture.bytes(), original);
+
     assert_eq!(
         call(
             &fixture.webview,

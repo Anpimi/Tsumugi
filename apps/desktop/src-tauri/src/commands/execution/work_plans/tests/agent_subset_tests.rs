@@ -396,7 +396,7 @@ fn agent_subset_registered_missing_host_and_accepted_close_cannot_create_read_au
 
 #[test]
 fn agent_subset_registered_human_reconciliation_distinguishes_ended_absence_and_acceptance() {
-    let f = Fixture::create();
+    let mut f = Fixture::create();
     let root = opened(&f);
     let child = f
         .call(
@@ -466,4 +466,27 @@ fn agent_subset_registered_human_reconciliation_distinguishes_ended_absence_and_
         .state::<AppState>()
         .sessions
         .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    let old_context = f.context.clone();
+    f.reopen();
+    let original = f.bytes();
+    for (proof, outcome) in [(identity, "not-enqueued"), (accepted, "enqueued")] {
+        assert_eq!(
+            f.call("reconcile_work_plan_agent_execution", proof.clone())
+                .unwrap(),
+            json!({"identity":proof,"outcome":outcome})
+        );
+        assert!(
+            call(
+                &f.webview,
+                "reconcile_work_plan_agent_execution",
+                request(&old_context, proof)
+            )
+            .is_err()
+        );
+    }
+    f.app
+        .state::<AppState>()
+        .sessions
+        .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    assert_eq!(f.bytes(), original);
 }

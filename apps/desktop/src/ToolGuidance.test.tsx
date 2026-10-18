@@ -172,7 +172,9 @@ it("preserves newer AI input and the original uncertain action through guidance 
   act(() => {
     owner.setConfig(before => ({ ...before, model: "Newer draft B", shareTerms: false }));
     owner.agent.update(before => ({ ...before, selected: [status.plan.scope[0].unitId], pending: { kind: "generation", consumer, prepared, plan: status.plan,
-      generation: status.lease.generation, unitIds: [status.plan.scope[0].unitId], uncertain: true } }));
+      generation: status.lease.generation, unitIds: [status.plan.scope[0].unitId], uncertain: true,
+      checking: false, retryAllowed: false, reconciliation: null, failure: null,
+      request: { ...context, lease: structuredClone(status.lease), taskId: prepared.taskId, attemptId: prepared.attemptId, inputDigest: prepared.inputDigest } } }));
   });
   const pending = owner.agent.current().pending, config = owner.config;
   const user = await openDirectory(); await user.click(screen.getByRole("button", { name: "Read tool Skill" })); await screen.findByText(malicious, literal);

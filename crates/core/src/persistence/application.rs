@@ -1919,4 +1919,186 @@ mod tests {
             ErrorCode::DependencyConflict
         );
     }
+    #[test]
+    fn agent_original_reconciliation_preserves_guard_history_and_expired_absence() {
+        use crate::application::{
+            AgentGenerationRequest, WorkPlanAgentExecutionIdentity,
+            WorkPlanAgentReconciliationOutcome,
+        };
+        let (directory, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let grant = store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
+        let root = crate::execution::FixedInput::capture(grant.input.unwrap()).unwrap();
+        store.enqueue_execution(&root).unwrap();
+        let scope = store.work_plan_agent_scope(grant.lease).unwrap();
+        let prepared = store
+            .prepare_work_plan_agent_generation(
+                &scope,
+                &AgentGenerationRequest {
+                    task_id: ExecutionId::new(),
+                    attempt_id: ExecutionId::new(),
+                    unit_ids: vec![units[0]],
+                },
+            )
+            .unwrap();
+        let identity = WorkPlanAgentExecutionIdentity {
+            lease: grant.lease,
+            task_id: prepared.envelope().task_id,
+            attempt_id: prepared.envelope().attempt_id,
+            input_digest: prepared.digest().into(),
+        };
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert!(
+            store
+                .execution_input_if_present(identity.attempt_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.is_reconciling());
+        let missing = store
+            .reconcile_work_plan_agent_execution(&identity)
+            .unwrap();
+        assert_eq!(missing.identity, identity);
+        assert_eq!(missing.outcome, WorkPlanAgentReconciliationOutcome::Active);
+        assert!(!store.is_reconciling());
+        store
+            .enqueue_work_plan_agent_generation(
+                &prepared,
+                crate::execution::RecoveryPolicy::ExternalUnknown,
+            )
+            .unwrap();
+        for wrong in [
+            WorkPlanAgentExecutionIdentity {
+                task_id: ExecutionId::new(),
+                ..identity.clone()
+            },
+            WorkPlanAgentExecutionIdentity {
+                input_digest: "0".repeat(64),
+                ..identity.clone()
+            },
+            WorkPlanAgentExecutionIdentity {
+                lease: crate::application::AutomationLease {
+                    generation: crate::execution::Revision::new(9).unwrap(),
+                    ..grant.lease
+                },
+                ..identity.clone()
+            },
+        ] {
+            store
+                .execution_unknown
+                .store(true, std::sync::atomic::Ordering::Release);
+            assert!(store.reconcile_work_plan_agent_execution(&wrong).is_err());
+            assert!(store.is_reconciling());
+        }
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE execution_attempts SET digest=?2 WHERE attempt_id=?1",
+                rusqlite::params![identity.attempt_id.to_string(), "0".repeat(64)],
+            )
+            .unwrap();
+        assert!(
+            store
+                .reconcile_work_plan_agent_execution(&identity)
+                .is_err()
+        );
+        assert!(store.is_reconciling());
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE execution_attempts SET digest=?2 WHERE attempt_id=?1",
+                rusqlite::params![identity.attempt_id.to_string(), identity.input_digest],
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .reconcile_work_plan_agent_execution(&identity)
+                .unwrap()
+                .outcome,
+            WorkPlanAgentReconciliationOutcome::Enqueued
+        );
+        assert!(!store.is_reconciling());
+        let short_plan = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let mut short_consent = consent(&short_plan);
+        short_consent.expires_at = control::now().unwrap() + 2;
+        let short_grant = store
+            .authorize_work_plan(&short_plan, &short_consent)
+            .unwrap();
+        store
+            .enqueue_execution(
+                &crate::execution::FixedInput::capture(short_grant.input.unwrap()).unwrap(),
+            )
+            .unwrap();
+        let short_scope = store.work_plan_agent_scope(short_grant.lease).unwrap();
+        let short = store
+            .prepare_work_plan_agent_generation(
+                &short_scope,
+                &AgentGenerationRequest {
+                    task_id: ExecutionId::new(),
+                    attempt_id: ExecutionId::new(),
+                    unit_ids: vec![units[0]],
+                },
+            )
+            .unwrap();
+        let expired = WorkPlanAgentExecutionIdentity {
+            lease: short_grant.lease,
+            task_id: short.envelope().task_id,
+            attempt_id: short.envelope().attempt_id,
+            input_digest: short.digest().into(),
+        };
+        while control::now().unwrap() <= short_consent.expires_at {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(
+            store
+                .reconcile_work_plan_agent_execution(&expired)
+                .unwrap()
+                .outcome,
+            WorkPlanAgentReconciliationOutcome::NotEnqueued
+        );
+        assert!(
+            store
+                .enqueue_work_plan_agent_generation(
+                    &short,
+                    crate::execution::RecoveryPolicy::ExternalUnknown
+                )
+                .is_err()
+        );
+        let revision = store.metadata().unwrap().metadata_revision();
+        store.set_target_locales(revision, &["ja".into()]).unwrap();
+        let sequence = store.execution_sequence().unwrap();
+        assert_eq!(
+            store
+                .reconcile_work_plan_agent_execution(&identity)
+                .unwrap()
+                .outcome,
+            WorkPlanAgentReconciliationOutcome::Enqueued
+        );
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        store.close().unwrap();
+        let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_eq!(
+            reopened
+                .reconcile_work_plan_agent_execution(&identity)
+                .unwrap()
+                .outcome,
+            WorkPlanAgentReconciliationOutcome::Enqueued
+        );
+        assert_eq!(
+            reopened
+                .reconcile_work_plan_agent_execution(&expired)
+                .unwrap()
+                .outcome,
+            WorkPlanAgentReconciliationOutcome::NotEnqueued
+        );
+        assert_eq!(reopened.execution_sequence().unwrap(), sequence);
+    }
 }

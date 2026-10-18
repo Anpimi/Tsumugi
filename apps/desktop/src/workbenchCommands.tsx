@@ -284,6 +284,11 @@ interface WorkbenchCommandPayloads {
   "ai.agent.generate": AiAgentCommandPayload;
   "ai.agent.query-tool": AiAgentCommandPayload;
   "ai.agent.reconcile": AiAgentPendingCommandPayload;
+  "ai.agent.retry": AiAgentPendingCommandPayload;
+  "ai.agent.end-unqueued": AiAgentPendingCommandPayload;
+  "ai.children.check-start": AiAgentPendingCommandPayload;
+  "ai.children.retry-start": AiAgentPendingCommandPayload;
+  "ai.children.end-unqueued": AiAgentPendingCommandPayload;
   "ai.component.prepare": AiComponentPrepareCommandPayload;
   "ai.component.start": AiComponentCommandPayload;
   "ai.component.check-start": AiComponentCommandPayload;
@@ -505,7 +510,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"ai-plan-translation", "ai.plan.open-translation">
   | ResourceCommand<"ai-effect", "ai.effect.retry">
   | ResourceCommand<"ai-agent", "ai.agent.generate" | "ai.agent.query-tool">
-  | ResourceCommand<"ai-agent-pending", "ai.agent.reconcile">
+  | ResourceCommand<"ai-agent-pending", "ai.agent.reconcile" | "ai.agent.retry" | "ai.agent.end-unqueued" | "ai.children.check-start" | "ai.children.retry-start" | "ai.children.end-unqueued">
   | ResourceCommand<"ai-component-prepare", "ai.component.prepare">
   | ResourceCommand<"ai-component", "ai.component.start" | "ai.component.discard" | "ai.component.check-start" | "ai.component.retry-start">
   | ResourceCommand<"release-plugin-start", "release.start-build" | "release.confirm-builder" | "release.confirm-checker" | "release.start-artifact-check">
