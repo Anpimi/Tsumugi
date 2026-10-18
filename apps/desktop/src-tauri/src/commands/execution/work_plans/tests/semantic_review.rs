@@ -243,3 +243,52 @@ fn registered_semantic_review_refuses_selection_drift_before_first_dispatch() {
     assert_eq!(fixture.attempt_count(), count);
     assert!(lookup(&fixture, &prepared["attemptId"])["view"].is_null());
 }
+
+
+#[test]
+fn registered_semantic_start_proof_reads_original_enqueue_without_initializing_or_submitting() {
+    let isolated=ProjectFixture::create("en-US");
+    let absent=json!({"attemptId":ExecutionId::new(),"digest":"0".repeat(64),"confirmed":false});
+    assert_eq!(call(&isolated.webview,"read_ai_semantic_review_start_action",request(&isolated.context,absent)).unwrap(),Value::Null);
+    isolated.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    let mut fixture=Fixture::create();selected(&fixture);let unit=fixture.unit;
+    let (attempt,preview,task,input_digest)=fixture.app.state::<AppState>().sessions.with(move |sessions| {
+        let store=&mut sessions.active.as_mut().unwrap().store;
+        let prepared=store.prepare_ai_semantic_review(AiConfig {endpoint:"https://model.example/v1/chat/completions".into(),model:"synthetic-review".into(),credential_env:String::new(),..Default::default()},
+            &[tsumugi_core::ai::semantic_review::AiSemanticReviewTarget {unit_id:unit,locale:"zh-CN".into()}],
+            &[tsumugi_core::ai::semantic_review::AiSemanticReviewRule::Meaning]).unwrap();
+        let attempt=prepared.input().envelope().attempt_id;let task=prepared.input().envelope().task_id;
+        store.enqueue_execution(prepared.input()).unwrap();
+        (attempt,prepared.preview().clone(),task,prepared.input().digest().to_owned())
+    });
+    let business=json!({"attemptId":attempt,"digest":preview.digest,"confirmed":true});
+    let admitted=fixture.attempt_count();
+    let saved=fixture.call("read_ai_semantic_review_start_action",business.clone()).unwrap();
+    assert_eq!(saved["projectId"],fixture.context["projectId"]);assert_eq!(saved["attemptId"],json!(attempt));
+    assert_eq!(saved["taskId"],json!(task));assert_eq!(saved["inputDigest"],json!(input_digest));
+    assert_eq!(saved["preview"],serde_json::to_value(crate::commands::execution::review::semantic::AiSemanticReviewPreviewView::from(preview)).unwrap());
+    let mut without_consent=business.clone();without_consent["confirmed"]=json!(false);
+    assert_eq!(fixture.call("read_ai_semantic_review_start_action",without_consent).unwrap(),saved,"read never attests to or renews temporary consent");
+    for field in ["projectId","sessionToken","digest"] {
+        let mut wrong=business.clone();wrong[field]=if field=="projectId" {json!(ExecutionId::new())} else {json!("wrong")};
+        assert!(fixture.call("read_ai_semantic_review_start_action",wrong).is_err());
+    }
+    let mut extra=business.clone();extra["grant"]=json!(true);assert!(fixture.call("read_ai_semantic_review_start_action",extra).is_err());
+    assert_eq!(fixture.attempt_count(),admitted);
+    Fixture::capture_source(&fixture.app,br#"{"replacement":"Changed source"}"#.to_vec());
+    let retained_count=fixture.attempt_count();
+    let sequence=fixture.app.state::<AppState>().sessions.with(|sessions| {
+        let active=sessions.active.as_mut().unwrap();let revision=active.store.metadata().unwrap().metadata_revision();active.store.set_target_locales(revision,&["ja".into()]).unwrap();
+        active.execution.as_mut().unwrap().quiescing=true;active.store.execution_sequence().unwrap()
+    });
+    assert_eq!(fixture.call("read_ai_semantic_review_start_action",business.clone()).unwrap(),saved);
+    fixture.app.state::<AppState>().sessions.with(move |sessions| {
+        let active=sessions.active.as_mut().unwrap();assert_eq!(active.store.execution_sequence().unwrap(),sequence);active.execution.as_mut().unwrap().quiescing=false;
+    });
+    fixture.reopen();
+    assert_eq!(fixture.call("read_ai_semantic_review_start_action",business).unwrap(),saved);
+    fixture.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    assert_eq!(fixture.attempt_count(),retained_count);
+    // Reading cannot admit another task; the existing fixture may own other source checks.
+    assert_eq!(fixture.call("read_ai_semantic_review_start_action",json!({"attemptId":attempt,"digest":saved["preview"]["digest"],"confirmed":false})).unwrap(),saved);
+}

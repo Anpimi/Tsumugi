@@ -1,3 +1,4 @@
+import { jsonIdentity } from "./pluginToolChoices";
 import { sameAiConfig } from "./aiCommands";
 import { sameExecutionIds } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
@@ -69,6 +70,11 @@ export const aiSemanticReviewCommands = {
       }
       return true;
     }),
+  startAction: (request: Requests["semanticStartAction"], expected: AiSemanticReviewPreview) => checkedInvoke("read_ai_semantic_review_start_action", request,
+    (value): value is Responses["semanticStartAction"] => validators.validateResponseSemanticStartAction(value)
+      && (value === null || (value.projectId === request.projectId && value.attemptId === request.attemptId
+        && /^[a-f0-9]{64}$/.test(value.inputDigest) && validPreview(value.preview)
+        && value.preview.digest === request.digest && jsonIdentity(value.preview) === jsonIdentity(expected)))),
   read: (request: Requests["semanticRead"]) => checkedInvoke("read_ai_semantic_review", request,
     (value): value is AiSemanticReviewLookup => validators.validateResponseSemanticRead(value)
       && value.attemptId === request.attemptId && (value.view === null || validAiSemanticReviewView(value.view, request.attemptId))),

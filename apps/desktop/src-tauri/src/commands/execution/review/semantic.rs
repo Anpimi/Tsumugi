@@ -145,6 +145,18 @@ pub struct AiSemanticReviewView {
     pub detail: AttemptDetail,
     pub rows: Vec<AiSemanticReviewRow>,
 }
+/// An original enqueue receipt; progress and adopted findings are separate reads.
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiSemanticReviewStartRead {
+    pub project_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub input_digest: String,
+    pub preview: AiSemanticReviewPreviewView,
+}
+
 /// An absent task is an explicit successful ledger observation. Storage errors
 /// are still errors, so a lost start response cannot silently clear its intent.
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -176,6 +188,8 @@ mod wire_tests {
         }
         round_trip!("requests", "prepare", AiSemanticReviewPrepareRequest);
         round_trip!("requests", "start", AiSemanticReviewStartRequest);
+        round_trip!("requests", "startAction", AiSemanticReviewStartRequest);
+        round_trip!("responses", "startAction", Option<AiSemanticReviewStartRead>);
         round_trip!("requests", "read", AiSemanticReviewReadRequest);
         round_trip!("responses", "prepared", AiSemanticReviewPrepared);
         round_trip!("responses", "started", ExecutionId);
@@ -297,6 +311,21 @@ pub async fn start_ai_semantic_review(
             },
         )
         .await
+}
+
+#[tauri::command]
+pub async fn read_ai_semantic_review_start_action(
+    state: State<'_, AppState>, request: AiSemanticReviewStartRequest,
+) -> Result<Option<AiSemanticReviewStartRead>, CommandError> {
+    state.sessions.run("read_ai_semantic_review_start_action",CommandStage::ExecutionRead,move |sessions| {
+        let active=authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?;
+        // `confirmed` is temporary consent for the mutation. Reading cannot
+        // attest to it, restore it or use it to submit work.
+        active.store.ai_semantic_review_start_action_read(request.project_id,request.attempt_id,&request.digest)
+            .map(|found|found.map(|saved|AiSemanticReviewStartRead {project_id:saved.project_id,
+                attempt_id:saved.attempt_id,task_id:saved.task_id,input_digest:saved.input_digest,preview:saved.preview.into()}))
+            .map_err(map_read)
+    }).await
 }
 
 #[tauri::command]

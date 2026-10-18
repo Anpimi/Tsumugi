@@ -356,6 +356,7 @@ struct ResourceResponses {
 struct ReviewRequests {
     semantic_prepare: execution::review::semantic::AiSemanticReviewPrepareRequest,
     semantic_start: execution::review::semantic::AiSemanticReviewStartRequest,
+    semantic_start_action: execution::review::semantic::AiSemanticReviewStartRequest,
     semantic_read: execution::review::semantic::AiSemanticReviewReadRequest,
     page: execution::review::ReviewPageRequest,
     target: execution::review::ReviewTargetRequest,
@@ -386,6 +387,7 @@ struct ReviewRequests {
 struct ReviewResponses {
     semantic_prepare: execution::review::semantic::AiSemanticReviewPrepared,
     semantic_start: tsumugi_core::execution::ExecutionId,
+    semantic_start_action: Option<execution::review::semantic::AiSemanticReviewStartRead>,
     semantic_read: execution::review::semantic::AiSemanticReviewLookup,
     page: tsumugi_core::ReviewPage,
     target: tsumugi_core::ReviewTarget,

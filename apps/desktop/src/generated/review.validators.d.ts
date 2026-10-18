@@ -21,6 +21,7 @@ export declare function validateRequestScope(value: unknown): value is Requests[
 export declare function validateRequestSemanticPrepare(value: unknown): value is Requests["semanticPrepare"];
 export declare function validateRequestSemanticRead(value: unknown): value is Requests["semanticRead"];
 export declare function validateRequestSemanticStart(value: unknown): value is Requests["semanticStart"];
+export declare function validateRequestSemanticStartAction(value: unknown): value is Requests["semanticStartAction"];
 export declare function validateRequestSummary(value: unknown): value is Requests["summary"];
 export declare function validateRequestTarget(value: unknown): value is Requests["target"];
 export declare function validateRequestWaiver(value: unknown): value is Requests["waiver"];
@@ -47,6 +48,7 @@ export declare function validateResponseScope(value: unknown): value is Response
 export declare function validateResponseSemanticPrepare(value: unknown): value is Responses["semanticPrepare"];
 export declare function validateResponseSemanticRead(value: unknown): value is Responses["semanticRead"];
 export declare function validateResponseSemanticStart(value: unknown): value is Responses["semanticStart"];
+export declare function validateResponseSemanticStartAction(value: unknown): value is Responses["semanticStartAction"];
 export declare function validateResponseSummary(value: unknown): value is Responses["summary"];
 export declare function validateResponseTarget(value: unknown): value is Responses["target"];
 export declare function validateResponseWaiver(value: unknown): value is Responses["waiver"];

@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/aiSemanticReviewCommands.contract.json";
 import { aiSemanticReviewCommands, type AiSemanticReviewLookup } from "./aiSemanticReviewCommands";
 import * as validators from "./generated/review.validators";
+import { semanticPreparedFixture } from "./testSupport/aiSemanticReviewFixture";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 import { hasUnknownOutcome } from "./projectCommands";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -73,4 +75,15 @@ it("keeps full unsigned token counters and rejects number substitution or invent
 it.each([fixture.requests.prepare.projectId, null, {}])("treats an invalid start acknowledgement as unknown: %j", async result => {
   invoke.mockResolvedValueOnce(result);
   await expect(aiSemanticReviewCommands.start(fixture.requests.start)).rejects.toSatisfy(hasUnknownOutcome);
+});
+
+
+it("correlates original start proof with the full frozen preview and keeps temporary consent separate", async () => {
+  const prepared = semanticPreparedFixture();
+  const request = { projectId: fixtureIdentity(2400), sessionToken: "original-session", attemptId: prepared.attemptId, digest: prepared.preview.digest, confirmed: false };
+  const saved = { projectId: request.projectId, attemptId: request.attemptId, taskId: fixtureIdentity(2490), inputDigest: "f".repeat(64), preview: prepared.preview };
+  invoke.mockResolvedValueOnce(saved); expect(await aiSemanticReviewCommands.startAction(request, prepared.preview)).toEqual(saved);
+  expect(invoke).toHaveBeenLastCalledWith("read_ai_semantic_review_start_action", { request });
+  invoke.mockResolvedValueOnce(null); expect(await aiSemanticReviewCommands.startAction(request, prepared.preview)).toBeNull();
+  invoke.mockResolvedValueOnce({ ...saved, taskId: "invalid" }); await expect(aiSemanticReviewCommands.startAction(request, prepared.preview)).rejects.toThrow();
 });

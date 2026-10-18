@@ -78,6 +78,17 @@ pub struct AiSemanticReviewPreview {
     pub digest: String,
 }
 
+/// Historical enqueue evidence, independent of consent and current results.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiSemanticReviewStartReceipt {
+    pub project_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub input_digest: String,
+    pub preview: AiSemanticReviewPreview,
+}
+
 #[derive(Clone, Debug)]
 pub struct PreparedAiSemanticReview {
     pub(crate) preview: AiSemanticReviewPreview,

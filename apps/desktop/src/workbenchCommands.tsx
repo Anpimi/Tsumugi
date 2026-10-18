@@ -29,6 +29,7 @@ type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending" | "review.check-pending"
+  | "review.semantic-check-start" | "review.semantic-retry-start"
   | "review.approve-batch" | "review.stop-batch"
   | "source.discard" | "source.begin-update" | "source.show-current" | "source.read-current" | "source.read-applied" | "source.refresh-attempt";
 export interface ProjectMetadataReconcileCommandPayload {

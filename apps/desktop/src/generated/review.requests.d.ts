@@ -38,6 +38,7 @@ export interface Requests {
   semanticPrepare: AiSemanticReviewPrepareRequest;
   semanticRead: AiSemanticReviewReadRequest;
   semanticStart: AiSemanticReviewStartRequest;
+  semanticStartAction: AiSemanticReviewStartRequest;
   summary: ReviewSummaryPageRequest;
   target: ReviewTargetRequest;
   waiver: WaiverRequest;

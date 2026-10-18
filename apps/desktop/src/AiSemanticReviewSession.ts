@@ -1,7 +1,6 @@
 import { useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import { defaultAiConfig, editedAiConfig, sameAiConfig, type AiConfig } from "./aiCommands";
 import { aiSemanticReviewCommands, type AiSemanticReviewPrepared, type AiSemanticReviewRule, type AiSemanticReviewTarget } from "./aiSemanticReviewCommands";
-import { semanticReviewKey } from "./aiSemanticReviewQueries";
 import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
 import type { ConnectionReadView } from "./connectionCommands";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
@@ -92,18 +91,43 @@ export function useAiSemanticReviewSession(project: ProjectView, target: ReviewT
     } catch (error) { if (live()) update(value => ({ ...value, failure: commandFailure(error) })); }
     finally { working.current = false; update(value => ({ ...value, busy: null })); }
   }
+  function settleStart(pending: NonNullable<AiSemanticReviewDraft["pending"]>) {
+    if (!live() || stateRef.current.pending !== pending) return;
+    const { request, preparation } = pending;
+    update(value => ({ ...value, pending: null, prepared: value.prepared === preparation ? null : value.prepared,
+      attemptId: request.attemptId, attempts: value.attempts.includes(request.attemptId) ? value.attempts : [...value.attempts, request.attemptId],
+      notice: "started", failure: null }));
+    reads.invalidate(["execution"]);
+  }
+  async function lookupStart(original: NonNullable<AiSemanticReviewDraft["pending"]>, failure: CommandFailure | null) {
+    if (!live() || stateRef.current.pending !== original) return;
+    const pending = { ...original, absent: false };
+    update(value => ({ ...value, pending, busy: "check", failure: null, notice: null }));
+    try {
+      const found = await aiSemanticReviewCommands.startAction(pending.request, pending.preparation.value.preview);
+      if (!live() || stateRef.current.pending !== pending) return;
+      if (found !== null) settleStart(pending);
+      else update(value => ({ ...value, pending: { ...pending, absent: true }, failure, notice: "absent" }));
+    } catch (error) {
+      if (!live() || stateRef.current.pending !== pending) return;
+      update(value => ({ ...value, failure: commandFailure(error), notice: "unknown" }));
+    }
+  }
   async function send(request: StartRequest, preparation: Preparation) {
+    if (!live() || working.current) return;
+    const uncertain = stateRef.current.pending?.request === request;
+    const pending = { request, preparation, absent: false };
     working.current = true;
-    update(value => ({ ...value, busy: "start", pending: { request, preparation, absent: false }, consent: false, failure: null, notice: null }));
+    update(value => ({ ...value, busy: "start", pending, consent: false, failure: null, notice: null }));
     try {
       await aiSemanticReviewCommands.start(request);
-      if (!live()) return;
-      update(value => ({ ...value, pending: null, prepared: value.prepared === preparation ? null : value.prepared,
-        attemptId: request.attemptId, attempts: value.attempts.includes(request.attemptId) ? value.attempts : [...value.attempts, request.attemptId], notice: "started" }));
-      reads.invalidate(["execution"]);
+      settleStart(pending);
     } catch (error) {
-      if (!live()) return;
-      update(value => ({ ...value, pending: hasUnknownOutcome(error) ? value.pending : null, failure: commandFailure(error), notice: hasUnknownOutcome(error) ? "unknown" : null }));
+      if (!live() || stateRef.current.pending !== pending) return;
+      const unknown = hasUnknownOutcome(error), failure = commandFailure(error);
+      update(value => ({ ...value, pending: unknown || uncertain ? pending : null,
+        failure, notice: unknown || uncertain ? "unknown" : null }));
+      if (unknown) await lookupStart(pending, failure);
     } finally { working.current = false; update(value => ({ ...value, busy: null })); }
   }
   async function start() {
@@ -112,19 +136,10 @@ export function useAiSemanticReviewSession(project: ProjectView, target: ReviewT
     await send({ ...session, attemptId: prepared.value.attemptId, digest: prepared.value.preview.digest, confirmed: true }, prepared);
   }
   async function check() {
-    const original = stateRef.current.pending;
-    if (!live() || !original || working.current) return;
-    const pending = { ...original, absent: false };
-    working.current = true; update(value => ({ ...value, pending, busy: "check", failure: null }));
-    try {
-      const lookup = await aiSemanticReviewCommands.read({ ...session, attemptId: pending.request.attemptId });
-      if (!live() || stateRef.current.pending !== pending) return;
-      if (lookup.view) {
-        reads.client.setQueryData(reads.key(semanticReviewKey(lookup.attemptId)), lookup.view);
-        update(value => ({ ...value, pending: null, prepared: null, attemptId: lookup.attemptId,
-          attempts: value.attempts.includes(lookup.attemptId) ? value.attempts : [...value.attempts, lookup.attemptId], notice: "started" }));
-      } else update(value => ({ ...value, pending: { ...pending, absent: true }, notice: "absent" }));
-    } catch (error) { update(value => ({ ...value, failure: commandFailure(error), notice: "unknown" })); }
+    const pending = stateRef.current.pending;
+    if (!live() || !pending || working.current) return;
+    working.current = true;
+    try { await lookupStart(pending, stateRef.current.failure); }
     finally { working.current = false; update(value => ({ ...value, busy: null })); }
   }
   function reserved() {

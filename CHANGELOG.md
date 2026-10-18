@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Confirm an uncertain AI meaning and style review submission from its original
+  saved input and complete preview. Confirmation does not start model work;
+  newer review input is kept, and an uncertain retry remains recoverable.
+
 - Check the original saved QA result after an uncertain preparation or checking
   response, preserving drafts and newer observed results. Confirmation does not
   prepare or run checks; a missing saved result does not mean checking stopped,

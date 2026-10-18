@@ -292,6 +292,7 @@ export interface Responses {
   semanticPrepare: AiSemanticReviewPrepared;
   semanticRead: AiSemanticReviewLookup;
   semanticStart: ExecutionId;
+  semanticStartAction: AiSemanticReviewStartRead | null;
   summary: ReviewSummaryPage;
   target: ReviewTarget;
   waiver: Waiver;
@@ -1286,6 +1287,16 @@ export interface AiSemanticReviewRun {
   runId: ExecutionId;
   unitId: ExecutionId;
   validatorVersion: string;
+}
+/**
+ * An original enqueue receipt; progress and adopted findings are separate reads.
+ */
+export interface AiSemanticReviewStartRead {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  preview: AiSemanticReviewPreviewView;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface ReviewSummaryPage {
   nextOrdinal: number | null;

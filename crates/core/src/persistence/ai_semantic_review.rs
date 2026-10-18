@@ -213,6 +213,32 @@ fn current_item(
 }
 
 impl ProjectStore {
+    /// Confirm only the original durable enqueue. No currentness check,
+    /// preparation, runtime initialization or renewed execution permission.
+    pub fn ai_semantic_review_start_action_read(&self, project: ExecutionId,
+        attempt: ExecutionId, expected_digest: &str,
+    ) -> Result<Option<AiSemanticReviewStartReceipt>, ExecutionError> {
+        let found=review::read_snapshot(self.connection().map_err(|_|fail(ErrorCode::StorageFailed,"ai-review-start-read"))?, |c| {
+            if super::read_metadata_from(c).map_err(|_|corrupt())?.project_id().to_string()!=project.to_string() {
+                return Err(fail(ErrorCode::Unauthorized,"ai-review-project"));
+            }
+            let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                [attempt.to_string()],|row|row.get(0)).map_err(super::ledger::sql_error)?;
+            if !exists {return Ok(None);}
+            // The strict ledger reader also verifies retained semantic input
+            // references and the original task/attempt/input associations.
+            let input=super::ledger::load_input(c,attempt)?;
+            let preview=preview_from_input(&input)?;
+            if input.envelope().project_id!=project || preview.digest!=expected_digest {
+                return Err(fail(ErrorCode::ResultMismatch,"ai-review-start-request"));
+            }
+            Ok(Some(AiSemanticReviewStartReceipt {project_id:project,attempt_id:attempt,
+                task_id:input.envelope().task_id,input_digest:input.digest().to_owned(),preview}))
+        })?;
+        if self.is_reconciling() {self.reconcile_execution()?;}
+        Ok(found)
+    }
+
     /// Pure preparation of one explicitly selected finite set of unit/locale
     /// pairs. Every item shares the original Task's provider budget.
     pub fn prepare_ai_semantic_review(
@@ -664,4 +690,44 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         .ok_or_else(corrupt)?;
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod start_read_tests {
+    use super::*;
+    use crate::persistence::review::tests::{fixture,translate,adopt_source};
+
+    #[test]
+    fn semantic_start_read_confirms_original_input_without_current_authority_or_runtime() {
+        let (directory,mut store,project,units)=fixture();let unit=units[0];
+        translate(&mut store,project,unit,"zh-CN","Saved original translation");
+        let config=AiConfig {endpoint:"https://model.example/v1/chat/completions".into(),model:"synthetic-review".into(),credential_env:String::new(),..Default::default()};
+        let prepared=store.prepare_ai_semantic_review(config,&[AiSemanticReviewTarget {unit_id:unit,locale:"zh-CN".into()}],&[AiSemanticReviewRule::Meaning,AiSemanticReviewRule::Style]).unwrap();
+        let input=prepared.input();let attempt=input.envelope().attempt_id;let original=&prepared.preview().digest;
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert_eq!(store.ai_semantic_review_start_action_read(project,attempt,original).unwrap(),None);assert!(!store.is_reconciling());
+        store.enqueue_execution(input).unwrap();
+        let expected=AiSemanticReviewStartReceipt {project_id:project,attempt_id:attempt,task_id:input.envelope().task_id,
+            input_digest:input.digest().into(),preview:prepared.preview().clone()};
+        assert_eq!(store.ai_semantic_review_start_action_read(project,attempt,original).unwrap(),Some(expected.clone()));
+        for (owner,proof) in [(project,"0".repeat(64)),(ExecutionId::new(),original.clone())] {
+            store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+            assert!(store.ai_semantic_review_start_action_read(owner,attempt,&proof).is_err());assert!(store.is_reconciling());
+        }
+        let c=store.connection().unwrap();
+        c.execute("UPDATE execution_attempts SET digest=?2 WHERE attempt_id=?1",params![attempt.to_string(),"0".repeat(64)]).unwrap();
+        assert!(store.ai_semantic_review_start_action_read(project,attempt,original).is_err());assert!(store.is_reconciling());
+        c.execute("UPDATE execution_attempts SET digest=?2 WHERE attempt_id=?1",params![attempt.to_string(),input.digest()]).unwrap();
+        let source_attempt:String=c.query_row("SELECT attempt_id FROM source_snapshots LIMIT 1",[],|row|row.get(0)).unwrap();
+        assert!(store.ai_semantic_review_start_action_read(project,ExecutionId::parse(&source_attempt).unwrap(),original).is_err());assert!(store.is_reconciling());
+        assert_eq!(store.ai_semantic_review_start_action_read(project,attempt,original).unwrap(),Some(expected.clone()));assert!(!store.is_reconciling());
+        translate(&mut store,project,unit,"zh-CN","Newer selected translation");
+        adopt_source(&mut store,br#"{"replacement":"Changed source"}"#);
+        let revision=store.metadata().unwrap().metadata_revision();store.set_target_locales(revision,&["ja".into()]).unwrap();
+        let sequence=store.execution_sequence().unwrap();
+        assert_eq!(store.ai_semantic_review_start_action_read(project,attempt,original).unwrap(),Some(expected.clone()));assert_eq!(store.execution_sequence().unwrap(),sequence);
+        store.close().unwrap();let reopened=ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_eq!(reopened.ai_semantic_review_start_action_read(project,attempt,original).unwrap(),Some(expected));
+    }
 }

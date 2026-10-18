@@ -12,13 +12,14 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewSummaryFor } from "./testSupport/reviewFixture";
 import { i18n } from "./i18n";
 import { connectionFixture } from "./testSupport/connectionFixture";
-import { executionCommands, type PrepareRequest, type Receipt } from "./executionCommands";
+import { executionCommands, type PrepareRequest, type Receipt, type AdoptionAction } from "./executionCommands";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import execution from "../test/fixtures/executionCommands.contract.json";
 import { ReviewFindings } from "./ReviewFindings";
 import { reviewCommands } from "./reviewCommands";
 import { semanticDiagnosticFixture } from "./testSupport/semanticDiagnosticFixture";
 import { useSessionReads } from "./SessionReadProvider";
+import { useWorkbenchCommands } from "./workbenchCommands";
 import { semanticReviewKey } from "./aiSemanticReviewQueries";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -28,8 +29,9 @@ const project: ProjectView = { sessionToken: "semantic-review-session", locator:
 let review!: ReturnType<typeof useReviewDraftSession>;
 let tasks!: ReturnType<typeof useExecutionTaskSession>;
 let reads!: ReturnType<typeof useSessionReads>;
+let registry!: ReturnType<typeof useWorkbenchCommands>;
 let target = semanticTargetFixture();
-function Probe() { const owner = useReviewDraftSession(), taskOwner = useExecutionTaskSession(), readOwner = useSessionReads(); useLayoutEffect(() => { review = owner; tasks = taskOwner; reads = readOwner; }); return null; }
+function Probe() { const owner = useReviewDraftSession(), taskOwner = useExecutionTaskSession(), readOwner = useSessionReads(), commands = useWorkbenchCommands(); useLayoutEffect(() => { review = owner; tasks = taskOwner; reads = readOwner; registry = commands; }); return null; }
 function Harness() { return <><Probe /><AiSemanticReview project={project} active disabled={false} currentTarget={() => target} /></>; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 async function setup(expanded = true) {
@@ -47,6 +49,9 @@ beforeEach(async () => {
     return { ...prepared, preview: { ...prepared.preview, rules: request.rules, items: request.targets.map(pair => semanticPreparedFixture({ ...target, unitId: pair.unitId, locale: pair.locale }, request.config).preview.items[0]) } };
   });
   vi.spyOn(aiSemanticReviewCommands, "start").mockImplementation(async request => request.attemptId);
+  vi.spyOn(aiSemanticReviewCommands, "startAction").mockImplementation(async (request, preview) => ({
+    projectId: request.projectId, attemptId: request.attemptId, taskId: fixtureIdentity(2490), inputDigest: "f".repeat(64), preview,
+  }));
   vi.spyOn(aiSemanticReviewCommands, "read").mockImplementation(async request => ({ attemptId: request.attemptId, view: semanticViewFixture() }));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -114,7 +119,7 @@ it("freezes an explicit cross-language pair batch and invalidates consent when t
 
 it("keeps the same unknown start through failed reads and only retries after an observed absence", async () => {
   vi.mocked(aiSemanticReviewCommands.start).mockRejectedValueOnce(new Error("Lost original ACK"));
-  vi.mocked(aiSemanticReviewCommands.read).mockRejectedValueOnce(new Error("Read unavailable"));
+  vi.mocked(aiSemanticReviewCommands.startAction).mockRejectedValueOnce(new Error("Automatic read unavailable")).mockRejectedValueOnce(new Error("Manual read unavailable"));
   await setup();
   await act(async () => { await review.semantic.prepare(); }); act(() => review.semantic.setConsent(true));
   await act(async () => { await review.semantic.start(); });
@@ -122,7 +127,7 @@ it("keeps the same unknown start through failed reads and only retries after an 
   await act(async () => { await review.semantic.check(); await review.semantic.retry(); });
   expect(review.semantic.current().pending?.request).toBe(request); expect(review.semantic.current().pending?.absent).toBe(false);
   expect(aiSemanticReviewCommands.start).toHaveBeenCalledOnce();
-  vi.mocked(aiSemanticReviewCommands.read).mockResolvedValueOnce({ attemptId: request.attemptId, view: null });
+  vi.mocked(aiSemanticReviewCommands.startAction).mockResolvedValueOnce(null);
   await act(async () => { await review.semantic.check(); await review.semantic.retry(); });
   expect(aiSemanticReviewCommands.start).toHaveBeenCalledTimes(2); expect(vi.mocked(aiSemanticReviewCommands.start).mock.calls[1][0]).toBe(request);
   expect(review.semantic.current().pending).toBeNull();
@@ -130,6 +135,7 @@ it("keeps the same unknown start through failed reads and only retries after an 
 
 it("reconciles the original accepted attempt without overwriting newer config or sending a replacement", async () => {
   vi.mocked(aiSemanticReviewCommands.start).mockRejectedValueOnce(new Error("Lost original ACK"));
+  vi.mocked(aiSemanticReviewCommands.startAction).mockRejectedValueOnce(new Error("Automatic read unavailable"));
   await setup(); await act(async () => { await review.semantic.prepare(); }); act(() => review.semantic.setConsent(true));
   await act(async () => { await review.semantic.start(); });
   act(() => review.semantic.setConfig(value => ({ ...value, model: "retained-model-B" })));
@@ -150,15 +156,16 @@ it("records exactly one authoritative recovery unit through the original Task ow
   vi.mocked(aiSemanticReviewCommands.read).mockResolvedValue({ attemptId: view.detail.attemptId, view });
   vi.spyOn(executionCommands, "identity").mockResolvedValue(fixtureIdentity(2480));
   let captured!: PrepareRequest;
+  let recordedAction!: AdoptionAction;
   const prepare = vi.spyOn(executionCommands, "prepare").mockImplementation(async request => {
     captured = request;
-    return { ...execution.action, projectId: request.projectId, actionId: request.actionId, attemptId: request.attemptId,
+    return recordedAction = { ...execution.action, projectId: request.projectId, actionId: request.actionId, attemptId: request.attemptId,
       unitId: request.unitId, operation: "ai-semantic-review", resultIds: request.resultIds, parameters: null };
   });
   const adopt = vi.spyOn(executionCommands, "adopt").mockRejectedValueOnce(new Error("Lost recording ACK"));
-  const receipt = vi.spyOn(executionCommands, "receipt").mockImplementation(async () => ({ ...execution.receipt,
+  const receipt = vi.spyOn(executionCommands, "adoptionAction").mockImplementation(async () => ({ action: recordedAction, receipt: { ...execution.receipt,
     projectId: captured.projectId, actionId: captured.actionId, attemptId: captured.attemptId, unitId: captured.unitId,
-    changes: [{ kind: "ai-semantic-review", id: target.unitId, revision: "1" }] } satisfies Receipt));
+    changes: [{ kind: "ai-semantic-review", id: target.unitId, revision: "1" }] } satisfies Receipt })).mockRejectedValueOnce(new Error("Automatic full action read unavailable"));
   await setup(); await act(async () => { await review.semantic.prepare(); }); act(() => review.semantic.setConsent(true));
   await act(async () => { await review.semantic.start(); }); const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Review recording these advisory findings" }));
@@ -168,7 +175,7 @@ it("records exactly one authoritative recovery unit through the original Task ow
   act(() => review.editReason(target, "Newer reason B"));
   await user.click(screen.getByRole("button", { name: "Check original recording receipt" }));
   await waitFor(() => expect(tasks.currentActivity()?.phase).toBe("recorded"));
-  expect(prepare).toHaveBeenCalledOnce(); expect(adopt).toHaveBeenCalledOnce(); expect(receipt).toHaveBeenCalledWith(expect.objectContaining({ actionId: captured.actionId }));
+  expect(prepare).toHaveBeenCalledOnce(); expect(adopt).toHaveBeenCalledOnce(); expect(receipt).toHaveBeenCalledTimes(2); expect(receipt).toHaveBeenLastCalledWith(captured);
   expect(review.current().drafts[`${target.locale}:${target.unitId}`]).toBe("Newer reason B");
 });
 
@@ -199,4 +206,22 @@ it("does not let a departed session apply a late preview to the replacement sess
   ui.rerender(<Probe />, replacement);
   await act(async () => { pending.resolve(semanticPreparedFixture()); await work; });
   expect(review.semantic.current().prepared).toBeNull(); expect(review.semantic.current().pending).toBeNull();
+});
+
+
+it("registers separate pure start checking and explicit retry, hidden and busy gates included", async () => {
+  const delayed = deferred<Awaited<ReturnType<typeof aiSemanticReviewCommands.startAction>>>();
+  vi.mocked(aiSemanticReviewCommands.start).mockRejectedValueOnce(new Error("Lost ACK"));
+  vi.mocked(aiSemanticReviewCommands.startAction).mockReturnValueOnce(delayed.promise);
+  await setup(); await act(async () => { await review.semantic.prepare(); }); act(() => review.semantic.setConsent(true));
+  let work!: Promise<void>; await act(async () => { work = review.semantic.start(); });
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  expect(registry.list(scope).find(item => item.id === "review.semantic-check-start")).toMatchObject({ risk: "reads-review", availability: { enabled: false, reason: "busy" } });
+  expect(registry.dispatch("review.semantic-check-start", scope)).toBe(false); expect(registry.dispatch("review.semantic-retry-start", scope)).toBe(false);
+  await act(async () => { delayed.resolve(null); await work; });
+  expect(registry.list(scope).find(item => item.id === "review.semantic-check-start")?.availability.enabled).toBe(true);
+  expect(registry.list(scope).find(item => item.id === "review.semantic-retry-start")?.availability.enabled).toBe(true);
+  act(() => review.semantic.setExpanded(false));
+  expect(registry.dispatch("review.semantic-check-start", scope)).toBe(false); expect(registry.dispatch("review.semantic-retry-start", scope)).toBe(false);
+  expect(aiSemanticReviewCommands.start).toHaveBeenCalledOnce();
 });

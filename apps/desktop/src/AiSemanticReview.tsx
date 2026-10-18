@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AiConnectionFields } from "./AiConnectionFields";
 import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
@@ -12,6 +12,7 @@ import { useReviewDraftSession } from "./ReviewDraftSession";
 import type { ReviewTarget } from "./reviewCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { ProjectFactPreview, SourceContextChoice, SourceContextPreview } from "./SourceContextPreparation";
+import { useWorkbenchCommands } from "./workbenchCommands";
 import { enUS } from "./i18n/en-US";
 
 export function AiSemanticReview({ project, active, disabled, currentTarget, onOpenConnections }: {
@@ -33,6 +34,27 @@ export function AiSemanticReview({ project, active, disabled, currentTarget, onO
   const ownActivity = tasks.activity?.intent.operation === "ai-semantic-review" ? tasks.activity : null;
   const recordPending = !!ownActivity && !["recorded", "rejected"].includes(ownActivity.phase);
   const blocked = !active || disabled || reads.retired || !!review.state.pending || review.state.busyMutation || review.state.batchRunning || recordPending;
+  const registry = useWorkbenchCommands();
+  const commandScope = { projectId: session.projectId, sessionToken: session.sessionToken, area: "review" as const };
+  function checkAvailability() {
+    if (!active || !owner.current().expanded || reads.retired) return { enabled: false, reason: "hidden" as const };
+    if (owner.current().busy) return { enabled: false, reason: "busy" as const };
+    return owner.current().pending ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
+  }
+  function retryAvailability() {
+    const available = checkAvailability();
+    if (!available.enabled) return available;
+    const pending = owner.current().pending;
+    return !blocked && pending?.absent && owner.preparationCurrent(pending.preparation)
+      ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
+  }
+  useLayoutEffect(() => {
+    const removeCheck = registry.register({ id: "review.semantic-check-start", nameKey: "semanticReview.check", category: "review", scope: commandScope,
+      binding: null, risk: "reads-review", confirmation: "none", availability: checkAvailability, handler: () => { void owner.check(); } });
+    const removeRetry = registry.register({ id: "review.semantic-retry-start", nameKey: "semanticReview.retry", category: "review", scope: commandScope,
+      binding: null, risk: "retries-review-action", confirmation: "none", availability: retryAvailability, handler: () => { void owner.retry(); } });
+    return () => { removeCheck(); removeRetry(); };
+  });
   const pairCount = owner.targets().length;
   const pairLimitValid = Number.isInteger(state.config.maxItems) && state.config.maxItems >= 1 && state.config.maxItems <= 100;
   const canPrepare = active && !blocked && !owner.reserved() && pairCount > 0 && pairLimitValid && pairCount <= state.config.maxItems && state.rules.length > 0
@@ -93,8 +115,8 @@ export function AiSemanticReview({ project, active, disabled, currentTarget, onO
         <button type="button" className="primary-button" disabled={blocked || owner.reserved() || !fresh || !state.consent} onClick={() => void owner.start()}>{t("semanticReview.start")}</button>
       </section> : null}
       {state.pending ? <section aria-label={t("semanticReview.original")}><h4>{t("semanticReview.original")}</h4><p>{state.pending.preparation.value.preview.config.model}</p>
-        <button type="button" className="secondary-button" disabled={!!state.busy || !active} onClick={() => void owner.check()}>{t("semanticReview.check")}</button>
-        {state.pending.absent ? <><button type="button" className="secondary-button" disabled={blocked || !!state.busy || !owner.preparationCurrent(state.pending.preparation)} onClick={() => void owner.retry()}>{t("semanticReview.retry")}</button><button type="button" className="secondary-button" disabled={!!state.busy} onClick={owner.discardAbsent}>{t("semanticReview.discardAbsent")}</button></> : null}
+        <button type="button" className="secondary-button" disabled={!checkAvailability().enabled} onClick={() => registry.dispatch("review.semantic-check-start", commandScope)}>{t("semanticReview.check")}</button>
+        {state.pending.absent ? <><button type="button" className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => registry.dispatch("review.semantic-retry-start", commandScope)}>{t("semanticReview.retry")}</button><button type="button" className="secondary-button" disabled={!!state.busy} onClick={owner.discardAbsent}>{t("semanticReview.discardAbsent")}</button></> : null}
       </section> : null}
       {state.attempts.length ? <label className="field">{t("semanticReview.history")}<select value={state.attemptId ?? ""} disabled={!active || owner.reserved()} onChange={event => owner.showAttempt(event.target.value)}>{state.attempts.map((id, index) => <option value={id} key={id}>{t("semanticReview.attempt", { count: index + 1 })}</option>)}</select></label> : null}
       {state.attemptId ? <><button type="button" className="secondary-button" disabled={query.isFetching || !active} onClick={() => void query.refetch()}>{t("semanticReview.refresh")}</button>

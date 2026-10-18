@@ -47,6 +47,13 @@
       "projectId": "60000000-0000-4000-8000-000000000001",
       "attemptId": "60000000-0000-4000-8000-000000000002",
       "sessionToken": "isolated-ai-arena-session"
+    },
+    "startAction": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "sessionToken": "isolated-ai-arena-session",
+      "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "confirmed": true
     }
   },
   "responses": {
@@ -709,6 +716,102 @@
             },
             "current": true
           }
+        ]
+      }
+    },
+    "startAction": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "taskId": "60000000-0000-4000-8000-000000000007",
+      "inputDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "preview": {
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "items": [
+          {
+            "source": {
+              "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+              "targetLocale": "zh-CN",
+              "omissions": [],
+              "resourceBaseline": "18446744073709551615",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "context": {
+                "revisionId": "30000000-0000-4000-8000-000000000008",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "locale": "zh-CN",
+                "text": "Translator note 中文 👩🏽‍💻 é",
+                "reason": "Reviewed context",
+                "previousRevisionId": null
+              },
+              "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+              "nativeKey": "barrel",
+              "terms": [
+                {
+                  "target": "木桶 👩🏽‍💻 é",
+                  "revisionId": "60000000-0000-4000-8000-000000000006",
+                  "source": "barrel",
+                  "protected": true
+                }
+              ],
+              "sourceText": "Barrel {name}",
+              "sourceLocale": "en",
+              "sourceContext": {
+                "kind": "not-selected"
+              },
+              "projectContext": {
+                "kind": "selected",
+                "scope": {
+                  "projectId": "60000000-0000-4000-8000-000000000001",
+                  "unitId": "60000000-0000-4000-8000-000000000003",
+                  "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                  "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                  "locale": "zh-CN"
+                },
+                "manual": true,
+                "decisions": []
+              }
+            },
+            "selectionId": "70000000-0000-4000-8000-000000000001",
+            "translationRevisionId": "70000000-0000-4000-8000-000000000002",
+            "translationText": "Synthetic saved translation",
+            "reviewBasis": {
+              "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+              "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+              "selectionId": "70000000-0000-4000-8000-000000000001",
+              "revisionId": "70000000-0000-4000-8000-000000000002",
+              "contextRevisionId": "30000000-0000-4000-8000-000000000008",
+              "termRevisionIds": [
+                "60000000-0000-4000-8000-000000000006"
+              ]
+            },
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "config": {
+          "maxItems": 20,
+          "tokenField": "max_tokens",
+          "shareTerms": true,
+          "concurrency": 1,
+          "timeoutSeconds": 60,
+          "model": "synthetic-model",
+          "shareContext": true,
+          "maxRequests": 20,
+          "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+          "maxOutputTokens": 2000,
+          "credentialEnv": "",
+          "maxRetries": 0,
+          "sourceContext": {
+            "extracted": false,
+            "inferred": false,
+            "neighbors": false,
+            "maxBytes": 16384,
+            "maxItems": 128
+          },
+          "contextStrategy": null
+        },
+        "recipe": "semantic-review-1",
+        "rules": [
+          "meaning",
+          "style"
         ]
       }
     }
