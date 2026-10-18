@@ -84,6 +84,7 @@ macro_rules! handlers {
         resource::decide_context_fact,resource::read_context_fact_decisions,resource::read_context_fact_action,resource::read_context_fact_history,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
         review::read_review_findings,review::read_review_finding_action,review::write_review_finding,
+        review::read_review_decision_action,review::read_review_waiver_action,review::read_review_fallback_action,
         review::semantic::prepare_ai_semantic_review,review::semantic::start_ai_semantic_review,review::semantic::read_ai_semantic_review,
         review::read_review_page,review::read_review_target,review::read_review_diagnostic_location,review::read_review_history,review::write_review_decision,
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,

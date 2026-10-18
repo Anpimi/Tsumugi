@@ -351,6 +351,16 @@ impl ProjectStore {
         }
         Ok(value)
     }
+    /// Explicit read recovery; mutation replay retains the raw lookup above.
+    pub fn review_finding_action_read(
+        &self, project: ExecutionId, action: ExecutionId,
+    ) -> Result<Option<ReviewFindingDecision>, ExecutionError> {
+        let value = read_snapshot(self.connection().map_err(|_|failure(ErrorCode::StorageFailed,"review-read"))?, |_| {
+            self.review_finding_action(project,action)
+        })?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(value)
+    }
     pub fn write_review_finding(
         &mut self,
         r: &ReviewFindingWrite,

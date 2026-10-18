@@ -5,6 +5,7 @@ import { reviewCommands, confirmReviewFindingBasis, confirmReviewFindingEvidence
 import * as validators from "./generated/review.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 import { reviewDiagnosticFixture } from "./testSupport/reviewDiagnosticFixture";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -256,4 +257,47 @@ it("validates finding transport and exact action/evidence receipts without grant
   expect(()=>confirmReviewFindingEvidence({...result,requirement:{...result.requirement,inputDigest:"d".repeat(64)}},page.findings[0])).toThrow("Invalid review finding acknowledgement");
   invoke.mockResolvedValueOnce({...page,findings:[{...page.findings[0],requirement:{...result.requirement,mandatory:true}}]});
   await expect(reviewCommands.findings({...session,unitId:target.unitId,locale:target.locale,offset:0,limit:20})).rejects.toThrow();
+});
+
+it("reads each complete human decision request without dispatching its mutation", async () => {
+  const decision = { ...decisionRequest().decision, expectedDecisionId: fixture.requests.decision.decision.expectedDecisionId ?? null };
+  const waiver = { ...fixture.requests.waiver.waiver, expectedWaiverId: fixture.requests.waiver.waiver.expectedWaiverId ?? null };
+  const fallback = { ...fixture.requests.fallback.fallback, expectedFallbackId: fixture.requests.fallback.fallback.expectedFallbackId ?? null };
+  for (const [command, request, response, read] of [
+    ["read_review_decision_action", { ...session, decision }, { request: decision, receipt: fixture.responses.decision }, () => reviewCommands.decisionAction(session, decision)],
+    ["read_review_waiver_action", { ...session, waiver }, { request: waiver, receipt: fixture.responses.waiver }, () => reviewCommands.waiverAction(session, waiver)],
+    ["read_review_fallback_action", { ...session, fallback }, { request: fallback, receipt: fixture.responses.fallback }, () => reviewCommands.fallbackAction(session, fallback)],
+  ] as const) {
+    invoke.mockResolvedValueOnce(response);
+    expect(await read()).toEqual(response);
+    expect(invoke).toHaveBeenLastCalledWith(command, { request });
+    invoke.mockResolvedValueOnce(null); expect(await read()).toBeNull();
+  }
+  expect(invoke).toHaveBeenCalledTimes(6);
+});
+
+it.each(["decision", "waiver", "fallback"] as const)("rejects incomplete or differently bound %s action echoes before receipt settlement", async kind => {
+  const original = kind === "decision" ? { ...decisionRequest().decision, expectedDecisionId: null }
+    : kind === "waiver" ? { ...fixture.requests.waiver.waiver, expectedWaiverId: null }
+    : { ...fixture.requests.fallback.fallback, expectedFallbackId: null };
+  const receipt = kind === "decision" ? fixture.responses.decision : kind === "waiver" ? fixture.responses.waiver : fixture.responses.fallback;
+  const nullable = kind === "decision" ? "expectedDecisionId" : kind === "waiver" ? "expectedWaiverId" : "expectedFallbackId";
+  const read = () => kind === "decision" ? reviewCommands.decisionAction(session, { ...decisionRequest().decision, expectedDecisionId: null })
+    : kind === "waiver" ? reviewCommands.waiverAction(session, { ...fixture.requests.waiver.waiver, expectedWaiverId: null })
+    : reviewCommands.fallbackAction(session, { ...fixture.requests.fallback.fallback, expectedFallbackId: null });
+  const missing = { ...original } as Record<string, unknown>; delete missing[nullable];
+  for (const response of [undefined, {}, { request: original },
+    { request: missing, receipt }, { request: { ...original, [nullable]: fixture.requests.target.unitId }, receipt },
+    ...["projectId", "actionId", "unitId", "locale", "expectedBasis", "actor", "reason"].map(key => ({ request: { ...original, [key]: key.endsWith("Id") ? fixtureIdentity(3300) : key === "locale" ? "fr" : "different" }, receipt })),
+    { request: original, receipt: { ...receipt, actionId: fixture.requests.target.unitId } },
+  ]) {
+    invoke.mockResolvedValueOnce(response);
+    await expect(read()).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  const changed = kind === "decision" ? { ...original, kind: fixture.requests.decision.decision.kind === "approve" ? "request-changes" : "approve" }
+    : kind === "waiver" ? { ...original, grant: !fixture.requests.waiver.waiver.grant }
+    : { ...original, allow: !fixture.requests.fallback.fallback.allow };
+  invoke.mockResolvedValueOnce({ request: changed, receipt });
+  await expect(read()).rejects.toSatisfy(hasUnknownOutcome);
+  expect(invoke.mock.calls.every(([command]) => command.startsWith("read_review_"))).toBe(true);
 });

@@ -1,7 +1,7 @@
 import { useSessionAlive, useSessionReads } from "./SessionReadProvider";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
-import { executionCommands, executionContext } from "./executionCommands";
+import { executionCommands, executionContext, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCommands";
 import { confirmReviewFindingEvidence, confirmReviewFindingBasis, confirmReviewFinding, reviewCommands, type ReviewFindingWrite, type ReviewFindingDecision, type ReviewBasis, type AdvisoryFinding, type CheckRun, type FallbackDecision, type FallbackWrite, type ReviewDecision,
   type ReviewSummary, type ReviewTarget, type ReviewWrite, type Waiver, type WaiverWrite } from "./reviewCommands";
@@ -10,13 +10,20 @@ import type { ReviewCheckRequest, ReviewCheckStartRequest, ReviewPluginCheckView
 import type { PluginTextReviewSelection } from "./pluginCommands";
 import { useAiSemanticReviewSession } from "./AiSemanticReviewSession";
 type ReviewCheckPreparation = { request: ReviewCheckRequest; view: ReviewPluginCheckView };
-export type ReviewPending =
+export type ReviewHumanPending = (
   | { kind: "finding"; request: ReviewFindingWrite; basisEvidence: ReviewBasis; evidence: Pick<AdvisoryFinding, "requirement" | "finding" | "runId" | "purpose" | "aiOrigin">; submittedSeq: number }
   | { kind: "decision"; request: ReviewWrite; submittedSeq: number }
-  | { kind: "prepare-check"; request: ReviewCheckRequest; submittedSeq: null }
-  | { kind: "check"; request: ReviewCheckRequest; executions: ReviewCheckStartRequest["executions"]; submittedSeq: null }
   | { kind: "waiver"; request: WaiverWrite; submittedSeq: number }
-  | { kind: "fallback"; request: FallbackWrite; submittedSeq: number };
+  | { kind: "fallback"; request: FallbackWrite; submittedSeq: number }) & { session: SessionRequest };
+export type ReviewPending = ReviewHumanPending
+  | { kind: "prepare-check"; request: ReviewCheckRequest; submittedSeq: null }
+  | { kind: "check"; request: ReviewCheckRequest; executions: ReviewCheckStartRequest["executions"]; submittedSeq: null };
+export function isHumanReviewPending(action: ReviewPending): action is ReviewHumanPending {
+  return action.kind !== "check" && action.kind !== "prepare-check";
+}
+type HumanReceipt = ReviewDecision | Waiver | FallbackDecision | ReviewFindingDecision;
+type HumanOutcome = { kind: "saved"; receipt: HumanReceipt; checked: boolean }
+  | { kind: "pending" } | { kind: "retired" } | { kind: "rejected"; error: unknown };
 export type ReviewNotice = "saved" | "unknown" | "conflict" | "error" | "checkFailed" | "checkCancelled" | "checkUnknown" | "cancelRequested" | null;
 export interface ReviewBatchStatus { applied: number; conflicted: number; failed: number; notStarted: number }
 
@@ -34,6 +41,8 @@ export interface ReviewDraftState {
   chosen: Record<string, ReviewSummary>;
   pending: ReviewPending | null;
   pendingUncertain: boolean;
+  checkingAction: boolean;
+  retryAllowed: boolean;
   notice: ReviewNotice;
   reasonValue: CommandFailure;
   busyMutation: boolean;
@@ -74,6 +83,7 @@ interface ReviewSession {
   finding: (capture: Pick<ReviewFindingWrite, "runId" | "issueId" | "expectedDecisionId" | "disposition"> & { evidence: Pick<AdvisoryFinding, "requirement" | "finding" | "runId" | "purpose" | "aiOrigin"> }, currentRead: () => boolean) => Promise<ReviewFindingDecision | null>;
   fallback: (allow: boolean, currentRead: () => boolean) => Promise<void>;
   retryPending: () => Promise<void>;
+  checkPending: () => Promise<void>;
   cancelCheck: () => Promise<void>;
   approveBatch: () => Promise<void>;
   stopBatch: () => void;
@@ -92,7 +102,7 @@ function isConflict(error: unknown) { return (error as { code?: string } | null)
 export function ReviewDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
   const [state, setState] = useState<ReviewDraftState>(() => ({
     locale: project.metadata.targetLocales[0] ?? "", actor: "", drafts: {}, editSeq: {}, draftTargets: {}, selected: null, projection: null, chosen: {},
-    pending: null, pendingUncertain: false, notice: null, reasonValue: "", busyMutation: false, activeCheckId: null,
+    pending: null, pendingUncertain: false, checkingAction: false, retryAllowed: false, notice: null, reasonValue: "", busyMutation: false, activeCheckId: null,
     batchRunning: false, batchStatus: null, completionVersion: 0, advisoryChecks: [], checkReview: null, checkConsent: [],
   }));
   const currentState = useRef(state);
@@ -112,7 +122,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
 
   function update(change: (before: ReviewDraftState) => ReviewDraftState) {
     const before = currentState.current;
-    if (!mounted.current) return before;
+    if (!mounted.current || reads.retired) return before;
     const after = change(before);
     currentState.current = after;
     if (after !== before) setState(after);
@@ -207,15 +217,23 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       if (before.pending !== pending) return before;
       function withReceipt(target: ReviewTarget): ReviewTarget {
         if (action.kind === "finding") return target;
-        if (action.kind === "decision") return { ...target, currentDecision: receipt as ReviewDecision };
+        if (action.kind === "decision") {
+          const decision = receipt as ReviewDecision, observed = target.currentDecision?.decisionId ?? null;
+          return observed === action.request.expectedDecisionId || observed === decision.decisionId
+            ? { ...target, currentDecision: decision } : target;
+        }
         if (action.kind === "check") return { ...target, currentCheck: receipt as CheckRun };
         if (action.kind === "waiver") {
           const waiver = receipt as Waiver;
+          const observed = target.currentWaivers.find(value => value.issueId === action.request.issueId)?.waiverId ?? null;
+          if (observed !== action.request.expectedWaiverId && observed !== waiver.waiverId) return target;
           return { ...target, currentWaivers: action.request.grant
             ? [...target.currentWaivers.filter(value => value.issueId !== waiver.issueId), waiver]
             : target.currentWaivers.filter(value => value.waiverId !== action.request.expectedWaiverId) };
         }
-        return { ...target, currentFallback: action.request.allow ? receipt as FallbackDecision : null };
+        const fallback = receipt as FallbackDecision, observed = target.currentFallback?.fallbackId ?? null;
+        return observed === action.request.expectedFallbackId || observed === fallback.fallbackId
+          ? { ...target, currentFallback: action.request.allow ? fallback : null } : target;
       }
       const selected = matchingSelected(before, action) && before.selected ? withReceipt(before.selected) : before.selected;
       const projection = before.projection?.unitId === action.request.unitId && before.projection.locale === action.request.locale
@@ -227,29 +245,97 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       let chosen = before.chosen;
       if (action.kind === "decision") {
         const key = reviewDraftKey(action.request);
-        if (chosen[key]?.basis === action.request.expectedBasis) { chosen = { ...chosen }; delete chosen[key]; }
+        const observed = chosen[key]?.currentDecision?.decisionId ?? null;
+        if (chosen[key]?.basis === action.request.expectedBasis && (observed === action.request.expectedDecisionId
+          || observed === (receipt as ReviewDecision).decisionId)) { chosen = { ...chosen }; delete chosen[key]; }
       }
       const nextReason = reasonAfterReceipt({ ...before, draftTargets }, action);
       const checkOutcome = action.kind === "check" ? (receipt as CheckRun).outcome : null;
-      return { ...before, ...nextReason, selected, projection, chosen, pending: null, pendingUncertain: false,
+      const batchStatus = action.kind === "decision" && action.submittedSeq === -1 && !before.batchRunning
+        && before.batchStatus && before.batchStatus.failed > 0
+        ? { ...before.batchStatus, applied: before.batchStatus.applied + 1, failed: before.batchStatus.failed - 1 } : before.batchStatus;
+      return { ...before, ...nextReason, selected, projection, chosen, batchStatus, pending: null, pendingUncertain: false, checkingAction: false, retryAllowed: false,
         notice: checkOutcome === "failed" ? "checkFailed" : checkOutcome === "cancelled" ? "checkCancelled" : checkOutcome === "unknown" ? "checkUnknown" : "saved",
-        reasonValue: "", completionVersion: before.completionVersion + 1 };
+        reasonValue: "", completionVersion: before.completionVersion + (before.batchRunning ? 0 : 1) };
     });
+  }
+  function matchesHuman(action: ReviewHumanPending) {
+    return mounted.current && !reads.retired && current().pending === action;
+  }
+  async function lookupHuman(action: ReviewHumanPending, originalFailure: CommandFailure = current().reasonValue): Promise<HumanOutcome> {
+    if (!matchesHuman(action)) return { kind: "retired" };
+    update(before => ({ ...before, checkingAction: true, retryAllowed: false, pendingUncertain: true, notice: null, reasonValue: "" }));
+    try {
+      let receipt: HumanReceipt | null;
+      if (action.kind === "finding") {
+        receipt = await reviewCommands.findingAction({ ...action.session, actionId: action.request.actionId });
+        if (receipt !== null) {
+          confirmReviewFinding(receipt, action.request);
+          confirmReviewFindingBasis(receipt, action.basisEvidence);
+          confirmReviewFindingEvidence(receipt, action.evidence);
+        }
+      } else if (action.kind === "decision") {
+        const found = await reviewCommands.decisionAction(action.session, action.request);
+        receipt = found === null ? null : found.receipt;
+      } else if (action.kind === "waiver") {
+        const found = await reviewCommands.waiverAction(action.session, action.request);
+        receipt = found === null ? null : found.receipt;
+      } else {
+        const found = await reviewCommands.fallbackAction(action.session, action.request);
+        receipt = found === null ? null : found.receipt;
+      }
+      if (!matchesHuman(action)) return { kind: "retired" };
+      if (receipt !== null) {
+        confirmed(action, receipt);
+        return { kind: "saved", receipt, checked: true };
+      }
+      update(before => ({ ...before, checkingAction: false, retryAllowed: true, pendingUncertain: true, notice: "unknown", reasonValue: originalFailure }));
+    } catch (error) {
+      if (!matchesHuman(action)) return { kind: "retired" };
+      update(before => ({ ...before, checkingAction: false, retryAllowed: false, pendingUncertain: true, notice: "unknown", reasonValue: commandFailure(error) }));
+    }
+    return { kind: "pending" };
+  }
+  async function dispatchHuman(action: ReviewHumanPending): Promise<HumanOutcome> {
+    if (!mounted.current || reads.retired) return { kind: "retired" };
+    const uncertain = current().pending === action && current().pendingUncertain;
+    update(before => ({ ...before, pending: action, checkingAction: false, retryAllowed: false, notice: null, reasonValue: "" }));
+    let failed: { error: unknown } | null = null;
+    let receipt: HumanReceipt | null = null;
+    try {
+      if (action.kind === "finding") {
+        receipt = await reviewCommands.finding(action.session, action.request);
+        confirmReviewFindingBasis(receipt, action.basisEvidence);
+        confirmReviewFindingEvidence(receipt, action.evidence);
+      } else if (action.kind === "decision") receipt = await reviewCommands.decide(action.session, action.request);
+      else if (action.kind === "waiver") receipt = await reviewCommands.waive(action.session, action.request);
+      else receipt = await reviewCommands.fallback(action.session, action.request);
+    } catch (error) { failed = { error }; }
+    if (!matchesHuman(action)) return { kind: "retired" };
+    if (!failed && receipt !== null) {
+      confirmed(action, receipt);
+      return { kind: "saved", receipt, checked: false };
+    }
+    if (!failed) return { kind: "pending" };
+    const error = failed.error;
+    const unknown = hasUnknownOutcome(error);
+    const failure = commandFailure(error);
+    update(before => ({ ...before, pending: unknown || uncertain ? action : null, pendingUncertain: unknown || uncertain,
+      retryAllowed: false, notice: unknown || uncertain ? "unknown" : isConflict(error) ? "conflict" : "error", reasonValue: failure }));
+    // A failed lookup cannot enter this write-error branch and cause another read.
+    if (unknown) return lookupHuman(action, failure);
+    return uncertain ? { kind: "pending" } : { kind: "rejected", error };
   }
   async function dispatch(action: ReviewPending) {
     if (!mounted.current) return;
+    if (isHumanReviewPending(action)) {
+      const outcome = await dispatchHuman(action);
+      return action.kind === "finding" && outcome.kind === "saved" ? outcome.receipt as ReviewFindingDecision : undefined;
+    }
     update(before => ({ ...before, pending: action, notice: null,
       activeCheckId: action.kind === "check" ? action.request.actionId : null }));
     try {
       const session = executionContext(projectRef.current);
-      if (action.kind === "finding") {
-        const receipt = await reviewCommands.finding(session, action.request);
-        confirmReviewFindingBasis(receipt, action.basisEvidence);
-        confirmReviewFindingEvidence(receipt, action.evidence);
-        confirmed(action, receipt);
-        return receipt;
-      }
-      if (action.kind === "decision") confirmed(action, await reviewCommands.decide(session, action.request));
       if (action.kind === "prepare-check") {
         const preparation = await reviewCommands.prepareCheck(action.request);
         if (preparation.kind === "recorded") confirmed({ ...action, kind: "check", executions: [] }, preparation.run, action);
@@ -262,8 +348,6 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         });
       }
       if (action.kind === "check") confirmed(action, await reviewCommands.check({ ...session, check: action.request, executions: action.executions }));
-      if (action.kind === "waiver") confirmed(action, await reviewCommands.waive(session, action.request));
-      if (action.kind === "fallback") confirmed(action, await reviewCommands.fallback(session, action.request));
     } catch (error) {
       update(before => before.pending !== action ? before : { ...before,
         pending: hasUnknownOutcome(error) || before.pendingUncertain ? action : null,
@@ -291,7 +375,9 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         || latest.selected.basis !== target.basis
         || (latest.projection?.unitId === target.unitId && latest.projection.locale === target.locale
           && latest.projection.basis !== target.basis)) return;
-      return await dispatch(makeAction(actionId, before));
+      const action = makeAction(actionId, before);
+      if (isHumanReviewPending(action)) action.session = structuredClone(session);
+      return await dispatch(action);
     } catch (error) { fail(error); }
     finally {
       running.current = false;
@@ -304,7 +390,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     if (!target || !before.actor.trim()) { update(value => ({ ...value, notice: "error", reasonValue: "reviewer-required" })); return; }
     const key = reviewDraftKey(target), reason = before.drafts[key] ?? "";
     if (kind === "request-changes" && !reason.trim()) { update(value => ({ ...value, notice: "error", reasonValue: "reason-required" })); return; }
-    await fresh(target, currentRead, actionId => ({ kind: "decision", submittedSeq: before.editSeq[key] ?? 0,
+    await fresh(target, currentRead, actionId => ({ kind: "decision", session: executionContext(projectRef.current), submittedSeq: before.editSeq[key] ?? 0,
       request: { projectId: projectRef.current.metadata.projectId, actionId, unitId: target.unitId, locale: target.locale,
         expectedBasis: target.basis, expectedDecisionId: target.currentDecision?.decisionId ?? null,
         actor: before.actor.trim(), kind, reason } }));
@@ -363,7 +449,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       update(value => ({ ...value, notice: "error", reasonValue: "reason-required" })); return;
     }
     const key = reviewDraftKey(target), reason = before.drafts[key];
-    await fresh(target, currentRead, actionId => ({ kind: "waiver", submittedSeq: before.editSeq[key] ?? 0,
+    await fresh(target, currentRead, actionId => ({ kind: "waiver", session: executionContext(projectRef.current), submittedSeq: before.editSeq[key] ?? 0,
       request: { projectId: projectRef.current.metadata.projectId, actionId, unitId: target.unitId, locale: target.locale,
         expectedBasis: target.basis, issueId, grant, expectedWaiverId, actor: before.actor.trim(), reason } }));
   }
@@ -374,7 +460,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     }
     const key = reviewDraftKey(target), reason = before.drafts[key];
     const { evidence, ...requestCapture } = capture;
-    const receipt = await fresh(target, currentRead, actionId => ({ kind: "finding", evidence: structuredClone(evidence), basisEvidence: structuredClone(target.basisEvidence), submittedSeq: before.editSeq[key] ?? 0,
+    const receipt = await fresh(target, currentRead, actionId => ({ kind: "finding", session: executionContext(projectRef.current), evidence: structuredClone(evidence), basisEvidence: structuredClone(target.basisEvidence), submittedSeq: before.editSeq[key] ?? 0,
       request: { ...requestCapture, projectId: projectRef.current.metadata.projectId, actionId, unitId: target.unitId, locale: target.locale,
         expectedBasis: target.basis, actor: before.actor.trim(), reason } }));
     return receipt ?? null;
@@ -385,34 +471,29 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       update(value => ({ ...value, notice: "error", reasonValue: "reason-required" })); return;
     }
     const key = reviewDraftKey(target), reason = before.drafts[key];
-    await fresh(target, currentRead, actionId => ({ kind: "fallback", submittedSeq: before.editSeq[key] ?? 0,
+    await fresh(target, currentRead, actionId => ({ kind: "fallback", session: executionContext(projectRef.current), submittedSeq: before.editSeq[key] ?? 0,
       request: { projectId: projectRef.current.metadata.projectId, actionId, unitId: target.unitId, locale: target.locale,
         expectedBasis: target.basis, allow, expectedFallbackId: target.currentFallback?.fallbackId ?? null,
         actor: before.actor.trim(), reason } }));
   }
   async function retryPending() {
     const action = current().pending;
-    if (!mounted.current || !action || running.current) return;
+    if (!mounted.current || reads.retired || !action || running.current || isHumanReviewPending(action) && !current().retryAllowed) return;
     running.current = true;
     update(before => ({ ...before, busyMutation: true, notice: null }));
     try {
       if (current().pending !== action) return;
-      if (action.kind === "finding") {
-        // Check the original action before retrying it. A changed current basis
-        // cannot turn an unknown commit into a fresh request.
-        try {
-          const receipt = await reviewCommands.findingAction({ ...executionContext(projectRef.current), actionId: action.request.actionId });
-          if (current().pending !== action || !mounted.current) return;
-          if (receipt) { confirmReviewFindingEvidence(receipt, action.evidence); confirmReviewFindingBasis(receipt, action.basisEvidence); confirmed(action, confirmReviewFinding(receipt, action.request)); return; }
-          update(before => before.pending !== action ? before : { ...before, pendingUncertain: false });
-        } catch (error) {
-          update(before => before.pending !== action ? before : { ...before, pendingUncertain: true, notice: "unknown", reasonValue: commandFailure(error) });
-          return;
-        }
-      }
       if (current().pending === action) await dispatch(action);
     }
     finally { running.current = false; update(before => ({ ...before, busyMutation: false, activeCheckId: null })); }
+  }
+  async function checkPending() {
+    const action = current().pending;
+    if (!mounted.current || reads.retired || running.current || !action || !isHumanReviewPending(action)) return;
+    running.current = true;
+    update(before => ({ ...before, busyMutation: true }));
+    try { await lookupHuman(action); }
+    finally { running.current = false; update(before => ({ ...before, busyMutation: false })); }
   }
   async function cancelCheck() {
     const before = current(), actionId = before.activeCheckId ?? (before.pending?.kind === "check" ? before.pending.request.actionId : null);
@@ -431,7 +512,6 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     let processed = 0;
     for (const target of frozen) {
       if (cancelBatch.current || !mounted.current || current().pending || !localeAvailable(target.locale)) break;
-      let action: ReviewPending | null = null;
       try {
         const session = executionContext(projectRef.current);
         const actionId = await executionCommands.identity(session);
@@ -439,27 +519,19 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         const request: ReviewWrite = { projectId: session.projectId, actionId,
           unitId: target.unitId, locale: target.locale, expectedBasis: target.basis,
           expectedDecisionId: target.currentDecision?.decisionId ?? null, actor: batchActor, kind: "approve", reason: "" };
-        action = { kind: "decision", request, submittedSeq: -1 };
-        const receipt = await reviewCommands.decide(session, request);
-        update(value => {
-          const chosen = { ...value.chosen };
-          if (chosen[reviewDraftKey(target)]?.basis === request.expectedBasis) delete chosen[reviewDraftKey(target)];
-          const selected = value.selected?.unitId === target.unitId && value.selected.locale === target.locale
-            && value.selected.basis === request.expectedBasis ? { ...value.selected, currentDecision: receipt } : value.selected;
-          const projection = value.projection?.unitId === target.unitId && value.projection.locale === target.locale
-            && value.projection.basis === request.expectedBasis ? { ...value.projection, currentDecision: receipt } : value.projection;
-          const key = reviewDraftKey(target);
-          const captured = value.draftTargets[key];
-          const draftTargets = captured?.basis === request.expectedBasis
-            ? { ...value.draftTargets, [key]: { ...captured, currentDecision: receipt } } : value.draftTargets;
-          return { ...value, chosen, selected, projection, draftTargets };
-        });
-        result.applied++;
+        const action: ReviewHumanPending = { kind: "decision", session: structuredClone(session), request, submittedSeq: -1 };
+        const outcome = await dispatchHuman(action);
+        if (outcome.kind === "retired") break;
+        if (outcome.kind === "saved") {
+          result.applied++;
+          // An uncertain batch action is checked once, never a reason to resume
+          // the remaining batch after that recovery boundary.
+          if (outcome.checked) { processed++; break; }
+        } else if (outcome.kind === "pending") { result.failed++; processed++; break; }
+        else if (isConflict(outcome.error)) result.conflicted++;
+        else result.failed++;
       } catch (error) {
-        if (hasUnknownOutcome(error)) {
-          if (action) update(value => ({ ...value, pending: action, pendingUncertain: true, notice: "unknown", reasonValue: commandFailure(error) }));
-          result.failed++; processed++; break;
-        }
+        if (hasUnknownOutcome(error)) { result.failed++; processed++; break; }
         if (isConflict(error)) result.conflicted++; else result.failed++;
       }
       processed++;
@@ -481,6 +553,6 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
 
   const owner: ReviewSession = { state, current, semantic, inFlight: () => running.current || semantic.reserved(),
     setLocale, setActor, setSelected, receiveTarget, observeProjection, editReason, adoptCurrent, toggleChosen, clear, setNotice, setReason,
-    decide, prepareCheck, check, setAdvisoryChecks, observeSettingsRevision, slotConsentKey, setCheckerConsent, checkersConfirmed, waive, finding, fallback, retryPending, cancelCheck, approveBatch, stopBatch };
+    decide, prepareCheck, check, setAdvisoryChecks, observeSettingsRevision, slotConsentKey, setCheckerConsent, checkersConfirmed, waive, finding, fallback, retryPending, checkPending, cancelCheck, approveBatch, stopBatch };
   return <ReviewContext.Provider value={owner}>{children}</ReviewContext.Provider>;
 }

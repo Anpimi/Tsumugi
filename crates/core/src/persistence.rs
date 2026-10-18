@@ -93,7 +93,7 @@ pub use review::{
     EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
     ReviewCheckEvidence, ReviewCheckOrigin, ReviewCheckOriginEvidence, ReviewCheckOutcome,
     ReviewCheckPlan, ReviewChecker, ReviewCheckerKey, ReviewCheckerKind, ReviewDecision,
-    ReviewDecisionKind, ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewFindingDecision,
+    ReviewDecisionKind, ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead, ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewFindingDecision,
     ReviewFindingDisposition, ReviewFindingRepair, ReviewFindingView, ReviewFindingWrite,
     ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewRepairStatus,
     ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision,

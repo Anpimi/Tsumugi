@@ -59,6 +59,7 @@ beforeEach(async () => {
     if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
     if (command === "create_execution_identity") return fixtureIdentity(620);
     if (command === "write_review_decision") return reviewDecisionFixture(args.request.decision as ReviewWrite, target);
+    if (command === "read_review_decision_action") return null;
     if (command === "read_review_work") return { items: [], total: 0, nextOffset: null, coverage: "current" };
     throw new Error(command);
   });

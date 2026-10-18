@@ -102,6 +102,8 @@ beforeEach(async () => {
       const decision = args.request.decision as ReviewWrite;
       return reviewDecisionFixture(decision, Object.values(targets).find(target => target.unitId === decision.unitId)!);
     }
+    // Recovery scenarios install a saved action explicitly when it is present.
+    if (["read_review_decision_action", "read_review_waiver_action", "read_review_fallback_action"].includes(command)) return null;
     if (command === "read_review_work") return { items: [], total: 0, nextOffset: null, coverage: "current" };
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), basis: "eligibility",
       ready: false, locales: [{ locale: "zh-CN", ready: false, blockers: [{ unitId: targets.first.unitId, nativeKey: "first", code: "qa-missing-or-stale", reference: null }],
@@ -123,6 +125,7 @@ it("registers scoped Review commands for the committed view and removes them on 
   expect(command("review.run-checks")).toMatchObject({ nameKey: "review.check", category: "review", binding: null, risk: "runs-review-checks" });
   expect(command("review.cancel-checks")).toMatchObject({ nameKey: "review.cancelCheck", category: "review", binding: null, risk: "cancels-review-checks" });
   expect(command("review.retry-pending")).toMatchObject({ nameKey: "review.retry", category: "review", binding: null, risk: "retries-review-action" });
+  expect(command("review.check-pending")).toMatchObject({ nameKey: "review.checkSaved", category: "review", binding: null, risk: "reads-review" });
 
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
@@ -2213,10 +2216,13 @@ it("keeps the complete original batch action after an unknown response and a lat
   view.rerender(null, project); view.rerender(ui(), project);
   await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
   await waitFor(() => expect(writes).toBe(2));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Retry the same action" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check saved result" })).toBeEnabled());
   expect(owner.current().pending).toBe(original);
   expect(owner.current().pendingUncertain).toBe(true);
   expect(screen.getByRole("button", { name: "Approve selected entries (1)" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await screen.findByRole("button", { name: "Retry the same action" });
   await user.click(screen.getByRole("button", { name: "Retry the same action" }));
   await waitFor(() => expect(owner.current().pending).toBeNull());
   const requests = invoke.mock.calls.filter(([command]) => command === "write_review_decision").map(([, args]) => args.request);
@@ -2244,4 +2250,54 @@ it("offers safe project exit for a checker review without a reason draft and kee
   expect(await leaving).toBe(true);
   expect(owner.current().checkReview).toBeNull(); expect(owner.current().checkConsent).toEqual([]);
   expect(invoke.mock.calls.some(([command]) => command === "run_review_checks" || command === "cancel_review_checks")).toBe(false);
+});
+
+it("separates the bilingual automatic and manual read phases from approval and explicit retry", async () => {
+  const original = invoke.getMockImplementation()!;
+  let rejectWrite!: (error: unknown) => void, finishRead!: (value: unknown) => void, failCurrent = false;
+  const writing = new Promise((_, reject) => { rejectWrite = reject; });
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "write_review_decision") return writing;
+    if (command === "read_review_decision_action") return new Promise(resolve => { finishRead = resolve; });
+    if (command === "read_review_target" && failCurrent) return Promise.reject(new Error("Current projection unavailable"));
+    return original(command, args);
+  });
+  let registry!: WorkbenchCommands, owner!: ReturnType<typeof useReviewDraftSession>;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  render(<><ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={value => { registry = value; }} /><ReviewOwnerProbe capture={value => { owner = value; }} /></>, project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Reason A");
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(1));
+  expect(screen.queryByText("Checking the saved review result…")).not.toBeInTheDocument();
+  const request = invoke.mock.calls.find(([name]) => name === "write_review_decision")![1].request;
+  await act(async () => { rejectWrite(new Error("Lost approval response")); });
+  await screen.findByText("Checking the saved review result…");
+  expect(registry.list(scope).find(value => value.id === "review.check-pending")).toMatchObject({ risk: "reads-review", availability: { enabled: false, reason: "busy" } });
+  expect(registry.dispatch("review.retry-pending", scope)).toBe(false);
+  await act(async () => { await i18n.changeLanguage("zh-CN"); });
+  expect(screen.getByText("正在核对审阅结果…")).toBeVisible();
+  expect(screen.getByRole("button", { name: "核对已保存结果" })).toBeDisabled();
+  await act(async () => { await i18n.changeLanguage("en-US"); finishRead(null); });
+  await screen.findByRole("button", { name: "Retry the same action" });
+  expect(owner.current().pendingUncertain).toBe(true); expect(owner.current().retryAllowed).toBe(true);
+  await user.clear(screen.getByRole("textbox", { name: "Reason or evidence" }));
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Reason B");
+  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await screen.findByText("Checking the saved review result…");
+  expect(registry.dispatch("review.check-pending", scope)).toBe(false); expect(registry.dispatch("review.retry-pending", scope)).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_decision_action").map(([, args]) => args.request)).toEqual([request, request]);
+  failCurrent = true;
+  await act(async () => { finishRead({ request: request.decision, receipt: reviewDecisionFixture(request.decision, targets.first) }); });
+  await waitFor(() => expect(owner.current().pending).toBeNull());
+  expect(owner.current().reasonValue).toBe(""); expect(owner.current().checkingAction).toBe(false);
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Reason B");
+  expect(screen.queryByRole("button", { name: "Check saved result" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
 });

@@ -10,7 +10,7 @@ export type { ReviewFindingWrite, ReviewWrite, WaiverWrite, FallbackWrite, Revie
 export type { ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingView, ReviewFindingRepair, ReviewRepairStatus, AdvisoryFinding, ReviewCheckPreparation, ReviewPluginCheckView, ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
 
 function requireConfirmation(condition: boolean) {
-  if (!condition) throw new Error("Invalid IPC acknowledgement: review action");
+  if (!condition) throw Object.assign(new Error("Invalid IPC acknowledgement: review action"), { outcome: "unknown", reason: "invalid-review-action-receipt" });
 }
 function sameAction(actual: { actionId: string; unitId: string; locale: string }, expected: { actionId: string; unitId: string; locale: string }) {
   return actual.actionId === expected.actionId && actual.unitId === expected.unitId && actual.locale === expected.locale;
@@ -20,12 +20,35 @@ export function confirmReviewFinding(receipt: ReviewFindingDecision, request: Re
   const actual = receipt.request;
   if (actual.projectId !== request.projectId || !sameAction(actual, request)
     || actual.expectedBasis !== request.expectedBasis || actual.runId !== request.runId || actual.issueId !== request.issueId
-    || actual.expectedDecisionId !== request.expectedDecisionId || actual.disposition !== request.disposition
+    || actual.expectedDecisionId === undefined || actual.expectedDecisionId !== request.expectedDecisionId || actual.disposition !== request.disposition
     || actual.actor !== request.actor || actual.reason !== request.reason || receipt.finding.issueId !== request.issueId
     || receipt.requirement.mandatory || receipt.requirement.waivable) {
     throw invalidFindingReceipt();
   }
   return receipt;
+}
+
+export function confirmReviewDecision(result: Responses["decision"], request: ReviewWrite) {
+  requireConfirmation(sameAction(result, request) && result.basis === request.expectedBasis
+    && result.kind === request.kind && result.actor === request.actor && result.reason === request.reason
+    && result.selectionId === result.basisEvidence.selectionId && result.revisionId === result.basisEvidence.revisionId
+    && result.sourceRevisionId === result.basisEvidence.sourceRevisionId);
+  return result;
+}
+export function confirmReviewWaiver(result: Responses["waiver"], request: WaiverWrite) {
+  requireConfirmation(sameAction(result, request) && result.basis === request.expectedBasis && result.issueId === request.issueId
+    && result.grant === request.grant && result.previousWaiverId === (request.expectedWaiverId ?? null)
+    && result.actor === request.actor && result.reason === request.reason);
+  return result;
+}
+export function confirmReviewFallback(result: Responses["fallback"], request: FallbackWrite) {
+  requireConfirmation(sameAction(result, request) && result.allow === request.allow
+    && result.previousFallbackId === (request.expectedFallbackId ?? null) && result.actor === request.actor && result.reason === request.reason);
+  return result;
+}
+function sameReviewRequest(actual: ReviewWrite | WaiverWrite | FallbackWrite, expected: ReviewWrite | WaiverWrite | FallbackWrite) {
+  return actual.projectId === expected.projectId && sameAction(actual, expected) && actual.expectedBasis === expected.expectedBasis
+    && actual.actor === expected.actor && actual.reason === expected.reason;
 }
 
 function invalidFindingReceipt() {
@@ -75,6 +98,33 @@ export const reviewCommands = {
       && (value === null || (value.request.projectId === request.projectId && value.request.actionId === request.actionId))),
   finding: async (session: SessionRequest, finding: ReviewFindingWrite) => confirmReviewFinding(
     await checkedInvoke("write_review_finding", { ...session, finding }, validators.validateResponseFinding), finding),
+  decisionAction: async (session: SessionRequest, decision: ReviewWrite) => {
+    const value = await checkedInvoke("read_review_decision_action", { ...session, decision }, validators.validateResponseDecisionAction);
+    if (value !== null) {
+      requireConfirmation(sameReviewRequest(value.request, decision) && value.request.kind === decision.kind
+        && value.request.expectedDecisionId !== undefined && value.request.expectedDecisionId === decision.expectedDecisionId);
+      confirmReviewDecision(value.receipt, decision);
+    }
+    return value;
+  },
+  waiverAction: async (session: SessionRequest, waiver: WaiverWrite) => {
+    const value = await checkedInvoke("read_review_waiver_action", { ...session, waiver }, validators.validateResponseWaiverAction);
+    if (value !== null) {
+      requireConfirmation(sameReviewRequest(value.request, waiver) && value.request.issueId === waiver.issueId && value.request.grant === waiver.grant
+        && value.request.expectedWaiverId !== undefined && value.request.expectedWaiverId === waiver.expectedWaiverId);
+      confirmReviewWaiver(value.receipt, waiver);
+    }
+    return value;
+  },
+  fallbackAction: async (session: SessionRequest, fallback: FallbackWrite) => {
+    const value = await checkedInvoke("read_review_fallback_action", { ...session, fallback }, validators.validateResponseFallbackAction);
+    if (value !== null) {
+      requireConfirmation(sameReviewRequest(value.request, fallback) && value.request.allow === fallback.allow
+        && value.request.expectedFallbackId !== undefined && value.request.expectedFallbackId === fallback.expectedFallbackId);
+      confirmReviewFallback(value.receipt, fallback);
+    }
+    return value;
+  },
   // A captured list is one source snapshot. Keep response correlation at the
   // transport boundary alongside the generated shape validator.
   summaryPage: (request: ReviewSummaryPageRequest) => checkedInvoke("read_review_summary_page", request,
@@ -92,12 +142,7 @@ export const reviewCommands = {
   target: (request: ReviewTargetRequest) => checkedInvoke("read_review_target", request, validators.validateResponseTarget),
   history: (request: ReviewHistoryRequest) => checkedInvoke("read_review_history", request, validators.validateResponseHistory),
   decide: async (session: SessionRequest, decision: ReviewWrite) => {
-    const result = await checkedInvoke("write_review_decision", { ...session, decision }, validators.validateResponseDecision);
-    requireConfirmation(sameAction(result, decision) && result.basis === decision.expectedBasis
-      && result.kind === decision.kind && result.actor === decision.actor && result.reason === decision.reason
-      && result.selectionId === result.basisEvidence.selectionId && result.revisionId === result.basisEvidence.revisionId
-      && result.sourceRevisionId === result.basisEvidence.sourceRevisionId);
-    return result;
+    return confirmReviewDecision(await checkedInvoke("write_review_decision", { ...session, decision }, validators.validateResponseDecision), decision);
   },
   prepareCheck: async (request: ReviewCheckRequest) => {
     const result = await checkedInvoke("prepare_review_checks", request, validators.validateResponsePrepareCheck);
@@ -132,18 +177,10 @@ export const reviewCommands = {
   },
   cancelCheck: (request: ReviewCancelCheckRequest) => checkedInvoke("cancel_review_checks", request, validators.validateResponseCancelCheck),
   waive: async (session: SessionRequest, waiver: WaiverWrite) => {
-    const result = await checkedInvoke("waive_review_issue", { ...session, waiver }, validators.validateResponseWaiver);
-    requireConfirmation(sameAction(result, waiver) && result.basis === waiver.expectedBasis && result.issueId === waiver.issueId
-      && result.grant === waiver.grant && result.previousWaiverId === (waiver.expectedWaiverId ?? null)
-      && result.actor === waiver.actor && result.reason === waiver.reason);
-    return result;
+    return confirmReviewWaiver(await checkedInvoke("waive_review_issue", { ...session, waiver }, validators.validateResponseWaiver), waiver);
   },
   fallback: async (session: SessionRequest, fallback: FallbackWrite) => {
-    const result = await checkedInvoke("allow_source_fallback", { ...session, fallback }, validators.validateResponseFallback);
-    requireConfirmation(sameAction(result, fallback) && result.allow === fallback.allow
-      && result.previousFallbackId === (fallback.expectedFallbackId ?? null)
-      && result.actor === fallback.actor && result.reason === fallback.reason);
-    return result;
+    return confirmReviewFallback(await checkedInvoke("allow_source_fallback", { ...session, fallback }, validators.validateResponseFallback), fallback);
   },
   work: (request: ReviewWorkRequest) => checkedInvoke("read_review_work", request, validators.validateResponseWork),
   eligibility: (request: EligibilityRequest) => checkedInvoke("read_review_eligibility", request, validators.validateResponseEligibility),

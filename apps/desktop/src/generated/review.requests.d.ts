@@ -21,9 +21,11 @@ export interface Requests {
   cancelCheck: ReviewCancelCheckRequest;
   check: ReviewCheckStartRequest;
   decision: ReviewWriteRequest;
+  decisionAction: ReviewWriteRequest;
   diagnosticLocation: ReviewDiagnosticLocationRequest;
   eligibility: EligibilityRequest;
   fallback: FallbackRequest;
+  fallbackAction: FallbackRequest;
   finding: ReviewFindingWriteRequest;
   findingAction: ReviewFindingActionRequest;
   findings: ReviewHistoryRequest;
@@ -38,6 +40,7 @@ export interface Requests {
   summary: ReviewSummaryPageRequest;
   target: ReviewTargetRequest;
   waiver: WaiverRequest;
+  waiverAction: WaiverRequest;
   work: ReviewWorkRequest;
 }
 export interface ReviewCancelCheckRequest {

@@ -43,7 +43,7 @@ pub use persistence::{
     ResourceDecisionResult, ResourceImpactConfidence, ResourceImpactKind, ResourceImpactStatus,
     ResourcePreview, ResourcePreviewRow, ReviewBasis, ReviewCheckEvidence, ReviewCheckOrigin,
     ReviewCheckOriginEvidence, ReviewCheckOutcome, ReviewCheckPlan, ReviewChecker,
-    ReviewCheckerKey, ReviewCheckerKind, ReviewDecision, ReviewDecisionKind, ReviewDiagnosticLocation,
+    ReviewCheckerKey, ReviewCheckerKind, ReviewDecision, ReviewDecisionKind, ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead, ReviewDiagnosticLocation,
     ReviewEditorSnapshot, ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingRepair, ReviewFindingView,
     ReviewFindingWrite, ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage,
     ReviewRepairStatus, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck,

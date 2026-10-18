@@ -137,7 +137,9 @@ it("uses the AI finding's independent run while retaining mechanical QA and mode
 
 it("recovers the original action receipt while preserving newer reason B and independent manual B",async()=>{
   let saved!:ReviewFindingDecision;
+  let reads=0;
   write=async request=>{saved=receipt(request);history.unshift(saved);throw new Error("Lost ACK");};
+  readAction=async()=>{if(++reads===1)throw new Error("Automatic receipt read unavailable");return saved;};
   const {user,ref,panel}=await open();
   act(()=>{manual.begin({unitId:fixtureIdentity(995),locale:"zh-CN",sourceRevisionId:fixtureIdentity(996),key:"manual",sourceText:"Other entry"},null,null,"Manual B");});
   await user.click(panel().getByRole("button",{name:"Reject as false positive"}));
@@ -145,11 +147,13 @@ it("recovers the original action receipt while preserving newer reason B and ind
   await user.clear(screen.getByRole("textbox",{name:"Reason or evidence"}));
   await user.type(screen.getByRole("textbox",{name:"Reason or evidence"}),"Reason B");
   await act(async()=>{expect(await ref.current!.allowNavigate()).toBe(false);expect(await ref.current!.allowLeave()).toBe(false);});
-  await user.click(screen.getByRole("button",{name:"Retry the same action"}));
+  expect(screen.queryByRole("button",{name:"Retry the same action"})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"Check saved result"}));
   await waitFor(()=>expect(review.current().pending).toBeNull());
   expect(screen.getByRole("textbox",{name:"Reason or evidence"})).toHaveValue("Reason B");
   expect(manual.current()?.text).toBe("Manual B");
   expect(invoke.mock.calls.filter(([name])=>name==="write_review_finding")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name])=>name==="read_review_finding_action")).toHaveLength(2);
   expect(invoke.mock.calls.find(([name])=>name==="read_review_finding_action")?.[1].request.actionId).toBe(saved.request.actionId);
 });
 
@@ -164,12 +168,15 @@ it("retries the same captured action only after the receipt read found no record
   await waitFor(()=>expect(review.current().pending).toBeNull());
   const writes=invoke.mock.calls.filter(([name])=>name==="write_review_finding");
   expect(writes).toHaveLength(2);expect(writes[1][1]).toEqual(writes[0][1]);
+  expect(invoke.mock.calls.filter(([name])=>name==="read_review_finding_action")).toHaveLength(1);
   expect(screen.getByRole("textbox",{name:"Reason or evidence"})).toHaveValue("Reason A plus B");
 });
 
 it("treats a structurally valid mismatched ACK as unknown and retains the original request",async()=>{
   let original!:ReviewFindingDecision;
+  let reads=0;
   write=async request=>{original=receipt(request);history.unshift(original);return {...original,request:{...original.request,reason:"Unrelated acknowledgement"}};};
+  readAction=async()=>++reads===1?{...original,request:{...original.request,reason:"Unrelated acknowledgement"}}:original;
   const {user,panel}=await open();
   await user.click(panel().getByRole("button",{name:"Reject as false positive"}));
   await screen.findByRole("region",{name:"Original finding action awaiting confirmation"});
@@ -178,7 +185,8 @@ it("treats a structurally valid mismatched ACK as unknown and retains the origin
   if(originalPending?.kind!=="finding")throw new Error("Original finding request required");
   expect(originalPending.request.reason).toBe("Reason A");
   expect(review.current().pendingUncertain).toBe(true);
-  await user.click(screen.getByRole("button",{name:"Retry the same action"}));
+  expect(screen.queryByRole("button",{name:"Retry the same action"})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"Check saved result"}));
   await waitFor(()=>expect(review.current().pending).toBeNull());
   expect(history).toHaveLength(1);
 });
@@ -292,8 +300,9 @@ it("keeps the original pending action when its recovery read fails instead of re
   await screen.findByRole("region",{name:"Original finding action awaiting confirmation"});
   const original=review.current().pending;
   await user.type(screen.getByRole("textbox",{name:"Reason or evidence"})," plus B");
-  await user.click(screen.getByRole("button",{name:"Retry the same action"}));
-  await waitFor(()=>expect(invoke.mock.calls.filter(([name])=>name==="read_review_finding_action")).toHaveLength(1));
+  expect(screen.queryByRole("button",{name:"Retry the same action"})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"Check saved result"}));
+  await waitFor(()=>expect(invoke.mock.calls.filter(([name])=>name==="read_review_finding_action")).toHaveLength(2));
   expect(review.current().pending).toBe(original);
   expect(invoke.mock.calls.filter(([name])=>name==="write_review_finding")).toHaveLength(1);
   expect(screen.getByRole("textbox",{name:"Reason or evidence"})).toHaveValue("Reason A plus B");

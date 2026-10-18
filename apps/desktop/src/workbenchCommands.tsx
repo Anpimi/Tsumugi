@@ -28,7 +28,7 @@ import { validateResponseProjectView } from "./generated/validators";
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
-  | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending"
+  | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending" | "review.check-pending"
   | "review.approve-batch" | "review.stop-batch"
   | "source.discard" | "source.begin-update" | "source.show-current" | "source.read-current" | "source.read-applied" | "source.refresh-attempt";
 export interface ProjectMetadataReconcileCommandPayload {
@@ -459,7 +459,7 @@ interface CommandMetadata {
   scope: CommandScope;
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
-    | "cancels-review-checks" | "retries-review-action" | "stops-review-batch"
+    | "cancels-review-checks" | "retries-review-action" | "stops-review-batch" | "reads-review"
     | "writes-resources" | "captures-resources" | "reads-resources" | "runs-resource-tool" | "stops-application-component" | "retries-resource-action" | "opens-translation" | "opens-review"
     | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"
     | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task"

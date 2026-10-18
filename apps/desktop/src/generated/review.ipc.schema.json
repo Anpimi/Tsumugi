@@ -1353,6 +1353,9 @@
       "decision": {
         "$ref": "#/definitions/ReviewWriteRequest"
       },
+      "decisionAction": {
+        "$ref": "#/definitions/ReviewWriteRequest"
+      },
       "diagnosticLocation": {
         "$ref": "#/definitions/ReviewDiagnosticLocationRequest"
       },
@@ -1360,6 +1363,9 @@
         "$ref": "#/definitions/EligibilityRequest"
       },
       "fallback": {
+        "$ref": "#/definitions/FallbackRequest"
+      },
+      "fallbackAction": {
         "$ref": "#/definitions/FallbackRequest"
       },
       "finding": {
@@ -1404,6 +1410,9 @@
       "waiver": {
         "$ref": "#/definitions/WaiverRequest"
       },
+      "waiverAction": {
+        "$ref": "#/definitions/WaiverRequest"
+      },
       "work": {
         "$ref": "#/definitions/ReviewWorkRequest"
       }
@@ -1423,11 +1432,14 @@
       "findingAction",
       "findings",
       "decision",
+      "decisionAction",
       "prepareCheck",
       "check",
       "cancelCheck",
       "waiver",
+      "waiverAction",
       "fallback",
+      "fallbackAction",
       "work",
       "eligibility"
     ],
@@ -3185,6 +3197,57 @@
         ],
         "type": "object"
       },
+      "FallbackWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "allow": {
+            "type": "boolean"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedFallbackId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "allow",
+          "expectedFallbackId",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
       "FindingSeverity": {
         "enum": [
           "warning",
@@ -4217,6 +4280,22 @@
         ],
         "type": "object"
       },
+      "ReviewDecisionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/ReviewDecision"
+          },
+          "request": {
+            "$ref": "#/definitions/ReviewWrite"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
+        ],
+        "type": "object"
+      },
       "ReviewDecisionKind": {
         "enum": [
           "approve",
@@ -4312,6 +4391,22 @@
           "terms",
           "context",
           "readVersion"
+        ],
+        "type": "object"
+      },
+      "ReviewFallbackActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/FallbackDecision"
+          },
+          "request": {
+            "$ref": "#/definitions/FallbackWrite"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
         ],
         "type": "object"
       },
@@ -5063,6 +5158,73 @@
           "currentCheck",
           "currentFallback",
           "currentWaivers"
+        ],
+        "type": "object"
+      },
+      "ReviewWaiverActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/Waiver"
+          },
+          "request": {
+            "$ref": "#/definitions/WaiverWrite"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "ReviewWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/definitions/ReviewDecisionKind"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "expectedDecisionId",
+          "actor",
+          "kind",
+          "reason"
         ],
         "type": "object"
       },
@@ -6585,6 +6747,61 @@
         ],
         "type": "object"
       },
+      "WaiverWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedWaiverId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grant": {
+            "type": "boolean"
+          },
+          "issueId": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "issueId",
+          "grant",
+          "expectedWaiverId",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
       "WorkItem": {
         "additionalProperties": false,
         "properties": {
@@ -6663,6 +6880,16 @@
       "decision": {
         "$ref": "#/definitions/ReviewDecision"
       },
+      "decisionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ReviewDecisionActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "diagnosticLocation": {
         "$ref": "#/definitions/ReviewDiagnosticLocation"
       },
@@ -6674,6 +6901,16 @@
       },
       "fallback": {
         "$ref": "#/definitions/FallbackDecision"
+      },
+      "fallbackAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ReviewFallbackActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "finding": {
         "$ref": "#/definitions/ReviewFindingDecision"
@@ -6724,6 +6961,16 @@
       "waiver": {
         "$ref": "#/definitions/Waiver"
       },
+      "waiverAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ReviewWaiverActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "work": {
         "$ref": "#/definitions/WorkPage"
       }
@@ -6743,11 +6990,14 @@
       "findingAction",
       "findings",
       "decision",
+      "decisionAction",
       "prepareCheck",
       "check",
       "cancelCheck",
       "waiver",
+      "waiverAction",
       "fallback",
+      "fallbackAction",
       "work",
       "eligibility",
       "editor"

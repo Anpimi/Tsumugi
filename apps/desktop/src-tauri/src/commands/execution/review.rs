@@ -440,6 +440,42 @@ pub async fn read_review_history(
 }
 
 #[tauri::command]
+pub async fn read_review_decision_action(
+    state: State<'_, AppState>, request: ReviewWriteRequest,
+) -> Result<Option<tsumugi_core::ReviewDecisionActionRead>, CommandError> {
+    state.sessions.run("read_review_decision_action",CommandStage::ExecutionRead,move |sessions| {
+        if request.decision.project_id != request.project_id {
+            return Err(CommandError::invalid_input(CommandStage::ExecutionRead,Some("review-project")));
+        }
+        authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?
+            .store.review_decision_action_read(&request.decision).map_err(map_read)
+    }).await
+}
+#[tauri::command]
+pub async fn read_review_waiver_action(
+    state: State<'_, AppState>, request: WaiverRequest,
+) -> Result<Option<tsumugi_core::ReviewWaiverActionRead>, CommandError> {
+    state.sessions.run("read_review_waiver_action",CommandStage::ExecutionRead,move |sessions| {
+        if request.waiver.project_id != request.project_id {
+            return Err(CommandError::invalid_input(CommandStage::ExecutionRead,Some("review-project")));
+        }
+        authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?
+            .store.review_waiver_action_read(&request.waiver).map_err(map_read)
+    }).await
+}
+#[tauri::command]
+pub async fn read_review_fallback_action(
+    state: State<'_, AppState>, request: FallbackRequest,
+) -> Result<Option<tsumugi_core::ReviewFallbackActionRead>, CommandError> {
+    state.sessions.run("read_review_fallback_action",CommandStage::ExecutionRead,move |sessions| {
+        if request.fallback.project_id != request.project_id {
+            return Err(CommandError::invalid_input(CommandStage::ExecutionRead,Some("review-project")));
+        }
+        authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?
+            .store.review_fallback_action_read(&request.fallback).map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn write_review_decision(
     state: State<'_, AppState>,
     request: ReviewWriteRequest,
@@ -840,7 +876,7 @@ pub async fn read_review_finding_action(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .review_finding_action(request.project_id, request.action_id)
+                .review_finding_action_read(request.project_id, request.action_id)
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )

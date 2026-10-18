@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check original saved approval, waiver, source fallback and advisory-finding
+  decisions after an uncertain response. Checking preserves newer reasons and
+  does not repeat the action; an uncertain batch resumes only its original
+  result check, leaving the remaining entries for an explicit new batch.
+
 - Check whether the original comparison or run already shows candidate identities
   after an uncertain reveal response. Confirmation reads do not reveal again; a
   missing target remains unresolved, and newer input is retained.

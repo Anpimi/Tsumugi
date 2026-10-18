@@ -29,6 +29,8 @@ pub(super) use checks::{
 pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
+mod actions;
+pub use actions::{ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead};
 mod findings;
 pub use findings::{
     AdvisoryFinding, ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingRepair,

@@ -274,10 +274,12 @@ export interface Responses {
   cancelCheck: boolean;
   check: CheckRun;
   decision: ReviewDecision;
+  decisionAction: ReviewDecisionActionRead | null;
   diagnosticLocation: ReviewDiagnosticLocation;
   editor: ReviewEditorSnapshot;
   eligibility: Eligibility;
   fallback: FallbackDecision;
+  fallbackAction: ReviewFallbackActionRead | null;
   finding: ReviewFindingDecision;
   findingAction: ReviewFindingDecision | null;
   findings: ReviewFindingView;
@@ -292,6 +294,7 @@ export interface Responses {
   summary: ReviewSummaryPage;
   target: ReviewTarget;
   waiver: Waiver;
+  waiverAction: ReviewWaiverActionRead | null;
   work: WorkPage;
 }
 export interface CheckRun {
@@ -625,6 +628,21 @@ export interface ReviewDecision {
   sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
 }
+export interface ReviewDecisionActionRead {
+  receipt: ReviewDecision;
+  request: ReviewWrite;
+}
+export interface ReviewWrite {
+  actionId: ExecutionId;
+  actor: string;
+  expectedBasis: string;
+  expectedDecisionId: ExecutionId | null;
+  kind: ReviewDecisionKind;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  unitId: ExecutionId;
+}
 /**
  * Read-only coordinates for one exact diagnostic in the current saved QA run.
  */
@@ -799,6 +817,21 @@ export interface EligibilityReason {
   code: string;
   nativeKey: string;
   reference: string | null;
+  unitId: ExecutionId;
+}
+export interface ReviewFallbackActionRead {
+  receipt: FallbackDecision;
+  request: FallbackWrite;
+}
+export interface FallbackWrite {
+  actionId: ExecutionId;
+  actor: string;
+  allow: boolean;
+  expectedBasis: string;
+  expectedFallbackId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
   unitId: ExecutionId;
 }
 export interface ReviewFindingDecision {
@@ -1267,6 +1300,22 @@ export interface ReviewSummaryDecision {
   basis: string;
   decisionId: ExecutionId;
   kind: ReviewDecisionKind;
+}
+export interface ReviewWaiverActionRead {
+  receipt: Waiver;
+  request: WaiverWrite;
+}
+export interface WaiverWrite {
+  actionId: ExecutionId;
+  actor: string;
+  expectedBasis: string;
+  expectedWaiverId: ExecutionId | null;
+  grant: boolean;
+  issueId: string;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  unitId: ExecutionId;
 }
 export interface WorkPage {
   coverage: string;

@@ -14,7 +14,7 @@ import type { ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { reviewCommands as commands, type Eligibility, type EligibilityReason,
   type ReviewHistoryPage, type ReviewSummaryPage, type ReviewTarget, type WorkPage } from "./reviewCommands";
-import { reviewDraftKey, useReviewDraftSession } from "./ReviewDraftSession";
+import { isHumanReviewPending, reviewDraftKey, useReviewDraftSession } from "./ReviewDraftSession";
 import { useWorkbenchCommands, type ReviewFallbackCommandPayload, type ReviewWaiverCommandPayload } from "./workbenchCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { ChangeScope } from "./sessionReads";
@@ -284,8 +284,16 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
   function retryAvailability() {
     if (!open || leavePrompt || batchPrompt || batchConfirmation.current) return { enabled: false, reason: "hidden" as const };
     if (busy || owner.inFlight()) return { enabled: false, reason: "busy" as const };
-    if (!owner.current().pending) return { enabled: false, reason: "unavailable" as const };
+    const current = owner.current();
+    if (!current.pending || isHumanReviewPending(current.pending) && !current.retryAllowed) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
+  }
+  function checkPendingAvailability() {
+    if (!open || leavePrompt || batchPrompt || batchConfirmation.current) return { enabled: false, reason: "hidden" as const };
+    if (busy || owner.inFlight()) return { enabled: false, reason: "busy" as const };
+    const current = owner.current();
+    return current.pending && isHumanReviewPending(current.pending) && !current.checkingAction
+      ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
   }
   function targetActionAvailability(payload: ReviewFallbackCommandPayload | ReviewWaiverCommandPayload | undefined) {
     const available = reviewActionAvailability(false);
@@ -390,6 +398,11 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
       binding: null, risk: "retries-review-action", confirmation: "none", availability: retryAvailability,
       handler: () => { void owner.retryPending(); },
     });
+    const removeCheckPending = commandRegistry.register({
+      id: "review.check-pending", nameKey: "review.checkSaved", category: "review", scope: commandScope,
+      binding: null, risk: "reads-review", confirmation: "none", availability: checkPendingAvailability,
+      handler: () => { void owner.checkPending(); },
+    });
     const removeAllowFallback = commandRegistry.register({
       id: "review.allow-fallback", nameKey: "review.fallback", category: "review", scope: commandScope,
       binding: null, risk: "writes-review", confirmation: "none", payloadKind: "review-fallback",
@@ -423,7 +436,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
       handler: owner.stopBatch,
     });
     return () => { removeStop(); removeBatch(); removeRevokeWaiver(); removeGrantWaiver(); removeWithdrawFallback(); removeAllowFallback();
-      removeRetry(); removeCancel(); removeCheck(); removePrepareCheck(); removeRequestChanges(); removeApprove(); };
+      removeCheckPending(); removeRetry(); removeCancel(); removeCheck(); removePrepareCheck(); removeRequestChanges(); removeApprove(); };
   });
   function captureSelected() {
     const current = owner.current(), target = current.selected;
@@ -685,8 +698,8 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
             {tab === "work" && work && !workBusy && !workFailure && !work.items.some(item => item.unitId === editorReturned.unitId)
               ? <p role="status">{t("review.diagnosticNavigation.returnedMissing")}</p> : null}</> : null}
           {removedLocale ? <p role="status">{t("review.removedTarget", { locale: removedLocale })}</p> : null}
-          {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "checkUnknown" ? t("review.checkUnknownHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "diagnostic-stale" ? t("review.diagnosticNavigation.stale") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
-          {pending && !owner.inFlight() && notice !== "unknown" ? <p role="status">{t("review.unknown")}</p> : null}
+          {owner.state.checkingAction ? <p role="status">{t("review.checkingSaved")}</p> : notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t(pending && isHumanReviewPending(pending) ? "review.actionUnknown" : "review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "checkUnknown" ? t("review.checkUnknownHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "diagnostic-stale" ? t("review.diagnosticNavigation.stale") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
+          {pending && !owner.inFlight() && !owner.state.checkingAction && notice !== "unknown" ? <p role="status">{t("review.unknown")}</p> : null}
           {notice ? <CommandFailureDetails failure={reasonValue} /> : null}
           {pending?.kind === "finding" ? <section aria-label={t("review.advisoryFindings.originalAction")}>
             <h4>{t("review.advisoryFindings.originalAction")}</h4><p>{t("review.advisoryFindings.originalHelp")}</p>
@@ -694,7 +707,9 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
             <p>{t(pending.request.disposition === "rejected" ? "review.advisoryFindings.reject" : pending.request.disposition === "restored" ? "review.advisoryFindings.restore" : "review.advisoryFindings.repairRecorded")}</p>
             <details><summary>{t("review.advisoryFindings.basis")}</summary><p>{pending.request.actionId}</p><p>{pending.request.runId}</p><p>{pending.request.issueId}</p><p>{pending.basisEvidence.sourceRevisionId}</p></details>
           </section> : null}
-          {pending ? <button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button> : null}
+          {pending && isHumanReviewPending(pending) ? <button className="secondary-button" disabled={!checkPendingAvailability().enabled}
+            onClick={() => commandRegistry.dispatch("review.check-pending", commandScope)}>{t("review.checkSaved")}</button> : null}
+          {pending && (!isHumanReviewPending(pending) || owner.state.retryAllowed) ? <button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button> : null}
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
           {batchStatus?.notStarted ? <p role="status">{t("review.batchRemaining", { count: batchStatus.notStarted })}</p> : null}
           {batchRunning ? <button className="secondary-button" disabled={!stopBatchAvailability().enabled} onClick={() => commandRegistry.dispatch("review.stop-batch", commandScope)}>{t("review.batchCancel")}</button> : null}

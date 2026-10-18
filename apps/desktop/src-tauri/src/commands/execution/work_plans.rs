@@ -2507,6 +2507,76 @@ mod tests {
     }
 
     #[test]
+    fn registered_review_human_action_reads_preserve_exact_requests_after_history_changes() {
+        let wire:Value=serde_json::from_str(include_str!("../../../../test/fixtures/reviewCommands.contract.json")).unwrap();
+        let isolated=ProjectFixture::create("en-US");
+        for (kind,command) in [("decision","read_review_decision_action"),("waiver","read_review_waiver_action"),("fallback","read_review_fallback_action")] {
+            let mut body=wire["requests"][kind].clone();body["projectId"]=isolated.context["projectId"].clone();body["sessionToken"]=isolated.context["sessionToken"].clone();
+            body[kind]["projectId"]=isolated.context["projectId"].clone();
+            assert_eq!(call(&isolated.webview,command,body).unwrap(),Value::Null);
+        }
+        assert_eq!(call(&isolated.webview,"read_review_finding_action",request(&isolated.context,json!({"actionId":ExecutionId::new()}))).unwrap(),Value::Null);
+        isolated.app.state::<AppState>().sessions.with(|sessions|assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+        let mut fixture=Fixture::create_with_source(br#"{"first":"Hello {{name}}"}"#);let unit=fixture.unit;
+        let target=fixture.call("read_review_target",json!({"unitId":unit,"locale":"zh-CN"})).unwrap();
+        let fallback=json!({"projectId":fixture.context["projectId"],"actionId":ExecutionId::new(),"unitId":unit,"locale":"zh-CN",
+            "expectedBasis":target["basis"],"allow":true,"expectedFallbackId":null,"actor":"Original reviewer","reason":"Use original source"});
+        assert_eq!(fixture.call("read_review_fallback_action",json!({"fallback":fallback})).unwrap(),Value::Null);
+        let fallback_receipt=fixture.call("allow_source_fallback",json!({"fallback":fallback})).unwrap();
+        let mut withdrawn=fallback.clone();withdrawn["actionId"]=json!(ExecutionId::new());withdrawn["allow"]=json!(false);withdrawn["expectedFallbackId"]=fallback_receipt["fallbackId"].clone();
+        fixture.call("allow_source_fallback",json!({"fallback":withdrawn})).unwrap();
+        let (decision,waiver)=fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let store=&mut sessions.active.as_mut().unwrap().store;let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+            let target=store.review_target(project,unit,"zh-CN").unwrap();
+            store.save_translation_revision(&tsumugi_core::SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+                locale:"zh-CN".into(),source_revision_id:target.source_revision_id,expected_selection_id:None,text:"你好 {{name}}".into()}).unwrap();
+            store.save_term(&tsumugi_core::SaveTerm {project_id:project,action_id:ExecutionId::new(),term_id:None,locale:"zh-CN".into(),
+                source:"Hello".into(),aliases:vec![],target:"欢迎".into(),protected:true,scope_unit_id:Some(unit),expected_revision_id:None,reason:"Preferred term".into()}).unwrap();
+            let target=store.review_target(project,unit,"zh-CN").unwrap();
+            let run=store.run_review_checks(project,unit,"zh-CN",&target.basis,ExecutionId::new()).unwrap();
+            let issue=run.rules.iter().flat_map(|rule|&rule.findings).find(|finding|finding.code=="protected-form").unwrap().issue_id.clone();
+            (json!({"projectId":project,"actionId":ExecutionId::new(),"unitId":unit,"locale":"zh-CN","expectedBasis":target.basis,
+                "expectedDecisionId":null,"kind":"approve","actor":"Original reviewer","reason":"Original approval"}),
+             json!({"projectId":project,"actionId":ExecutionId::new(),"unitId":unit,"locale":"zh-CN","expectedBasis":target.basis,
+                "expectedWaiverId":null,"issueId":issue,"grant":true,"actor":"Original reviewer","reason":"Accept original issue"}))
+        });
+        let decision_receipt=fixture.call("write_review_decision",json!({"decision":decision})).unwrap();
+        let waiver_receipt=fixture.call("waive_review_issue",json!({"waiver":waiver})).unwrap();
+        let mut later=decision.clone();later["actionId"]=json!(ExecutionId::new());later["expectedDecisionId"]=decision_receipt["decisionId"].clone();later["kind"]=json!("request-changes");
+        fixture.call("write_review_decision",json!({"decision":later})).unwrap();
+        let mut revoked=waiver.clone();revoked["actionId"]=json!(ExecutionId::new());revoked["expectedWaiverId"]=waiver_receipt["waiverId"].clone();revoked["grant"]=json!(false);
+        fixture.call("waive_review_issue",json!({"waiver":revoked})).unwrap();
+        let facts=[("decision","read_review_decision_action",decision,decision_receipt),("waiver","read_review_waiver_action",waiver,waiver_receipt),
+            ("fallback","read_review_fallback_action",fallback,fallback_receipt)];
+        for (kind,command,business,receipt) in &facts {
+            let mut body=json!({});body[*kind]=business.clone();
+            assert_eq!(fixture.call(command,body.clone()).unwrap(),json!({"request":business,"receipt":receipt}));
+            for field in ["projectId","sessionToken"] {
+                let mut wrong=body.clone();wrong[field]=if field=="sessionToken" {json!("old-session")} else {json!(ExecutionId::new())};assert!(fixture.call(command,wrong).is_err());
+            }
+            let mut wrong=body.clone();wrong[*kind]["projectId"]=json!(ExecutionId::new());assert!(fixture.call(command,wrong).is_err());
+            let mut wrong=body.clone();wrong[*kind]["reason"]=json!("Wrong original request");assert_eq!(fixture.call(command,wrong).unwrap_err()["code"],"result-mismatch");
+            let mut extra=body;extra["grant"]=json!("invented");assert!(fixture.call(command,extra).is_err());
+        }
+        Fixture::capture_source(&fixture.app,br#"{"replacement":"Changed source"}"#.to_vec());
+        let sequence=fixture.app.state::<AppState>().sessions.with(|sessions| {
+            let active=sessions.active.as_mut().unwrap();let revision=active.store.metadata().unwrap().metadata_revision();active.store.set_target_locales(revision,&["ja".into()]).unwrap();
+            active.execution.as_mut().unwrap().quiescing=true;active.store.execution_sequence().unwrap()
+        });
+        for (kind,command,business,receipt) in &facts {
+            let mut body=json!({});body[*kind]=business.clone();assert_eq!(fixture.call(command,body).unwrap(),json!({"request":business,"receipt":receipt}));
+        }
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active=sessions.active.as_mut().unwrap();assert_eq!(active.store.execution_sequence().unwrap(),sequence);active.execution.as_mut().unwrap().quiescing=false;
+        });
+        let old_context=fixture.context.clone();fixture.reopen();
+        for (kind,command,business,receipt) in &facts {
+            let mut body=json!({});body[*kind]=business.clone();assert!(call(&fixture.webview,command,request(&old_context,body.clone())).is_err());
+            assert_eq!(fixture.call(command,body).unwrap(),json!({"request":business,"receipt":receipt}));
+        }
+    }
+
+    #[test]
     fn registered_arena_reveal_target_reads_distinguish_visibility_from_action_receipts() {
         let isolated=ProjectFixture::create("en-US");
         assert_eq!(call(&isolated.webview,"read_arena_reveal_target",request(&isolated.context,json!({"comparisonId":ExecutionId::new()}))).unwrap(),Value::Null);
