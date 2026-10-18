@@ -298,7 +298,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     </section>
     {!project.metadata.targetLocales.length?<p role="status">{t("ai.workspace.noTargets")}</p>:null}
     <IncrementalMaintenance project={project} active={open} disabled={locked} onOpenManual={onOpenManual}/>
-    <StrategyWorkbench project={project} active={open} disabled={disabled || preparation.reserved()} config={config} onOpenConnections={onOpenConnections} />
+    <StrategyWorkbench area="ai" project={project} active={open} disabled={disabled || preparation.reserved()} config={config} onOpenConnections={onOpenConnections} />
     {preparation.strategyDefault === "loading" ? <p role="status">{t("strategy.defaultLoading")}</p> : preparation.strategyDefault === "failed" ? <div role="alert"><p>{t("strategy.defaultFailed")}</p><CommandFailureDetails failure={preparation.strategyDefaultFailure} />
       <button type="button" className="secondary-button" disabled={preparation.reserved()} onClick={() => void preparation.loadStrategyDefault()}>{t("strategy.retryDefault")}</button></div> : config.contextStrategy ? <p role="status">{t("strategy.appliedDefault")}</p> : null}
     <TaskCancellationFeedback origin="ai" taskId={view?.detail.taskId} disabled={busy} retryCommand={{

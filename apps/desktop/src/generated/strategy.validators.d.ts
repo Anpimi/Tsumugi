@@ -13,8 +13,10 @@ export declare function validateRequestPromote(value: unknown): value is Request
 export declare function validateRequestRead(value: unknown): value is Requests["read"];
 export declare function validateRequestReadStart(value: unknown): value is Requests["readStart"];
 export declare function validateRequestRunCheck(value: unknown): value is Requests["runCheck"];
+export declare function validateRequestSaveAction(value: unknown): value is Requests["saveAction"];
 export declare function validateRequestSaveCandidate(value: unknown): value is Requests["saveCandidate"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
+export declare function validateRequestStartAction(value: unknown): value is Requests["startAction"];
 export declare function validateRequestSuite(value: unknown): value is Requests["suite"];
 export declare function validateRequestWithdraw(value: unknown): value is Requests["withdraw"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
@@ -31,5 +33,7 @@ export declare function validateResponseEvaluations(value: unknown): value is Re
 export declare function validateResponseIdentity(value: unknown): value is Responses["identity"];
 export declare function validateResponseJudgment(value: unknown): value is Responses["judgment"];
 export declare function validateResponsePrepared(value: unknown): value is Responses["prepared"];
+export declare function validateResponseSaveAction(value: unknown): value is Responses["saveAction"];
+export declare function validateResponseStartAction(value: unknown): value is Responses["startAction"];
 export declare function validateResponseStartReceipt(value: unknown): value is Responses["startReceipt"];
 export declare function validateResponseSuite(value: unknown): value is Responses["suite"];

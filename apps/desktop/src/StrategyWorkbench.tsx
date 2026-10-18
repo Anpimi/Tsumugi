@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useLayoutEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useOptionalStrategyDraftSession, useStrategyDraftSession } from "./StrategyDraftSession";
@@ -12,20 +12,39 @@ import { mandatoryChecksClean, type AiConfig } from "./aiCommands";
 import type { ProjectView } from "./projectCommands";
 import type { ArenaView } from "./arenaCommands";
 import { reviewRuleLabel } from "./reviewLabels";
+import { useWorkbenchCommands } from "./workbenchCommands";
 import { enUS } from "./i18n/en-US";
 
-interface Props { project: ProjectView; active: boolean; disabled: boolean; config: AiConfig; onOpenConnections?: () => void }
+interface Props { area: "ai" | "arena"; project: ProjectView; active: boolean; disabled: boolean; config: AiConfig; onOpenConnections?: () => void }
 /** The shared draft owner remains mounted when either existing work surface is hidden. */
 export function StrategyWorkbench(props: Props) {
   const owner = useOptionalStrategyDraftSession();
   return owner ? <StrategyPanel {...props} /> : null;
 }
-function StrategyPanel({ project, active, disabled, config, onOpenConnections }: Props) {
+function StrategyPanel({ area, project, active, disabled, config, onOpenConnections }: Props) {
   const { t } = useTranslation(), owner = useStrategyDraftSession(), reads = useSessionReads(), state = owner.state;
   const [expanded, setExpanded] = useState(() => owner.dirty() || owner.reserved()), [after, setAfter] = useState(0);
   const [candidateOffset, setCandidateOffset] = useState(0), [evaluationOffset, setEvaluationOffset] = useState(0), [historyOffset, setHistoryOffset] = useState(0);
   const failureRef = useRef<HTMLDivElement>(null), context = reads.context;
   const enabled = active && expanded && !reads.retired;
+  const registry = useWorkbenchCommands();
+  const commandScope = { ...context, area };
+  function checkAvailability() {
+    if (!active || !expanded || reads.retired) return { enabled: false, reason: "hidden" as const };
+    if (owner.current().busy) return { enabled: false, reason: "busy" as const };
+    return owner.current().pending?.uncertain ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
+  }
+  function retryAvailability() {
+    const available = checkAvailability(); if (!available.enabled) return available;
+    return !disabled && owner.current().pending?.retryAllowed ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
+  }
+  useLayoutEffect(() => {
+    const removeCheck = registry.register({ id: "strategy.check-pending", nameKey: "strategy.reconcile", category: area, scope: commandScope,
+      binding: null, risk: "reads-strategy", confirmation: "none", availability: checkAvailability, handler: () => { void owner.reconcile(); } });
+    const removeRetry = registry.register({ id: "strategy.retry-pending", nameKey: "strategy.retryOriginal", category: area, scope: commandScope,
+      binding: null, risk: "retries-strategy-action", confirmation: "none", availability: retryAvailability, handler: () => { void owner.retry(); } });
+    return () => { removeCheck(); removeRetry(); };
+  });
   const sourceOptions = sourceReads.scope(context), source = useSessionQuery({ ...sourceOptions, enabled });
   const pageOptions = sourceReads.content(context, source.data?.currentSnapshot ?? "", after, source.data);
   const page = useSessionQuery({ ...pageOptions, enabled: enabled && !!source.data?.currentSnapshot && !source.error });
@@ -76,12 +95,12 @@ function StrategyPanel({ project, active, disabled, config, onOpenConnections }:
       </select></label>
       {!owner.available() ? <p role="alert">{t("ai.errors.ai-locale")}</p> : null}
       {loading ? <p role="status">{t("strategy.loading")}</p> : null}
-      {failure ? <div role="alert" tabIndex={-1} ref={failureRef}><p>{t(localFailure ?? (state.pending?.uncertain ? "strategy.unknown" : "strategy.failed"))}</p>
+      {failure ? <div role="alert" tabIndex={-1} ref={failureRef}><p>{t(localFailure ?? (state.pending?.uncertain ? "strategy.unknown" : state.notice === "recordedReadFailed" ? "strategy.recordedReadFailed" : "strategy.failed"))}</p>
         <CommandFailureDetails failure={failure} /><button type="button" className="secondary-button" disabled={state.busy} onClick={refresh}>{t("strategy.refresh")}</button></div> : null}
       {state.notice ? <p role="status">{t(`strategy.${state.notice}`)}</p> : null}
-      {state.pending?.uncertain ? <div role="status"><p>{t("strategy.unknown")}</p>
-        <button type="button" className="secondary-button" disabled={state.busy} onClick={() => void owner.reconcile()}>{t("strategy.reconcile")}</button>
-        {state.pending.retryAllowed ? <button type="button" className="secondary-button" disabled={state.busy} onClick={() => void owner.retry()}>{t("strategy.retryOriginal")}</button> : null}
+      {state.pending?.uncertain ? <div role="status"><p>{t(state.checkingAction ? "strategy.checkingSaved" : state.pending.kind === "check" || state.pending.kind === "prepare-check" ? "strategy.checkUnknown" : "strategy.unknown")}</p>
+        <button type="button" className="secondary-button" disabled={!checkAvailability().enabled} onClick={() => registry.dispatch("strategy.check-pending", commandScope)}>{t("strategy.reconcile")}</button>
+        {state.pending.retryAllowed ? <button type="button" className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => registry.dispatch("strategy.retry-pending", commandScope)}>{t("strategy.retryOriginal")}</button> : null}
       </div> : null}
       {state.pending?.kind === "check" ? <button type="button" className="secondary-button" disabled={disabled} onClick={() => void owner.cancelCheck()}>{t("review.cancelCheck")}</button> : null}
       <section aria-label={t("strategy.defaultTitle")}><h3>{t("strategy.defaultTitle")}</h3>

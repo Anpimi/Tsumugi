@@ -25,7 +25,7 @@ import { validateRequestPluginStart as validateTranslationPluginStart, validateR
 import type { ProjectView } from "./projectCommands";
 import { validateResponseProjectView } from "./generated/validators";
 
-type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
+type PlainWorkbenchCommandId = "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending" | "review.check-pending"
@@ -459,7 +459,7 @@ interface CommandMetadata {
   category: "project" | "translation" | "review" | "resources" | "source" | "ai" | "arena" | "tasks" | "release";
   scope: CommandScope;
   binding: "Mod+S" | null;
-  risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
+  risk: "reads-strategy" | "retries-strategy-action" | "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
     | "cancels-review-checks" | "retries-review-action" | "stops-review-batch" | "reads-review"
     | "writes-resources" | "captures-resources" | "reads-resources" | "runs-resource-tool" | "stops-application-component" | "retries-resource-action" | "opens-translation" | "opens-review"
     | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"

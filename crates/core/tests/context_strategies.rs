@@ -517,3 +517,127 @@ fn suite_request_config() -> AiConfig {
         ..Default::default()
     }
 }
+
+#[test]
+fn original_suite_evaluation_and_enqueue_reads_preserve_historical_scope() {
+    let (directory, mut store, rows) = support::source_fixture();
+    let owner = project(&store);
+    let (_, value) = candidate(&mut store, &rows[0]);
+    let request = suite_request(&store, &value, &rows);
+    let suite = store.capture_strategy_suite(&request).unwrap();
+    let capture = CaptureStrategyEvaluation {
+        action_id: ExecutionId::new(),
+        project_id: owner,
+        candidate_id: value.candidate_id,
+        suite_id: suite.suite_id,
+    };
+    let evaluation = store.capture_strategy_evaluation(&capture).unwrap();
+    let expected = [
+        (
+            request.action_id,
+            StrategyActionReceipt::Suite { request, suite },
+        ),
+        (
+            capture.action_id,
+            StrategyActionReceipt::Evaluation {
+                request: capture,
+                evaluation: evaluation.clone(),
+            },
+        ),
+    ];
+    let assert_saved = |store: &ProjectStore| {
+        for (action, receipt) in &expected {
+            assert_eq!(
+                store.strategy_action_read(owner, *action).unwrap(),
+                Some(receipt.clone())
+            );
+        }
+    };
+    assert_saved(&store);
+    let input = store
+        .strategy_evaluation_input(owner, evaluation.evaluation_id)
+        .unwrap();
+    assert_eq!(
+        store
+            .strategy_evaluation_start_action_read(
+                owner,
+                evaluation.evaluation_id,
+                evaluation.attempt_id,
+                input.digest()
+            )
+            .unwrap(),
+        None
+    );
+    assert!(
+        store
+            .strategy_evaluation_start_action_read(
+                owner,
+                evaluation.evaluation_id,
+                ExecutionId::new(),
+                input.digest()
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .strategy_evaluation_start_action_read(
+                owner,
+                evaluation.evaluation_id,
+                evaluation.attempt_id,
+                &"0".repeat(64)
+            )
+            .is_err()
+    );
+    store.enqueue_execution(&input).unwrap();
+    let started = store
+        .strategy_evaluation_start_action_read(
+            owner,
+            evaluation.evaluation_id,
+            evaluation.attempt_id,
+            input.digest(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(started.project_id, owner);
+    assert_eq!(started.evaluation_id, evaluation.evaluation_id);
+    assert_eq!(started.attempt_id, evaluation.attempt_id);
+    assert_eq!(started.task_id, input.envelope().task_id);
+    assert_eq!(started.digest, input.digest());
+    save(
+        &mut store,
+        &rows[0],
+        Some(value.evidence.basis.after.selection_id),
+        "Later human correction",
+    );
+    let revision = store.metadata().unwrap().metadata_revision();
+    store.set_target_locales(revision, &["ja".into()]).unwrap();
+    let sequence = store.execution_sequence().unwrap();
+    assert_saved(&store);
+    assert_eq!(
+        store
+            .strategy_evaluation_start_action_read(
+                owner,
+                evaluation.evaluation_id,
+                evaluation.attempt_id,
+                input.digest()
+            )
+            .unwrap(),
+        Some(started.clone())
+    );
+    assert_eq!(store.execution_sequence().unwrap(), sequence);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+    assert_saved(&reopened);
+    assert_eq!(
+        reopened
+            .strategy_evaluation_start_action_read(
+                owner,
+                evaluation.evaluation_id,
+                evaluation.attempt_id,
+                input.digest()
+            )
+            .unwrap(),
+        Some(started)
+    );
+    assert_eq!(reopened.execution_sequence().unwrap(), sequence);
+}

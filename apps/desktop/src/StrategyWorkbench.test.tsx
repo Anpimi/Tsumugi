@@ -1,7 +1,8 @@
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
-import { useEffect } from "react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { useEffect, useLayoutEffect } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useWorkbenchCommands } from "./workbenchCommands";
 import { StrategyDraftSession, useStrategyDraftSession } from "./StrategyDraftSession";
 import { StrategyWorkbench, StrategyEvaluationResults } from "./StrategyWorkbench";
 import { strategyCommands, strategyKeys, type ContextStrategyCandidate, type StrategyEvaluationView, type StrategySuite } from "./strategyCommands";
@@ -53,9 +54,11 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
-function mount() { return render(<StrategyDraftSession project={project}><StrategyWorkbench project={project} active disabled={false} config={defaultAiConfig} /></StrategyDraftSession>, project); }
-async function fill() {
-  const user = userEvent.setup(); mount(); await user.click(screen.getByText(enUS.strategy.title));
+let commands!: ReturnType<typeof useWorkbenchCommands>;
+function RecoveryRegistryProbe() { const value = useWorkbenchCommands(); useLayoutEffect(() => { commands = value; }); return null; }
+function mount(area: "ai" | "arena" = "ai") { return render(<StrategyDraftSession project={project}><RecoveryRegistryProbe /><StrategyWorkbench area={area} project={project} active disabled={false} config={defaultAiConfig} /></StrategyDraftSession>, project); }
+async function fill(area: "ai" | "arena" = "ai") {
+  const user = userEvent.setup(); mount(area); await user.click(screen.getByText(enUS.strategy.title));
   await screen.findByRole("option", { name: /door.barrel/ });
   await user.selectOptions(screen.getByRole("combobox", { name: enUS.strategy.correction }), resourceWire.responses.correctionBasis.basis.unitId);
   await user.click(screen.getByRole("button", { name: enUS.strategy.inspectCorrection }));
@@ -135,4 +138,24 @@ it.each(["failed", "cancelled", "unavailable"] as const)("allows a fresh indepen
   expect(prepared.mock.calls[0][0].check).toMatchObject({ evaluationId, itemId: first.itemId, resultId: first.resultId });
   expect(screen.getByRole("button", { name: enUS.strategy.runCheck })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "start_strategy_evaluation" || command === "start_arena_translation")).toBe(false);
+});
+
+
+it.each(["ai", "arena"] as const)("registers separate strategy recovery actions for the %s surface with hidden and busy gates", async area => {
+  const user = await fill(area);
+  let resolve!: (value: null) => void;
+  const pending = new Promise<null>(done => { resolve = done; });
+  vi.mocked(strategyCommands.capture).mockRejectedValueOnce(new Error("Lost original ACK"));
+  const read = vi.spyOn(strategyCommands, "action").mockReturnValueOnce(pending);
+  await user.click(screen.getByRole("button", { name: enUS.strategy.create }));
+  await screen.findByText(enUS.strategy.checkingSaved);
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area };
+  expect(commands.list(scope).find(value => value.id === "strategy.check-pending")).toMatchObject({ risk: "reads-strategy", availability: { enabled: false, reason: "busy" } });
+  expect(commands.dispatch("strategy.check-pending", scope)).toBe(false); expect(commands.dispatch("strategy.retry-pending", scope)).toBe(false);
+  await act(async () => { resolve(null); }); await screen.findByRole("button", { name: enUS.strategy.retryOriginal });
+  await waitFor(() => expect(commands.list(scope).find(value => value.id === "strategy.retry-pending")?.availability.enabled).toBe(true));
+  await user.click(screen.getByText(enUS.strategy.title));
+  await waitFor(() => expect(commands.list(scope).find(value => value.id === "strategy.check-pending")?.availability).toEqual({ enabled: false, reason: "hidden" }));
+  expect(commands.dispatch("strategy.check-pending", scope)).toBe(false); expect(commands.dispatch("strategy.retry-pending", scope)).toBe(false);
+  expect(read).toHaveBeenCalledOnce(); expect(strategyCommands.capture).toHaveBeenCalledOnce();
 });

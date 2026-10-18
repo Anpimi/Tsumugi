@@ -3829,7 +3829,7 @@ fn capture_adoption_in(
 
 /// Restore one historical action and optional receipt inside the caller's read snapshot.
 /// Stored bytes, frozen input and row associations are evidence, never new eligibility.
-fn read_adoption_action_in(
+pub(in crate::persistence) fn read_adoption_action_in(
     connection: &Connection,
     action: ExecutionId,
 ) -> Result<Option<(AdoptionActionRead, FixedInput)>, ExecutionError> {

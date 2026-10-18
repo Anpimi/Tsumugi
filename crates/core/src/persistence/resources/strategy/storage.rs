@@ -245,6 +245,45 @@ fn decode_receipt(
     }
     Ok(value)
 }
+fn action_in(
+    c: &Connection,
+    owner: ExecutionId,
+    action: ExecutionId,
+    validate: bool,
+) -> Result<Option<StrategyActionReceipt>, ExecutionError> {
+    project(c, owner, None)?;
+    let row:Option<(String,String,Vec<u8>,String,Option<Vec<u8>>)>=c.query_row(
+        "SELECT project_id,kind,request,request_digest,receipt FROM context_strategy_actions WHERE action_id=?1",
+        [action.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(sql)?;
+    let Some((project, kind, request, expected, receipt)) = row else {
+        let orphan: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM context_strategy_facts WHERE fact_id=?1)",
+                [action.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        if orphan {
+            return Err(corrupt());
+        }
+        return Ok(None);
+    };
+    if project != owner.to_string() || codec::digest(&request) != expected {
+        return Err(corrupt());
+    }
+    let receipt = decode_receipt(
+        &receipt.ok_or_else(corrupt)?,
+        owner,
+        action,
+        &kind,
+        &request,
+    )?;
+    if validate {
+        validation::validate_saved_action(c, owner, action, &kind, request, receipt.clone())?;
+    }
+    Ok(Some(receipt))
+}
+
 fn record<T: Serialize>(
     c: &Connection,
     project: ExecutionId,
@@ -337,22 +376,122 @@ impl ProjectStore {
         project_id: ExecutionId,
         action: ExecutionId,
     ) -> Result<Option<StrategyActionReceipt>, ExecutionError> {
-        let c = connection(self)?;
-        project(c, project_id, None)?;
-        let value:Option<(String,Vec<u8>,String,Option<Vec<u8>>)>=c.query_row("SELECT kind,request,request_digest,receipt FROM context_strategy_actions WHERE action_id=?1 AND project_id=?2",params![action.to_string(),project_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(sql)?;
-        let Some((kind, request, expected, receipt)) = value else {
-            return Ok(None);
-        };
-        if codec::digest(&request) != expected {
-            return Err(corrupt());
+        action_in(connection(self)?, project_id, action, false)
+    }
+    /// Explicit recovery validates the immutable facts in one snapshot; raw
+    /// receipt-first mutation lookups never clear the memory guard themselves.
+    pub fn strategy_action_read(
+        &self,
+        project_id: ExecutionId,
+        action: ExecutionId,
+    ) -> Result<Option<StrategyActionReceipt>, ExecutionError> {
+        let found = review::read_snapshot(connection(self)?, |c| {
+            action_in(c, project_id, action, true)
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
         }
-        Ok(Some(decode_receipt(
-            &receipt.ok_or_else(corrupt)?,
-            project_id,
-            action,
-            &kind,
-            &request,
-        )?))
+        Ok(found)
+    }
+    pub fn strategy_evaluation_start_action_read(
+        &self,
+        owner: ExecutionId,
+        evaluation: ExecutionId,
+        attempt: ExecutionId,
+        digest: &str,
+    ) -> Result<Option<StrategyEvaluationStartRead>, ExecutionError> {
+        let found = review::read_snapshot(connection(self)?, |c| {
+            project(c, owner, None)?;
+            match action_in(c, owner, evaluation, true)? {
+                Some(StrategyActionReceipt::Evaluation { .. }) => {}
+                _ => return Err(corrupt()),
+            }
+            let expected = evaluation_input(c, owner, evaluation)?;
+            if expected.envelope().attempt_id != attempt || expected.digest() != digest {
+                return Err(fail(ErrorCode::ResultMismatch, "strategy-start-request"));
+            }
+            let exists: bool = c
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [attempt.to_string()],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            if !exists {
+                return Ok(None);
+            }
+            let saved = crate::persistence::ledger::load_input(c, attempt)?;
+            if saved.bytes() != expected.bytes() {
+                return Err(corrupt());
+            }
+            Ok(Some(StrategyEvaluationStartRead {
+                project_id: owner,
+                evaluation_id: evaluation,
+                attempt_id: attempt,
+                task_id: saved.envelope().task_id,
+                digest: saved.digest().into(),
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
+    pub fn strategy_candidate_save_action_read(
+        &self,
+        request: &StrategyCandidateSaveRequest,
+    ) -> Result<Option<StrategyCandidateSaveRead>, ExecutionError> {
+        let found = review::read_snapshot(connection(self)?, |c| {
+            project(c, request.project_id, None)?;
+            match action_in(c, request.project_id, request.evaluation_id, true)? {
+                Some(StrategyActionReceipt::Evaluation { .. }) => {}
+                _ => return Err(corrupt()),
+            }
+            let expected = evaluation_input(c, request.project_id, request.evaluation_id)?;
+            let mut units = expected
+                .envelope()
+                .units
+                .iter()
+                .filter(|unit| unit.item_ids.as_slice() == [request.item_id]);
+            let unit = units.next().ok_or_else(corrupt)?.unit_id;
+            if units.next().is_some() {
+                return Err(corrupt());
+            }
+            let result = crate::persistence::ledger::load_result(c, &expected, request.result_id)?;
+            if result.envelope().item_id != request.item_id {
+                return Err(fail(ErrorCode::ResultMismatch, "strategy-candidate-result"));
+            }
+            arena::validate_output(&expected, &result)?;
+            let Some((adoption, saved)) =
+                crate::persistence::ledger::read_adoption_action_in(c, request.action_id)?
+            else {
+                return Ok(None);
+            };
+            let original = &adoption.action;
+            if saved.bytes() != expected.bytes()
+                || original.project_id != request.project_id
+                || original.attempt_id != expected.envelope().attempt_id
+                || original.unit_id != unit
+                || original.result_ids != vec![request.result_id]
+                || !original.parameters.is_null()
+                || original.operation != arena::OPERATION
+            {
+                return Err(fail(ErrorCode::ResultMismatch, "strategy-candidate-action"));
+            }
+            if adoption.receipt.as_ref().is_some_and(|receipt| {
+                receipt.changes.len() != 1 || receipt.changes[0].kind != "translation-revision"
+            }) {
+                return Err(corrupt());
+            }
+            Ok(Some(StrategyCandidateSaveRead {
+                request: request.clone(),
+                adoption,
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
     }
     pub fn capture_context_strategy(
         &mut self,
@@ -813,9 +952,17 @@ pub(in crate::persistence) fn verify_input_binding(
     match input.envelope().operation.as_str() {
         crate::ai::OPERATION | crate::ai::semantic_review::OPERATION => {
             let semantic = input.envelope().operation == crate::ai::semantic_review::OPERATION;
-            let config = if semantic { crate::ai::semantic_review::settings(input)?.config } else { crate::ai::settings(input)?.config };
+            let config = if semantic {
+                crate::ai::semantic_review::settings(input)?.config
+            } else {
+                crate::ai::settings(input)?.config
+            };
             for item in &input.envelope().items {
-                let payload = if semantic { crate::ai::semantic_review::item_payload(input,item.item_id)?.source } else { crate::ai::item_payload(input, item.item_id)? };
+                let payload = if semantic {
+                    crate::ai::semantic_review::item_payload(input, item.item_id)?.source
+                } else {
+                    crate::ai::item_payload(input, item.item_id)?
+                };
                 if config
                     .context_strategy
                     .as_ref()
@@ -1553,4 +1700,123 @@ fn promotion_evidence(
         checks: checks.iter().map(|r| r.request.action_id).collect(),
         judgments: judgments.iter().map(|j| j.judgment_id).collect(),
     })
+}
+
+#[cfg(test)]
+mod action_read_tests {
+    use super::*;
+    use crate::persistence::review::tests::{adopt_source, fixture, translate};
+
+    #[test]
+    fn strategy_original_action_reads_validate_facts_and_history_before_reconciling() {
+        let (directory, mut store, owner, units) = fixture();
+        let unit = units[0];
+        translate(
+            &mut store,
+            owner,
+            unit,
+            "zh-CN",
+            "Original manual translation",
+        );
+        translate(
+            &mut store,
+            owner,
+            unit,
+            "zh-CN",
+            "Corrected manual translation",
+        );
+        let selection = store
+            .review_target(owner, unit, "zh-CN")
+            .unwrap()
+            .selection_id
+            .unwrap();
+        let basis = store
+            .correction_term_basis(owner, unit, "zh-CN", selection)
+            .unwrap()
+            .basis;
+        let request = CaptureContextStrategy {
+            action_id: ExecutionId::new(),
+            basis,
+            source_context: SourceContextSelection {
+                neighbors: true,
+                ..Default::default()
+            },
+            reason: "Use surrounding context".into(),
+            exceptions: "Only this project".into(),
+        };
+        let candidate = store.capture_context_strategy(&request).unwrap();
+        let expected = vec![(
+            request.action_id,
+            StrategyActionReceipt::Candidate {
+                request: request.clone(),
+                candidate: candidate.clone(),
+            },
+        )];
+        let assert_saved = |store: &ProjectStore| {
+            for (action, receipt) in &expected {
+                assert_eq!(
+                    store.strategy_action_read(owner, *action).unwrap(),
+                    Some(receipt.clone())
+                );
+            }
+        };
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            store
+                .strategy_action_read(owner, ExecutionId::new())
+                .unwrap(),
+            None
+        );
+        assert!(!store.is_reconciling());
+        assert_saved(&store);
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert!(
+            store
+                .read_strategy_action(owner, request.action_id)
+                .unwrap()
+                .is_some()
+        );
+        assert!(store.is_reconciling());
+        let c = connection(&store).unwrap();
+        let mut changed = candidate.clone();
+        changed.reason = "Rehashed different immutable fact".into();
+        let payload = bytes(&changed).unwrap();
+        c.execute("UPDATE context_strategy_facts SET payload=?2,digest=?3 WHERE kind='candidate' AND fact_id=?1",params![candidate.candidate_id.to_string(),payload,codec::digest(&payload)]).unwrap();
+        assert!(
+            store
+                .strategy_action_read(owner, request.action_id)
+                .is_err()
+        );
+        assert!(store.is_reconciling());
+        let payload = bytes(&candidate).unwrap();
+        c.execute("UPDATE context_strategy_facts SET payload=?2,digest=?3 WHERE kind='candidate' AND fact_id=?1",params![candidate.candidate_id.to_string(),payload,codec::digest(&payload)]).unwrap();
+        let orphan = ExecutionId::new();
+        c.execute(
+            "UPDATE context_strategy_facts SET fact_id=?2 WHERE kind='candidate' AND fact_id=?1",
+            params![candidate.candidate_id.to_string(), orphan.to_string()],
+        )
+        .unwrap();
+        assert!(store.strategy_action_read(owner, orphan).is_err());
+        assert!(store.is_reconciling());
+        c.execute(
+            "UPDATE context_strategy_facts SET fact_id=?2 WHERE kind='candidate' AND fact_id=?1",
+            params![orphan.to_string(), candidate.candidate_id.to_string()],
+        )
+        .unwrap();
+        assert_saved(&store);
+        assert!(!store.is_reconciling());
+        adopt_source(&mut store, br#"{"replacement":"Changed source"}"#);
+        let revision = store.metadata().unwrap().metadata_revision();
+        store.set_target_locales(revision, &["ja".into()]).unwrap();
+        let sequence = store.execution_sequence().unwrap();
+        assert_saved(&store);
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        store.close().unwrap();
+        let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_saved(&reopened);
+    }
 }

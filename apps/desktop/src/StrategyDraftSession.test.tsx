@@ -7,7 +7,7 @@ import { confirmArenaView } from "./ArenaDraftSession";
 import { AiPreparationSession, useAiPreparation } from "./AiPreparationSession";
 import { useSessionReads } from "./SessionReadProvider";
 import { defaultAiConfig, editedAiConfig, sameAiConfig, type AiConfig } from "./aiCommands";
-import { strategyCommands, strategyKeys, type ContextStrategyCandidate, type ContextStrategyDefaultRevision, type StrategyEvaluationView, type StrategySuite, type Prepared, type StrategyCheckReceipt } from "./strategyCommands";
+import { strategyCommands, strategyKeys, type ContextStrategyCandidate, type ContextStrategyDefaultRevision, type StrategyEvaluationView, type StrategySuite, type Prepared, type StrategyCheckReceipt, type StrategyActionReceipt } from "./strategyCommands";
 import { reviewCommands } from "./reviewCommands";
 import { resourceCommands, type CorrectionTermEvidence } from "./resourceCommands";
 import { executionCommands } from "./executionCommands";
@@ -19,6 +19,7 @@ import { defaultArenaConfig, type ArenaView } from "./arenaCommands";
 import { arenaViewFixture } from "./testSupport/aiFixture";
 import type { AiItem } from "./aiCommands";
 import { validateResponseCorrectionBasis } from "./generated/resource.validators";
+import errorWire from "../test/fixtures/commandErrors.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import type { ProjectView } from "./projectCommands";
 
@@ -32,8 +33,8 @@ let owner: ReturnType<typeof useStrategyDraftSession>, ai: ReturnType<typeof use
 let evidence: CorrectionTermEvidence;
 function Probe() { const value = useStrategyDraftSession(), session = useSessionReads(); useLayoutEffect(() => { owner = value; reads = session; }); return null; }
 function AiProbe() { const value = useAiPreparation(); useLayoutEffect(() => { ai = value; }); return null; }
-function Harness({ current = project, withAi = false }: { current?: ProjectView; withAi?: boolean }) {
-  return <StrategyDraftSession project={current}><Probe />{withAi ? <AiPreparationSession initialLocale="zh-CN" targetLocales={current.metadata.targetLocales}><AiProbe /></AiPreparationSession> : null}</StrategyDraftSession>;
+function Harness({ current = project, withAi = false, showProbe = true }: { current?: ProjectView; withAi?: boolean; showProbe?: boolean }) {
+  return <StrategyDraftSession project={current}>{showProbe ? <Probe /> : null}{withAi ? <AiPreparationSession initialLocale="zh-CN" targetLocales={current.metadata.targetLocales}><AiProbe /></AiPreparationSession> : null}</StrategyDraftSession>;
 }
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void; const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; }
 function candidate(actionId = fixtureIdentity(2400), reason = "Preserve the speaker context"): ContextStrategyCandidate {
@@ -104,7 +105,7 @@ it("releases a missing original capture after its exact receipt-first stale reje
   const original = owner.state.pending?.request;
   vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => owner.reconcile());
   act(() => { owner.edit("reason", "Newer hypothesis B"); reads.invalidate(["source"]); });
-  vi.mocked(strategyCommands.capture).mockRejectedValueOnce({ code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "strategy-correction-stale" });
+  vi.mocked(strategyCommands.capture).mockRejectedValueOnce({ ...errorWire.errors[0], reason: "strategy-correction-stale" });
   await act(async () => owner.retry()); expect(vi.mocked(strategyCommands.capture).mock.calls[1][0]).toBe(original);
   expect(owner.state.pending).toBeNull(); expect(owner.state.reason).toBe("Newer hypothesis B"); expect(owner.state.stale).toBe(true); expect(owner.dirty()).toBe(true);
   act(() => expect(owner.reset()).toBe(true));
@@ -114,7 +115,7 @@ it("keeps unknown writes pending after Host preflight rejection without receipt-
   render(<Harness />, project); await correction();
   vi.mocked(strategyCommands.capture).mockRejectedValueOnce(new Error("Synthetic lost acknowledgement")); await act(async () => owner.capture());
   vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => owner.reconcile());
-  vi.mocked(strategyCommands.capture).mockRejectedValueOnce({ code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "connection-profile-current" });
+  vi.mocked(strategyCommands.capture).mockRejectedValueOnce({ ...errorWire.errors[0], reason: "connection-profile-current" });
   await act(async () => owner.retry()); expect(owner.state.pending?.uncertain).toBe(true); expect(owner.reset()).toBe(false);
 });
 
@@ -231,7 +232,7 @@ it.each([false, true])("orchestrates fixed Arena and Review requests with a real
   expect(start).toHaveBeenCalledWith(expect.objectContaining({ evaluationId: prepared.evaluation.evaluationId, attemptId, digest: prepared.evaluation.inputDigest, confirmed: true }));
   expect(start.mock.calls[0][0].digest).not.toBe(prepared.preview.digest);
   expect(owner.state.pending?.uncertain).toBe(true);
-  const originalStart = start.mock.calls[0][0]; vi.spyOn(strategyCommands, "startReceipt").mockResolvedValue(null);
+  const originalStart = start.mock.calls[0][0]; vi.spyOn(strategyCommands, "startAction").mockResolvedValue(null);
   await act(async () => owner.reconcile()); expect(owner.state.pending?.retryAllowed).toBe(true);
   await act(async () => owner.retry()); expect(start.mock.calls[1][0]).toBe(originalStart);
   let arena = arenaViewFixture(item, suite.preview.config);
@@ -270,11 +271,15 @@ it.each([false, true])("orchestrates fixed Arena and Review requests with a real
     if (row === rows[0]) {
       const pending = owner.state.pending; if (pending?.kind !== "save-candidate") throw new Error("Mismatched source-unit receipt must remain unknown");
       expect(pending.unitId).not.toBe(row.item.unitId); expect(pending.unitId).toBe(fixtureIdentity(2900));
-      vi.spyOn(executionCommands, "receipt").mockResolvedValue({ ...executionWire.receipt, actionId: pending.request.actionId, projectId: project.metadata.projectId, attemptId,
-        unitId: pending.unitId, changes: [{ kind: "translation-revision", id: fixtureIdentity(2490), revision: "1" }] });
-      const actionRead = vi.spyOn(executionCommands, "prepare").mockImplementation(async request => ({ ...executionWire.action, projectId: request.projectId, attemptId: request.attemptId,
-        actionId: request.actionId, unitId: request.unitId, resultIds: request.resultIds, parameters: null, operation: "arena-translation" }));
-      await act(async () => owner.reconcile()); expect(owner.state.pending).toBeNull(); expect(actionRead).toHaveBeenCalledWith(expect.objectContaining({ unitId: pending.unitId, resultIds: [row.resultId] }));
+      const recovered = { ...executionWire.receipt, actionId: pending.request.actionId, projectId: project.metadata.projectId, attemptId,
+        unitId: pending.unitId, changes: [{ kind: "translation-revision", id: fixtureIdentity(2490), revision: "1" }] };
+      const actionRead = vi.spyOn(strategyCommands, "saveAction").mockResolvedValue({ request: { projectId: project.metadata.projectId,
+        actionId: pending.request.actionId, evaluationId: pending.request.evaluationId, itemId: pending.request.itemId, resultId: pending.request.resultId },
+        adoption: { receipt: recovered, action: { ...executionWire.action, actionId: pending.request.actionId, projectId: project.metadata.projectId,
+          attemptId, unitId: pending.unitId, operation: "arena-translation", resultIds: [row.resultId!], parameters: null } } });
+      const preparing = vi.spyOn(executionCommands, "prepare");
+      await act(async () => owner.reconcile()); expect(owner.state.pending).toBeNull(); expect(actionRead).toHaveBeenCalledWith(pending.request);
+      expect(preparing).not.toHaveBeenCalled();
     }
     act(freshView); await act(async () => owner.prepareCheck(view, row));
     expect(owner.checkersConfirmed()).toBe(false);
@@ -299,10 +304,25 @@ it.each([false, true])("orchestrates fixed Arena and Review requests with a real
   expect(promote).toHaveBeenCalledWith(expect.objectContaining({ promotion: expect.objectContaining({ evaluationId: view.evaluation.evaluationId, expectedRevisionId: null }) }));
   expect(owner.state.pending?.uncertain).toBe(true); const originalPromotion = owner.state.pending?.request;
   vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => owner.reconcile());
-  promote.mockRejectedValueOnce({ code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "strategy-default-current" });
+  promote.mockRejectedValueOnce({ ...errorWire.errors[0], reason: "strategy-default-current" });
   await act(async () => owner.retry()); expect(promote.mock.calls[1][0]).toBe(originalPromotion); expect(owner.state.pending).toBeNull();
   act(freshView); await act(async () => owner.changeDefault(view, false, fixtureIdentity(2950), () => true));
   expect(promote.mock.calls[2][0].promotion.expectedRevisionId).toBe(fixtureIdentity(2950)); expect(owner.state.pending).toBeNull();
+  const originalPrepare = vi.mocked(strategyCommands.prepare).getMockImplementation()!;
+  const prepareCount = vi.mocked(strategyCommands.prepare).mock.calls.length, readsBeforeRecovery = evaluationRead.mock.calls.length;
+  vi.mocked(strategyCommands.prepare).mockImplementationOnce(async request => { await originalPrepare(request); throw new Error("Lost saved evaluation ACK"); });
+  const lookup = vi.mocked(strategyCommands.action).mockImplementation(async () => ({ kind: "evaluation", request: prepared.evaluation.request, evaluation: prepared.evaluation }));
+  await act(async () => owner.prepare());
+  expect(vi.mocked(strategyCommands.prepare).mock.calls.length).toBe(prepareCount + 1);
+  expect(evaluationRead.mock.calls.length).toBe(readsBeforeRecovery);
+  expect(owner.state.pending).toBeNull(); expect(owner.state.evaluationId).toBe(prepared.evaluation.evaluationId);
+  expect(owner.state.prepared).toBeNull(); expect(owner.state.consent).toBe(false); expect(owner.state.notice).toBe("preparationRecorded");
+  expect(lookup).toHaveBeenLastCalledWith(expect.objectContaining({ actionId: prepared.evaluation.evaluationId }));
+  evaluationRead.mockRejectedValueOnce(new Error("Current evaluation view unavailable"));
+  await act(async () => owner.prepare());
+  expect(owner.state.pending).toBeNull(); expect(owner.state.evaluationId).toBe(prepared.evaluation.evaluationId);
+  expect(owner.state.prepared).toBeNull(); expect(owner.state.notice).toBe("recordedReadFailed");
+
 });
 
 it("rejects a default that became stale while its immutable candidate was being read", async () => {
@@ -320,4 +340,80 @@ it("keeps stale candidate evidence visible and refuses a new evaluation set", as
     owner.edit("roles", { [stale.evidence.basis.unitId]: "calibration", [fixtureIdentity(2960)]: "holdout" }); });
   const captureSuite = vi.spyOn(strategyCommands, "suite"); await act(async () => owner.captureSuite());
   expect(captureSuite).not.toHaveBeenCalled(); expect(owner.state.candidate?.evidence.sourceText).toBe(evidence.sourceText); expect(owner.state.stale).toBe(true);
+});
+
+
+it.each(["candidate", "withdraw"] as const)("automatically confirms original %s once and never repeats its write or identity", async kind => {
+  render(<Harness />, project); if (kind === "candidate") await correction();
+  let original!: StrategyActionReceipt;
+  const candidateRead = vi.spyOn(strategyCommands, "candidate").mockImplementation(async () => {
+    if (original.kind !== "candidate") throw new Error("Candidate proof required"); return original.candidate;
+  });
+  const originalCapture = vi.mocked(strategyCommands.capture).getMockImplementation()!;
+  if (kind === "candidate") vi.mocked(strategyCommands.capture).mockImplementationOnce(async request => {
+    original = { kind: "candidate", request: request.capture, candidate: await originalCapture(request) }; throw new Error("Lost original capture ACK");
+  });
+  const withdraw = vi.spyOn(strategyCommands, "withdraw").mockImplementation(async request => {
+    const withdrawal = { ...request.withdrawal, expectedRevisionId: request.withdrawal.expectedRevisionId ?? null };
+    original = { kind: "withdrawn", request: withdrawal, revision: { revisionId: withdrawal.actionId, actionId: withdrawal.actionId,
+      projectId: project.metadata.projectId, locale: withdrawal.locale, previousRevisionId: withdrawal.expectedRevisionId, reference: null, evaluationId: null } };
+    throw Object.assign(new Error("Invalid original withdrawal ACK"), { outcome: "unknown" });
+  });
+  const read = vi.spyOn(strategyCommands, "action").mockImplementation(async () => original);
+  await act(async () => { if (kind === "candidate") await owner.capture(); else await owner.changeDefault(null, true, fixtureIdentity(2901), () => true); });
+  expect(owner.state.pending).toBeNull(); expect(owner.state.notice).toBe("reconciled"); expect(owner.state.checkingAction).toBe(false);
+  expect(read).toHaveBeenCalledOnce(); expect(executionCommands.identity).toHaveBeenCalledOnce();
+  expect(kind === "candidate" ? strategyCommands.capture : withdraw).toHaveBeenCalledOnce();
+  expect(candidateRead).toHaveBeenCalledTimes(kind === "candidate" ? 1 : 0);
+});
+
+it("pins a recovered original candidate before a failed current read without offering another write", async () => {
+  render(<Harness />, project); await correction(); let original!: StrategyActionReceipt;
+  const capture = vi.mocked(strategyCommands.capture).getMockImplementation()!;
+  vi.mocked(strategyCommands.capture).mockImplementationOnce(async request => { original = { kind: "candidate", request: request.capture, candidate: await capture(request) }; throw new Error("Lost ACK"); });
+  vi.spyOn(strategyCommands, "action").mockImplementation(async () => original);
+  vi.spyOn(strategyCommands, "candidate").mockRejectedValue(new Error("Current evidence unavailable"));
+  await act(async () => owner.capture());
+  expect(owner.state.pending).toBeNull(); expect(owner.state.candidate?.candidateId).toBe(fixtureIdentity(2410));
+  expect(owner.state.notice).toBe("recordedReadFailed"); expect(owner.state.stale).toBe(true);
+  await act(async () => owner.retry()); expect(strategyCommands.capture).toHaveBeenCalledOnce();
+});
+
+it("keeps one original read flight through consumer removal, preserving newer hypothesis B", async () => {
+  const view = render(<Harness />, project); await correction();
+  let original!: StrategyActionReceipt; const captured = vi.mocked(strategyCommands.capture).getMockImplementation()!;
+  vi.mocked(strategyCommands.capture).mockImplementationOnce(async request => { original = { kind: "candidate", request: request.capture, candidate: await captured(request) }; throw new Error("Lost ACK"); });
+  const response = deferred<StrategyActionReceipt | null>(), read = vi.spyOn(strategyCommands, "action").mockReturnValue(response.promise);
+  let writing!: Promise<void>; await act(async () => { writing = owner.capture(); });
+  expect(owner.state.checkingAction).toBe(true); expect(owner.reserved()).toBe(true);
+  act(() => owner.edit("reason", "Newer hypothesis B"));
+  await act(async () => { await owner.reconcile(); await owner.retry(); }); expect(read).toHaveBeenCalledOnce();
+  const retained = owner; view.rerender(<Harness showProbe={false} />);
+  await act(async () => { response.resolve(original); await writing; });
+  expect(retained.current().pending).toBeNull(); expect(retained.current().reason).toBe("Newer hypothesis B");
+  expect(retained.current().candidate).toBeNull(); expect(retained.dirty()).toBe(true); expect(strategyCommands.capture).toHaveBeenCalledOnce();
+});
+
+it("retains the original request when a successful lookup belongs to another capture, then permits the same manual check", async () => {
+  render(<Harness />, project); await correction(); let original!: Extract<StrategyActionReceipt,{kind:"candidate"}>;
+  const captured = vi.mocked(strategyCommands.capture).getMockImplementation()!;
+  vi.mocked(strategyCommands.capture).mockImplementationOnce(async request => { original = { kind: "candidate", request: request.capture, candidate: await captured(request) }; throw new Error("Lost ACK"); });
+  const read = vi.spyOn(strategyCommands, "action").mockImplementationOnce(async () => ({ ...original, request: { ...original.request, reason: "Foreign input" } })).mockImplementation(async () => original);
+  vi.spyOn(strategyCommands, "candidate").mockImplementation(async () => original.candidate);
+  await act(async () => owner.capture()); const pending = owner.state.pending;
+  expect(pending?.retryAllowed).toBe(false); await act(async () => owner.retry()); expect(strategyCommands.capture).toHaveBeenCalledOnce();
+  await act(async () => owner.reconcile()); expect(owner.state.pending).toBeNull(); expect(read).toHaveBeenCalledTimes(2);
+  expect(read.mock.calls[1][0]).toEqual(read.mock.calls[0][0]);
+});
+
+it("does not settle a retired strategy owner from a late original read", async () => {
+  render(<Harness />, project); await correction(); let original!: StrategyActionReceipt;
+  const captured = vi.mocked(strategyCommands.capture).getMockImplementation()!;
+  vi.mocked(strategyCommands.capture).mockImplementationOnce(async request => { original = { kind: "candidate", request: request.capture, candidate: await captured(request) }; throw new Error("Lost ACK"); });
+  const response = deferred<StrategyActionReceipt | null>(), read = vi.spyOn(strategyCommands, "action").mockReturnValue(response.promise);
+  let writing!: Promise<void>; await act(async () => { writing = owner.capture(); });
+  const retained = owner.state.pending; act(() => reads.retire());
+  await act(async () => { response.resolve(original); await writing; });
+  expect(owner.current().pending).toBe(retained); expect(owner.current().candidate).toBeNull();
+  await act(async () => owner.reconcile()); expect(read).toHaveBeenCalledOnce();
 });

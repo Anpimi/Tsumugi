@@ -29,8 +29,8 @@ interface State {
   config: AiConfig; roles: Record<string, "calibration" | "holdout">; candidate: ContextStrategyCandidate | null; suite: StrategySuite | null;
   prepared: Prepared | null; evaluationId: string | null; consent: boolean; stale: boolean; judgments: Record<string, StrategyJudgmentDraft>;
   check: { request: StrategyCheckCommand; preparation: Extract<StrategyCheckPreparation, { kind: "plugin" }> } | null; checkerConsent: string[];
-  editSeq: number; busy: boolean; pending: Pending | null; failure: CommandFailure | null;
-  notice: "saved" | "suiteSaved" | "reconciled" | "started" | "judgmentSaved" | "promoted" | "withdrawn" | "checked" | "retryAvailable" | "previewChanged" | null;
+  editSeq: number; busy: boolean; checkingAction: boolean; pending: Pending | null; failure: CommandFailure | null;
+  notice: "saved" | "suiteSaved" | "reconciled" | "started" | "judgmentSaved" | "promoted" | "withdrawn" | "checked" | "retryAvailable" | "previewChanged" | "preparationRecorded" | "recordedReadFailed" | null;
   candidateEditSeq: number; candidateSavedSeq: number; suiteEditSeq: number; suiteSavedSeq: number;
 }
 const fixed = <T,>(value: T): T => structuredClone(value);
@@ -51,7 +51,7 @@ function isReceiptFirstRejection(entry: Pending, error: unknown) {
 function initialState(locale: string): State {
   return { locale, correctionUnit: "", evidence: null, sourceContext: fixed(defaultAiConfig.sourceContext), reason: "", exceptions: "",
     config: fixed(defaultAiConfig), roles: {}, candidate: null, suite: null, prepared: null, evaluationId: null, consent: false, stale: false,
-    judgments: {}, check: null, checkerConsent: [], editSeq: 0, candidateEditSeq: 0, candidateSavedSeq: 0, suiteEditSeq: 0, suiteSavedSeq: 0, busy: false, pending: null, failure: null, notice: null };
+    judgments: {}, check: null, checkerConsent: [], editSeq: 0, candidateEditSeq: 0, candidateSavedSeq: 0, suiteEditSeq: 0, suiteSavedSeq: 0, busy: false, checkingAction: false, pending: null, failure: null, notice: null };
 }
 
 function useStrategyOwner(project: ProjectView) {
@@ -97,7 +97,7 @@ function useStrategyOwner(project: ProjectView) {
     if (!live() || flight.current || !recovery && current().pending) return;
     const ticket = {}; flight.current = ticket; update(before => ({ ...before, busy: true, failure: null }));
     try { await work(); } catch (error) { update(before => ({ ...before, failure: commandFailure(error, "outcome-unknown") })); }
-    finally { if (flight.current === ticket) { flight.current = null; update(before => ({ ...before, busy: false })); }
+    finally { if (flight.current === ticket) { flight.current = null; update(before => ({ ...before, busy: false, checkingAction: false })); }
       if (!current().pending && reservation.current) { translation.releaseMutation(reservation.current); reservation.current = null; } }
   }
   const matches = (entry: Pending) => live() && current().pending?.request === entry.request;
@@ -115,7 +115,7 @@ function useStrategyOwner(project: ProjectView) {
   }
   function settle(entry: Pending, notice: State["notice"]) {
     if (!matches(entry)) return;
-    update(before => ({ ...before, pending: null,
+    update(before => ({ ...before, pending: null, checkingAction: false,
       ...(entry.kind === "candidate" ? { candidateSavedSeq: Math.min(before.candidateEditSeq, entry.editSeq) } : entry.kind === "suite" ? { suiteSavedSeq: Math.min(before.suiteEditSeq, entry.editSeq) } : {}),
       notice, failure: null }));
     reads.invalidate(entry.kind === "save-candidate" ? ["arena", "translation"] : entry.kind === "check" ? ["arena", "review"]
@@ -137,7 +137,7 @@ function useStrategyOwner(project: ProjectView) {
   }
   async function dispatch(entry: Pending, replay = false) {
     if (!live()) return;
-    update(before => ({ ...before, pending: { ...entry, retryAllowed: false }, notice: null }));
+    update(before => ({ ...before, pending: { ...entry, retryAllowed: false }, checkingAction: false, notice: null }));
     // Use the actual retained entry so an unknown result cannot be rebound to a new request.
     entry = current().pending!;
     try {
@@ -149,15 +149,23 @@ function useStrategyOwner(project: ProjectView) {
           update(before => ({ ...before, ...(before.editSeq === entry.editSeq ? { suite: fixed(suite), prepared: null } : {}) })); settle(entry, "suiteSaved"); break; }
         case "prepare": { const prepared = await strategyCommands.prepare(entry.request); if (!matches(entry)) return;
           if (!sameStrategyValue(prepared.preview, entry.suite.preview)) throw new Error("Invalid original strategy preview association");
-          // Preparation records Resources facts. Drain their real notification
-          // before publishing a preview, then re-read its current fixed basis.
-          await reads.synchronizeFresh(); if (!matches(entry)) return;
-          const generation = evidenceGeneration.current;
-          const observed = await strategyCommands.evaluation({ ...session, evaluationId: prepared.evaluation.evaluationId }); if (!matches(entry)) return;
-          if (!sameStrategyValue(observed.evaluation, prepared.evaluation) || !sameStrategyValue(observed.suite, entry.suite)) throw new Error("Invalid current strategy preparation");
-          const stillCurrent = observed.current && evidenceGeneration.current === generation;
-          update(before => ({ ...before, evaluationId: prepared.evaluation.evaluationId, ...(before.editSeq === entry.editSeq ? { prepared: stillCurrent ? fixed(prepared) : null, consent: false, stale: !stillCurrent } : {}) }));
-          settle(entry, stillCurrent ? "reconciled" : "previewChanged"); break; }
+          const original = entry;
+          update(before => ({ ...before, evaluationId: prepared.evaluation.evaluationId,
+            ...(before.editSeq === original.editSeq ? { prepared: null, consent: false, stale: true } : {}) }));
+          settle(entry, "preparationRecorded");
+          try {
+            await reads.synchronizeFresh(); if (!live()) return;
+            const generation = evidenceGeneration.current;
+            const observed = await strategyCommands.evaluation({ ...session, evaluationId: prepared.evaluation.evaluationId });
+            if (!live() || current().evaluationId !== prepared.evaluation.evaluationId || current().editSeq !== original.editSeq) return;
+            if (!sameStrategyValue(observed.evaluation, prepared.evaluation) || !sameStrategyValue(observed.suite, original.suite)) throw new Error("Invalid current strategy preparation");
+            const stillCurrent = observed.current && evidenceGeneration.current === generation;
+            update(before => ({ ...before, prepared: stillCurrent ? fixed(prepared) : null, consent: false, stale: !stillCurrent,
+              notice: stillCurrent ? "reconciled" : "previewChanged" }));
+          } catch (error) {
+            if (live() && current().evaluationId === prepared.evaluation.evaluationId) update(before => ({ ...before, failure: commandFailure(error), notice: "recordedReadFailed" }));
+          }
+          break; }
         case "start": await strategyCommands.start(entry.request); if (matches(entry)) { update(before => ({ ...before, consent: false, prepared: null })); settle(entry, "started"); } break;
         case "judgment": { const judgment = await strategyCommands.judgment(entry.request); if (!matches(entry)) return;
           const unitId = judgment.request.unitId, draftSeq = entry.draftSeq;
@@ -174,20 +182,20 @@ function useStrategyOwner(project: ProjectView) {
         case "check": await strategyCommands.check(entry.request); if (matches(entry)) { update(before => ({ ...before, check: null, checkerConsent: [] })); settle(entry, "checked"); } break;
       }
     } catch (error) {
-      // This exact Core rejection follows its original-action lookup. Host
-      // preflight rejections do not provide the same non-commit evidence.
-      let notCommitted = isReceiptFirstRejection(entry, error);
-      if (notCommitted && entry.kind === "prepare") {
-        // Desktop also checks currentness after recording preparation. A saved
-        // receipt keeps that fact distinct from a later preparation refusal.
-        try { notCommitted = await strategyCommands.action({ ...session, actionId: actionId(entry) }) === null; }
-        catch { notCommitted = false; }
-      }
-      if (matches(entry)) update(before => ({ ...before, ...(notCommitted ? { stale: true } : {}), pending: !notCommitted && (replay || entry.uncertain || hasUnknownOutcome(error))
-        ? { ...entry, uncertain: true, retryAllowed: false } : null }));
-      throw error;
+      if (!matches(entry)) return;
+      const failure = commandFailure(error, "outcome-unknown"), unknown = hasUnknownOutcome(error);
+      const uncertain = replay || entry.uncertain;
+      // The Host may reject current preparation after recording evaluation.
+      // Only this fresh post-record rejection needs an original fact read.
+      const notCommitted = isReceiptFirstRejection(entry, error);
+      const postRecordRejection = entry.kind === "prepare" && notCommitted;
+      const retained = { ...entry, uncertain: true, retryAllowed: false };
+      update(before => ({ ...before, ...(isReceiptFirstRejection(entry, error) ? { stale: true } : {}),
+        pending: unknown || postRecordRejection || uncertain && !notCommitted ? retained : null, failure }));
+      if (unknown || postRecordRejection) await lookupOriginal(retained, failure, postRecordRejection);
     }
   }
+
   async function fresh(make: (actionId: string) => Mutation, proof: () => boolean = () => true) {
     if (reserved() || !available() || !proof()) return;
     const seq = current().editSeq, locale = current().locale;
@@ -344,50 +352,66 @@ function useStrategyOwner(project: ProjectView) {
       default: throw new Error("Wrong strategy recovery target");
     }
   }
-  async function reconcile() {
-    const entry = current().pending; if (!entry) return;
-    await run(async () => {
-      update(before => ({ ...before, pending: { ...entry, retryAllowed: false } }));
-      const retained = current().pending!;
-      if (entry.kind === "start") { const receipt = await strategyCommands.startReceipt({ ...session, evaluationId: entry.request.evaluationId }); if (!matches(retained)) return;
-        if (receipt === null) { update(before => ({ ...before, pending: { ...retained, retryAllowed: true }, notice: "retryAvailable" })); return; }
-        if (receipt !== entry.request.attemptId) throw new Error("Invalid strategy start association");
-        update(before => ({ ...before, prepared: null, consent: false })); settle(retained, "reconciled"); return; }
-      if (entry.kind === "save-candidate") { const receipt = await executionCommands.receipt({ ...session, actionId: entry.request.actionId }); if (!matches(retained)) return;
-        if (receipt) {
-          const request = { ...session, actionId: entry.request.actionId, attemptId: entry.attemptId, unitId: entry.unitId, resultIds: [entry.request.resultId] };
-          confirmExecutionReceipt(request, receipt);
-          if (receipt.changes.length !== 1 || receipt.changes[0].kind !== "translation-revision") throw new Error("Invalid Arena save receipt");
-          const action = await executionCommands.prepare(request); if (!matches(retained)) return;
-          confirmExecutionAction(request, "arena-translation", action); settle(retained, "reconciled"); }
-        else update(before => ({ ...before, pending: { ...retained, retryAllowed: true }, notice: "retryAvailable" })); return; }
+  async function lookupOriginal(entry: Pending, originalFailure: CommandFailure | null = current().failure, rejectedIfMissing = false) {
+    if (!matches(entry)) return;
+    const retained = { ...entry, uncertain: true, retryAllowed: false };
+    update(before => ({ ...before, pending: retained, checkingAction: true, notice: null, failure: null }));
+    const missing = () => {
+      if (!matches(retained)) return;
+      update(before => ({ ...before, pending: rejectedIfMissing ? null : { ...retained, retryAllowed: true },
+        checkingAction: false, notice: rejectedIfMissing ? null : "retryAvailable", failure: originalFailure }));
+    };
+    try {
+      if (entry.kind === "start") {
+        const receipt = await strategyCommands.startAction(entry.request); if (!matches(retained)) return;
+        if (receipt === null) { missing(); return; }
+        update(before => ({ ...before, prepared: null, consent: false })); settle(retained, "started"); return;
+      }
+      if (entry.kind === "save-candidate") {
+        const found = await strategyCommands.saveAction(entry.request); if (!matches(retained)) return;
+        if (found === null) { missing(); return; }
+        const request = { ...session, actionId: entry.request.actionId, attemptId: entry.attemptId, unitId: entry.unitId, resultIds: [entry.request.resultId] };
+        confirmExecutionAction(request, "arena-translation", found.adoption.action);
+        if (found.adoption.receipt === null) { missing(); return; }
+        confirmExecutionReceipt(request, found.adoption.receipt);
+        if (found.adoption.receipt.changes.length !== 1 || found.adoption.receipt.changes[0].kind !== "translation-revision") throw new Error("Invalid Arena save receipt");
+        settle(retained, "reconciled"); return;
+      }
       const receipt = await strategyCommands.action({ ...session, actionId: actionId(entry) }); if (!matches(retained)) return;
-      if (!receipt) { update(before => ({ ...before, pending: { ...retained, retryAllowed: true }, notice: "retryAvailable" })); return; }
+      if (receipt === null) { missing(); return; }
       confirmRecovered(entry, receipt);
       if (entry.kind === "prepare" && receipt.kind === "evaluation") {
-        try { await dispatch(retained, true); }
-        catch (error) {
-          // The original evaluation receipt is confirmed even if current Host
-          // preparation is unavailable. Keep its history without a live grant.
-          if (matches(retained)) {
-            update(before => ({ ...before, evaluationId: receipt.evaluation.evaluationId, prepared: null, consent: false, stale: true }));
-            settle(retained, "previewChanged"); update(before => ({ ...before, failure: commandFailure(error) }));
-          }
+        update(before => ({ ...before, evaluationId: receipt.evaluation.evaluationId, prepared: null, consent: false, stale: true }));
+        settle(retained, "preparationRecorded"); return;
+      }
+      if (entry.kind === "candidate" && receipt.kind === "candidate") {
+        update(before => ({ ...before, ...(before.editSeq === entry.editSeq ? { candidate: fixed(receipt.candidate), stale: true } : {}) }));
+        settle(retained, "reconciled");
+        if (current().editSeq !== entry.editSeq) return;
+        try {
+          await reads.synchronizeFresh(); if (!live()) return;
+          const generation = evidenceGeneration.current;
+          const candidate = await strategyCommands.candidate({ ...session, candidateId: receipt.candidate.candidateId });
+          if (!live() || current().editSeq !== entry.editSeq || current().candidate?.candidateId !== candidate.candidateId) return;
+          confirmStrategyCandidate(entry.request.capture, candidate);
+          update(before => ({ ...before, candidate: fixed(candidate), stale: !candidate.evidence.current || evidenceGeneration.current !== generation }));
+        } catch (error) {
+          if (live() && current().candidate?.candidateId === receipt.candidate.candidateId) update(before => ({ ...before, failure: commandFailure(error), notice: "recordedReadFailed" }));
         }
         return;
       }
-      if (entry.kind === "candidate" && receipt.kind === "candidate") {
-        const candidate = await strategyCommands.candidate({ ...session, candidateId: receipt.candidate.candidateId });
-        if (!matches(retained)) return;
-        confirmStrategyCandidate(entry.request.capture, candidate);
-        update(before => ({ ...before, ...(before.editSeq === entry.editSeq ? { candidate: fixed(candidate) } : {}) }));
-      }
-      if (entry.kind === "suite" && receipt.kind === "suite") { confirmSuite(entry, receipt.suite); update(before => ({ ...before, ...(before.editSeq === entry.editSeq ? { suite: fixed(receipt.suite) } : {}) })); }
+      if (entry.kind === "suite" && receipt.kind === "suite") { confirmSuite(entry, receipt.suite); update(before => ({ ...before, ...(before.editSeq === entry.editSeq ? { suite: fixed(receipt.suite), prepared: null, consent: false } : {}) })); }
       if (entry.kind === "judgment" && receipt.kind === "judgment") { const unit = receipt.judgment.request.unitId, seq = entry.draftSeq;
-        update(before => ({ ...before, judgments: before.judgments[unit] ? { ...before.judgments, [unit]: { ...before.judgments[unit], savedSeq: seq } } : before.judgments })); }
+        update(before => ({ ...before, judgments: before.judgments[unit] ? { ...before.judgments, [unit]: { ...before.judgments[unit], savedSeq: Math.max(before.judgments[unit].savedSeq, seq) } } : before.judgments })); }
       if (receipt.kind === "check") update(before => ({ ...before, check: null, checkerConsent: [] }));
       settle(retained, "reconciled");
-    }, true);
+    } catch (error) {
+      if (matches(retained)) update(before => ({ ...before, pending: { ...retained, retryAllowed: false }, checkingAction: false, failure: commandFailure(error, "outcome-unknown") }));
+    }
+  }
+  async function reconcile() {
+    const entry = current().pending;
+    if (entry) await run(() => lookupOriginal(entry), true);
   }
   async function retry() { const entry = current().pending; if (entry?.retryAllowed) await run(() => dispatch(entry, true), true); }
   return { state, current, reserved, dirty, available, reset, setLocale, edit, inspectCorrection, canCapture, capture, chooseCandidate,

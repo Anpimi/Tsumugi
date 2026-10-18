@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Check uncertain strategy actions from their original saved facts, including
+  experiment starts and saved candidates. Recovery does not prepare or run an
+  experiment again. Saved preparation stays recorded if current evidence cannot
+  be read, and newer hypotheses and judgment notes are kept.
+
 - Confirm an uncertain AI meaning and style review submission from its original
   saved input and complete preview. Confirmation does not start model work;
   newer review input is kept, and an uncertain retry remains recoverable.

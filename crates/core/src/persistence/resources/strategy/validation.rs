@@ -109,169 +109,246 @@ fn validate_records(c: &Connection) -> Result<(), ExecutionError> {
         let receipt: Option<StrategyActionReceipt> = receipt
             .map(|p| codec::decode(&p, MAX_INPUT_BYTES))
             .transpose()?;
-        match (kind.as_str(), receipt) {
-            (
-                "candidate",
-                Some(StrategyActionReceipt::Candidate {
-                    request: r,
-                    candidate,
-                }),
-            ) => {
-                if bytes(&r)? != request
-                    || r.action_id != id
-                    || r.basis.project_id != owner
-                    || get::<ContextStrategyCandidate>(c, "candidate", id, owner)? != candidate
-                {
-                    return Err(corrupt());
-                }
-                validate_candidate(c, &r, &candidate)?;
-            }
-            ("suite", Some(StrategyActionReceipt::Suite { request: r, suite })) => {
-                if bytes(&r)? != request
-                    || r.action_id != id
-                    || r.project_id != owner
-                    || suite.request != r
-                    || get::<StrategySuite>(c, "suite", id, owner)? != suite
-                {
-                    return Err(corrupt());
-                }
-                validate_suite(c, &suite)?;
-            }
-            (
-                "evaluation",
-                Some(StrategyActionReceipt::Evaluation {
-                    request: r,
-                    evaluation,
-                }),
-            ) => {
-                if bytes(&r)? != request
-                    || r.action_id != id
-                    || r.project_id != owner
-                    || evaluation.request != r
-                    || evaluation.evaluation_id != id
-                    || evaluation.project_id != owner
-                    || evaluation.candidate_id != r.candidate_id
-                    || evaluation.suite_id != r.suite_id
-                    || get::<StrategyEvaluation>(c, "evaluation", id, owner)? != evaluation
-                {
-                    return Err(corrupt());
-                }
-                let suite: StrategySuite = get(c, "suite", r.suite_id, owner)?;
-                if suite.candidate_id != r.candidate_id || suite.locale != evaluation.locale {
-                    return Err(corrupt());
-                }
-                evaluation_input(c, owner, id)?;
-            }
-            ("check", value) => {
-                let r: StrategyCheckRequest = codec::decode(&request, MAX_INPUT_BYTES)?;
-                if r.action_id != id || r.project_id != owner {
-                    return Err(corrupt());
-                }
-                let capture: CheckCapture = get(c, "check-capture", id, owner)?;
-                if capture.request != r {
-                    return Err(corrupt());
-                }
-                validate_capture(c, &capture)?;
-                match value {
-                    Some(StrategyActionReceipt::Check { receipt }) => {
-                        if receipt.request != r
-                            || get::<StrategyCheckReceipt>(c, "check", id, owner)? != receipt
-                        {
-                            return Err(corrupt());
-                        }
-                        validate_check(c, &receipt)?;
-                    }
-                    _ => return Err(corrupt()),
-                }
-            }
-            ("judgment", Some(StrategyActionReceipt::Judgment { judgment })) => {
-                let r = &judgment.request;
-                if bytes(r)? != request
-                    || r.action_id != id
-                    || r.project_id != owner
-                    || judgment.judgment_id != id
-                    || get::<StrategyJudgment>(c, "judgment", id, owner)? != judgment
-                    || judgments.get(&(r.evaluation_id, r.unit_id)).copied()
-                        != r.expected_judgment_id
-                {
-                    return Err(corrupt());
-                }
-                validate_judgment(c, &judgment)?;
-                judgments.insert((r.evaluation_id, r.unit_id), id);
-            }
-            (
-                "promote",
-                Some(StrategyActionReceipt::Promoted {
-                    request: r,
-                    revision,
-                }),
-            ) => {
-                if bytes(&r)? != request
-                    || r.action_id != id
-                    || r.project_id != owner
-                    || revision.action_id != id
-                    || revision.revision_id != id
-                    || revision.project_id != owner
-                    || revision.previous_revision_id != r.expected_revision_id
-                    || defaults.get(&revision.locale).copied() != r.expected_revision_id
-                    || get::<ContextStrategyDefaultRevision>(c, "default", id, owner)? != revision
-                {
-                    return Err(corrupt());
-                }
-                let evaluation: StrategyEvaluation = get(c, "evaluation", r.evaluation_id, owner)?;
-                let suite: StrategySuite = get(c, "suite", evaluation.suite_id, owner)?;
-                if revision.locale != suite.locale
-                    || revision.evaluation_id != Some(r.evaluation_id)
-                    || revision.reference
-                        != Some(ContextStrategyReference {
-                            project_id: owner,
-                            revision_id: id,
-                            candidate_id: evaluation.candidate_id,
-                        })
-                {
-                    return Err(corrupt());
-                }
-                let qualification: Qualification = get(c, "qualification", id, owner)?;
-                validate_qualification(c, &evaluation, &suite, &qualification)?;
-                defaults.insert(revision.locale, id);
-            }
-            (
-                "withdraw",
-                Some(StrategyActionReceipt::Withdrawn {
-                    request: r,
-                    revision,
-                }),
-            ) => {
-                if bytes(&r)? != request
-                    || r.action_id != id
-                    || r.project_id != owner
-                    || revision.action_id != id
-                    || revision.revision_id != id
-                    || revision.project_id != owner
-                    || revision.locale != r.locale
-                    || revision.previous_revision_id != r.expected_revision_id
-                    || defaults.get(&r.locale).copied() != r.expected_revision_id
-                    || revision.reference.is_some()
-                    || revision.evaluation_id.is_some()
-                    || get::<ContextStrategyDefaultRevision>(c, "default", id, owner)? != revision
-                {
-                    return Err(corrupt());
-                }
-                let prior: ContextStrategyDefaultRevision = get(
-                    c,
-                    "default",
-                    r.expected_revision_id.ok_or_else(corrupt)?,
-                    owner,
-                )?;
-                if prior.reference.is_none() {
-                    return Err(corrupt());
-                }
-                defaults.insert(r.locale, id);
-            }
-            _ => return Err(corrupt()),
-        }
+        validate_action(
+            c,
+            id,
+            owner,
+            &kind,
+            request,
+            receipt,
+            &mut defaults,
+            &mut judgments,
+        )?;
     }
     Ok(())
+}
+
+// Reopen and explicit original-action recovery share the same historical rules.
+fn validate_action(
+    c: &Connection,
+    id: ExecutionId,
+    owner: ExecutionId,
+    kind: &str,
+    request: Vec<u8>,
+    receipt: Option<StrategyActionReceipt>,
+    defaults: &mut BTreeMap<String, ExecutionId>,
+    judgments: &mut BTreeMap<(ExecutionId, ExecutionId), ExecutionId>,
+) -> Result<(), ExecutionError> {
+    match (kind, receipt) {
+        (
+            "candidate",
+            Some(StrategyActionReceipt::Candidate {
+                request: r,
+                candidate,
+            }),
+        ) => {
+            if bytes(&r)? != request
+                || r.action_id != id
+                || r.basis.project_id != owner
+                || get::<ContextStrategyCandidate>(c, "candidate", id, owner)? != candidate
+            {
+                return Err(corrupt());
+            }
+            validate_candidate(c, &r, &candidate)?;
+        }
+        ("suite", Some(StrategyActionReceipt::Suite { request: r, suite })) => {
+            if bytes(&r)? != request
+                || r.action_id != id
+                || r.project_id != owner
+                || suite.request != r
+                || get::<StrategySuite>(c, "suite", id, owner)? != suite
+            {
+                return Err(corrupt());
+            }
+            validate_suite(c, &suite)?;
+        }
+        (
+            "evaluation",
+            Some(StrategyActionReceipt::Evaluation {
+                request: r,
+                evaluation,
+            }),
+        ) => {
+            if bytes(&r)? != request
+                || r.action_id != id
+                || r.project_id != owner
+                || evaluation.request != r
+                || evaluation.evaluation_id != id
+                || evaluation.project_id != owner
+                || evaluation.candidate_id != r.candidate_id
+                || evaluation.suite_id != r.suite_id
+                || get::<StrategyEvaluation>(c, "evaluation", id, owner)? != evaluation
+            {
+                return Err(corrupt());
+            }
+            let suite: StrategySuite = get(c, "suite", r.suite_id, owner)?;
+            if suite.candidate_id != r.candidate_id || suite.locale != evaluation.locale {
+                return Err(corrupt());
+            }
+            evaluation_input(c, owner, id)?;
+        }
+        ("check", value) => {
+            let r: StrategyCheckRequest = codec::decode(&request, MAX_INPUT_BYTES)?;
+            if r.action_id != id || r.project_id != owner {
+                return Err(corrupt());
+            }
+            let capture: CheckCapture = get(c, "check-capture", id, owner)?;
+            if capture.request != r {
+                return Err(corrupt());
+            }
+            validate_capture(c, &capture)?;
+            match value {
+                Some(StrategyActionReceipt::Check { receipt }) => {
+                    if receipt.request != r
+                        || get::<StrategyCheckReceipt>(c, "check", id, owner)? != receipt
+                    {
+                        return Err(corrupt());
+                    }
+                    validate_check(c, &receipt)?;
+                }
+                _ => return Err(corrupt()),
+            }
+        }
+        ("judgment", Some(StrategyActionReceipt::Judgment { judgment })) => {
+            let r = &judgment.request;
+            if bytes(r)? != request
+                || r.action_id != id
+                || r.project_id != owner
+                || judgment.judgment_id != id
+                || get::<StrategyJudgment>(c, "judgment", id, owner)? != judgment
+                || judgments.get(&(r.evaluation_id, r.unit_id)).copied() != r.expected_judgment_id
+            {
+                return Err(corrupt());
+            }
+            validate_judgment(c, &judgment)?;
+            judgments.insert((r.evaluation_id, r.unit_id), id);
+        }
+        (
+            "promote",
+            Some(StrategyActionReceipt::Promoted {
+                request: r,
+                revision,
+            }),
+        ) => {
+            if bytes(&r)? != request
+                || r.action_id != id
+                || r.project_id != owner
+                || revision.action_id != id
+                || revision.revision_id != id
+                || revision.project_id != owner
+                || revision.previous_revision_id != r.expected_revision_id
+                || defaults.get(&revision.locale).copied() != r.expected_revision_id
+                || get::<ContextStrategyDefaultRevision>(c, "default", id, owner)? != revision
+            {
+                return Err(corrupt());
+            }
+            let evaluation: StrategyEvaluation = get(c, "evaluation", r.evaluation_id, owner)?;
+            let suite: StrategySuite = get(c, "suite", evaluation.suite_id, owner)?;
+            if revision.locale != suite.locale
+                || revision.evaluation_id != Some(r.evaluation_id)
+                || revision.reference
+                    != Some(ContextStrategyReference {
+                        project_id: owner,
+                        revision_id: id,
+                        candidate_id: evaluation.candidate_id,
+                    })
+            {
+                return Err(corrupt());
+            }
+            let qualification: Qualification = get(c, "qualification", id, owner)?;
+            validate_qualification(c, &evaluation, &suite, &qualification)?;
+            defaults.insert(revision.locale, id);
+        }
+        (
+            "withdraw",
+            Some(StrategyActionReceipt::Withdrawn {
+                request: r,
+                revision,
+            }),
+        ) => {
+            if bytes(&r)? != request
+                || r.action_id != id
+                || r.project_id != owner
+                || revision.action_id != id
+                || revision.revision_id != id
+                || revision.project_id != owner
+                || revision.locale != r.locale
+                || revision.previous_revision_id != r.expected_revision_id
+                || defaults.get(&r.locale).copied() != r.expected_revision_id
+                || revision.reference.is_some()
+                || revision.evaluation_id.is_some()
+                || get::<ContextStrategyDefaultRevision>(c, "default", id, owner)? != revision
+            {
+                return Err(corrupt());
+            }
+            let prior: ContextStrategyDefaultRevision = get(
+                c,
+                "default",
+                r.expected_revision_id.ok_or_else(corrupt)?,
+                owner,
+            )?;
+            if prior.reference.is_none() {
+                return Err(corrupt());
+            }
+            defaults.insert(r.locale, id);
+        }
+        _ => return Err(corrupt()),
+    }
+    Ok(())
+}
+
+pub(super) fn validate_saved_action(
+    c: &Connection,
+    owner: ExecutionId,
+    id: ExecutionId,
+    kind: &str,
+    request: Vec<u8>,
+    receipt: StrategyActionReceipt,
+) -> Result<(), ExecutionError> {
+    let mut defaults = BTreeMap::new();
+    let mut judgments = BTreeMap::new();
+    let previous = |fact_kind: &str,
+                    locale: Option<&str>,
+                    association: Option<String>,
+                    member: Option<String>|
+     -> Result<Option<ExecutionId>, ExecutionError> {
+        let value:Option<String>=c.query_row("SELECT fact_id FROM context_strategy_facts
+            WHERE kind=?1 AND project_id=?2 AND (?3 IS NULL OR locale=?3)
+            AND (?4 IS NULL OR association_id=?4) AND (?5 IS NULL OR member_id=?5)
+            AND rowid<(SELECT rowid FROM context_strategy_facts WHERE kind=?1 AND project_id=?2 AND fact_id=?6)
+            ORDER BY rowid DESC LIMIT 1",params![fact_kind,owner.to_string(),locale,association,member,id.to_string()],|r|r.get(0)).optional().map_err(sql)?;
+        value.map(|value| ExecutionId::parse(&value)).transpose()
+    };
+    match &receipt {
+        StrategyActionReceipt::Promoted { revision, .. }
+        | StrategyActionReceipt::Withdrawn { revision, .. } => {
+            if let Some(prior) = previous("default", Some(&revision.locale), None, None)? {
+                defaults.insert(revision.locale.clone(), prior);
+            }
+        }
+        StrategyActionReceipt::Judgment { judgment } => {
+            let r = &judgment.request;
+            if let Some(prior) = previous(
+                "judgment",
+                None,
+                Some(r.evaluation_id.to_string()),
+                Some(r.unit_id.to_string()),
+            )? {
+                judgments.insert((r.evaluation_id, r.unit_id), prior);
+            }
+        }
+        _ => {}
+    }
+    validate_action(
+        c,
+        id,
+        owner,
+        kind,
+        request,
+        Some(receipt),
+        &mut defaults,
+        &mut judgments,
+    )
 }
 
 fn validate_candidate(

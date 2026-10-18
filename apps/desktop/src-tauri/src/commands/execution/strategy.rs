@@ -669,6 +669,66 @@ pub async fn read_strategy_evaluation(
 }
 
 #[tauri::command]
+pub async fn read_strategy_evaluation_start_action(
+    state: State<'_, AppState>,
+    request: EvaluationStartRequest,
+) -> Result<Option<tsumugi_core::StrategyEvaluationStartRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_strategy_evaluation_start_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .strategy_evaluation_start_action_read(
+                    request.project_id,
+                    request.evaluation_id,
+                    request.attempt_id,
+                    &request.digest,
+                )
+                .map_err(map_read)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_strategy_candidate_save_action(
+    state: State<'_, AppState>,
+    request: SaveCandidateRequest,
+) -> Result<Option<tsumugi_core::StrategyCandidateSaveRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_strategy_candidate_save_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .strategy_candidate_save_action_read(&tsumugi_core::StrategyCandidateSaveRequest {
+                    project_id: request.project_id,
+                    evaluation_id: request.evaluation_id,
+                    action_id: request.action_id,
+                    item_id: request.item_id,
+                    result_id: request.result_id,
+                })
+                .map_err(map_read)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
 pub async fn read_strategy_evaluation_start(
     state: State<'_, AppState>,
     request: EvaluationRequest,
@@ -906,7 +966,7 @@ pub async fn read_strategy_action(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .read_strategy_action(request.project_id, request.action_id)
+                .strategy_action_read(request.project_id, request.action_id)
                 .map_err(map_read)?
                 .map(TryInto::try_into)
                 .transpose()

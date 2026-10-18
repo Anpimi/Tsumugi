@@ -416,6 +416,8 @@ export interface Responses {
   identity: ExecutionId;
   judgment: StrategyJudgment;
   prepared: Prepared;
+  saveAction: StrategyCandidateSaveRead | null;
+  startAction: StrategyEvaluationStartRead | null;
   startReceipt: ExecutionId | null;
   suite: StrategySuiteView;
 }
@@ -1193,4 +1195,36 @@ export interface Prepared {
   canStart: boolean;
   evaluation: StrategyEvaluation;
   preview: ArenaPreviewView;
+}
+export interface StrategyCandidateSaveRead {
+  adoption: AdoptionActionRead;
+  request: StrategyCandidateSaveRequest;
+}
+export interface AdoptionActionRead {
+  action: AdoptionAction;
+  receipt: AdoptionReceipt | null;
+}
+export interface AdoptionAction {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  cancellationRevision: Revision;
+  operation: string;
+  parameters: unknown;
+  projectId: ExecutionId;
+  resultIds: ExecutionId[];
+  unitId: ExecutionId;
+}
+export interface StrategyCandidateSaveRequest {
+  actionId: ExecutionId;
+  evaluationId: ExecutionId;
+  itemId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+}
+export interface StrategyEvaluationStartRead {
+  attemptId: ExecutionId;
+  digest: string;
+  evaluationId: ExecutionId;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
 }

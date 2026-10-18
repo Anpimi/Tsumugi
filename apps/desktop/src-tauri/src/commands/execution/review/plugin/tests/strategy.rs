@@ -235,6 +235,16 @@ fn strategy_ipc_uses_original_arena_independent_qa_and_project_local_cas_history
             .is_null()
         );
         let start = json!({"evaluationId":evaluation["evaluationId"],"attemptId":prepared["attemptId"],"digest":evaluation["inputDigest"],"confirmed":true});
+        assert!(
+            invocation(
+                window,
+                context,
+                "read_strategy_evaluation_start_action",
+                start.clone()
+            )
+            .is_null()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 0);
         let mut denied = start.clone();
         denied["confirmed"] = json!(false);
         assert!(
@@ -382,6 +392,15 @@ fn strategy_ipc_uses_original_arena_independent_qa_and_project_local_cas_history
             let target_before =
                 invocation(window, context, "read_review_target", target_fields.clone());
             let saved_request = json!({"evaluationId":evaluation["evaluationId"],"itemId":row["itemId"],"resultId":row["resultId"],"actionId":ExecutionId::new()});
+            assert!(
+                invocation(
+                    window,
+                    context,
+                    "read_strategy_candidate_save_action",
+                    saved_request.clone()
+                )
+                .is_null()
+            );
             let saved = invocation(
                 window,
                 context,
@@ -567,6 +586,119 @@ fn strategy_ipc_uses_original_arena_independent_qa_and_project_local_cas_history
                 )
             });
 
+        let original_reads = |ctx: &Value| {
+            for (action, expected) in [
+                (
+                    capture["actionId"].clone(),
+                    json!({"kind":"candidate","request":capture,"candidate":candidate}),
+                ),
+                (
+                    suite_capture["actionId"].clone(),
+                    json!({"kind":"suite","request":suite_capture,"suite":suite}),
+                ),
+                (
+                    prepare["actionId"].clone(),
+                    json!({"kind":"evaluation","request":prepare,"evaluation":evaluation}),
+                ),
+                (
+                    judgment["actionId"].clone(),
+                    json!({"kind":"judgment","judgment":judged}),
+                ),
+                (
+                    promotion["actionId"].clone(),
+                    json!({"kind":"promoted","request":promotion,"revision":promoted}),
+                ),
+                (
+                    withdrawal["actionId"].clone(),
+                    json!({"kind":"withdrawn","request":withdrawal,"revision":withdrawn}),
+                ),
+            ] {
+                assert_eq!(
+                    invocation(
+                        window,
+                        ctx,
+                        "read_strategy_action",
+                        json!({"actionId":action})
+                    ),
+                    expected
+                );
+            }
+            let started = invocation(
+                window,
+                ctx,
+                "read_strategy_evaluation_start_action",
+                start.clone(),
+            );
+            assert_eq!(
+                started,
+                json!({"projectId":project_id,"evaluationId":evaluation["evaluationId"],"attemptId":prepared["attemptId"],
+                "taskId":arena["detail"]["taskId"],"digest":evaluation["inputDigest"]})
+            );
+            let mut no_consent = start.clone();
+            no_consent["confirmed"] = json!(false);
+            assert_eq!(
+                invocation(
+                    window,
+                    ctx,
+                    "read_strategy_evaluation_start_action",
+                    no_consent
+                ),
+                started
+            );
+            let mut wrong = start.clone();
+            wrong["digest"] = json!("0".repeat(64));
+            assert!(
+                call(
+                    window,
+                    "read_strategy_evaluation_start_action",
+                    Some(scoped(ctx, wrong))
+                )
+                .is_err()
+            );
+            for (check, receipt, saved_request, saved) in &receipts {
+                assert_eq!(
+                    invocation(
+                        window,
+                        ctx,
+                        "read_strategy_action",
+                        json!({"actionId":check["check"]["actionId"]})
+                    ),
+                    json!({"kind":"check","receipt":receipt})
+                );
+                let found = invocation(
+                    window,
+                    ctx,
+                    "read_strategy_candidate_save_action",
+                    saved_request.clone(),
+                );
+                let mut expected = saved_request.clone();
+                expected["projectId"] = ctx["projectId"].clone();
+                assert_eq!(found["request"], expected);
+                assert_eq!(found["adoption"]["receipt"], *saved);
+                assert_eq!(found["adoption"]["action"]["unitId"], saved["unitId"]);
+                assert_eq!(
+                    found["adoption"]["action"]["resultIds"],
+                    json!([saved_request["resultId"]])
+                );
+                let mut wrong = saved_request.clone();
+                wrong["resultId"] = json!(ExecutionId::new());
+                assert!(
+                    call(
+                        window,
+                        "read_strategy_candidate_save_action",
+                        Some(scoped(ctx, wrong))
+                    )
+                    .is_err()
+                );
+            }
+            assert_eq!(
+                provider.requests.lock().unwrap().len(),
+                4,
+                "pure result reads never submit another model request"
+            );
+        };
+        original_reads(context);
+
         let unopened_capture = json!({"actionId":ExecutionId::new(),"projectId":project_id,"candidateId":candidate["candidateId"],"suiteId":suite["suiteId"]});
         let unopened = invocation(
             window,
@@ -596,6 +728,7 @@ fn strategy_ipc_uses_original_arena_independent_qa_and_project_local_cas_history
             "the original submitted action remains readable after evidence changes"
         );
         invocation(window, context, "quiesce_execution", json!({}));
+        original_reads(context);
         call(
             window,
             "close_project",
@@ -609,6 +742,21 @@ fn strategy_ipc_uses_original_arena_independent_qa_and_project_local_cas_history
         )
         .unwrap();
         let current = json!({"sessionToken":reopened["sessionToken"],"projectId":project_id});
+        original_reads(&current);
+        fixture.app.state::<AppState>().sessions.with(|sessions| {
+            assert!(
+                sessions.active.as_ref().unwrap().execution.is_none(),
+                "original proof reads must not initialize execution after reopen"
+            )
+        });
+        assert!(
+            call(
+                window,
+                "read_strategy_action",
+                Some(scoped(context, json!({"actionId":capture["actionId"]})))
+            )
+            .is_err()
+        );
         assert_eq!(
             invocation(
                 window,

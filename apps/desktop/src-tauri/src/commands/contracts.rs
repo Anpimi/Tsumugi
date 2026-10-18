@@ -579,6 +579,8 @@ struct StrategyRequests {
     prepare: execution::strategy::EvaluationPrepareRequest,
     read: execution::strategy::EvaluationRequest,
     read_start: execution::strategy::EvaluationRequest,
+    start_action: execution::strategy::EvaluationStartRequest,
+    save_action: execution::strategy::SaveCandidateRequest,
     start: execution::strategy::EvaluationStartRequest,
     judgment: execution::strategy::JudgmentRequest,
     promote: execution::strategy::PromoteRequest,
@@ -606,6 +608,8 @@ struct StrategyResponses {
     check: tsumugi_core::StrategyCheckReceipt,
     identity: tsumugi_core::execution::ExecutionId,
     start_receipt: Option<tsumugi_core::execution::ExecutionId>,
+    start_action: Option<tsumugi_core::StrategyEvaluationStartRead>,
+    save_action: Option<tsumugi_core::StrategyCandidateSaveRead>,
     adoption: tsumugi_core::execution::AdoptionReceipt,
     error: CommandError,
 }

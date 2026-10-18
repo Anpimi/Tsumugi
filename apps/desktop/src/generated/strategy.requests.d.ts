@@ -17,8 +17,10 @@ export interface Requests {
   read: EvaluationRequest;
   readStart: EvaluationRequest;
   runCheck: StrategyCheckStartRequest;
+  saveAction: SaveCandidateRequest;
   saveCandidate: SaveCandidateRequest;
   start: EvaluationStartRequest;
+  startAction: EvaluationStartRequest;
   suite: SuiteCaptureRequest;
   withdraw: WithdrawRequest;
 }

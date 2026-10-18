@@ -52,6 +52,17 @@ export const strategyCommands = {
     const value = await checkedInvoke("start_strategy_evaluation", request, validators.validateResponseIdentity);
     requireMatch(value === request.attemptId); return value;
   },
+  startAction: (request: R.EvaluationStartRequest) => checkedInvoke("read_strategy_evaluation_start_action", request,
+    (value): value is S.Responses["startAction"] => validators.validateResponseStartAction(value)
+      && (value === null || value.projectId === request.projectId && value.evaluationId === request.evaluationId
+        && value.attemptId === request.attemptId && value.digest === request.digest)),
+  saveAction: (request: R.SaveCandidateRequest) => checkedInvoke("read_strategy_candidate_save_action", request,
+    (value): value is S.Responses["saveAction"] => validators.validateResponseSaveAction(value)
+      && (value === null || sameStrategyValue(value.request, { projectId: request.projectId, actionId: request.actionId,
+        evaluationId: request.evaluationId, itemId: request.itemId, resultId: request.resultId })
+        && value.adoption.action.projectId === request.projectId && value.adoption.action.actionId === request.actionId
+        && value.adoption.action.operation === "arena-translation" && value.adoption.action.parameters === null
+        && sameStrategyValue(value.adoption.action.resultIds, [request.resultId]))),
   startReceipt: (request: R.EvaluationRequest) => checkedInvoke("read_strategy_evaluation_start", request, validators.validateResponseStartReceipt),
   evaluation: async (request: R.EvaluationRequest) => {
     const value = await checkedInvoke("read_strategy_evaluation", request, validators.validateResponseEvaluation);

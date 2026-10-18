@@ -108,7 +108,7 @@ macro_rules! handlers {
         strategy::capture_context_strategy,strategy::read_context_strategy,strategy::list_context_strategies,
         strategy::capture_strategy_suite,strategy::prepare_strategy_evaluation,strategy::start_strategy_evaluation,
         strategy::read_strategy_evaluation,strategy::list_strategy_evaluations,
-        strategy::read_strategy_evaluation_start,
+        strategy::read_strategy_evaluation_start,strategy::read_strategy_evaluation_start_action,strategy::read_strategy_candidate_save_action,
         strategy::save_strategy_evaluation_candidate,
         strategy::record_strategy_judgment,strategy::promote_context_strategy,strategy::withdraw_context_strategy,
         strategy::read_context_strategy_default,strategy::list_context_strategy_defaults,strategy::read_strategy_action,

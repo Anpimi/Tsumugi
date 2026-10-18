@@ -907,10 +907,16 @@
       "runCheck": {
         "$ref": "#/definitions/StrategyCheckStartRequest"
       },
+      "saveAction": {
+        "$ref": "#/definitions/SaveCandidateRequest"
+      },
       "saveCandidate": {
         "$ref": "#/definitions/SaveCandidateRequest"
       },
       "start": {
+        "$ref": "#/definitions/EvaluationStartRequest"
+      },
+      "startAction": {
         "$ref": "#/definitions/EvaluationStartRequest"
       },
       "suite": {
@@ -929,6 +935,8 @@
       "prepare",
       "read",
       "readStart",
+      "startAction",
+      "saveAction",
       "start",
       "judgment",
       "promote",
@@ -946,6 +954,70 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AdoptionAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "cancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "parameters": true,
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "operation",
+          "resultIds",
+          "cancellationRevision",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "AdoptionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AdoptionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "receipt"
+        ],
+        "type": "object"
+      },
       "AdoptionReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -4593,6 +4665,50 @@
           }
         ]
       },
+      "StrategyCandidateSaveRead": {
+        "additionalProperties": false,
+        "properties": {
+          "adoption": {
+            "$ref": "#/definitions/AdoptionActionRead"
+          },
+          "request": {
+            "$ref": "#/definitions/StrategyCandidateSaveRequest"
+          }
+        },
+        "required": [
+          "request",
+          "adoption"
+        ],
+        "type": "object"
+      },
+      "StrategyCandidateSaveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "evaluationId",
+          "itemId",
+          "resultId"
+        ],
+        "type": "object"
+      },
       "StrategyCheckPreparation": {
         "oneOf": [
           {
@@ -4788,6 +4904,34 @@
           "unitId",
           "slot",
           "resultId"
+        ],
+        "type": "object"
+      },
+      "StrategyEvaluationStartRead": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "evaluationId",
+          "attemptId",
+          "taskId",
+          "digest"
         ],
         "type": "object"
       },
@@ -5538,6 +5682,26 @@
       "prepared": {
         "$ref": "#/definitions/Prepared"
       },
+      "saveAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/StrategyCandidateSaveRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "startAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/StrategyEvaluationStartRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "startReceipt": {
         "anyOf": [
           {
@@ -5567,6 +5731,8 @@
       "check",
       "identity",
       "startReceipt",
+      "startAction",
+      "saveAction",
       "adoption",
       "error"
     ],

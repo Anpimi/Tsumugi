@@ -251,6 +251,36 @@ pub enum StrategyActionReceipt {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct StrategyEvaluationStartRead {
+    pub project_id: ExecutionId,
+    pub evaluation_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct StrategyCandidateSaveRequest {
+    pub project_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub evaluation_id: ExecutionId,
+    pub item_id: ExecutionId,
+    pub result_id: ExecutionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct StrategyCandidateSaveRead {
+    pub request: StrategyCandidateSaveRequest,
+    pub adoption: crate::execution::AdoptionActionRead,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct StrategyEvaluationView {
     pub evaluation: StrategyEvaluation,
     pub candidate: ContextStrategyCandidate,
