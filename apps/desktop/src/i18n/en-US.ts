@@ -1129,6 +1129,13 @@ ai: {
   "discard": "Discard draft and leave",
   "origin": "AI candidate · generation evidence retained in Tasks",
   "component": {
+    "checkStart": "Check original component start",
+    "checkingStart": "Checking the original component start…",
+    "startRecorded": "The original component input is recorded. Execution status is shown separately; this check does not renew permission.",
+    "startMissing": "No saved input was found for this original start. You can explicitly retry the same start while its original permission is still valid.",
+    "startReadFailed": "The original start could not be confirmed. Your preparation and saved results are retained.",
+    "refreshStatus": "Refresh execution status",
+
     "title": "Generate with an installed component",
     "help": "Choose a component for the selected original entries. It uses this plan’s fixed model, sharing choices, checks and remaining budget. Preparing sends no model request.",
     "choice": "Generation component choices",

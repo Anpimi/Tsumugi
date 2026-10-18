@@ -2509,6 +2509,60 @@ impl ProjectStore {
             Ok(None)
         }
     }
+    /// Confirm an exact ordinary plugin submission without preparing or loading
+    /// a runtime. Only a successfully validated read clears the recovery guard.
+    pub fn plugin_start_action_read(
+        &self,
+        project: ExecutionId,
+        task: ExecutionId,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+    ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
+        let found = super::review::read_snapshot(self.execution_connection()?, |c| {
+            if super::read_metadata_from(c)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "plugin-start-project"))?
+                .project_id()
+                .to_string()
+                != project.to_string()
+            {
+                return Err(error(ErrorCode::ResultMismatch, "plugin-start-project"));
+            }
+            let exists: bool = c
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [attempt.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_error)?;
+            if !exists {
+                return Ok(None);
+            }
+            let input = load_input(c, attempt)?;
+            let envelope = input.envelope();
+            if envelope.project_id != project
+                || envelope.task_id != task
+                || envelope.operation != operation
+                || input.digest() != digest
+                || envelope.plugin.is_none()
+                || envelope.automation.is_some()
+                || envelope.previous_attempt_id.is_some()
+            {
+                return Err(error(ErrorCode::ResultMismatch, "plugin-start-request"));
+            }
+            Ok(Some(PluginStartActionRead {
+                project_id: project,
+                task_id: task,
+                attempt_id: attempt,
+                operation: envelope.operation.clone(),
+                input_digest: input.digest().into(),
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
     pub(crate) fn execution_input_cached(
         &self,
         attempt: ExecutionId,

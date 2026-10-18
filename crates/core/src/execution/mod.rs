@@ -1164,6 +1164,19 @@ pub struct AdoptionReceipt {
     pub changes: Vec<ChangeReference>,
 }
 
+/// Evidence of one exact ordinary plugin input in the durable execution ledger.
+/// This proves enqueueing, never current scope, worker completion or live consent.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginStartActionRead {
+    pub project_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub operation: String,
+    pub input_digest: String,
+}
+
 /// The durable original cancellation request, independently of worker shutdown.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

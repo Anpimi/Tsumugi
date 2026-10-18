@@ -1795,3 +1795,167 @@ fn attempt_service_origin_rejects_rescoping_and_grant_substitution_and_reopens_w
     );
     assert_eq!(reopened.execution_sequence().unwrap(), sequence);
 }
+
+#[test]
+fn original_plugin_start_read_validates_exact_input_before_reconciling() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = ProjectStore::create(
+        directory.path().join("project"),
+        crate::ProjectMetadata::create("Plugin start proof", "en-US", ["zh-CN"]).unwrap(),
+    )
+    .unwrap();
+    let plugin = binding();
+    let owner = store.metadata().unwrap().project_id();
+    let mut envelope = InputEnvelope::new(
+        owner,
+        "fixture",
+        &plugin.capability.declaration.contract.id,
+        &plugin.capability_version(),
+        vec![InputItem::new(
+            Scope {
+                kind: "fixture".into(),
+                id: "original".into(),
+                locale: None,
+            },
+            json!({"original":true}),
+            vec![],
+        )],
+    )
+    .unwrap();
+    envelope.plugin = Some(plugin);
+    let input = FixedInput::capture(envelope).unwrap();
+    let owner = input.envelope().project_id;
+    let task = input.envelope().task_id;
+    let attempt = input.envelope().attempt_id;
+    let expected = PluginStartActionRead {
+        project_id: owner,
+        task_id: task,
+        attempt_id: attempt,
+        operation: "fixture".into(),
+        input_digest: input.digest().into(),
+    };
+    store
+        .execution_unknown
+        .store(true, std::sync::atomic::Ordering::Release);
+    assert!(
+        store
+            .plugin_start_action_read(ExecutionId::new(), task, attempt, "fixture", input.digest())
+            .is_err()
+    );
+    assert!(store.is_reconciling());
+    assert_eq!(
+        store
+            .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())
+            .unwrap(),
+        None
+    );
+    assert!(!store.is_reconciling());
+    assert_eq!(
+        store.enqueue_execution(&input).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime
+        .register(Arc::new(Registered {
+            plugin: input.envelope().plugin.clone(),
+        }))
+        .unwrap();
+    runtime
+        .authorize_plugin(
+            &mut store,
+            ExecutionId::new(),
+            &input,
+            plugin_now_ms().unwrap() + 60_000,
+            PluginConsent {
+                unsandboxed_execution: true,
+                application_execution: false,
+            },
+        )
+        .unwrap();
+    runtime.submit(&mut store, &input).unwrap();
+    for (project, task, operation, digest) in [
+        (
+            ExecutionId::new(),
+            task,
+            "fixture",
+            input.digest().to_owned(),
+        ),
+        (
+            owner,
+            ExecutionId::new(),
+            "fixture",
+            input.digest().to_owned(),
+        ),
+        (owner, task, "another-operation", input.digest().to_owned()),
+        (owner, task, "fixture", "0".repeat(64)),
+    ] {
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert!(
+            store
+                .plugin_start_action_read(project, task, attempt, operation, &digest)
+                .is_err()
+        );
+        assert!(store.is_reconciling());
+    }
+    assert_eq!(
+        store
+            .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())
+            .unwrap(),
+        Some(expected.clone())
+    );
+    assert!(!store.is_reconciling());
+    store
+        .execution_unknown
+        .store(true, std::sync::atomic::Ordering::Release);
+    store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE execution_attempts SET digest=?2 WHERE attempt_id=?1",
+            params![attempt.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+    assert!(
+        store
+            .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())
+            .is_err()
+    );
+    assert!(store.is_reconciling());
+    store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE execution_attempts SET digest=?2 WHERE attempt_id=?1",
+            params![attempt.to_string(), input.digest()],
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())
+            .unwrap(),
+        Some(expected.clone())
+    );
+    assert!(!store.is_reconciling());
+    let sequence = store.execution_sequence().unwrap();
+    let revision = store.metadata().unwrap().metadata_revision();
+    store.set_target_locales(revision, &["ja".into()]).unwrap();
+    assert_eq!(
+        store
+            .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())
+            .unwrap(),
+        Some(expected.clone())
+    );
+    assert_eq!(store.execution_sequence().unwrap(), sequence);
+    drop(runtime);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+    assert_eq!(
+        reopened
+            .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())
+            .unwrap(),
+        Some(expected)
+    );
+    assert_eq!(reopened.execution_sequence().unwrap(), sequence);
+}

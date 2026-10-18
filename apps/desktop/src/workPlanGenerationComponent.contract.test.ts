@@ -8,6 +8,7 @@ const fixture = rawFixture as unknown as {
 };
 import { workPlanGenerationCommands } from "./workPlanGenerationCommands";
 import * as validators from "./generated/ai.validators";
+import { hasUnknownOutcome } from "./projectCommands";
 import { generationToolFixture } from "./testSupport/generationToolFixture";
 import { applicationWorkPlanTool, workPlanToolStatus } from "./testSupport/workPlanToolFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
@@ -146,4 +147,30 @@ it("rejects stale but plausible scope, source, installation and child identities
   await expect(workPlanGenerationCommands.start(prepared, fixture.start)).rejects.toThrow("acknowledgement");
   invoke.mockResolvedValueOnce(false);
   await expect(workPlanGenerationCommands.discard(fixture.discard)).resolves.toBe(false);
+});
+
+it("confirms the exact original plugin input without sending temporary scope or consent", async () => {
+  invoke.mockResolvedValueOnce(structuredClone(fixture.preflight));
+  const prepared = await workPlanGenerationCommands.prepare(structuredClone(fixture.prepare), fixture.scope, fixture.preflight.component);
+  const request = { projectId: fixture.prepare.projectId, sessionToken:fixture.prepare.sessionToken,
+    taskId:fixture.preflight.taskId, attemptId:fixture.prepare.attemptId, inputDigest:fixture.preflight.inputDigest };
+  const proof = { projectId:request.projectId,taskId:request.taskId,attemptId:request.attemptId,inputDigest:request.inputDigest,operation:"work-plan-generation-component" };
+  prepared.taskId = fixtureIdentity(999); prepared.attemptId = fixtureIdentity(998); prepared.inputDigest = "b".repeat(64);
+  invoke.mockResolvedValueOnce(proof);
+  await expect(workPlanGenerationCommands.startAction(prepared)).resolves.toEqual(proof);
+  expect(invoke).toHaveBeenLastCalledWith("read_work_plan_generation_component_start", {request});
+  invoke.mockResolvedValueOnce(null); await expect(workPlanGenerationCommands.startAction(prepared)).resolves.toBeNull();
+  for (const [field,value] of Object.entries({projectId:fixtureIdentity(999),taskId:fixtureIdentity(999),attemptId:fixtureIdentity(999),inputDigest:"c".repeat(64),operation:"plugin-tool-query"})) {
+    const substituted = { ...proof, [field]:value };
+    expect(validators.validateResponseWorkPlanGenerationStartRead(substituted)).toBe(true);
+    invoke.mockResolvedValueOnce(substituted);
+    await expect(workPlanGenerationCommands.startAction(prepared)).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  for (const field of ["scopeId","grantId","expiresAtMs","unsandboxedExecution"]) {
+    expect(validators.validateRequestWorkPlanGenerationStartRead({...request,[field]:true})).toBe(false);
+    invoke.mockResolvedValueOnce({...proof,[field]:true});
+    await expect(workPlanGenerationCommands.startAction(prepared)).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  await expect(workPlanGenerationCommands.startAction(structuredClone(prepared))).rejects.toThrow("not prepared");
+  expect(invoke.mock.calls.some(([command])=>command.startsWith("start_")||command.startsWith("authorize_")||command==="create_execution_identity")).toBe(false);
 });

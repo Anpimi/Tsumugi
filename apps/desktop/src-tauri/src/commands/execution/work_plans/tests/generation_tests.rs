@@ -429,6 +429,19 @@ fn generation_component_real_scoped(component_scope: sdk::ComponentScope) {
         assert_eq!(fixture.attempt_count(), count);
         assert_eq!(preflight["parentTask"], scope["parentTask"]);
         assert_eq!(preflight["generation"], generation);
+        let proof_request = json!({"taskId":preflight["taskId"],"attemptId":outer,"inputDigest":preflight["inputDigest"]});
+        assert_eq!(
+            fixture
+                .call(
+                    "read_work_plan_generation_component_start",
+                    proof_request.clone()
+                )
+                .unwrap(),
+            Value::Null
+        );
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.attempt_count(), count);
+
         let mut unused = preparing.clone();
         unused["attemptId"] = json!(ExecutionId::new());
         unused["generation"]["taskId"] = json!(ExecutionId::new());
@@ -488,6 +501,30 @@ fn generation_component_real_scoped(component_scope: sdk::ComponentScope) {
                 .unwrap(),
             json!(outer)
         );
+
+        let proof = fixture
+            .call(
+                "read_work_plan_generation_component_start",
+                proof_request.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            proof,
+            json!({"projectId":fixture.context["projectId"],"taskId":preflight["taskId"],"attemptId":outer,
+            "operation":"work-plan-generation-component","inputDigest":preflight["inputDigest"]})
+        );
+        for (field, value) in [
+            ("taskId", json!(ExecutionId::new())),
+            ("inputDigest", json!("0".repeat(64))),
+        ] {
+            let mut wrong = proof_request.clone();
+            wrong[field] = value;
+            assert!(
+                fixture
+                    .call("read_work_plan_generation_component_start", wrong)
+                    .is_err()
+            );
+        }
         let outer_records = fixture
             .call(
                 "read_execution_task",
@@ -688,7 +725,40 @@ fn generation_component_real_scoped(component_scope: sdk::ComponentScope) {
         );
     }
     drop(connection);
+    let previous_context = fixture.context.clone();
     fixture.reopen();
+    let unchanged = fixture.bytes();
+    let count = fixture.attempt_count();
+    for (outer, _, preflight, _) in &completed {
+        let original = json!({"taskId":preflight["taskId"],"attemptId":outer,"inputDigest":preflight["inputDigest"]});
+        let proof = fixture
+            .call(
+                "read_work_plan_generation_component_start",
+                original.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            proof,
+            json!({"projectId":fixture.context["projectId"],"taskId":preflight["taskId"],"attemptId":outer,
+            "operation":"work-plan-generation-component","inputDigest":preflight["inputDigest"]})
+        );
+        assert!(
+            call(
+                &fixture.webview,
+                "read_work_plan_generation_component_start",
+                request(&previous_context, original)
+            )
+            .is_err()
+        );
+    }
+    fixture.app.state::<AppState>().sessions.with(|sessions| {
+        assert!(
+            sessions.active.as_ref().unwrap().execution.is_none(),
+            "pure historical reads cannot initialize an execution host"
+        );
+    });
+    assert_eq!(fixture.bytes(), unchanged);
+    assert_eq!(fixture.attempt_count(), count);
     for (outer, generation, _, starting) in completed {
         assert!(
             fixture
@@ -778,4 +848,30 @@ fn generation_component_shared_workflow_fixture_round_trips() {
     round::<generation::WorkPlanGenerationStartRequest>(&fixture["start"]);
     round::<generation::WorkPlanGenerationDiscardRequest>(&fixture["discard"]);
     round::<generation::WorkPlanGenerationPreflight>(&fixture["preflight"]);
+}
+
+#[test]
+fn generation_component_start_read_wire_excludes_live_scope_and_consent() {
+    let original = json!({"projectId":ExecutionId::new(),"sessionToken":"original-session","taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"inputDigest":"a".repeat(64)});
+    assert!(
+        serde_json::from_value::<generation::WorkPlanGenerationStartReadRequest>(original.clone())
+            .is_ok()
+    );
+    for field in [
+        "scopeId",
+        "grantId",
+        "expiresAtMs",
+        "unsandboxedExecution",
+        "component",
+        "generation",
+        "preparedTools",
+        "budget",
+    ] {
+        let mut extra = original.clone();
+        extra[field] = json!(true);
+        assert!(
+            serde_json::from_value::<generation::WorkPlanGenerationStartReadRequest>(extra)
+                .is_err()
+        );
+    }
 }

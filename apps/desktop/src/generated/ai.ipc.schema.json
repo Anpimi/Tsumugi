@@ -2168,6 +2168,34 @@
         ],
         "type": "object"
       },
+      "WorkPlanGenerationStartReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
       "WorkPlanGenerationStartRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2571,6 +2599,9 @@
       "workPlanGenerationStart": {
         "$ref": "#/definitions/WorkPlanGenerationStartRequest"
       },
+      "workPlanGenerationStartRead": {
+        "$ref": "#/definitions/WorkPlanGenerationStartReadRequest"
+      },
       "workPlanPrepare": {
         "$ref": "#/definitions/WorkPlanPrepareRequest"
       },
@@ -2604,6 +2635,7 @@
       "workPlanAuthorizationAction",
       "workPlanGenerationPrepare",
       "workPlanGenerationStart",
+      "workPlanGenerationStartRead",
       "workPlanGenerationDiscard",
       "workPlanAgentOpen",
       "workPlanAgentDelegate",
@@ -5810,6 +5842,35 @@
         ],
         "type": "object"
       },
+      "PluginStartActionRead": {
+        "additionalProperties": false,
+        "description": "Evidence of one exact ordinary plugin input in the durable execution ledger.\nThis proves enqueueing, never current scope, worker completion or live consent.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "attemptId",
+          "operation",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
       "PluginTextReviewView": {
         "additionalProperties": false,
         "properties": {
@@ -8810,6 +8871,16 @@
       "workPlanGenerationPreflight": {
         "$ref": "#/definitions/WorkPlanGenerationPreflight"
       },
+      "workPlanGenerationStartRead": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginStartActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "workPlanReceipt": {
         "$ref": "#/definitions/WorkPlanReceiptView"
       },
@@ -8838,6 +8909,7 @@
       "workPlan",
       "maintenanceAssessment",
       "workPlanGenerationPreflight",
+      "workPlanGenerationStartRead",
       "workPlanAgent",
       "workPlanAgentReconcile",
       "workPlanAgentGeneration",

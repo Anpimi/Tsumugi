@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Confirm uncertain generation component starts from their original recorded input,
+  keeping execution progress separate. Explicit retries retain the original
+  preparation and permission; recovery never starts work or renews permission.
+
 - Check uncertain strategy actions from their original saved facts, including
   experiment starts and saved candidates. Recovery does not prepare or run an
   experiment again. Saved preparation stays recorded if current evidence cannot

@@ -53,6 +53,14 @@ request!(
 );
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanGenerationStartReadRequest {
+        task_id: ExecutionId,
+        attempt_id: ExecutionId,
+        input_digest: String
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     WorkPlanGenerationDiscardRequest {
         attempt_id: ExecutionId
     }
@@ -825,6 +833,37 @@ pub async fn start_work_plan_generation_component(
     })
     .await
     .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))?
+}
+/// Historical enqueue proof excludes Host-local scope and execution consent.
+#[tauri::command]
+pub async fn read_work_plan_generation_component_start(
+    state: State<'_, AppState>,
+    request: WorkPlanGenerationStartReadRequest,
+) -> Result<Option<PluginStartActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_work_plan_generation_component_start",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .plugin_start_action_read(
+                    request.project_id,
+                    request.task_id,
+                    request.attempt_id,
+                    OPERATION,
+                    &request.input_digest,
+                )
+                .map_err(map_read)
+            },
+        )
+        .await
 }
 #[tauri::command]
 pub async fn discard_work_plan_generation_component(

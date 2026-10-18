@@ -111,6 +111,7 @@ export interface Requests {
   workPlanGenerationDiscard: WorkPlanGenerationDiscardRequest;
   workPlanGenerationPrepare: WorkPlanGenerationPrepareRequest;
   workPlanGenerationStart: WorkPlanGenerationStartRequest;
+  workPlanGenerationStartRead: WorkPlanGenerationStartReadRequest;
   workPlanPrepare: WorkPlanPrepareRequest;
   workPlanStart: WorkPlanStartRequest;
   workPlanStartAction: WorkPlanStartRequest;
@@ -584,6 +585,13 @@ export interface WorkPlanGenerationStartRequest {
   scopeId: ExecutionId;
   sessionToken: string;
   unsandboxedExecution: boolean;
+}
+export interface WorkPlanGenerationStartReadRequest {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  taskId: ExecutionId;
 }
 export interface WorkPlanPrepareRequest {
   advisoryChecks: PluginTextReviewSelection[];

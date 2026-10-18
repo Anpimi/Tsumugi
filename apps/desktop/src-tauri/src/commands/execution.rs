@@ -116,6 +116,7 @@ macro_rules! handlers {
         work_plans::read_maintenance_assessment,work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,work_plans::read_work_plan_start_action,
         work_plans::generation::prepare_work_plan_generation_component,
         work_plans::generation::start_work_plan_generation_component,
+        work_plans::generation::read_work_plan_generation_component_start,
         work_plans::generation::discard_work_plan_generation_component,
         work_plans::agent::open_work_plan_agent_scope,
         work_plans::agent::prepare_work_plan_agent_generation,work_plans::agent::start_work_plan_agent_generation,

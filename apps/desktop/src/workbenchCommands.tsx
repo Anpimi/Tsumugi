@@ -286,6 +286,8 @@ interface WorkbenchCommandPayloads {
   "ai.agent.reconcile": AiAgentPendingCommandPayload;
   "ai.component.prepare": AiComponentPrepareCommandPayload;
   "ai.component.start": AiComponentCommandPayload;
+  "ai.component.check-start": AiComponentCommandPayload;
+  "ai.component.retry-start": AiComponentCommandPayload;
   "ai.component.discard": AiComponentCommandPayload;
   "release.start-build": ReleasePluginStartCommandPayload;
   "release.confirm-builder": ReleasePluginStartCommandPayload;
@@ -505,7 +507,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"ai-agent", "ai.agent.generate" | "ai.agent.query-tool">
   | ResourceCommand<"ai-agent-pending", "ai.agent.reconcile">
   | ResourceCommand<"ai-component-prepare", "ai.component.prepare">
-  | ResourceCommand<"ai-component", "ai.component.start" | "ai.component.discard">
+  | ResourceCommand<"ai-component", "ai.component.start" | "ai.component.discard" | "ai.component.check-start" | "ai.component.retry-start">
   | ResourceCommand<"release-plugin-start", "release.start-build" | "release.confirm-builder" | "release.confirm-checker" | "release.start-artifact-check">
   | ResourceCommand<"release-artifact", "release.prepare-artifact-check">
   | ResourceCommand<"release-check-finish", "release.finish-artifact-check">

@@ -479,6 +479,7 @@ struct AiRequests {
     work_plan_generation_prepare:
         execution::work_plans::generation::WorkPlanGenerationPrepareRequest,
     work_plan_generation_start: execution::work_plans::generation::WorkPlanGenerationStartRequest,
+    work_plan_generation_start_read: execution::work_plans::generation::WorkPlanGenerationStartReadRequest,
     work_plan_generation_discard:
         execution::work_plans::generation::WorkPlanGenerationDiscardRequest,
     work_plan_agent_open: execution::work_plans::agent::WorkPlanAgentOpenRequest,
@@ -514,6 +515,7 @@ struct AiResponses {
     work_plan: execution::work_plans::WorkPlanView,
     maintenance_assessment: tsumugi_core::application::MaintenanceAssessment,
     work_plan_generation_preflight: execution::work_plans::generation::WorkPlanGenerationPreflight,
+    work_plan_generation_start_read: Option<tsumugi_core::execution::PluginStartActionRead>,
     work_plan_agent: execution::work_plans::agent::WorkPlanAgentView,
     work_plan_agent_reconcile: tsumugi_core::application::WorkPlanAgentReconciliation,
     work_plan_agent_generation: execution::work_plans::agent::WorkPlanAgentGenerationView,

@@ -14,6 +14,7 @@ import { generationToolFixture } from "./testSupport/generationToolFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import generationFixture from "../test/fixtures/workPlanGenerationComponent.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import errorWire from "../test/fixtures/commandErrors.contract.json";
 import type { AttemptDetail } from "./executionCommands";
 import type { WorkPlanGenerationPrepareRequest } from "./generated/ai.requests";
 import { readPluginGenerationChoices } from "./pluginGenerationChoices";
@@ -28,15 +29,16 @@ let registry: WorkbenchCommands;
 function ReadOwnerProbe() { reader = useSessionReads(); return null; }
 function render(ui: ReactNode) { const commands=new WorkbenchCommands(); registry=commands; return renderUi(ui, { wrapper: ({ children }) => <WorkbenchCommandsProvider commands={commands}><SessionReadProvider context={context} bridge={false}><ReadOwnerProbe />{children}</SessionReadProvider></WorkbenchCommandsProvider> }); }
 type AgentProps=Omit<Parameters<typeof ProductionAgentControls>[0],"session"|"component"|"ownerBusy"|"run"> & {
-  run:(work:(current:()=>boolean)=>Promise<void>)=>Promise<void>;
+  run:(work:(current:()=>boolean)=>Promise<void>)=>Promise<void>; visible?: boolean;
 };
-function WorkPlanAgentControls(props:AgentProps) {
+function WorkPlanAgentControls({visible = true, ...props}:AgentProps) {
   const session=useWorkPlanAgentSession(()=>true), component=useWorkPlanGenerationSession(()=>true), reads=useSessionReads();
   useLayoutEffect(()=>{reads.client.setQueryData(reads.key(["workPlan",props.status.lease.planId]),props.status);},[props.status,reads]);
-  return <ProductionAgentControls {...props} session={session} component={component} ownerBusy={()=>false}
-    run={work=>props.run(current=>work(Object.assign(()=>current(),{fresh:()=>current(),acceptPlan:()=>current()})))}/>;
+  return visible ? <ProductionAgentControls {...props} session={session} component={component} ownerBusy={()=>false}
+    run={work=>props.run(current=>work(Object.assign(()=>current(),{fresh:()=>current(),acceptPlan:()=>current()})))}/> : null;
 }
 let identity: number, original: WorkPlanGenerationPrepareRequest | null, outer: AttemptDetail | null, child: AttemptDetail | null;
+let startRead: "saved" | "error";
 let startOutcome: "accepted" | "unknown" | "rejected", discardOutcome: boolean, installed: typeof generationPackage;
 function execution(state: "queued" | "succeeded" | "unknown", isChild: boolean): AttemptDetail {
   if (!original) throw new Error("Not prepared");
@@ -51,9 +53,14 @@ function execution(state: "queued" | "succeeded" | "unknown", isChild: boolean):
       status: { validation: "absent", adoption: "unapplied", itemId: fixtureIdentity(isChild ? 201 : 202), execution: state,
         cancellationRequested: false, retrySafe: false, diagnostic: null } }] };
 }
+function startProof() {
+  if (!original) throw new Error("Not prepared");
+  return { projectId:context.projectId, taskId:fixtureIdentity(200), attemptId:original.attemptId,
+    operation:"work-plan-generation-component",inputDigest:generationFixture.preflight.inputDigest };
+}
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); identity = 100; original = null; outer = null; child = null;
-  startOutcome = "accepted"; discardOutcome = true; installed = structuredClone(generationPackage);
+  startOutcome = "accepted"; startRead = "saved"; discardOutcome = true; installed = structuredClone(generationPackage);
   failures.length = 0;
   invoke.mockReset(); invoke.mockImplementation(async (command, args) => {
     const request = args?.request;
@@ -77,9 +84,13 @@ beforeEach(async () => {
         scope: workPlanToolStatus.plan.scope.filter(unit => request.generation.unitIds.includes(unit.unitId)) };
     }
     if (command === "start_work_plan_generation_component") {
-      if (startOutcome === "rejected") throw { code: "busy", stage: "execution-read", outcome: "rejected", recoveryRequired: false };
+      if (startOutcome === "rejected") throw { ...errorWire.errors[0], code: "busy", stage: "execution-recover", outcome: "rejected" };
       outer = execution("queued", false);
       return startOutcome === "unknown" ? null : request.attemptId;
+    }
+    if (command === "read_work_plan_generation_component_start") {
+      if (startRead === "error") throw new Error("Original component start read unavailable");
+      return outer === null ? null : startProof();
     }
     if (command === "discard_work_plan_generation_component") return discardOutcome;
     if (command === "read_execution_task") {
@@ -143,7 +154,7 @@ it("opens the existing generation results only after the exact child execution i
   expect(generated).not.toHaveBeenCalled();
   expect(blocked).toHaveBeenLastCalledWith(true);
   child = execution("queued", true); outer = execution("succeeded", false);
-  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await user.click(screen.getByRole("button", { name: "Refresh execution status" }));
   await waitFor(() => expect(generated).toHaveBeenCalledExactlyOnceWith(fixtureIdentity(101)));
   await screen.findByRole("button", { name: "Keep records and close this component review" });
   await user.click(screen.getByRole("button", { name: "Keep records and close this component review" }));
@@ -153,16 +164,18 @@ it("opens the existing generation results only after the exact child execution i
 it("reconciles an unknown start through original ledger reads without renewing consent or resending", async () => {
   startOutcome = "unknown"; const generated = vi.fn(); render(controls(workPlanToolStatus, generated));
   const user = await prepare(); await confirm(user);
-  await screen.findByText(/The action may have run/);
+  await screen.findByText(/The original component input is recorded/);
+  expect(invoke.mock.calls.filter(([command])=>command === "read_work_plan_generation_component_start")).toHaveLength(1);
   const started = structuredClone(invoke.mock.calls.find(([command]) => command === "start_work_plan_generation_component")![1].request);
   child = execution("queued", true); outer = execution("unknown", false);
-  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await user.click(screen.getByRole("button", { name: "Refresh execution status" }));
   await waitFor(() => expect(generated).toHaveBeenCalledExactlyOnceWith(original!.generation.attemptId));
   expect(screen.queryByRole("button", { name: "Start component generation" })).toBeNull();
   expect(invoke.mock.calls.filter(([command]) => command === "start_work_plan_generation_component").map(([,args]) => args.request)).toEqual([started]);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(4);
 });
 it("keeps an unknown start unchanged across empty task pages and a wrong child until the exact child is recorded", async () => {
+  startRead = "error";
   const originalInvoke = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command, args) => command === "start_work_plan_generation_component" ? null : originalInvoke(command, args));
   const generated = vi.fn(), blocked = vi.fn(); render(controls(workPlanToolStatus, generated, blocked));
@@ -175,21 +188,22 @@ it("keeps an unknown start unchanged across empty task pages and a wrong child u
   expect(invoke.mock.calls.some(([command]) => command === "read_execution_attempt")).toBe(false);
   expect(generated).not.toHaveBeenCalled();
   expect(blocked).toHaveBeenLastCalledWith(true);
-  const beforeCheck = initialReads();
-  await user.click(screen.getByRole("button", { name: "Check saved result" }));
-  await waitFor(() => expect(initialReads()).toBeGreaterThanOrEqual(beforeCheck + 2));
+  const proofReads = () => invoke.mock.calls.filter(([command]) => command === "read_work_plan_generation_component_start").length;
+  expect(proofReads()).toBe(1);
+  await user.click(screen.getByRole("button", { name: "Check original component start" }));
+  await waitFor(() => expect(proofReads()).toBe(2));
   expect(invoke.mock.calls.some(([command]) => command === "read_execution_attempt")).toBe(false);
   expect(generated).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Start component generation" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry the same component start" })).toBeNull();
   child = { ...execution("queued", true), taskId: fixtureIdentity(999) };
-  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await user.click(screen.getByRole("button", { name: "Refresh execution status" }));
   await screen.findByText("The component choices or execution record could not be read. Your preparation and saved results are retained.");
   expect(generated).not.toHaveBeenCalled();
   expect(blocked).toHaveBeenLastCalledWith(true);
   expect(screen.getByRole("checkbox", { name: "barrel" })).toBeDisabled();
-  child = execution("queued", true); outer = execution("unknown", false);
-  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  child = execution("queued", true); outer = execution("unknown", false); startRead = "saved";
+  await user.click(screen.getByRole("button", { name: "Check original component start" }));
   await waitFor(() => expect(generated).toHaveBeenCalledExactlyOnceWith(prepared.generation.attemptId));
   expect(original).toEqual(prepared);
   expect(invoke.mock.calls.filter(([command]) => command === "start_work_plan_generation_component").map(([, args]) => args.request)).toEqual([started]);
@@ -304,7 +318,7 @@ it("keeps a late preparation tied to its original lease when plan control change
 it("refuses a child record belonging to another task and retains the original action for checking", async () => {
   const generated = vi.fn(); render(controls(workPlanToolStatus, generated)); const user = await prepare(); await confirm(user);
   child = { ...execution("queued", true), taskId: fixtureIdentity(999) };
-  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await user.click(screen.getByRole("button", { name: "Refresh execution status" }));
   await screen.findByText("The component choices or execution record could not be read. Your preparation and saved results are retained.");
   expect(generated).not.toHaveBeenCalled();
   expect(screen.getByRole("checkbox", { name: "barrel" })).toBeDisabled();
@@ -523,13 +537,13 @@ it("rechecks the original tool authority before component start and retains safe
   expect(invoke.mock.calls.some(([command]) => command.startsWith("start_"))).toBe(false);
 });
 it("keeps an uncertain component start bound to its original reference query and consent", async () => {
-  usePreparedToolInput(); startOutcome = "unknown"; render(controls()); const user = await chooseComponent(); await chooseReference(user);
+  usePreparedToolInput(); startOutcome = "unknown"; startRead = "error"; render(controls()); const user = await chooseComponent(); await chooseReference(user);
   await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
   await screen.findByRole("region", { name: "Review component generation" });
   const captured = structuredClone(original!);
   await confirm(user); await screen.findByText(/The action may have run/);
   const started = structuredClone(invoke.mock.calls.find(([command]) => command === "start_work_plan_generation_component")![1].request);
-  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await user.click(screen.getByRole("button", { name: "Check original component start" }));
   expect(original).toEqual(captured);
   expect(screen.getByRole("combobox", { name: "Reference tool for this component" })).toBeDisabled();
   expect(invoke.mock.calls.filter(([command]) => command === "start_work_plan_generation_component").map(([, args]) => args.request)).toEqual([started]);
@@ -575,4 +589,94 @@ it.each(["eviction","error","contradiction","destroyed"] as const)("keeps compon
   const subscriptions=counts.subscribed;
   act(()=>reader.client.setQueryData(queryKey,originalMetadata));
   expect(counts.subscribed).toBe(subscriptions);expect(counts.disposed).toBe(2);
+});
+
+it("pins confirmed original enqueue even when current execution progress cannot be read", async () => {
+  startOutcome = "unknown";
+  const base = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command,args)=>command === "read_execution_task" ? Promise.reject(new Error("Current status unavailable")) : base(command,args));
+  render(controls()); const user=await prepare(); await confirm(user);
+  await screen.findByText(/The original component input is recorded/);
+  await screen.findByText("The component choices or execution record could not be read. Your preparation and saved results are retained.");
+  expect(screen.queryByRole("button",{name:"Retry the same component start"})).toBeNull();
+  expect(screen.queryByRole("button",{name:"Check original component start"})).toBeNull();
+  expect(invoke.mock.calls.filter(([command])=>command === "read_work_plan_generation_component_start")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command])=>command === "start_work_plan_generation_component")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command])=>command === "prepare_work_plan_generation_component")).toHaveLength(1);
+});
+
+it.each(["accepted","rejected"] as const)("only retries proven missing using identical original consent, preserving unknown after %s",async outcome=>{
+  const base=invoke.getMockImplementation()!;let starts=0;
+  invoke.mockImplementation((command,args)=>command === "start_work_plan_generation_component" && starts++ === 0
+    ? Promise.resolve(null) : base(command,args));
+  render(controls());const user=await prepare();await confirm(user);
+  const retry=await screen.findByRole("button",{name:"Retry the same component start"});
+  expect(await screen.findByText(/No saved input was found/)).toBeInTheDocument();
+  const originalStart=structuredClone(invoke.mock.calls.find(([command])=>command === "start_work_plan_generation_component")![1].request);
+  startOutcome=outcome;await user.click(retry);
+  if(outcome === "accepted") await screen.findByText(/The original component input is recorded/);
+  else {
+    await screen.findByText(/The action may have run/);
+    expect(screen.getByRole("button",{name:"Check original component start"})).toBeEnabled();
+    expect(screen.queryByRole("button",{name:"Retry the same component start"})).toBeNull();
+  }
+  expect(invoke.mock.calls.filter(([command])=>command === "start_work_plan_generation_component").map(([,args])=>args.request)).toEqual([originalStart,originalStart]);
+  expect(invoke.mock.calls.filter(([command])=>command === "read_work_plan_generation_component_start")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command])=>command === "create_execution_identity")).toHaveLength(4);
+});
+
+it("keeps a substituted original proof unknown despite finished progress, then uses the same pure reader manually",async()=>{
+  startOutcome="unknown";const base=invoke.getMockImplementation()!;let wrong=true;
+  invoke.mockImplementation((command,args)=>command === "read_work_plan_generation_component_start"
+    ? Promise.resolve({...startProof(),...(wrong?{taskId:fixtureIdentity(999)}:{})}) : base(command,args));
+  const generated=vi.fn(),blocked=vi.fn();render(controls(workPlanToolStatus,generated,blocked));
+  const user=await prepare();await confirm(user);await screen.findByText(/The action may have run/);
+  child=execution("queued",true);outer=execution("succeeded",false);
+  await user.click(screen.getByRole("button",{name:"Refresh execution status"}));
+  await screen.findByText("Output generated");
+  expect(generated).not.toHaveBeenCalled();expect(blocked).toHaveBeenLastCalledWith(true);
+  expect(screen.queryByRole("button",{name:"Keep records and close this component review"})).toBeNull();
+  expect(screen.queryByRole("button",{name:"Retry the same component start"})).toBeNull();
+  wrong=false;await user.click(screen.getByRole("button",{name:"Check original component start"}));
+  await screen.findByText(/The original component input is recorded/);
+  await waitFor(()=>expect(generated).toHaveBeenCalledExactlyOnceWith(original!.generation.attemptId));
+  const proofs=invoke.mock.calls.filter(([command])=>command === "read_work_plan_generation_component_start").map(([,args])=>args.request);
+  expect(proofs).toHaveLength(2);expect(proofs[1]).toEqual(proofs[0]);
+  expect(invoke.mock.calls.filter(([command])=>command === "start_work_plan_generation_component")).toHaveLength(1);
+});
+
+it("retains one original read flight across hidden and removed consumers with exact Registry gates",async()=>{
+  startOutcome="unknown";const base=invoke.getMockImplementation()!;let finish!:(value:unknown)=>void;
+  const pending=new Promise<unknown>(resolve=>{finish=resolve;});
+  invoke.mockImplementation((command,args)=>command === "read_work_plan_generation_component_start" ? pending : base(command,args));
+  const props={context,status:workPlanToolStatus,open:true,disabled:false,busy:false,run:perform,onGenerated:vi.fn(),onBlockedChange:vi.fn()};
+  const ui=render(<WorkPlanAgentControls {...props}/>);const user=await prepare();await confirm(user);
+  await screen.findByText("Checking the original component start…");
+  const scope={...context,area:"ai" as const},payload={kind:"ai-component" as const,scopeId:original!.scopeId,attemptId:original!.attemptId,inputDigest:generationFixture.preflight.inputDigest};
+  expect(registry.describe("ai.component.check-start",scope,payload)?.availability).toMatchObject({enabled:false,reason:"busy"});
+  expect(registry.dispatch("ai.component.check-start",scope,payload)).toBe(false);
+  expect(registry.dispatch("ai.component.retry-start",scope,payload)).toBe(false);
+  ui.rerender(<WorkPlanAgentControls {...props} open={false}/>);
+  expect(registry.describe("ai.component.check-start",scope,payload)?.availability).toMatchObject({enabled:false,reason:"hidden"});
+  const changed={...props,status:{...workPlanToolStatus,state:"paused" as const,lease:{...workPlanToolStatus.lease,generation:"2"}}};
+  ui.rerender(<WorkPlanAgentControls {...changed} visible={false}/>);
+  const proof=startProof();await act(async()=>{finish(proof);await pending;});
+  ui.rerender(<WorkPlanAgentControls {...changed}/>);
+  await screen.findByText(/The original component input is recorded/);
+  expect(screen.getByText("The original plan or captured entries changed. This preparation cannot start. Discard it and review the current plan.")).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command])=>command === "read_work_plan_generation_component_start")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command])=>command === "start_work_plan_generation_component")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command])=>command === "create_execution_identity")).toHaveLength(4);
+});
+
+it("ignores a late original proof after the project session retires",async()=>{
+  startOutcome="unknown";const base=invoke.getMockImplementation()!;let finish!:(value:unknown)=>void;
+  const pending=new Promise<unknown>(resolve=>{finish=resolve;});
+  invoke.mockImplementation((command,args)=>command === "read_work_plan_generation_component_start" ? pending : base(command,args));
+  const generated=vi.fn();render(controls(workPlanToolStatus,generated));const user=await prepare();await confirm(user);
+  await screen.findByText("Checking the original component start…");
+  const proof=startProof();await act(async()=>{reader.retire();finish(proof);await pending;});
+  expect(screen.queryByText(/The original component input is recorded/)).toBeNull();
+  expect(generated).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.filter(([command])=>command === "start_work_plan_generation_component")).toHaveLength(1);
 });

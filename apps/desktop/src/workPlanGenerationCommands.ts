@@ -14,7 +14,7 @@ function invalidAcknowledgement(): never {
     outcome: "unknown", reason: "invalid-generation-component-acknowledgement",
   });
 }
-const preparations = new WeakMap<WorkPlanGenerationPreflight, WorkPlanGenerationPrepareRequest & { inputDigest: string }>();
+const preparations = new WeakMap<WorkPlanGenerationPreflight, WorkPlanGenerationPrepareRequest & { inputDigest: string; taskId: string }>();
 const starts = new WeakMap<WorkPlanGenerationPreflight, WorkPlanGenerationStartRequest>();
 export function generationSupportsPreparedTools(component: PluginGenerationComponentView) {
   return (component.componentScope === "project" || component.componentScope === "attempt") && component.environment.profile === "node-system-libraries-v1"
@@ -60,7 +60,7 @@ export const workPlanGenerationCommands = {
         || jsonIdentity(tool.query) !== jsonIdentity(request.toolQueries[index])
         || jsonIdentity(tool.tool) !== jsonIdentity(capturedTools.find(candidate => candidate.handle === tool.query.toolHandle))
         || contractIdentity(tool.input.schema) !== contractIdentity(tool.tool.binding.capability.declaration.inputSchema))) invalidAcknowledgement();
-    preparations.set(value, { ...request, inputDigest: value.inputDigest });
+    preparations.set(value, { ...request, inputDigest: value.inputDigest, taskId: value.taskId });
     return value;
   },
   start: async (prepared: WorkPlanGenerationPreflight, consent: Pick<WorkPlanGenerationStartRequest, "grantId" | "expiresAtMs" | "unsandboxedExecution">) => {
@@ -78,6 +78,19 @@ export const workPlanGenerationCommands = {
     starts.set(prepared, structuredClone(request));
     const value = await checkedInvoke("start_work_plan_generation_component", request, validators.validateResponseIdentity);
     if (value !== original.attemptId) invalidAcknowledgement();
+    return value;
+  },
+  startAction: async (prepared: WorkPlanGenerationPreflight) => {
+    const original = preparations.get(prepared);
+    if (!original) throw new Error("Generation component was not prepared by this session");
+    // Scope handles and live human consent are not part of the stored input.
+    // The original task and digest bind the complete captured plugin request.
+    const request = { projectId: original.projectId, sessionToken: original.sessionToken,
+      taskId: original.taskId, attemptId: original.attemptId, inputDigest: original.inputDigest };
+    const value = await checkedInvoke("read_work_plan_generation_component_start", request, validators.validateResponseWorkPlanGenerationStartRead);
+    if (value !== null && (value.projectId !== request.projectId || value.taskId !== request.taskId
+      || value.attemptId !== request.attemptId || value.inputDigest !== request.inputDigest
+      || value.operation !== "work-plan-generation-component")) invalidAcknowledgement();
     return value;
   },
   discard: async (input: WorkPlanGenerationDiscardRequest) => {
