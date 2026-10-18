@@ -596,6 +596,7 @@ toolQuery: {
   failed: "无法确认此查询操作。输入与已保存结果均已保留。开始新查询前，请核对原操作或刷新执行记录。",
 },
 translationPlugin: {
+  projectionStartMissing: "未查到本次匹配预览已启动的记录。可以明确重试同一次已准备的预览；在途请求仍可能完成。",
   environmentChanged: "捕获后扩展设置已变化，固定输入仍保留。继续前请选择新输入，并重新审阅执行同意。",
   emptyFile: "已检查文件中没有译文条目，已有译文保持不变。",
   controls: "译文插件与执行", package: "译文插件", profile: "译文配置",

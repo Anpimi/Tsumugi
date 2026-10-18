@@ -800,6 +800,9 @@
       "projectionStart": {
         "$ref": "#/definitions/TranslationProjectionStartRequest"
       },
+      "projectionStartAction": {
+        "$ref": "#/definitions/TranslationProjectionStartRequest"
+      },
       "save": {
         "$ref": "#/definitions/TranslationSaveRequest"
       },
@@ -825,6 +828,7 @@
       "checkFinish",
       "projectionPrepare",
       "projectionStart",
+      "projectionStartAction",
       "files",
       "preview",
       "adopt",
@@ -2179,6 +2183,39 @@
         ],
         "type": "object"
       },
+      "TranslationProjectionStartRead": {
+        "additionalProperties": false,
+        "description": "Historical proof of one exact built-in match projection being enqueued.\nThe producer association is evidence, not current qualification or permission.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "attemptId",
+          "inputDigest",
+          "translationAttemptId",
+          "translationResultId"
+        ],
+        "type": "object"
+      },
       "TranslationRevision": {
         "additionalProperties": false,
         "properties": {
@@ -2495,6 +2532,16 @@
       "projectionReview": {
         "$ref": "#/definitions/TranslationProjectionReview"
       },
+      "projectionStartAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TranslationProjectionStartRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "saveAction": {
         "anyOf": [
           {
@@ -2531,6 +2578,7 @@
       "pluginPreflight",
       "checkReview",
       "projectionReview",
+      "projectionStartAction",
       "checked",
       "files",
       "attempt",

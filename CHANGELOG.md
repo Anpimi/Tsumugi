@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Confirm uncertain translation match previews from their original saved projection
+  and independent check evidence. Recovery does not rerun extraction or checks;
+  explicit retries retain the same prepared preview and newer input.
+
 - Confirm uncertain source imports, translation extraction, builds and their
   independent plugin checks from the exact original saved input. Recovery reads
   do not start work; explicit retries keep the original permission and preserve

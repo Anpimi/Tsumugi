@@ -267,6 +267,7 @@ interface WorkbenchCommandPayloads {
   "translation.prepare-import-projection": TranslationPluginCommandPayload;
   "translation.start-import-projection": TranslationPluginCommandPayload;
   "translation.check-import-plugin-start": TranslationPluginPendingCommandPayload;
+  "translation.check-import-projection-start": TranslationPluginPendingCommandPayload;
   "translation.retry-import-plugin": TranslationPluginPendingCommandPayload;
   "source.prepare-check": SourceCheckCommandPayload;
   "source.start-check": SourceCheckCommandPayload;
@@ -529,7 +530,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"translation-protection", "translation.protect-work" | "translation.release-work">
   | ResourceCommand<"translation-protection-pending", "translation.retry-protection">
   | ResourceCommand<"translation-plugin", "translation.prepare-import-check" | "translation.start-import-check" | "translation.finish-import-check" | "translation.prepare-import-projection" | "translation.start-import-projection">
-  | ResourceCommand<"translation-plugin-pending", "translation.check-import-plugin-start" | "translation.retry-import-plugin">
+  | ResourceCommand<"translation-plugin-pending", "translation.check-import-plugin-start" | "translation.check-import-projection-start" | "translation.retry-import-plugin">
   | ResourceCommand<"translation-import-setup", "translation.choose-import-folder" | "translation.inspect-import">
   | ResourceCommand<"translation-import-consent", "translation.confirm-import-language" | "translation.start-import">
   | ResourceCommand<"translation-import-start-pending", "translation.check-import-start" | "translation.retry-import-start">

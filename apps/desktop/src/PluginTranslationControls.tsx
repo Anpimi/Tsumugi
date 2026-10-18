@@ -140,7 +140,7 @@ export function PluginTranslationControls({ project, open, targetLocale, disable
   function pluginPendingAvailability(input?: TranslationPluginPendingCommandPayload, retry = false): CommandAvailability {
     const allowed = common(true), expected = pendingPayload();
     return allowed.enabled && input && expected && JSON.stringify(input) === JSON.stringify(expected)
-      && (!retry || input.pendingKind !== "start-check" || owner.current().startRetryAllowed) ? allowed : allowed.enabled ? unavailable : allowed;
+      && (!retry || !["start-check", "start-projection"].includes(input.pendingKind) || owner.current().startRetryAllowed) ? allowed : allowed.enabled ? unavailable : allowed;
   }
   function proof() {
     const capturedSource = source.data, capturedEnvironment = environment.data, capturedTranslation = state.translation;
@@ -168,6 +168,7 @@ export function PluginTranslationControls({ project, open, targetLocale, disable
       registry.register({ ...meta, id: "translation.prepare-import-projection", nameKey: "translationPlugin.preparePreview", payloadKind: "translation-plugin", availability: input => pluginAvailability(input, "prepare-projection"), handler: input => { if (!input.extractionResultId) return; const captured = proof(); void owner.prepareProjection(input.extractionResultId, captured.current).finally(captured.dispose); } }),
       registry.register({ ...meta, id: "translation.start-import-projection", nameKey: "translationPlugin.openPreview", payloadKind: "translation-plugin", availability: input => pluginAvailability(input, "start-projection"), handler: () => void owner.startProjection() }),
       registry.register({ ...meta, id: "translation.check-import-plugin-start", nameKey: "execution.checkPluginStart", risk: "reads-execution", payloadKind: "translation-plugin-pending", availability: input => input?.pendingKind === "start-check" ? pluginPendingAvailability(input) : unavailable, handler: () => void owner.checkPluginStart() }),
+      registry.register({ ...meta, id: "translation.check-import-projection-start", nameKey: "execution.checkPluginStart", risk: "reads-execution", payloadKind: "translation-plugin-pending", availability: input => input?.pendingKind === "start-projection" ? pluginPendingAvailability(input) : unavailable, handler: () => void owner.checkProjectionStart() }),
       registry.register({ ...meta, id: "translation.retry-import-plugin", nameKey: "translationPlugin.retryOriginal", payloadKind: "translation-plugin-pending", availability: input => pluginPendingAvailability(input, true), handler: () => void owner.retryPlugin() }),
     ];
     return () => removals.forEach(remove => remove());
@@ -208,8 +209,8 @@ export function PluginTranslationControls({ project, open, targetLocale, disable
     {item?.status.validation === "valid" && !state.projection ? <button className="primary-button" disabled={!pluginAvailability(command, "prepare-projection").enabled} onClick={() => registry.dispatch("translation.prepare-import-projection", commandScope, command)}>{t("translationPlugin.preparePreview")}</button> : null}
     {state.projection && !state.attempt ? <><p>{t("translationPlugin.checked", { target: state.projection.targetLocale })}</p><button className="primary-button" disabled={!pluginAvailability(command, "start-projection").enabled} onClick={() => registry.dispatch("translation.start-import-projection", commandScope, command)}>{t("translationPlugin.openPreview")}</button></> : null}
     {pending ? <div role="status"><p>{t(state.checkingStart ? "execution.checkingPluginStart" : "translationPlugin.unknown")}</p>
-      {pending.pendingKind === "start-check" ? <><button className="secondary-button" disabled={!pluginPendingAvailability(pending).enabled} onClick={() => registry.dispatch("translation.check-import-plugin-start", commandScope, pending)}>{t("execution.checkPluginStart")}</button>
-        {state.startRetryAllowed ? <><p>{t("execution.pluginStartMissing")}</p><button className="secondary-button" disabled={!pluginPendingAvailability(pending, true).enabled} onClick={() => registry.dispatch("translation.retry-import-plugin", commandScope, pending)}>{t("execution.retryPluginStart")}</button></> : null}</>
+      {pending.pendingKind === "start-check" || pending.pendingKind === "start-projection" ? <><button className="secondary-button" disabled={!pluginPendingAvailability(pending).enabled} onClick={() => registry.dispatch(pending.pendingKind === "start-projection" ? "translation.check-import-projection-start" : "translation.check-import-plugin-start", commandScope, pending)}>{t("execution.checkPluginStart")}</button>
+        {state.startRetryAllowed ? <><p>{t(pending.pendingKind === "start-projection" ? "translationPlugin.projectionStartMissing" : "execution.pluginStartMissing")}</p><button className="secondary-button" disabled={!pluginPendingAvailability(pending, true).enabled} onClick={() => registry.dispatch("translation.retry-import-plugin", commandScope, pending)}>{t("execution.retryPluginStart")}</button></> : null}</>
         : <button className="secondary-button" disabled={!pluginPendingAvailability(pending, true).enabled} onClick={() => registry.dispatch("translation.retry-import-plugin", commandScope, pending)}>{t("translationPlugin.retryOriginal")}</button>}
     </div> : null}
     {startPending ? <div role="status"><p>{t(state.checkingStart ? "execution.checkingPluginStart" : "translation.startUnknown")}</p>

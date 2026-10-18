@@ -36,7 +36,7 @@ beforeEach(() => {
   const checkedWrites = new Map<string,number>();
   invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
     const request = payload.request;
-    if (command === "read_plugin_execution_start") return null;
+    if (command === "read_plugin_execution_start" || command === "read_translation_projection_start") return null;
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: preview.currentSourceSnapshotId };
     if (command === "create_execution_identity") return fixtureIdentity(nextIdentity++);
     if (command === "select_plugin_translation") return translationSelectionFixture(preview.fixedSourceSnapshotId);
@@ -551,4 +551,65 @@ it.each([false,true])("ignores a late original translation proof after session r
   await act(async()=>{resolve({projectId:read.projectId,taskId:fixtureIdentity(888),attemptId:read.attemptId,operation:read.operation,inputDigest:read.inputDigest});await running;});
   expect(owner.current().extractionAttempt).toBeNull();expect(owner.current().checkAttempt).toBeNull();expect(owner.hasPending()).toBe(false);
   expect(checker?old.current().pendingPlugin:old.current().pendingStart).not.toBeNull();
+});
+
+it("confirms one original built-in match preview before any progress read across hidden consumers and metadata changes",async()=>{
+  const view=render(<Probe/>,project),work=await preparePluginPhase("start-projection"),original=invoke.getMockImplementation()!;
+  const review=owner.current().projection!;expect(review).not.toBeNull();
+  let resolve!:(value:unknown)=>void;const response=new Promise<unknown>(done=>{resolve=done;});
+  invoke.mockImplementation((name,args)=>name==="start_translation_projection"?Promise.resolve(fixtureIdentity(999))
+    :name==="read_translation_projection_start"?response:original(name,args));
+  const identities=calls("create_execution_identity").length;
+  let running!:Promise<void>;act(()=>{running=work();});await waitFor(()=>expect(owner.current().checkingStart).toBe(true));
+  const pending=owner.current().pendingPlugin;expect(pending?.pendingKind).toBe("start-projection");
+  expect(calls("read_translation_projection_start")[0][1].request).toEqual(pending!.request);
+  expect(drafts.mutationReserved).toBe(true);
+  view.rerender(null,{...project,metadata:{...project.metadata,sourceLocale:"fr",targetLocales:[]}});
+  await act(async()=>{await owner.checkProjectionStart();await owner.retryPlugin();});
+  expect(calls("read_translation_projection_start")).toHaveLength(1);expect(calls("start_translation_projection")).toHaveLength(1);
+  await act(async()=>{resolve({projectId:project.metadata.projectId,taskId:fixtureIdentity(888),attemptId:review.attemptId,inputDigest:review.inputDigest,
+    translationAttemptId:review.translationAttemptId,translationResultId:review.translationResultId});await running;});
+  view.rerender(<Probe/>);
+  expect(owner.current().attempt).toBe(review.attemptId);expect(owner.current().projection).toBe(review);expect(owner.current().pendingPlugin).toBeNull();
+  expect(owner.current().failure).toBeNull();expect(owner.current().stale).toBe(true);expect(owner.current().confirmed).toBe(false);
+  expect(calls("create_execution_identity")).toHaveLength(identities);expect(calls("start_translation_projection")).toHaveLength(1);
+  expect(calls("read_plugin_execution_start")).toHaveLength(0);expect(calls("read_translation_preview")).toHaveLength(0);
+});
+it("requires pure original projection absence before exact retry and preserves unknown after a later formal rejection",async()=>{
+  render(<Probe/>,project);const work=await preparePluginPhase("start-projection"),review=owner.current().projection!,original=invoke.getMockImplementation()!;
+  let reads=0,sends=0;
+  const proof={projectId:project.metadata.projectId,taskId:fixtureIdentity(888),attemptId:review.attemptId,inputDigest:review.inputDigest,
+    translationAttemptId:review.translationAttemptId,translationResultId:review.translationResultId};
+  invoke.mockImplementation((name,args)=>{
+    if(name==="start_translation_projection")return Promise.reject(++sends===1?new Error("Lost ACK"):mutationRejection());
+    if(name==="read_translation_projection_start")return ++reads===1?Promise.resolve({...proof,translationResultId:fixtureIdentity(999)})
+      :reads===2?Promise.resolve(null):reads===3?Promise.reject(new Error("Read unavailable")):Promise.resolve(proof);
+    return original(name,args);
+  });
+  await act(async()=>{await work();});const pending=owner.current().pendingPlugin;expect(owner.current().startRetryAllowed).toBe(false);
+  await act(async()=>{await owner.retryPlugin();});expect(sends).toBe(1);expect(reads).toBe(1);
+  await act(async()=>{await owner.checkProjectionStart();});expect(owner.current().startRetryAllowed).toBe(true);expect(sends).toBe(1);
+  await act(async()=>{await owner.retryPlugin();});expect(sends).toBe(2);expect(reads).toBe(3);expect(owner.current().startRetryAllowed).toBe(false);
+  expect(owner.current().pendingPlugin).toBe(pending);expect(drafts.mutationReserved).toBe(true);
+  await act(async()=>{await owner.checkProjectionStart();});expect(sends).toBe(2);expect(reads).toBe(4);
+  expect(owner.current().attempt).toBe(review.attemptId);expect(owner.current().pendingPlugin).toBeNull();
+  expect(calls("start_translation_projection").map(([,args])=>args.request)).toEqual([pending!.request,pending!.request]);
+  expect(Object.keys(pending!.request).sort()).toEqual(["projectId","sessionToken","attemptId","inputDigest"].sort());
+});
+it("does not turn a fresh formal projection rejection into a recovery read",async()=>{
+  render(<Probe/>,project);const work=await preparePluginPhase("start-projection"),original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((name,args)=>name==="start_translation_projection"?Promise.reject(mutationRejection()):original(name,args));
+  await act(async()=>{await work();});expect(owner.current().pendingPlugin).toBeNull();expect(owner.current().attempt).toBeNull();
+  expect(owner.current().projection).not.toBeNull();expect(calls("read_translation_projection_start")).toHaveLength(0);
+});
+it("ignores a late built-in projection proof after session replacement",async()=>{
+  const view=render(<Probe/>,project),work=await preparePluginPhase("start-projection"),original=invoke.getMockImplementation()!;
+  let resolve!:(value:unknown)=>void;const response=new Promise<unknown>(done=>{resolve=done;});
+  invoke.mockImplementation((name,args)=>name==="start_translation_projection"?Promise.reject(new Error("Lost ACK"))
+    :name==="read_translation_projection_start"?response:original(name,args));
+  let running!:Promise<void>;act(()=>{running=work();});await waitFor(()=>expect(owner.current().checkingStart).toBe(true));
+  const old=owner,review=old.current().projection!;view.rerender(<Probe/>,{...project,sessionToken:"replacement-projection"});
+  await act(async()=>{resolve({projectId:project.metadata.projectId,taskId:fixtureIdentity(888),attemptId:review.attemptId,inputDigest:review.inputDigest,
+    translationAttemptId:review.translationAttemptId,translationResultId:review.translationResultId});await running;});
+  expect(owner.current().attempt).toBeNull();expect(owner.current().pendingPlugin).toBeNull();expect(old.current().pendingPlugin).not.toBeNull();
 });

@@ -75,6 +75,7 @@ describe("Translation business command payloads",()=>{
     ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "start-check", request: { ...translationWorkflow.start, attemptId: translationWorkflow.checkReview.attemptId, inputDigest: translationWorkflow.checkReview.inputDigest } }, [{ request: {} }]],
     ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "finish-check", request: translationWorkflow.checkFinish }, [{ request: {} }]],
     ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "start-projection", request: translationWorkflow.projectionStart }, [{ request: {} }]],
+    ["translation.check-import-projection-start", { kind: "translation-plugin-pending", pendingKind: "start-projection", request: translationWorkflow.projectionStart }, [{ request: {} }, { request: { ...translationWorkflow.projectionStart, grantId: "extra" } }]],
     ["translation.prepare-import-check", plugin, [{ extractionAttemptId: null }, { checkInputDigest: null }]],
     ["translation.start-import-check", plugin, [{ checkAttemptId: null }, { checkerConsent: "yes" }]],
     ["translation.finish-import-check", plugin, [{ checkResultId: false }]],

@@ -6,6 +6,20 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub const TRANSLATION_PROJECTION_CAPABILITY: &str = "core.translation-project";
 const VERSION: &str = "1";
 
+/// Historical proof of one exact built-in match projection being enqueued.
+/// The producer association is evidence, not current qualification or permission.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TranslationProjectionStartRead {
+    pub project_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub input_digest: String,
+    pub translation_attempt_id: ExecutionId,
+    pub translation_result_id: ExecutionId,
+}
+
 fn invalid() -> ExecutionError {
     ExecutionError::new(ErrorCode::OutputInvalid, "translation-projection")
 }

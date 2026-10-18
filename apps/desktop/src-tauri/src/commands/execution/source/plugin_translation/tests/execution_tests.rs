@@ -301,6 +301,7 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
         projected
     );
     let project_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"attemptId":projection,"inputDigest":projected["inputDigest"]});
+    assert_eq!(call(&window, "read_translation_projection_start", project_start.clone()).unwrap(), Value::Null);
     let mut bad = project_start.clone();
     bad["inputDigest"] = json!("0".repeat(64));
     assert!(call(&window, "start_translation_projection", bad).is_err());
@@ -322,6 +323,21 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
         .unwrap(),
         json!(projection)
     );
+    let proof = call(&window, "read_translation_projection_start", project_start.clone()).unwrap();
+    let proof_project = context["projectId"].clone();
+    let proof_digest = projected["inputDigest"].clone();
+    let expected_proof = state.sessions.with(move |sessions| {
+        let input = sessions.active.as_ref().unwrap().store.execution_input(projection).unwrap();
+        assert!(input.envelope().plugin.is_none());
+        json!({"projectId":proof_project,"taskId":input.envelope().task_id,"attemptId":projection,
+            "inputDigest":proof_digest,"translationAttemptId":producer,"translationResultId":result})
+    });
+    assert_eq!(proof,expected_proof);
+    for (field,value) in [("projectId",json!(ExecutionId::new())),("inputDigest",json!("f".repeat(64)))] {
+        let mut wrong = project_start.clone();wrong[field]=value;
+        assert!(call(&window,"read_translation_projection_start",wrong).is_err());
+    }
+    assert_eq!(call(&window,"read_translation_projection_start",project_start.clone()).unwrap(),proof);
     wait(&state, projection, 3);
     state.sessions.with(|sessions| {
         sessions
@@ -391,13 +407,18 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
         json!(producer)
     );
     assert_eq!(
-        call(&window, "start_translation_projection", project_start).unwrap(),
+        call(&window, "start_translation_projection", project_start.clone()).unwrap(),
         json!(projection)
     );
     assert_eq!(
         call(&window, "adopt_execution", action_request.clone()).unwrap(),
         receipt
     );
+    state.sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing=true; });
+    let before = state.sessions.with(|sessions| sessions.active.as_ref().unwrap().store.execution_sequence().unwrap());
+    assert_eq!(call(&window,"read_translation_projection_start",project_start.clone()).unwrap(),proof);
+    assert_eq!(state.sessions.with(|sessions| sessions.active.as_ref().unwrap().store.execution_sequence().unwrap()),before);
+    state.sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing=false; });
     // A valid empty object still needs independent plugin proof and the Core
     // empty-file sentinel. It must not invent an entry or alter saved work.
     let empty_raw = "\u{feff} { }\n";
@@ -522,6 +543,11 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
     )
     .unwrap();
     let opened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
+    assert!(call(&window,"read_translation_projection_start",project_start.clone()).is_err());
+    let mut reopened_start = project_start;
+    reopened_start["sessionToken"]=opened["sessionToken"].clone();
+    assert_eq!(call(&window,"read_translation_projection_start",reopened_start).unwrap(),proof);
+    state.sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
     let mut reopened_preview = preview_request;
     reopened_preview["sessionToken"] = opened["sessionToken"].clone();
     let historical = call(&window, "read_translation_preview", reopened_preview).unwrap();

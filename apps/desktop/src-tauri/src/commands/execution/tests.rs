@@ -379,6 +379,28 @@ fn setup() -> (
 }
 
 #[test]
+fn projection_start_read_ipc_requires_the_original_request_without_initializing_runtime() {
+    let (temp, app, webview, context) = setup();
+    let mut original = request(&context, json!({"attemptId":ExecutionId::new(),"inputDigest":"a".repeat(64)}));
+    assert_eq!(call(&webview, "read_translation_projection_start", original.clone()).unwrap(), Value::Null);
+    for (field, value) in [("projectId",json!(ExecutionId::new())), ("sessionToken",json!(ExecutionId::new())),
+        ("attemptId",json!("invalid")), ("inputDigest",json!("invalid")), ("grantId",json!(ExecutionId::new())), ("operation",json!("translation-import"))] {
+        let mut wrong = original.clone(); wrong[field] = value;
+        assert!(call(&webview, "read_translation_projection_start", wrong).is_err());
+    }
+    app.state::<AppState>().sessions.with(|sessions| {
+        let active = sessions.active.as_ref().unwrap();
+        assert!(active.execution.is_none()); assert_eq!(active.store.execution_sequence().unwrap().get(),0);
+    });
+    call(&webview,"close_project",json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview,"open_project",json!({"locator":temp.path().join("project")})).unwrap();
+    assert!(call(&webview,"read_translation_projection_start",original.clone()).is_err());
+    original["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&webview,"read_translation_projection_start",original).unwrap(),Value::Null);
+    app.state::<AppState>().sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+}
+
+#[test]
 fn ordinary_plugin_start_ipc_reads_all_fixed_operations_without_runtime_or_grant() {
     let (temp, app, webview, context) = setup();
     let mut original = request(&context, json!({"attemptId":ExecutionId::new(),"inputDigest":"a".repeat(64),"operation":"source-import"}));

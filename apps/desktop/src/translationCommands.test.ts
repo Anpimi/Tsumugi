@@ -261,3 +261,17 @@ it("checks the exact original revision selection instead of accepting a truthy s
   expect(() => confirmTranslationSelection(fixture.select, { ...fixture.selected, revisionId: fixtureIdentity(99) })).toThrow();
   expect(() => confirmTranslationSelection(fixture.select, { ...fixture.selected, previousEventId: null })).toThrow();
 });
+
+it("reads only the exact built-in projection start with strict origin identities and no runtime authority",async()=>{
+  const request=executionFixture.projectionStart,review=executionFixture.projectionReview;
+  const proof={projectId:request.projectId,taskId:fixtureIdentity(888),attemptId:request.attemptId,inputDigest:request.inputDigest,
+    translationAttemptId:review.translationAttemptId,translationResultId:review.translationResultId};
+  expect(validators.validateRequestProjectionStartAction(request)).toBe(true);
+  for(const value of [null,proof]){invoke.mockResolvedValueOnce(value);expect(await translationCommands.projectionStartAction(request)).toEqual(value);}
+  for(const value of [undefined,{...proof,projectId:fixtureIdentity(999)},{...proof,attemptId:fixtureIdentity(999)},{...proof,inputDigest:"e".repeat(64)},
+    {...proof,taskId:"invalid"},{...proof,translationResultId:"invalid"},{...proof,translationAttemptId:undefined},{...proof,grantId:fixtureIdentity(99)}]){
+    invoke.mockResolvedValueOnce(value);expect(hasUnknownOutcome(await translationCommands.projectionStartAction(request).catch(error=>error))).toBe(true);
+  }
+  expect(validators.validateRequestProjectionStartAction({...request,grantId:fixtureIdentity(99)})).toBe(false);
+  expect(invoke.mock.calls.every(([name])=>name==="read_translation_projection_start")).toBe(true);
+});

@@ -1906,6 +1906,16 @@ fn original_plugin_start_read_validates_exact_input_before_reconciling() {
         );
         assert!(store.is_reconciling());
     }
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert!(store.translation_projection_start_action_read(owner, attempt, input.digest()).is_err());
+    assert!(store.is_reconciling(), "ordinary plugin input cannot prove a built-in projection start");
+    let absent = ExecutionId::new();
+    for (project, digest) in [(ExecutionId::new(), input.digest()), (owner, "bad")] {
+        assert!(store.translation_projection_start_action_read(project, absent, digest).is_err());
+        assert!(store.is_reconciling());
+    }
+    assert_eq!(store.translation_projection_start_action_read(owner, absent, input.digest()).unwrap(), None);
+    assert!(!store.is_reconciling());
     assert_eq!(
         store
             .plugin_start_action_read(owner, task, attempt, "fixture", input.digest())

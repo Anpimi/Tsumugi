@@ -49,7 +49,9 @@ pub fn supported_identity_policy(policy: &str) -> bool {
 pub use translation::{
     TRANSLATION_OPERATION, TranslationEntry, TranslationOutput, validate_translation_output,
 };
-pub use translation_projection::{TRANSLATION_PROJECTION_CAPABILITY, TranslationProjectionRunner};
+pub use translation_projection::{
+    TRANSLATION_PROJECTION_CAPABILITY, TranslationProjectionRunner, TranslationProjectionStartRead,
+};
 pub(crate) use translation_projection::{
     TranslationProjection, is_translation_projection, validate_projected_translation_output,
 };

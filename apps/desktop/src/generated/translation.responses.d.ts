@@ -80,6 +80,7 @@ export interface Responses {
   prepared: AdoptionAction;
   preview: TranslationPreview;
   projectionReview: TranslationProjectionReview;
+  projectionStartAction: TranslationProjectionStartRead | null;
   saveAction: TranslationSaveReceipt | null;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
@@ -410,6 +411,18 @@ export interface TranslationProjectionReview {
   itemCount: number;
   source: TranslationSourceContext;
   targetLocale: string;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+/**
+ * Historical proof of one exact built-in match projection being enqueued.
+ * The producer association is evidence, not current qualification or permission.
+ */
+export interface TranslationProjectionStartRead {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
   translationAttemptId: ExecutionId;
   translationResultId: ExecutionId;
 }

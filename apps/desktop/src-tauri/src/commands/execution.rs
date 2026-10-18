@@ -69,7 +69,7 @@ macro_rules! handlers {
         source::plugin_translation::list_plugin_translation_files,source::plugin_translation::preflight_plugin_translation,
         source::plugin_translation::start_plugin_translation,source::plugin_translation::prepare_translation_check,
         source::plugin_translation::start_translation_check,source::plugin_translation::finish_translation_check,
-        source::plugin_translation::prepare_translation_projection,source::plugin_translation::start_translation_projection,
+        source::plugin_translation::prepare_translation_projection,source::plugin_translation::start_translation_projection,source::plugin_translation::read_translation_projection_start,
         source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_adoption_action,source::translation::read_translation_history,
         source::translation::read_translation_action,

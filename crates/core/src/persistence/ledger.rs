@@ -1485,6 +1485,72 @@ fn complete_translation_projection(
 }
 
 impl ProjectStore {
+    /// Read original enqueue evidence without current scope, plugin grants or a runtime.
+    /// Only a complete successful read reconciles the in-memory recovery guard.
+    pub fn translation_projection_start_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        digest: &str,
+    ) -> Result<Option<crate::content::TranslationProjectionStartRead>, ExecutionError> {
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            if super::read_metadata_from(connection)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "translation-projection-project"))?
+                .project_id()
+                .to_string()
+                != project.to_string()
+            {
+                return Err(error(
+                    ErrorCode::ResultMismatch,
+                    "translation-projection-project",
+                ));
+            }
+            if tsumugi_plugin_sdk::validate_package_digest(digest).is_err() {
+                return Err(error(
+                    ErrorCode::InvalidInput,
+                    "translation-projection-digest",
+                ));
+            }
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [attempt.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_error)?;
+            if !exists {
+                return Ok(None);
+            }
+            let input = load_input(connection, attempt)?;
+            let envelope = input.envelope();
+            if envelope.project_id != project
+                || envelope.attempt_id != attempt
+                || input.digest() != digest
+                || envelope.plugin.is_some()
+                || envelope.automation.is_some()
+                || envelope.previous_attempt_id.is_some()
+            {
+                return Err(error(
+                    ErrorCode::ResultMismatch,
+                    "translation-projection-request",
+                ));
+            }
+            let projection = crate::content::TranslationProjection::from_input(&input)?;
+            check_translation_projection(connection, &input, None)?;
+            Ok(Some(crate::content::TranslationProjectionStartRead {
+                project_id: project,
+                task_id: envelope.task_id,
+                attempt_id: attempt,
+                input_digest: input.digest().into(),
+                translation_attempt_id: projection.origin.producer_attempt,
+                translation_result_id: projection.origin.producer_result,
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
     /// Keep the caller's original projection attempt across uncertain submission
     /// outcomes. Existing inputs must retain the exact producer/result origin;
     /// reading them never renews either plugin grant.

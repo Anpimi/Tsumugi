@@ -7,7 +7,7 @@ import { validateResponseAdoptionAction } from "./generated/translation.validato
 import type { PluginTranslationRequest, PluginTranslationView } from "./pluginCommands";
 import { validateRequestAdopt, validateResponseCheckReview, validateResponseProjectionReview, validateResponseChecked, validateResponseSource, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseFiles, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaveAction, validateResponseSelectionAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
 import { validateResponseAdoption } from "./generated/execution.validators";
-import { validateResponseCandidateDecision, validateResponseCandidateAction } from "./generated/translation.validators";
+import { validateResponseProjectionStartAction, validateResponseCandidateDecision, validateResponseCandidateAction } from "./generated/translation.validators";
 import type { CandidateDecisionRequest } from "./generated/translation.requests";
 import type { CandidateDecision } from "./generated/translation.responses";
 export type { CandidateDecisionRequest } from "./generated/translation.requests";
@@ -34,6 +34,13 @@ export const translationCommands = {
   finishCheck: (request: TranslationCheckFinishRequest) => checkedInvoke("finish_translation_check", request, validateResponseChecked),
   prepareProjection: (request: TranslationProjectionPrepareRequest) => checkedInvoke("prepare_translation_projection", request, validateResponseProjectionReview),
   startProjection: (request: TranslationProjectionStartRequest) => checkedInvoke("start_translation_projection", request, validateResponseAttempt),
+  projectionStartAction: async (request: TranslationProjectionStartRequest): Promise<Responses["projectionStartAction"]> => {
+    const result = await checkedInvoke("read_translation_projection_start", request, validateResponseProjectionStartAction);
+    if (result !== null && (result.projectId !== request.projectId || result.attemptId !== request.attemptId || result.inputDigest !== request.inputDigest)) {
+      throw new Error("Invalid original translation projection start proof");
+    }
+    return result;
+  },
   preview: (request: TranslationPreviewRequest) => checkedInvoke("read_translation_preview", request, validateResponsePreview),
   prepare: (request: TranslationAdoptRequest) => checkedInvoke("prepare_translation_adoption", request, validateResponsePrepared),
   adoptionAction: (request: Requests["adoptionAction"]): Promise<Responses["adoptionAction"]> => checkedInvoke("read_translation_adoption_action", request, validateResponseAdoptionAction),

@@ -2261,8 +2261,10 @@ it.each(["newer-text", "composition"])("preserves %s when a manual selection ack
 
 
 it("reconciles an accepted translation start with the original attempt, grant and expiry", async () => {
-  const original = invoke.getMockImplementation()!, ref = createRef<TranslationHandle>(); let lost = true;
+  const original = invoke.getMockImplementation()!, ref = createRef<TranslationHandle>(); let lost = true, reads = 0;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_execution_start") return ++reads === 1 ? Promise.reject(new Error("Original read unavailable"))
+      : { projectId: args.request.projectId, taskId: fixtureIdentity(888), attemptId: args.request.attemptId, inputDigest: args.request.inputDigest, operation: args.request.operation };
     const value = await original(command, args);
     if (command === "start_plugin_translation" && lost) { lost = false; throw new Error("Lost accepted acknowledgement"); }
     return value;
@@ -2272,13 +2274,14 @@ it("reconciles an accepted translation start with the original attempt, grant an
   await captureDeclaredTranslation(user);
   await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract this captured translation file/ }));
   await user.click(screen.getByRole("button", { name: "Import for review" }));
-  const retry = await screen.findByRole("button", { name: i18n.t("translationPlugin.retryOriginal") });
+  const retry = await screen.findByRole("button", { name: i18n.t("execution.checkPluginStart") });
   expect(await ref.current!.allowLeave()).toBe(false);
   expect(screen.getByRole("button", { name: "Choose new translation input" })).toBeDisabled();
   await user.click(retry);
   await screen.findByRole("button", { name: "Review independent translation check" });
   const starts = invoke.mock.calls.filter(([name]) => name === "start_plugin_translation");
-  expect(starts).toHaveLength(2); expect(starts[1][1]).toEqual(starts[0][1]);
+  expect(starts).toHaveLength(1); expect(reads).toBe(2);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(2);
   expect(invoke.mock.calls.some(([name]) => name === "start_translation_check")).toBe(false);
   expect(invoke.mock.calls.some(([name]) => name === "prepare_translation_projection")).toBe(false);
 });

@@ -525,6 +525,34 @@ pub async fn prepare_translation_projection(
 }
 
 #[tauri::command]
+pub async fn read_translation_projection_start(
+    state: State<'_, AppState>,
+    request: TranslationProjectionStartRequest,
+) -> Result<Option<content::TranslationProjectionStartRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_translation_projection_start",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .translation_projection_start_action_read(
+                    request.project_id,
+                    request.attempt_id,
+                    &request.input_digest,
+                )
+                .map_err(map_source)
+            },
+        )
+        .await
+}
+#[tauri::command]
 pub async fn start_translation_projection(
     state: State<'_, AppState>,
     request: TranslationProjectionStartRequest,

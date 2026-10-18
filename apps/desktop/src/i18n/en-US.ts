@@ -604,6 +604,7 @@ toolQuery: {
   failed: "The query operation could not be confirmed. Your input and saved results are preserved. Check the original action or refresh the execution record before starting another query.",
 },
 translationPlugin: {
+  projectionStartMissing: "No saved start was found for this match preview. You can explicitly retry the same prepared preview. An in-flight request may still complete.",
   environmentChanged: "Extension settings changed after capture. Your fixed input is preserved. Choose new input and review new execution consent before continuing.",
   emptyFile: "The checked file contains no translation entries. Existing translations are unchanged.",
   controls: "Translation package and execution", package: "Translation package", profile: "Translation profile",
