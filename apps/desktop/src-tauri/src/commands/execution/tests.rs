@@ -404,7 +404,7 @@ fn projection_start_read_ipc_requires_the_original_request_without_initializing_
 fn ordinary_plugin_start_ipc_reads_all_fixed_operations_without_runtime_or_grant() {
     let (temp, app, webview, context) = setup();
     let mut original = request(&context, json!({"attemptId":ExecutionId::new(),"inputDigest":"a".repeat(64),"operation":"source-import"}));
-    for operation in ["source-import", "source-semantic-check", "translation-extract", "translation-semantic-check", "locale-build", "artifact-semantic-check"] {
+    for operation in ["source-import", "source-semantic-check", "translation-extract", "translation-semantic-check", "locale-build", "artifact-semantic-check", "plugin-tool-query"] {
         original["operation"] = json!(operation);
         assert_eq!(call(&webview, "read_plugin_execution_start", original.clone()).unwrap(), Value::Null);
     }

@@ -8,7 +8,7 @@ use tsumugi_plugin_host::{
     core::{ApplicationInstance, RunnerProxy},
 };
 
-const OPERATION: &str = "plugin-tool-query";
+pub(super) const OPERATION: &str = "plugin-tool-query";
 
 #[derive(Default)]
 pub(super) struct ToolSession {

@@ -291,7 +291,7 @@ it("accepts a zero continuation basis while checking the original TaskView scope
   expect(invoke).toHaveBeenLastCalledWith("read_execution_task_view", { request: fixture.taskViewRequest });
 });
 
-it.each(["source-import", "source-semantic-check", "translation-extract", "translation-semantic-check", "locale-build", "artifact-semantic-check"] as const)("strictly reads the original %s input without adding execution authority", async operation => {
+it.each(["source-import", "source-semantic-check", "translation-extract", "translation-semantic-check", "locale-build", "artifact-semantic-check", "plugin-tool-query"] as const)("strictly reads the original %s input without adding execution authority", async operation => {
   const request = { ...session, attemptId: fixture.detail.attemptId, inputDigest: "a".repeat(64), operation };
   const proof = { projectId: request.projectId, attemptId: request.attemptId, inputDigest: request.inputDigest, operation, taskId: fixture.detail.taskId };
   expect(validators.validateRequestPluginStartAction(request)).toBe(true);

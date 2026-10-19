@@ -199,9 +199,10 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
         && fixed.sequence === draftSequence.current && session.current().consent === fixed.review.inputDigest && applicationReady())
       ? { enabled: true } : { enabled: false, reason: "unavailable" };
   }
-  function pendingAvailability(payload?: ResourceToolPendingCommandPayload): CommandAvailability {
+  function pendingAvailability(payload?: ResourceToolPendingCommandPayload, retry = false): CommandAvailability {
     const base = baseAvailability(); if (!base.enabled) return base;
     return payload && session.current().pending && jsonIdentity(payload.intent) === jsonIdentity(session.current().pending)
+      && (!retry || payload.intent.kind !== "start" || session.current().startRetryAllowed)
       ? { enabled: true } : { enabled: false, reason: "unavailable" };
   }
   function cancelAvailability(payload?: ExecutionCancellationCommandPayload): CommandAvailability {
@@ -227,8 +228,10 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
         availability: stopInstanceAvailability, handler: () => { void perform(stopInstance); } }),
       registry.register({ ...metadata, id: "resource.discard-tool", payloadKind: "resource-tool-capture", nameKey: "toolQuery.discardReview", risk: "retries-resource-action",
         availability: payload => captureAvailability(payload), handler: () => { void perform(discard); } }),
+      registry.register({ ...metadata, id: "resource.check-tool-start", payloadKind: "resource-tool-pending", nameKey: "execution.checkPluginStart", risk: "reads-execution",
+        availability: payload => payload?.intent.kind === "start" ? pendingAvailability(payload) : { enabled: false, reason: "unavailable" }, handler: () => { void session.checkStart(); } }),
       registry.register({ ...metadata, id: "resource.retry-tool", payloadKind: "resource-tool-pending", nameKey: "toolQuery.retryOriginal", risk: "retries-resource-action",
-        availability: pendingAvailability, handler: payload => { void perform(current => submit(payload.intent, current)); } }),
+        availability: payload => pendingAvailability(payload, true), handler: payload => { void perform(current => submit(payload.intent, current)); } }),
       registry.register({ ...metadata, id: "resource.cancel-tool", payloadKind: "execution-cancellation", nameKey: "toolQuery.cancel", risk: "cancels-execution-task",
         availability: cancelAvailability, handler: payload => { void session.tasks.cancel(payload, cancellationProof); } }),
       registry.register({ ...metadata, id: "resource.retry-tool-cancellation", payloadKind: "execution-cancellation-retry", nameKey: "execution.retryCancellation", risk: "retries-execution-action",
@@ -304,7 +307,10 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
           <button className="primary-button" disabled={!captureAvailability(capturePayload, true).enabled} onClick={() => { if (capturePayload) registry.dispatch("resource.start-tool", commandScope, capturePayload); }}>{t("toolQuery.start")}</button></> : null}
         <button className="secondary-button" disabled={locked || working} onClick={() => { if (capturePayload) registry.dispatch("resource.discard-tool", commandScope, capturePayload); }}>{t("toolQuery.discardReview")}</button>
       </section> : null}
-      {pending ? <button className="secondary-button" disabled={busy || disabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("toolQuery.retryOriginal")}</button> : null}
+      {pending?.kind === "start" ? <section role="status"><p>{t(session.state.checkingStart ? "execution.checkingPluginStart" : "toolQuery.startUnknown")}</p>
+        <button className="secondary-button" disabled={!pendingAvailability(pendingPayload).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.check-tool-start", commandScope, pendingPayload); }}>{t("execution.checkPluginStart")}</button>
+        {session.state.startRetryAllowed ? <><p>{t("execution.pluginStartMissing")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload, true).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("execution.retryPluginStart")}</button></> : null}
+      </section> : pending ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload, true).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("toolQuery.retryOriginal")}</button> : null}
       {detail.data && visibleRun ? <section aria-label={t("toolQuery.results")}><h4>{t("toolQuery.results")}</h4><p>{t("toolQuery.references")}</p>
         {detail.data.items.map(item => {
           const fixed = visibleRun.review.items.find(value => value.itemId === item.status.itemId);

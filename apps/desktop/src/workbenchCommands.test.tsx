@@ -230,6 +230,7 @@ describe("resource command payloads", () => {
     ["resource.discard-tool", { kind: "resource-tool-capture", editSeq: 1, attemptId: toolWorkflow.discard.attemptId, inputDigest: toolWorkflow.start.inputDigest }, [{ attemptId: "" }]],
     ["resource.retry-tool", { kind: "resource-tool-pending", intent: { kind: "prepare", request: toolWorkflow.prepare, view: toolQueryView, sequence: 1 } }, [{ intent: {} }, { intent: { kind: "prepare", request: {}, view: toolQueryView, sequence: 1 } }]],
     ["resource.retry-tool", { kind: "resource-tool-pending", intent: { kind: "start", request: toolWorkflow.start, review: toolWorkflow.preflight, sequence: 1 } }, [{ intent: { kind: "start", request: {}, review: toolWorkflow.preflight, sequence: 1 } }]],
+    ["resource.check-tool-start", { kind: "resource-tool-pending", intent: { kind: "start", request: toolWorkflow.start, review: toolWorkflow.preflight, sequence: 1 } }, [{ intent: { kind: "start", request: {}, review: toolWorkflow.preflight, sequence: 1 } }]],
     ["resource.cancel-tool", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "resources" }, [{ origin: "other" }]],
     ["resource.retry-tool-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "resources", requestId: "original" }, [{ requestId: null }]],
     ["resource.check-tool-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "resources", requestId: "original" }, [{ requestId: null },{origin:"other"}]],

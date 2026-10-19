@@ -24,7 +24,8 @@ const project: ProjectView = { sessionToken: "synthetic-query-session", locator:
   metadata: { projectId: fixtureIdentity(900), displayName: "Query demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 let serial: number, inventory: typeof toolQueryInventory, prepared: PluginToolPreflight | null, detail: AttemptDetail | null;
 let outputs: Map<string, ExecutionOutputView>, startUnknown: boolean, malformedOutput: boolean, queued: boolean;
-let holdPreparation: Promise<void> | null;
+let holdPreparation: Promise<void> | null, holdStartRead: Promise<void> | null;
+let startBeforeEnqueue: boolean, startReadMode: "normal" | "error" | "invalid";
 let applicationMode: boolean, nativeMode: boolean, instanceState: "reserved" | "active" | "stopping" | "stopped", unknownStop: boolean;
 const applicationBasis = { instanceId: fixtureIdentity(1900), activationGeneration: 1 };
 function selectedTool(): PluginToolView {
@@ -36,7 +37,8 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   applicationMode = false; nativeMode = false; instanceState = "reserved"; unknownStop = false;
   serial = 901; inventory = structuredClone(toolQueryInventory); prepared = null; detail = null;
-  outputs = new Map(); startUnknown = false; malformedOutput = false; queued = false; holdPreparation = null;
+  outputs = new Map(); startUnknown = false; malformedOutput = false; queued = false; holdPreparation = null; holdStartRead = null;
+  startBeforeEnqueue = false; startReadMode = "normal";
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     const request = args?.request;
@@ -64,6 +66,7 @@ beforeEach(async () => {
         return structuredClone(prepared);
       }
       case "start_plugin_tool": {
+        if (startBeforeEnqueue) { startBeforeEnqueue = false; throw new Error("Connection lost before enqueue"); }
         if (applicationMode) instanceState = "active";
         if (!prepared) throw new Error("Missing synthetic capture");
         detail = { attemptId: prepared.attemptId, taskId: fixtureIdentity(1200), operation: "plugin-tool-query", nextOffset: null,
@@ -82,6 +85,13 @@ beforeEach(async () => {
         });
         if (startUnknown) { startUnknown = false; return { unconfirmed: true }; }
         return request.attemptId;
+      }
+      case "read_plugin_execution_start": {
+        const proof = detail && prepared ? { projectId: project.metadata.projectId, attemptId: detail.attemptId,
+          inputDigest: prepared.inputDigest, operation: detail.operation, taskId: detail.taskId } : null;
+        if (holdStartRead) await holdStartRead;
+        if (startReadMode === "error") throw new Error("Original start read unavailable");
+        return startReadMode === "invalid" && proof ? { ...proof, inputDigest: "d".repeat(64) } : proof;
       }
       case "read_execution_attempt": return structuredClone(detail);
       case "read_execution_output": return structuredClone(outputs.get(String(request.resultId)) ?? null);
@@ -106,7 +116,7 @@ async function open(presentation = true) {
     useLayoutEffect(() => { commands = currentCommands; owner = currentOwner; });
     return null;
   }
-  const ui = () => <><ResourceWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={() => true} /><Probe /></>;
+  const ui = (currentProject = project) => <><ResourceWorkbench ref={ref} project={currentProject} disabled={false} onOpenTranslation={() => true} /><Probe /></>;
   const view = render(ui(), project);
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
   await user.click(screen.getByRole("tab", { name: "Reference queries" }));
@@ -185,27 +195,26 @@ it("keeps B typed while A is captured and requires a new review instead of grant
   expect(requests[1][1].request.payloads[0].rows[0].text).toBe("AB");
 });
 
-it.each(["project", "native-application"])("retains the exact grant after an unknown %s start and blocks leaving until reconciliation", async mode => {
+it.each(["project", "native-application"])("confirms an unknown %s start by its original input without replay or renewed consent", async mode => {
   if (mode === "native-application") { nativeMode = true; applicationMode = true; inventory = nativeInventory(inventory); }
-  const { user, ref } = await open();
-  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "single");
+  const { user, owner } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "single 👩🏽‍💻");
   await review(user);
   if (applicationMode) await user.click(await screen.findByRole("checkbox", { name: /^I allow this exact shared instance/ }));
   startUnknown = true; await start(user);
-  const retry = await screen.findByRole("button", { name: "Check the original action" });
-  let allowed: boolean | undefined;
-  await act(async () => { allowed = await ref.current?.allowLeave(); });
-  expect(allowed).toBe(false);
-  let added: boolean | undefined;
-  await act(async () => { added = ref.current?.addQueryText("must not replace the unknown action"); });
-  expect(added).toBe(false);
-  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("single");
-  await user.click(retry);
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Check the original action" })).toBeNull());
+  await waitFor(() => expect(owner().current().pending).toBeNull());
+  expect(owner().current().knownTask).toEqual({ taskId: fixtureIdentity(1200), attemptId: prepared!.attemptId, operation: "plugin-tool-query" });
   const starts = invoke.mock.calls.filter(([command]) => command === "start_plugin_tool");
-  expect(starts).toHaveLength(2); expect(starts[1][1]).toEqual(starts[0][1]);
+  expect(starts).toHaveLength(1);
   expect(starts[0][1].request.applicationExecution).toBe(applicationMode);
+  const checks = invoke.mock.calls.filter(([command]) => command === "read_plugin_execution_start");
+  expect(checks).toHaveLength(1);
+  expect(checks[0][1].request).toEqual({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    attemptId: starts[0][1].request.attemptId, inputDigest: starts[0][1].request.inputDigest, operation: "plugin-tool-query" });
+  expect(owner().current().run?.review).toEqual(prepared);
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("single 👩🏽‍💻");
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: i18n.t("execution.retryPluginStart") })).toBeNull();
 });
 
 it("preserves hidden query drafts, prompts before leaving and explicitly discards the captured review", async () => {
@@ -374,8 +383,8 @@ it("appends editor text without replacing an existing draft or inheriting its re
 it("keeps the complete unknown tool action after the consumer unmounts and a later retry is rejected", async () => {
   const { user, ref, view, ui } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original Unicode 👩🏽‍💻");
-  await review(user); startUnknown = true; await start(user);
-  await screen.findByRole("button", { name: "Check the original action" });
+  await review(user); startBeforeEnqueue = true; await start(user);
+  await screen.findByRole("button", { name: i18n.t("execution.retryPluginStart") });
   const first = invoke.mock.calls.find(([command]) => command === "start_plugin_tool")![1];
   const identities = invoke.mock.calls.filter(([command]) => command === "create_execution_identity").length;
   const native = invoke.getMockImplementation()!;
@@ -389,15 +398,15 @@ it("keeps the complete unknown tool action after the consumer unmounts and a lat
   await refreshWorkbenchReads();
   expect(invoke.mock.calls.filter(([command]) => command === "read_execution_attempt")).toHaveLength(reads);
   view.rerender(ui(), project);
-  await user.click(await screen.findByRole("button", { name: "Check the original action" }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("execution.retryPluginStart") }));
   await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(2));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Check the original action" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("execution.retryPluginStart") })).toBeEnabled());
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("original Unicode 👩🏽‍💻");
   let allowed: boolean | undefined;
   await act(async () => { allowed = await ref.current?.allowLeave(); });
   expect(allowed).toBe(false);
-  await user.click(screen.getByRole("button", { name: "Check the original action" }));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Check the original action" })).toBeNull());
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.retryPluginStart") }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: i18n.t("execution.retryPluginStart") })).toBeNull());
   const retries = invoke.mock.calls.filter(([command]) => command === "start_plugin_tool");
   expect(retries).toHaveLength(3);
   retries.forEach(([, args]) => expect(args).toEqual(first));
@@ -409,8 +418,8 @@ it("keeps the complete unknown tool action after the consumer unmounts and a lat
 it("accepts only a complete cloned original tool recovery payload and retains its first unknown after rejection", async () => {
   const { user, commands, owner } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original query");
-  await review(user); startUnknown = true; await start(user);
-  await screen.findByRole("button", { name: "Check the original action" });
+  await review(user); startReadMode = "error"; startBeforeEnqueue = true; await start(user);
+  await waitFor(() => { expect(owner().current().checkingStart).toBe(false); expect(owner().current().failure).not.toBeNull(); });
   const original = owner().current().pending!;
   expect(original.kind).toBe("start");
   const native = invoke.getMockImplementation()!;
@@ -421,6 +430,19 @@ it("accepts only a complete cloned original tool recovery payload and retains it
   });
   const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "resources" as const };
   const payload = { kind: "resource-tool-pending" as const, intent: structuredClone(original) };
+  expect(commands().dispatch("resource.retry-tool", scope, payload)).toBe(false);
+  for (const mutate of [
+    (value: typeof payload) => { if (value.intent.kind === "start") value.intent.request.expiresAtMs = "1"; },
+    (value: typeof payload) => { if (value.intent.kind === "start") value.intent.review.inputDigest = "d".repeat(64); },
+    (value: typeof payload) => { if (value.intent.kind === "start") value.intent.sequence++; },
+  ]) {
+    const changed = structuredClone(payload); mutate(changed);
+    expect(commands().dispatch("resource.check-tool-start", scope, changed)).toBe(false);
+    expect(commands().dispatch("resource.retry-tool", scope, changed)).toBe(false);
+  }
+  startReadMode = "normal";
+  await act(async () => { expect(commands().dispatch("resource.check-tool-start", scope, payload)).toBe(true); });
+  await waitFor(() => expect(owner().current().startRetryAllowed).toBe(true));
   await act(async () => { expect(commands().dispatch("resource.retry-tool", scope, payload)).toBe(true); });
   await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(2));
   expect(owner().current().pending).toEqual(original); expect(owner().current().uncertain).toBe(true);
@@ -428,7 +450,7 @@ it("accepts only a complete cloned original tool recovery payload and retains it
   if (changed.intent.kind !== "start") throw new Error("Expected original start");
   changed.intent.request.expiresAtMs = "1";
   expect(commands().dispatch("resource.retry-tool", scope, changed)).toBe(false);
-  await user.click(await screen.findByRole("button", { name: "Check the original action" }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("execution.retryPluginStart") }));
   await waitFor(() => expect(owner().current().pending).toBeNull());
   const requests = invoke.mock.calls.filter(([command]) => command === "start_plugin_tool").map(([, args]) => args.request);
   expect(requests).toHaveLength(3); requests.forEach(request => expect(request).toEqual(requests[0]));
@@ -592,4 +614,65 @@ it("refuses a multi-callable Native application acknowledgement while keeping it
   expect(owner().current().pending?.kind).toBe("prepare");
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("keep Native input");
   expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
+});
+
+
+it.each(["error", "invalid"] as const)("preserves an accepted original start after a %s proof and reconciles without another write", async mode => {
+  const { user, owner } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original evidence");
+  await review(user); startReadMode = mode; startUnknown = true; await start(user);
+  await waitFor(() => { expect(owner().current().checkingStart).toBe(false); expect(owner().current().failure).not.toBeNull(); });
+  const original = owner().current().pending;
+  expect(original?.kind).toBe("start"); expect(owner().current().uncertain).toBe(true);
+  expect(owner().current().startRetryAllowed).toBe(false);
+  expect(screen.queryByRole("button", { name: i18n.t("execution.retryPluginStart") })).toBeNull();
+  // A broad progress refresh cannot confirm this exact original input.
+  await refreshWorkbenchReads();
+  expect(owner().current().pending).toBe(original);
+  startReadMode = "normal";
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.checkPluginStart") }));
+  await waitFor(() => expect(owner().current().pending).toBeNull());
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_plugin_execution_start")).toHaveLength(2);
+});
+
+it("does not read or retain a fresh formally rejected start", async () => {
+  const { user, owner } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "rejected input"); await review(user);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "start_plugin_tool"
+    ? Promise.reject(errorFixture.errors[1]) : original(command, args));
+  await start(user);
+  await waitFor(() => expect(owner().current().failure).not.toBeNull());
+  expect(owner().current().pending).toBeNull();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_plugin_execution_start")).toHaveLength(0);
+});
+
+it("finishes the original read while its consumer is hidden without issuing a new start", async () => {
+  const { user, owner, view, ui } = await open(); let finish!: () => void;
+  holdStartRead = new Promise<void>(resolve => { finish = resolve; });
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "hidden original"); await review(user);
+  startUnknown = true; await start(user);
+  await waitFor(() => expect(owner().current().checkingStart).toBe(true));
+  view.rerender(<span>Consumer hidden</span>, project);
+  await act(async () => { finish(); });
+  expect(owner().current().pending).toBeNull();
+  view.rerender(ui(), project);
+  expect(await screen.findByRole("textbox", { name: "Query text 1" })).toHaveValue("hidden original");
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+});
+
+it.each(["retire", "replace"])("ignores a late proof after session %s", async mode => {
+  const handle = await open(); const { user, owner, view, ui } = handle; let finish!: () => void;
+  holdStartRead = new Promise<void>(resolve => { finish = resolve; });
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "retired input"); await review(user);
+  startUnknown = true; await start(user);
+  await waitFor(() => expect(owner().current().checkingStart).toBe(true));
+  const previous = owner(), pending = previous.current().pending;
+  if (mode === "retire") view.unmount();
+  else { const replacement = { ...project, sessionToken: "replacement-query-session" }; view.rerender(ui(replacement), replacement); }
+  await act(async () => { finish(); });
+  expect(previous.current().pending).toBe(pending);
+  if (mode === "replace") { expect(owner().current().pending).toBeNull(); expect(owner().current().run).toBeNull(); }
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
 });

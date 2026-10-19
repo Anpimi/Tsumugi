@@ -25,7 +25,7 @@ interface State {
   choiceKey: string; runtimeKey: string; refresh: number; rows: DraftRow[]; target: string; selections: string[];
   capture: Capture | null; run: Capture | null; consent: string | null; applicationConsent: string | null; submittedSequence: number;
   knownTask: { taskId: string; attemptId: string; operation: "plugin-tool-query" } | null;
-  pending: ToolQueryIntent | null; uncertain: boolean; busy: boolean; failure: CommandFailure | null; inputFailure: ToolQueryError | null;
+  pending: ToolQueryIntent | null; uncertain: boolean; checkingStart: boolean; startRetryAllowed: boolean; busy: boolean; failure: CommandFailure | null; inputFailure: ToolQueryError | null;
 }
 function invalidAcknowledgement(message: string): never { throw Object.assign(new Error(message), { outcome: "unknown" }); }
 
@@ -33,7 +33,7 @@ function invalidAcknowledgement(message: string): never { throw Object.assign(ne
 export function usePluginToolQuerySession(project: ProjectView) {
   const context = executionContext(project), reads = useSessionReads(), mounted = useSessionAlive(), tasks = useExecutionTaskSession();
   const [state, setState] = useState<State>({ mode: "plugin", endpoint: "", credentialEnv: "", mcpToolName: "", retrievalUnit: null, choiceKey: "", runtimeKey: "", refresh: 0, rows: [{ id: 0, text: "" }], target: "", selections: [],
-    capture: null, run: null, consent: null, applicationConsent: null, submittedSequence: -1, knownTask: null, pending: null, uncertain: false, busy: false, failure: null, inputFailure: null });
+    capture: null, run: null, consent: null, applicationConsent: null, submittedSequence: -1, knownTask: null, pending: null, uncertain: false, checkingStart: false, startRetryAllowed: false, busy: false, failure: null, inputFailure: null });
   const currentState = useRef(state), nextRow = useRef(1), draftSequence = useRef(0), running = useRef(false), requestSequence = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestSequence.current++; }; }, []);
   function change<K extends keyof State>(key: K, value: State[K]) {
@@ -50,7 +50,7 @@ export function usePluginToolQuerySession(project: ProjectView) {
     draft: () => { const value = currentState.current; return { endpoint: value.endpoint, credentialEnv: value.credentialEnv, toolName: value.mcpToolName,
       unit: value.retrievalUnit, query: value.rows.length === 1 ? value.rows[0].text : "", locale: value.target, seq: draftSequence.current }; },
     submitted: seq => setSubmittedSequence(seq) });
-  function retain(value: ToolQueryIntent | null) { change("pending", value); if (!value) change("uncertain", false); }
+  function retain(value: ToolQueryIntent | null) { change("pending", value); if (!value) { change("uncertain", false); change("startRetryAllowed", false); } }
   async function perform(work: (current: () => boolean) => Promise<void>) {
     if (!mounted.current || running.current) return;
     running.current = true; setBusy(true); setFailure(null);
@@ -58,12 +58,41 @@ export function usePluginToolQuerySession(project: ProjectView) {
     try { await work(current); } catch (error) { if (current()) { if (error instanceof ToolQueryError) setInputFailure(error); else setFailure(commandFailure(error)); } }
     finally { running.current = false; if (mounted.current) { setBusy(false); reads.invalidate(["execution"]); } }
   }
+  function acceptStart(intent: Extract<ToolQueryIntent, { kind: "start" }>, current: () => boolean, taskId?: string) {
+    if (!current() || currentState.current.pending !== intent) return;
+    if (taskId) change("knownTask", Object.freeze({ taskId, attemptId: intent.request.attemptId, operation: "plugin-tool-query" }));
+    setRun({ review: intent.review, sequence: intent.sequence });
+    setSubmittedSequence(intent.sequence); setFailure(null); retain(null);
+  }
+  async function readStart(intent: Extract<ToolQueryIntent, { kind: "start" }>, current: () => boolean) {
+    const original = () => current() && currentState.current.pending === intent;
+    if (!original()) return;
+    change("checkingStart", true); change("startRetryAllowed", false);
+    try {
+      if (intent.request.projectId !== context.projectId || intent.request.sessionToken !== context.sessionToken
+        || intent.review.attemptId !== intent.request.attemptId || intent.review.inputDigest !== intent.request.inputDigest) {
+        invalidAcknowledgement("Original tool start association changed");
+      }
+      const proof = await executionCommands.pluginStartAction({ projectId: intent.request.projectId, sessionToken: intent.request.sessionToken,
+        attemptId: intent.request.attemptId, inputDigest: intent.request.inputDigest, operation: "plugin-tool-query" });
+      if (!original()) return;
+      if (proof) acceptStart(intent, current, proof.taskId);
+      else change("startRetryAllowed", true);
+    } finally { if (current()) change("checkingStart", false); }
+  }
+  async function checkStart() {
+    await perform(async current => {
+      const pending = currentState.current.pending;
+      if (pending?.kind === "start") await readStart(pending, current);
+    });
+  }
   async function submit(intent: ToolQueryIntent, current: () => boolean) {
     const before = currentState.current;
     const sameOriginal = before.pending !== null && jsonIdentity(before.pending) === jsonIdentity(intent);
     if (before.uncertain && !sameOriginal) throw new Error("The complete original tool request must be retained");
     const originalUncertain = sameOriginal && before.uncertain;
-    retain(intent);
+    if (originalUncertain && intent.kind === "start" && !before.startRetryAllowed) return;
+    change("startRetryAllowed", false); retain(intent);
     try {
       switch (intent.kind) {
         case "prepare": {
@@ -84,13 +113,23 @@ export function usePluginToolQuerySession(project: ProjectView) {
         case "start": {
           const id = await executionCommands.startTool(intent.request);
           if (id !== intent.request.attemptId) invalidAcknowledgement("Tool attempt identity changed");
-          if (current()) { setRun({ review: intent.review, sequence: intent.sequence }); setSubmittedSequence(intent.sequence); retain(null); }
+          acceptStart(intent, current);
           break;
         }
         case "stop-instance": await executionCommands.stopApplicationInstance(intent.request); if (current()) retain(null); await reads.client.invalidateQueries({ queryKey: reads.key(["application-plugin-instance", intent.request.basis.instanceId, intent.request.basis.activationGeneration]) }); break;
         case "discard": await executionCommands.discardTool(intent.request); if (current()) { setCapture(null); setConsent(null); setApplicationConsent(null); retain(null); } break;
       }
-    } catch (error) { if (current() && !hasUnknownOutcome(error) && !originalUncertain) { retain(null); setConsent(null); setApplicationConsent(null); } if (current() && (hasUnknownOutcome(error) || originalUncertain)) change("uncertain", true); throw error; }
+    } catch (error) {
+      if (current() && !hasUnknownOutcome(error) && !originalUncertain) { retain(null); setConsent(null); setApplicationConsent(null); }
+      if (current() && (hasUnknownOutcome(error) || originalUncertain)) {
+        change("uncertain", true);
+        if (intent.kind === "start") {
+          await readStart(intent, current);
+          if (!current() || currentState.current.pending !== intent) return;
+        }
+      }
+      throw error;
+    }
   }
 
   function observeTask(view: AttemptDetail) {
@@ -132,7 +171,7 @@ export function usePluginToolQuerySession(project: ProjectView) {
   function clearMcpDraft() { if (mcp.blocked() || !mcp.close()) return false;
     change("endpoint", ""); change("credentialEnv", ""); change("mcpToolName", ""); change("retrievalUnit", null); return true;
   }
-  return { tasks, state, mcp, current: () => currentState.current, draftSequence, nextRow, mounted, running, perform, submit, edit, blocked, working, observeTask, hasDraft, addText, setMode, editMcp, clearMcpDraft,
+  return { tasks, state, mcp, current: () => currentState.current, draftSequence, nextRow, mounted, running, perform, submit, checkStart, edit, blocked, working, observeTask, hasDraft, addText, setMode, editMcp, clearMcpDraft,
     setRows, setSelections, setCapture, setConsent, setApplicationConsent, setFailure, setInputFailure,
     setChoiceKey: (value: string) => change("choiceKey", value), setRuntimeKey: (value: string) => change("runtimeKey", value),
     setTarget: (value: string) => change("target", value), setRefresh: (value: number | ((before: number) => number)) => change("refresh", typeof value === "function" ? value(currentState.current.refresh) : value) };
