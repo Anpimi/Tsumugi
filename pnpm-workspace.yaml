@@ -1,3 +1,7 @@
 packages:
   - apps/desktop
   - runtimes/javascript-host
+  - runtimes/agent-service
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false

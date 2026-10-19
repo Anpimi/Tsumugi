@@ -6,6 +6,7 @@
 **/node_modules/
 apps/desktop/dist/
 runtimes/javascript-host/dist/
+runtimes/agent-service/dist/
 
 # Generated Tauri permission schemas
 apps/desktop/src-tauri/gen/
