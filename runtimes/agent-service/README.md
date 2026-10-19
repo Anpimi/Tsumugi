@@ -13,7 +13,19 @@ attempt against the shared budget, enforce current permission and settle usage.
 Automatic provider retries are disabled in this profile.
 
 `prepare` is awaited before each model request, including tool follow-up turns.
-It returns the original host request identity. Model, tool and lifecycle records
+It returns the original host request identity and an optional frozen shared
+view. Core supplies the view's exact UTF-8 data, real authors, source references
+and sharing basis. The public Pi `transformContext` hook adds it as one untrusted
+user-data message for that request, after the leading system declarations.
+The adapter preserves the accepted input, local message order and complete
+tool call/result pairs. Shared data never becomes a local assistant response or
+tool result, and earlier views do not accumulate in Pi's local history. A null
+view removes the previous projection instead of retaining it as a fallback.
+
+Guidance queued while `prepare` waits enters the next normal request boundary;
+it does not alter the already captured view. Core associates the frozen view
+basis with the original request and its actual serialized body. Node does not
+supply a replacement basis when requesting HTTP. Model, tool and lifecycle records
 carry that association. Event listeners are awaited through `agent_end`; their
 completion indicates local execution settlement, while business results still
 require application receipts. Missing provider usage must retain unknown budget

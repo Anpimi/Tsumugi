@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Add explicitly enabled, same-plan published discussions with stable member and
+  role identities, immutable references and bounded original-post reads. The
+  original plan authorization separately discloses sharing future publications
+  with its captured model destination. Each Pi request uses a Core-frozen view
+  without changing local input or tool history, and records that view with its
+  original physical request. Internal member protocol 2 and current-only project
+  schema 54 require matching application artifacts and a new development project;
+  earlier directories are preserved and refused without migration or reset.
+
 - Run bounded Agent generation through a captured Pi member process with
   controlled model transport and the original read-only tool permissions.
   Its Node environment comes from the application's exact approved default,
@@ -20,7 +29,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   reservation before sending HTTP. Unknown usage stays occupied; conflicting
   usage cannot replace an earlier report. Shared model IO now interrupts pending
   JSON/SSE response waits when cancelled. The current-only project format is
-  schema 53; keep earlier development directories and create a new project to
+  schema 54; keep earlier development directories and create a new project to
   reimport sources, as they are preserved and refused without migration or reset.
 
 - Confirm uncertain translation match previews from their original saved projection

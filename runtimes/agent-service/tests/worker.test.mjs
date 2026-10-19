@@ -36,7 +36,7 @@ function fixture(t, handle = async () => undefined) {
   // delivery and would race a correctly flushed terminal frame.
   const ended = new Promise(resolve => child.once("close", (code, signal) => resolve({ code, signal })));
   child.once("error", error => { failure = error; });
-  const send = (body, override = {}) => child.stdin.write(encodeFrame({ protocolVersion: 1, sessionId, sequence: sequence++, body, ...override }));
+  const send = (body, override = {}) => child.stdin.write(encodeFrame({ protocolVersion: MEMBER_PROFILE.protocolVersion, sessionId, sequence: sequence++, body, ...override }));
   const reply = (frame, value) => send({ kind: "reply", request: frame.body.request, reply: value });
   child.stderr.on("data", chunk => { stderr += chunk; });
   child.stdout.on("data", chunk => {
@@ -66,7 +66,7 @@ function fixture(t, handle = async () => undefined) {
 function ordinaryReply(frame, reply, state) {
   const call = frame.body.call;
   if (call.method === "prepare") {
-    const requestId = randomUUID(); state.requests.push(requestId); reply(frame, { kind: "prepared", requestId });
+    const requestId = randomUUID(); state.requests.push(requestId); reply(frame, { kind: "prepared", requestId, sharedView: null });
   } else if (call.method === "http") {
     state.http.push(call); reply(frame, { kind: "http", requestId: call.requestId, status: 200, contentType: "text/event-stream", body: sse() });
   } else if (call.method === "finish-turn") reply(frame, { kind: "turn", action: "normal" });
@@ -76,10 +76,17 @@ function ordinaryReply(frame, reply, state) {
 
 test("child Pi loop preserves tool pairs and reports observed zero separately from missing provider usage", async t => {
   const state = { requests: [], http: [], usage: [], order: [], executions: [] };
+  const views = ["Original objection with real author/source 👩🏽‍💻", "New evidence for the same candidate"].map((body, index) => ({
+    viewId: randomUUID(), utf8: JSON.stringify({ kind: "untrusted-team-discussions", author: "member-B", source: "candidate-1", revision: index + 1, body }),
+  }));
   const parent = fixture(t, async (frame, { reply }) => {
     if (frame.body.kind !== "request") return;
     const call = frame.body.call; state.order.push(call.method);
-    if (call.method === "http") {
+    if (call.method === "prepare") {
+      assert.ok(!call.messages.some(message => views.some(view => message.content === view.utf8)));
+      const requestId = randomUUID(); state.requests.push(requestId);
+      reply(frame, { kind: "prepared", requestId, sharedView: views[state.requests.length - 1] });
+    } else if (call.method === "http") {
       state.http.push(call);
       reply(frame, { kind: "http", requestId: call.requestId, status: 200, contentType: "text/event-stream",
         body: sse(state.http.length === 1 ? { tool: true, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } } : {}) });
@@ -99,12 +106,18 @@ test("child Pi loop preserves tool pairs and reports observed zero separately fr
   assert.deepEqual(state.usage.map(call => call.requestId), state.requests);
   assert.equal(state.order.indexOf("usage") < state.order.lastIndexOf("prepare"), true);
   const [first, second] = state.http.map(call => JSON.parse(call.body));
+  for (const [index, body] of [first, second].entries()) {
+    assert.equal(body.messages.filter(message => message.role === "user" && message.content === views[index].utf8).length, 1);
+    assert.equal(body.messages.some(message => message.content === views[1 - index].utf8), false);
+  }
   assert.equal(first.max_completion_tokens, 64); assert.equal(first.max_tokens, undefined);
   assert.ok(first.messages.some(message => message.role === "system" && /Translate only captured/.test(message.content)));
   assert.ok(second.messages.some(message => message.role === "user" && message.content === "Translate current source 👩🏽‍💻"));
   const assistant = second.messages.find(message => message.tool_calls), tool = second.messages.find(message => message.role === "tool");
   assert.equal(assistant.tool_calls[0].id, tool.tool_call_id); assert.match(tool.content, /rejected alternative X/);
   assert.equal(JSON.stringify(state.http).includes("ambient-key-must-not-be-forwarded"), false);
+  const result = parent.frames.find(frame => frame.body.kind === "result").body;
+  assert.ok(!result.messages.some(message => views.some(view => message.content === view.utf8)));
   parent.send({ kind: "close" }); assert.deepEqual(await parent.ended, { code: 0, signal: null });
 });
 
@@ -197,14 +210,15 @@ test("captured deadline terminates a child with an unacknowledged operation", as
 });
 
 test("member codec rejects duplicate keys, invalid Unicode, unsafe identities, oversize prefix and incomplete frames", () => {
-  const prefix = JSON.stringify({ protocolVersion: 1, sessionId: randomUUID(), sequence: 0, body: { kind: "close" } });
+  const prefix = JSON.stringify({ protocolVersion: MEMBER_PROFILE.protocolVersion, sessionId: randomUUID(), sequence: 0, body: { kind: "close" } });
   assert.throws(() => decodeFrame(Buffer.from(prefix.replace('"sequence":0', '"sequence":0,"sequence":1'))));
   assert.throws(() => decodeFrame(Buffer.from(prefix.replace('"close"', '"\\ud800"'))));
   assert.throws(() => decodeFrame(Buffer.from(prefix.replace('"sequence":0', '"sequence":9007199254740992'))));
   const frame = JSON.parse(prefix);
+  assert.throws(() => decodeFrame(Buffer.from(JSON.stringify({ ...frame, protocolVersion: MEMBER_PROFILE.protocolVersion - 1 }))));
   assert.throws(() => decodeFrame(Buffer.from(JSON.stringify({ ...frame, sessionId: "not-a-uuid" }))));
   assert.throws(() => decodeFrame(Buffer.from(JSON.stringify({ ...frame,
-    body: { kind: "reply", request: 1, reply: { kind: "prepared", requestId: "not-a-uuid" } } }))));
+    body: { kind: "reply", request: 1, reply: { kind: "prepared", requestId: "not-a-uuid", sharedView: null } } }))));
   const large = Buffer.alloc(4); large.writeUInt32BE(MEMBER_PROFILE.maxFrameBytes + 1);
   assert.throws(() => new FrameDecoder().push(large, () => {}));
   const decoder = new FrameDecoder(); decoder.push(Buffer.from([0, 0]), () => {}); assert.throws(() => decoder.finish());

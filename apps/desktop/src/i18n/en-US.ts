@@ -1084,6 +1084,18 @@ ai: {
   "locale": "Target language",
   "shareTerms": "Share applicable adopted terms",
   "shareContext": "Share saved context",
+  "discussions": {
+    "title": "Team discussions",
+    "enable": "Allow members to publish and share this plan’s discussions",
+    "sharing": "Members may publish discussions for this plan. Discussions published later may be shared only within each member’s assigned entries; this does not include private reasoning or discussions from other plans.",
+    "destination": "Discussion destination: {{endpoint}} · model {{model}}",
+    "members": "Up to {{members}} members, with {{versions}} recorded role versions per member.",
+    "posts": "Up to {{posts}} published posts in this plan; each post may contain up to {{bytes}} UTF-8 bytes.",
+    "view": "Each model request may include up to {{posts}} complete posts and {{bytes}} UTF-8 bytes of discussions.",
+    "bounds": "Required discussion and source material must fit the captured limits. Otherwise, the request is blocked. Model requests use this plan’s original budget and permission period; there is no automatic summarization.",
+    "costUnknown": "Cost is unknown. Limits bound application requests, not third-party billing. Only the captured source, resources and permitted same-plan discussions and references may be shared.",
+    "consent": "I authorize the displayed selection policy and member discussion publication, and confirm sending these strings, included resources and permitted future discussions for this plan to this endpoint within the shown scope and limits."
+  },
   "scope": "Selected original strings: {{count}}",
   "clearSelectedRange": "Clear selected range",
   "first": "First page",

@@ -190,7 +190,7 @@ class Worker {
           const reply = await this.rpc({ method: "prepare", messages: request.messages }, "prepared", signal);
           this.currentRequest = reply.requestId;
           this.usage.set(reply.requestId, { value: null, reported: false, response: false });
-          return reply.requestId;
+          return { requestId: reply.requestId, sharedView: reply.sharedView };
         },
         request: async request => {
           const reply = await this.rpc({ method: "http", requestId: request.requestId, endpoint: request.url, body: request.body }, "http", request.signal);

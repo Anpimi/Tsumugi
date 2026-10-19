@@ -6,6 +6,7 @@ pub(in crate::persistence) mod maintenance;
 mod selection;
 mod services;
 mod tools;
+pub(crate) mod team;
 use super::ProjectStore;
 use crate::{
     ai::{self, AiConfig},
@@ -16,9 +17,21 @@ pub(in crate::persistence) use agents::{
     binding as agent_binding, check_prepared as check_prepared_agent,
 };
 pub(super) use control::{
-    allows_cancelled_ancestor, check_enqueue, check_input, initialize, protect_manual_in,
-    record_input, stop_execution_plan_in, table_names, validate,
+    allows_cancelled_ancestor, check_enqueue, check_input, protect_manual_in,
+    record_input, stop_execution_plan_in,
 };
+
+pub(super) fn initialize(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    control::initialize(c)?;
+    team::initialize(c)
+}
+pub(super) fn table_names() -> impl Iterator<Item=String> {
+    control::table_names().chain(team::table_names())
+}
+pub(super) fn validate(c: &rusqlite::Connection) -> Result<(), ExecutionError> {
+    control::validate(c)?;
+    team::validate(c)
+}
 pub use selection::{
     CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
 };
@@ -729,6 +742,7 @@ mod tests {
             advisory_checks: Vec::new(),
             adopt_resources: false,
             deliver: false,
+            team_discussions: None,
         };
         let manual = store
             .prepare_work_plan(None, "zh-CN", &[units[0]], options)

@@ -14,6 +14,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 mod disclosure;
+pub mod team;
+pub use team::*;
 pub mod mcp_retrieval;
 pub use mcp_retrieval::*;
 mod maintenance;
@@ -79,6 +81,7 @@ pub enum AutomationEffect {
     AdoptResources,
     Deliver,
     QueryTools,
+    PublishDiscussion,
 }
 
 /// Captured by the trusted host from an installed package, never model text.
@@ -374,6 +377,7 @@ pub fn agent_subset_schema(generator: &mut schemars::SchemaGenerator) -> schemar
 /// Immutable provenance, never a substitute for a live opaque scope.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct WorkPlanAgentExecutionBinding {
     pub lease: AutomationLease,
     pub root_task: ExecutionId,
@@ -595,6 +599,9 @@ pub struct PlanOptions {
     pub advisory_checks: Vec<crate::AdvisoryReviewCheck>,
     pub adopt_resources: bool,
     pub deliver: bool,
+    /// Explicit consent for bounded, same-plan published discussions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_discussions: Option<TeamDiscussionPolicy>,
 }
 
 impl Default for PlanOptions {
@@ -626,6 +633,7 @@ impl Default for PlanOptions {
             advisory_checks: Vec::new(),
             adopt_resources: false,
             deliver: false,
+            team_discussions: None,
         }
     }
 }
@@ -645,6 +653,7 @@ impl PlanOptions {
             || (!self.advisory_checks.is_empty() && !self.assisted(WorkStage::Checks))
             || (self.adopt_resources && !self.assisted(WorkStage::Resources))
             || (self.deliver && !self.assisted(WorkStage::Delivery))
+            || (self.team_discussions.is_some() && !self.assisted(WorkStage::Generation))
         {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
@@ -673,6 +682,7 @@ impl PlanOptions {
             AutomationEffect::AdoptResources => self.adopt_resources,
             AutomationEffect::Deliver => self.deliver,
             AutomationEffect::QueryTools => false,
+            AutomationEffect::PublishDiscussion => self.team_discussions.is_some(),
         }
     }
 
@@ -692,6 +702,7 @@ impl PlanOptions {
             AutomationEffect::RunChecks,
             AutomationEffect::SelectMissing,
             AutomationEffect::ReplaceCapturedSelection,
+            AutomationEffect::PublishDiscussion,
         ]
         .into_iter()
         .filter(|effect| self.requests(*effect))

@@ -1,6 +1,7 @@
 import { Agent, type AgentEvent, type AgentMessage, type AgentOptions, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { Model, UserMessage } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
+import type { MemberSharedView } from "./generated/frame.js";
 
 /** Captured by the application. These references never grant execution rights. */
 export interface MemberBasis {
@@ -12,6 +13,10 @@ export interface PreparedMemberRequest {
   basis: MemberBasis;
   messages: AgentMessage[];
 }
+export interface PreparedMemberRequestResult {
+  requestId: string;
+  sharedView: MemberSharedView | null;
+}
 export interface MemberHttpRequest {
   basis: MemberBasis;
   requestId: string;
@@ -21,7 +26,7 @@ export interface MemberHttpRequest {
 }
 export interface MemberPorts {
   /** Await the application's request capture/current-authorization check. */
-  prepare(request: PreparedMemberRequest, signal?: AbortSignal): Promise<string>;
+  prepare(request: PreparedMemberRequest, signal?: AbortSignal): Promise<PreparedMemberRequestResult>;
   /** The trusted host owns credentials, physical-attempt budgets, IO and usage. */
   request(request: MemberHttpRequest): Promise<Response>;
   providerEvent(identity: MemberRequestIdentity, event: unknown): Promise<void>;
@@ -55,6 +60,7 @@ export class MemberKernel {
   private turns = 0;
   private turnLimitReached = false;
   private requestIdentity: MemberRequestIdentity | null = null;
+  private sharedView: Readonly<MemberSharedView> | null = null;
 
   constructor(options: MemberOptions) {
     if (options.model.api !== "openai-completions" || !Number.isSafeInteger(options.maxTurns) || options.maxTurns < 1) {
@@ -83,9 +89,27 @@ export class MemberKernel {
       prepareRequest: async ({ context }, signal) => {
         if (this.closed) throw new Error("Member admission has closed");
         this.requestIdentity = null;
-        const requestId = await this.ports.prepare({ basis: this.basis, messages: structuredClone(context.messages) }, signal);
+        this.sharedView = null;
+        const prepared = await this.ports.prepare({ basis: this.basis, messages: structuredClone(context.messages) }, signal);
+        if (this.closed || signal?.aborted) throw new DOMException("Member preparation cancelled", "AbortError");
+        const { requestId, sharedView } = prepared;
         if (typeof requestId !== "string" || !requestId.length) throw new Error("Missing original model request identity");
+        if (sharedView !== null && (typeof sharedView.viewId !== "string" || !sharedView.viewId.length || typeof sharedView.utf8 !== "string")) {
+          throw new Error("Invalid captured shared view");
+        }
+        this.sharedView = sharedView === null ? null : Object.freeze(structuredClone(sharedView));
         this.requestIdentity = Object.freeze({ basis: this.basis, requestId });
+      },
+      transformContext: async messages => {
+        this.identity();
+        if (!this.sharedView) return messages;
+        // Core owns the frozen data, its real authors/sources and sharing basis.
+        // This projection never enters Pi's local transcript or replaces input
+        // and tool pairs already accepted by its execution loop.
+        let leading = 0;
+        while (messages[leading]?.role === "system") leading++;
+        const shared: UserMessage = { role: "user", content: this.sharedView.utf8, timestamp: 0 };
+        return [...messages.slice(0, leading), shared, ...messages.slice(leading)];
       },
       streamFn: (_selected, context, runtime) => {
         return streamSimple(model, context, {
@@ -136,6 +160,7 @@ export class MemberKernel {
     this.turns = 0;
     this.turnLimitReached = false;
     this.requestIdentity = null;
+    this.sharedView = null;
     try {
       await this.agent.prompt(structuredClone(input));
       await this.agent.waitForIdle();
@@ -154,6 +179,7 @@ export class MemberKernel {
   /** The application must persist revocation before closing local admission. */
   async close() {
     this.closed = true;
+    this.sharedView = null;
     this.agent.clearAllQueues();
     this.agent.abort();
     await this.agent.waitForIdle();

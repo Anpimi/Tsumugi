@@ -162,7 +162,7 @@ impl MemberHandler for SyntheticHandler {
                     let mut trace = self.trace.lock().unwrap();
                     trace.order.push("prepare");
                     trace.prepares.push((request_id, messages));
-                    MemberReply::Prepared { request_id }
+                    MemberReply::Prepared { request_id, shared_view: None }
                 }
                 MemberCall::Http {
                     request_id,

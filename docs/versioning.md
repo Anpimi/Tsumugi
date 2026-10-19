@@ -1,10 +1,25 @@
 # Application versioning and changelog maintenance
 
-The internal Pi member channel has its own protocol 1, generated from Core's
+Explicit, opt-in same-plan discussions add immutable member, role and publication
+facts under the original WorkPlan authority. Their frozen per-request view is
+recorded with the exact serialized provider request in the existing reservation.
+The current-only project format advances to schema 54; schema 53 and earlier
+development directories remain preserved and refused without migration or reset.
+The internal member protocol advances to 2 for its required nullable prepared
+shared view, so old member artifacts cannot launch. WorkPlan3 gains an optional,
+default-disabled discussion policy and a separately disclosed authorization
+effect; its existing digest and authority remain unchanged in meaning. Desktop
+experimental consumers must regenerate their policy/limits/effect contracts.
+SDK/Process3, dependencies, installed approval and package version sources are
+unchanged. This is the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with synchronized bilingual Unreleased entries and no
+additional package version bump.
+
+The initial Pi member channel introduced protocol 1, generated from Core's
 Rust authority. Bounded Agent input now selects that captured runtime explicitly
 and does not fall back to fixed single-completion execution. The member artifact
 contains application code and dependency notices, uses an independently approved
-Node tool, and leaves SDK/Process3, WorkPlan3 and schema 53 unchanged. The esbuild
+Node tool, and left SDK/Process3, WorkPlan3 and schema 53 unchanged. The esbuild
 build dependency and generated member channel remain in the same undistributed
 application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; bilingual Unreleased
 entries are synchronized without another application version bump.
@@ -13,9 +28,9 @@ The application's exact bundled Node identity also supplies members with no
 domain tools or only native tools. Its existing installed approval and settings
 revocation remain separate from tool consent. Build-time and execution-time
 member capture share the Host artifact owner, with the protocol profile emitted
-by the existing Core generator. This adds no version source, stored field,
+by the existing Core generator. That preceding runtime unit added no version source, stored field,
 dependency, IPC or SDK contract; the same undistributed versions and schema 53
-remain unchanged, with synchronized bilingual Unreleased entries and no extra
+remained unchanged, with synchronized bilingual Unreleased entries and no extra
 version bump.
 
 Delivery recovery performs one bounded read of the original saved export action

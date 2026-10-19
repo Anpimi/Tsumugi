@@ -115,6 +115,23 @@ async function prepare() {
   act(() => { owner.setConsent(true); });
 }
 
+it("keeps newer discussion choices and clears consent after a late preparation", async () => {
+  render(<Harness />, project);
+  expect(owner.options).not.toHaveProperty("teamDiscussions");
+  await prepare();
+  const response = structuredClone(prepared), pending = deferred<AiPrepared>();
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, payload) => command === "preview_ai_translation" ? pending.promise : original(command, payload));
+  let completion!: Promise<void>;
+  act(() => { completion = owner.preview(); });
+  act(() => { owner.setOptions(before => ({ ...before, teamDiscussions: { profile: "current-plan-1" } })); });
+  await act(async () => { pending.resolve(response); await completion; });
+  expect(owner.options.teamDiscussions).toEqual({ profile: "current-plan-1" });
+  expect(owner.prepared).toBeNull(); expect(owner.preparedPlan).toBeNull(); expect(owner.consent).toBe(false);
+  act(() => { owner.reset(); });
+  expect(owner.options).not.toHaveProperty("teamDiscussions");
+});
+
 it("recommends adopted resources only for new drafts and explicit full resets without changing captured defaults", async () => {
   render(<Harness />, project);
   const recommendation = { ...defaultAiConfig, shareTerms: true, shareContext: true };

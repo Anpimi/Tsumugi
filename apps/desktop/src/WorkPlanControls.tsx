@@ -101,6 +101,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     if(latest.plan.planId!==original.prepared.planId||latest.plan.digest!==original.prepared.digest
       ||jsonIdentity(latest.plan.scope)!==jsonIdentity(original.prepared.scope)
       ||jsonIdentity(latest.plan.options)!==jsonIdentity(original.prepared.options)
+      ||jsonIdentity(latest.plan.teamDiscussionLimits)!==jsonIdentity(original.prepared.teamDiscussionLimits)
       ||jsonIdentity(latest.plan.preview)!==jsonIdentity(original.prepared.preview)
       ||jsonIdentity(latest.plan.tools)!==jsonIdentity(original.prepared.tools))throw {outcome:"unknown",reason:"invalid-work-plan-acknowledgement"};
     // A replayed receipt is historical. It must never restore older authority.
@@ -261,6 +262,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     return ["save-candidate",...(checkerRequired?["run-checks"] as const:[]),
       ...(plan.options.selectionPolicy==="candidates-only"?[]:
         [plan.options.selectionPolicy==="missing-only"?"select-missing":"replace-captured-selection"] as const),
+      ...(plan.options.teamDiscussions?["publish-discussion"] as const:[]),
       ...(toolsRequired?["query-tools"] as const:[])];
   }
   function startPayload():AiStartCommandPayload|undefined {

@@ -354,7 +354,8 @@
           "replace-captured-selection",
           "adopt-resources",
           "deliver",
-          "query-tools"
+          "query-tools",
+          "publish-discussion"
         ],
         "type": "string"
       },
@@ -1012,6 +1013,17 @@
               "$ref": "#/definitions/StageChoice"
             },
             "type": "array"
+          },
+          "teamDiscussions": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamDiscussionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit consent for bounded, same-plan published discussions."
           }
         },
         "required": [
@@ -1397,6 +1409,23 @@
           "skipped"
         ],
         "type": "string"
+      },
+      "TeamDiscussionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "TextReviewBinding": {
         "additionalProperties": false,
@@ -3353,7 +3382,8 @@
           "replace-captured-selection",
           "adopt-resources",
           "deliver",
-          "query-tools"
+          "query-tools",
+          "publish-discussion"
         ],
         "type": "string"
       },
@@ -5603,6 +5633,17 @@
               "$ref": "#/definitions/StageChoice"
             },
             "type": "array"
+          },
+          "teamDiscussions": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamDiscussionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit consent for bounded, same-plan published discussions."
           }
         },
         "required": [
@@ -7356,6 +7397,73 @@
         ],
         "type": "string"
       },
+      "TeamDiscussionLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxMembers": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxPostBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxPosts": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxRoleVersionsPerMember": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxViewBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxViewPosts": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxMembers",
+          "maxRoleVersionsPerMember",
+          "maxPosts",
+          "maxPostBytes",
+          "maxViewPosts",
+          "maxViewBytes"
+        ],
+        "type": "object"
+      },
+      "TeamDiscussionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "TextEncoding": {
         "enum": [
           "utf8-byte",
@@ -8725,6 +8833,16 @@
               "$ref": "#/definitions/PlanSelectionBasis"
             },
             "type": "array"
+          },
+          "teamDiscussionLimits": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamDiscussionLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "tools": {
             "anyOf": [

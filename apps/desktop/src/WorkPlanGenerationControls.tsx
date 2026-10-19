@@ -17,6 +17,7 @@ import type { WorkPlanGenerationPrepareRequest, WorkPlanGenerationStartRequest }
 import type { WorkPlanContinuation } from "./AiPreparationSession";
 import { useWorkbenchCommands, type CommandAvailability, type AiComponentPrepareCommandPayload, type AiComponentCommandPayload } from "./workbenchCommands";
 import { enUS } from "./i18n/en-US";
+import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
 import { useWorkPlanApplicationTools, WorkPlanApplicationToolDetails, WorkPlanApplicationToolObservation } from "./workPlanApplicationTools";
 
 type Consent = Pick<WorkPlanGenerationStartRequest, "grantId" | "expiresAtMs" | "unsandboxedExecution">;
@@ -320,7 +321,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
         <p>{t("ai.component.budget", { ...operation.prepared.budget, defaultValue: enUS.ai.component.budget })}</p>
         {operation.plan.preview ? <p>{t("ai.component.fixedModel", { model: operation.plan.preview.config.model, locale: operation.plan.locale, defaultValue: enUS.ai.component.fixedModel })}</p> : null}
         <ul>{operation.prepared.scope.map(unit => <li key={unit.unitId}>{unit.nativeKey}</li>)}</ul>
-        <details><summary>{t("ai.component.sharing")}</summary>{operation.plan.preview?.items.filter(item => operation.prepared.generation.unitIds.includes(item.unitId)).map(item =>
+        <details><summary>{t("ai.component.sharing")}</summary><TeamDiscussionDisclosure plan={operation.plan}/>{operation.plan.preview?.items.filter(item => operation.prepared.generation.unitIds.includes(item.unitId)).map(item =>
           <article key={item.unitId}><h4>{item.nativeKey}</h4><pre className="ai-text">{item.sourceText}</pre>
             {item.terms.map(term => <p key={term.revisionId}>{term.source}: {term.target}</p>)}
             {item.context ? <pre className="ai-text">{item.context.text}</pre> : null}</article>)}</details>

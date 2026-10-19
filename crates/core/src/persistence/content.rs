@@ -467,6 +467,24 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     Ok(())
 }
 
+/// A reference must retain the adopted source's original result and unit mapping.
+pub(super) fn check_result_reference(
+    connection: &Connection,
+    project: ExecutionId,
+    snapshot: ExecutionId,
+    attempt: ExecutionId,
+    result_id: ExecutionId,
+    unit: ExecutionId,
+    revision: ExecutionId,
+) -> Result<(), ExecutionError> {
+    let (_, (input, result, _, rows)) = snapshot_rows(connection, snapshot, true)?;
+    if input.envelope().project_id != project || input.envelope().attempt_id != attempt
+        || result.envelope().result_id != result_id
+        || !rows.iter().any(|row|row.unit_id==Some(unit) && row.source_revision_id==Some(revision))
+    { return Err(failure(ErrorCode::Unauthorized, "source-result-reference")); }
+    Ok(())
+}
+
 pub(super) fn snapshot_rows(
     connection: &Connection,
     snapshot: ExecutionId,

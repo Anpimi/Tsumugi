@@ -1,15 +1,18 @@
 //! Pi's serialized request crosses the original Core dispatch/budget boundary.
 use super::*;
 use serde::{Deserialize, Serialize};
+use crate::application::{CapturedTeamDiscussionView, TeamDiscussionView};
 
 // SSE framing is larger than the final model output. Bound its carrier bytes
 // separately; the existing execution output/profile still limits decoded text.
 const MAX_MEMBER_RESPONSE_BYTES: usize = crate::execution::MAX_RESULT_BYTES;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderRequestCapture {
     pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_view: Option<TeamDiscussionView>,
 }
 impl ProviderRequestCapture {
     pub(crate) fn validate(&self, config: &AiConfig) -> Result<(), ExecutionError> {
@@ -31,6 +34,18 @@ impl ProviderRequestCapture {
         {
             return Err(error(ErrorCode::ResultMismatch, "member-model-profile"));
         }
+        if let Some(view) = &self.team_view {
+            // The exact Core projection is an explicit user-data message in
+            // this physical request, not a replaceable identifier from Node.
+            let utf8 = serde_json::to_string(view)
+                .map_err(|_| error(ErrorCode::InvalidInput, "member-shared-view"))?;
+            let count = value["messages"].as_array().unwrap().iter().filter(|message| {
+                message["role"] == "user" && message["content"] == utf8
+            }).count();
+            if count != 1 {
+                return Err(error(ErrorCode::ResultMismatch, "member-shared-view"));
+            }
+        }
         Ok(())
     }
 }
@@ -46,6 +61,7 @@ struct ActiveRequest {
     id: ExecutionId,
     response: bool,
     issued: bool,
+    team_view: Option<TeamDiscussionView>,
 }
 
 /// One bounded member's physical requests share the original dispatch and budget.
@@ -76,6 +92,14 @@ impl MemberProviderSession {
         })
     }
     pub fn prepare(&mut self) -> Result<ExecutionId, ExecutionError> {
+        self.prepare_with_view(None)
+    }
+    /// Only the Core-owned snapshot can supply a request's discussion basis.
+    /// A subsequent HTTP call carries bytes and this original identity only.
+    pub fn prepare_with_view(
+        &mut self,
+        view: Option<CapturedTeamDiscussionView>,
+    ) -> Result<ExecutionId, ExecutionError> {
         self.dispatch.check_service_dispatch()?;
         if self.cancellation.is_requested() {
             return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
@@ -91,6 +115,7 @@ impl MemberProviderSession {
             id,
             response: false,
             issued: false,
+            team_view: view.map(|view| view.view().clone()),
         });
         Ok(id)
     }
@@ -106,7 +131,10 @@ impl MemberProviderSession {
         {
             return Err(error(ErrorCode::ResultMismatch, "member-request-identity"));
         }
-        let capture = ProviderRequestCapture { body };
+        let capture = ProviderRequestCapture {
+            body,
+            team_view: self.active.as_ref().unwrap().team_view.clone(),
+        };
         capture.validate(&self.config)?;
         let key = ProviderService::credential(&self.config)?;
         self.dispatch.check_service_dispatch()?;

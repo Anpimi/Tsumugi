@@ -12,6 +12,7 @@ import {executionContext} from "./executionCommands";
 import {sourceReads} from "./sourceQueries";
 import {aiTarget,type AiView} from "./aiCommands";
 import { AiConnectionFields } from "./AiConnectionFields";
+import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
 import {useAiPreparation,type WorkPlanContinuation} from "./AiPreparationSession";
 import { WorkPlanControls } from "./WorkPlanControls";
 import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnectionPicker";
@@ -25,7 +26,7 @@ import { AiEffectStatus } from "./AiEffectStatus";
 import { StrategyWorkbench } from "./StrategyWorkbench";
 import { useOptionalStrategyDraftSession } from "./StrategyDraftSession";
 import { TextReviewSelections } from "./TextReviewSelections";
-import type { WorkPlanStatusView } from "./workPlanCommands";
+import type { PlanOptions, WorkPlanStatusView } from "./workPlanCommands";
 import type { TranslationRevision } from "./translationCommands";
 import type {EditorTarget} from "./TranslationWorkbench";
 import type { AiReviewOrigin, WorkspaceDestination } from "./sessionNavigation";
@@ -64,7 +65,10 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   const planRead = useSessionQuery<WorkPlanStatusView>({key:["workPlan",planId],scopes:["project","execution","source","translation","resources","review"],enabled:open&&!!planId,
     read:()=>preparation.readPlan(planId!)});
   const status = !planRead.error ? planRead.data ?? null : null;
-  const sharing = prepared?.preview ?? status?.plan.preview ?? preparation.planControl.state.ready?.prepared.preview ?? preparation.planControl.state.pending?.prepared.preview;
+  const sharingPlan = prepared?.preview ? prepared : status?.plan.preview ? status.plan
+    : preparation.planControl.state.ready?.prepared.preview ? preparation.planControl.state.ready.prepared
+    : preparation.planControl.state.pending?.prepared;
+  const sharing = sharingPlan?.preview;
   const assisted = options.stages.some(choice=>choice.stage==="generation"&&choice.mode==="assisted");
   const perform = (work: Parameters<typeof preparation.runWorkPlan>[0]) => preparation.runWorkPlan(work,planId,contentOptions.key);
   const refreshPlan = preparation.readPlanForAction;
@@ -314,10 +318,14 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     <fieldset disabled={locked}><legend>{t("ai.scope",{count:selected.length})}</legend><h3>{t("ai.plan.stagesTitle")}</h3>{options.stages.map(choice=><label className="field" key={choice.stage}>{t(`ai.plan.stages.${choice.stage}`)}<select value={choice.mode} onChange={event=>{
       const mode = event.target.value;
       if(mode!=="manual"&&mode!=="assisted"&&mode!=="skipped")return;
-      setOptions(previous=>({...previous,
-        selectionPolicy: (choice.stage === "generation" || choice.stage === "checks") && mode !== "assisted" ? "candidates-only" : previous.selectionPolicy,
-        stages:previous.stages.map(item=>item.stage===choice.stage?{...item,mode}:choice.stage==="generation"&&mode!=="assisted"&&item.stage==="checks"&&item.mode==="assisted"?{...item,mode:"manual"}:item)
-      }));
+      setOptions(previous=>{
+        const next: PlanOptions = {...previous,
+          selectionPolicy: (choice.stage === "generation" || choice.stage === "checks") && mode !== "assisted" ? "candidates-only" : previous.selectionPolicy,
+          stages:previous.stages.map(item=>item.stage===choice.stage?{...item,mode}:choice.stage==="generation"&&mode!=="assisted"&&item.stage==="checks"&&item.mode==="assisted"?{...item,mode:"manual"}:item)
+        };
+        if (choice.stage === "generation" && mode !== "assisted") delete next.teamDiscussions;
+        return next;
+      });
     }}><option value="manual">{t("ai.plan.modes.manual")}</option>{choice.stage==="generation"?<option value="assisted">{t("ai.plan.modes.assisted")}</option>:choice.stage==="checks"&&assisted?<option value="assisted">{t("ai.plan.mechanicalChecks")}</option>:null}<option value="skipped">{t("ai.plan.modes.skipped")}</option></select></label>)}
     {assisted?<><label className="field">{t("ai.plan.selectionPolicy")}<select aria-label={t("ai.plan.selectionPolicy")} value={options.selectionPolicy} onChange={event=>{
       const selectionPolicy = event.target.value;
@@ -329,6 +337,15 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
 {assisted?<><ModelConnectionPicker config={config} label={t("connections.choose")} active={open} disabled={locked} editSeq={preparation.editSeq} onSelect={preparation.selectConnection} onOpenSettings={onOpenConnections}/><PreparationBudgetSummary config={config}/><AiConnectionFields config={config} setConfig={setConfig} presetName={presetName} setPresetName={setPresetName} connectionOpen={connectionOpen} setConnectionOpen={setConnectionOpen} failure={failure}/></>:null}
     {assisted?<WorkPlanToolChoice ref={toolChoice} open={open} disabled={locked} value={toolDraft} onChange={setToolDraft}/>:null}
     <label className="field">{t("ai.locale")}<select value={locale} disabled={!!preparation.maintenance} onChange={e=>{setLocale(e.target.value);}}>{!targetAvailable&&locale?<option value={locale} disabled>{locale}</option>:null}{project.metadata.targetLocales.map(l=><option key={l}>{l}</option>)}</select></label>
+    {assisted?<label className="source-check"><input type="checkbox" checked={!!options.teamDiscussions} onChange={event=>{
+      const enabled=event.target.checked;
+      setOptions(previous=>{
+        const next={...previous};
+        if(enabled) next.teamDiscussions={profile:"current-plan-1"};
+        else delete next.teamDiscussions;
+        return next;
+      });
+    }}/>{t("ai.discussions.enable")}</label>:null}
     {assisted?<><label className="source-check"><input type="checkbox" checked={config.shareTerms} onChange={e=>change("shareTerms",e.target.checked)}/>{t("ai.shareTerms")}</label><label className="source-check"><input type="checkbox" checked={config.shareContext} onChange={e=>change("shareContext",e.target.checked)}/>{t("ai.shareContext")}</label></>:null}
     {assisted?<SourceContextChoice value={config.sourceContext} onChange={value=>change("sourceContext",value)}/>:null}
     <AiScopePicker page={visiblePage} snapshotId={scopeRead.data?.currentSnapshot??null} selectedSnapshotId={selectedSnapshotId} selected={selected} after={after}
@@ -337,7 +354,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     <button className="secondary-button" type="button" disabled={locked||!selected.length} onClick={()=>{if(locked)return;clearSelectedRange();}}>{t("ai.clearSelectedRange")}</button>
     {options.stages.some(choice=>choice.stage==="checks"&&choice.mode==="assisted")?<><p>{t("review.formatChecksRequired")}</p><TextReviewSelections value={advisoryChecks} active={open} scopeKey={JSON.stringify([context,locale])} disabled={locked} onOpenExtensions={onOpenExtensions} onSnapshotRevision={revision=>{if(prepared?.checkers.some(checker=>checker.kind==="ready"&&checker.plugin.plugin.settingsRevision!==revision))preparation.invalidatePreview();}} onChange={setAdvisoryChecks}/></>:null}
     <button className="primary-button" disabled={!previewAvailability(preparationPayload()).enabled} onClick={()=>{registry.dispatch("ai.preview",commandScope,preparationPayload());}}>{t(assisted?"ai.preview":"ai.plan.prepareManual")}</button></fieldset>
-    {sharing&&targetAvailable?<section><h3>{t("ai.previewTitle")}</h3><p>{sharing.config.endpoint} · {sharing.config.model}</p><p>{t("ai.limits",{defaultValue:enUS.ai.limits,requests:config.maxRequests,concurrency:config.concurrency,tokens:config.maxOutputTokens,retries:config.maxRetries})}</p><p>{t("ai.costUnknown")}</p><p>{t("ai.rateLimit")}</p>{sharing.items.map(item=><article key={item.unitId}><h4>{item.nativeKey} → {item.targetLocale}</h4><pre className="ai-text">{item.sourceText}</pre>{item.terms.map(term=><p key={term.revisionId}>{term.source} → {term.target}</p>)}{item.context?<pre className="ai-text">{item.context.text}</pre>:null}<SourceContextPreview capture={item.sourceContext}/><ProjectFactPreview capture={item.projectContext}/>{item.omissions.map(reason=><p key={reason}>{reason.startsWith("term-conflict:")?t("ai.termConflict",{term:reason.slice(14)}):t(`ai.${reason}`,{defaultValue:reason})}</p>)}</article>)}{prepared?.preview&&!status?<label className="source-check"><input type="checkbox" checked={consent} disabled={locked||!preparation.connectionCurrent()} onChange={e=>setConsent(e.target.checked)}/>{t("ai.consent")}</label>:null}</section>:null}
+    {sharing&&targetAvailable?<section><h3>{t("ai.previewTitle")}</h3><p>{sharing.config.endpoint} · {sharing.config.model}</p><p>{t("ai.limits",{defaultValue:enUS.ai.limits,requests:config.maxRequests,concurrency:config.concurrency,tokens:config.maxOutputTokens,retries:config.maxRetries})}</p><p>{t(sharingPlan?.options.teamDiscussions?"ai.discussions.costUnknown":"ai.costUnknown")}</p><p>{t("ai.rateLimit")}</p>{sharing.items.map(item=><article key={item.unitId}><h4>{item.nativeKey} → {item.targetLocale}</h4><pre className="ai-text">{item.sourceText}</pre>{item.terms.map(term=><p key={term.revisionId}>{term.source} → {term.target}</p>)}{item.context?<pre className="ai-text">{item.context.text}</pre>:null}<SourceContextPreview capture={item.sourceContext}/><ProjectFactPreview capture={item.projectContext}/>{item.omissions.map(reason=><p key={reason}>{reason.startsWith("term-conflict:")?t("ai.termConflict",{term:reason.slice(14)}):t(`ai.${reason}`,{defaultValue:reason})}</p>)}</article>)}{sharingPlan?<TeamDiscussionDisclosure plan={sharingPlan}/>:null}{prepared?.preview&&!status?<label className="source-check"><input type="checkbox" checked={consent} disabled={locked||!preparation.connectionCurrent()} onChange={e=>setConsent(e.target.checked)}/>{t(prepared.options.teamDiscussions?"ai.discussions.consent":"ai.consent")}</label>:null}</section>:null}
     <WorkPlanControls context={context} prepared={prepared} status={status} busy={busy} disabled={disabled||!!pendingAdopt} consent={consent}
       session={preparation.planControl} editSeq={preparation.editSeq} run={perform} refresh={refreshPlan} onPlan={preparation.recordPlan}
       open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}

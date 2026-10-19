@@ -55,6 +55,8 @@ export const workPlanCommands = {
       || value.options.selectionPolicy !== request.options.selectionPolicy
       || value.options.adoptResources !== request.options.adoptResources
       || value.options.deliver !== request.options.deliver
+      || jsonIdentity(value.options.teamDiscussions) !== jsonIdentity(request.options.teamDiscussions)
+      || Boolean(value.teamDiscussionLimits) !== Boolean(request.options.teamDiscussions)
       || value.options.stages.length !== stages.size
       || value.options.stages.some(choice => stages.get(choice.stage) !== choice.mode)
       || value.options.advisoryChecks.length !== request.advisoryChecks.length
@@ -164,6 +166,8 @@ export const workPlanCommands = {
     const value = await checkedInvoke("read_work_plan_status", request, validators.validateResponseWorkPlanStatus);
     if (value.plan.planId !== request.planId || value.lease.planId !== request.planId
       || BigInt(value.lease.generation) === 0n
+      || Boolean(value.plan.options.teamDiscussions) !== Boolean(value.plan.teamDiscussionLimits)
+      || (value.plan.options.teamDiscussions && !value.plan.preview)
       || Boolean(value.plan.tools) !== Boolean(value.toolInvocations)
       || (value.plan.tools && (!value.toolInvocations || value.toolInvocations.limit !== value.plan.tools.maxInvocations
         || value.toolInvocations.reserved > value.toolInvocations.limit || !validWorkPlanApplicationTools(value.plan.tools.entries)))) invalidAcknowledgement();

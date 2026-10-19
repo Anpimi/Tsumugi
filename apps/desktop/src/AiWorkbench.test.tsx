@@ -20,7 +20,7 @@ import {validateRequestPrepare} from "./generated/execution.validators";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { aiAttempt, aiViewFixture, aiWorkPlanFixture } from "./testSupport/aiFixture";
+import { aiAttempt, aiViewFixture, aiWorkPlanFixture, teamDiscussionLimitsFixture } from "./testSupport/aiFixture";
 import { formatReviewSlotFixture } from "./testSupport/textReviewFixture";
 import { connectionFixture } from "./testSupport/connectionFixture";
 import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSupport/pluginToolFixture";
@@ -74,7 +74,9 @@ beforeEach(async()=>{
   if(command==="read_source_content")return sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)},rows:[sourceRowFixture({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId},{key:"first",text:item.sourceText})]});
   if(command==="prepare_work_plan"){
    if(request.config)prepared.preview.config=request.config as typeof defaultAiConfig;
-   plan={maintenance:structuredClone(request.maintenance) as WorkPlanView["maintenance"],tools:null,checkers: request.options && (request.options as WorkPlanView["options"]).stages.some(choice=>choice.stage==="checks"&&choice.mode==="assisted") ? [formatCheckerFixture()] : [],planId,digest:"plan-digest",locale:String(request.locale),options:request.options as WorkPlanView["options"],scope:[{unitId:item.unitId,sourceSnapshotId:item.sourceSnapshotId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,selectionId:null}],attemptId:request.config?aiAttempt:null,preview:request.config?prepared.preview:null};return plan;
+   plan={maintenance:structuredClone(request.maintenance) as WorkPlanView["maintenance"],tools:null,checkers: request.options && (request.options as WorkPlanView["options"]).stages.some(choice=>choice.stage==="checks"&&choice.mode==="assisted") ? [formatCheckerFixture()] : [],planId,digest:"plan-digest",locale:String(request.locale),options:request.options as WorkPlanView["options"],scope:[{unitId:item.unitId,sourceSnapshotId:item.sourceSnapshotId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,selectionId:null}],attemptId:request.config?aiAttempt:null,preview:request.config?prepared.preview:null};
+   if(plan.options.teamDiscussions)plan.teamDiscussionLimits=structuredClone(teamDiscussionLimitsFixture);
+   return plan;
   }
   if(command==="authorize_work_plan"){
    const receipt:WorkPlanReceiptView={actionId:String(request.actionId),lease:{planId,generation:"1"},state:"active",attemptId:aiAttempt,parentTask:null};
@@ -397,6 +399,40 @@ it("keeps checking independent of selection and preserves an explicit manual che
  expect(invoke.mock.calls.some(([name])=>name==="authorize_work_plan")).toBe(false);
 });
 it("requires exact sharing confirmation and invalidates it on configuration edits through the stable preparation consumer",async()=>{const user=await preview();expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).toBeChecked();expect(screen.getByRole("checkbox",{name:"Share saved context"})).toBeChecked();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
+it("requires explicit discussion sharing before authorizing future same-plan posts",async()=>{
+ const user=await preview();
+ const choice=screen.getByRole("checkbox",{name:"Allow members to publish and share this plan’s discussions"});
+ expect(choice).not.toBeChecked();
+ expect(invoke.mock.calls.find(([command])=>command==="prepare_work_plan")![1].request.options).not.toHaveProperty("teamDiscussions");
+ await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));
+ await user.click(choice);
+ expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+ expect(invoke.mock.calls.some(([command])=>command==="authorize_work_plan")).toBe(false);
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ const disclosure=await screen.findByRole("region",{name:"Team discussions"});
+ expect(within(disclosure).getByText(/Discussions published later may be shared only within each member’s assigned entries/)).toBeInTheDocument();
+ expect(within(disclosure).getByText("Discussion destination: http://127.0.0.1:4000/v1/chat/completions · model test-model")).toBeInTheDocument();
+ expect(within(disclosure).getByText(`Up to ${teamDiscussionLimitsFixture.maxPosts} published posts in this plan; each post may contain up to ${teamDiscussionLimitsFixture.maxPostBytes} UTF-8 bytes.`)).toBeInTheDocument();
+ expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();
+ await user.click(screen.getByRole("checkbox",{name:/I authorize the displayed selection policy and member discussion publication/}));
+ await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+ await waitFor(()=>expect(invoke.mock.calls.some(([command])=>command==="start_work_plan")).toBe(true));
+ const grant=invoke.mock.calls.find(([command])=>command==="authorize_work_plan")![1].request;
+ expect(grant).toMatchObject({planId,digest:"plan-digest",confirmed:true,effects:["save-candidate","publish-discussion"]});
+ expect(plan.options.teamDiscussions).toEqual({profile:"current-plan-1"});
+});
+
+it("removes discussion permission when generation becomes manual",async()=>{
+ const user=await preview();
+ await user.click(screen.getByRole("checkbox",{name:"Allow members to publish and share this plan’s discussions"}));
+ await user.selectOptions(screen.getByRole("combobox",{name:"Translate"}),"manual");
+ expect(screen.queryByRole("checkbox",{name:"Allow members to publish and share this plan’s discussions"})).not.toBeInTheDocument();
+ await user.click(screen.getByRole("button",{name:"Prepare manual plan"}));
+ await waitFor(()=>expect(invoke.mock.calls.filter(([command])=>command==="prepare_work_plan")).toHaveLength(2));
+ const request=invoke.mock.calls.filter(([command])=>command==="prepare_work_plan").at(-1)![1].request;
+ expect(request.config).toBeNull();expect(request.options).not.toHaveProperty("teamDiscussions");
+});
+
 it("keeps empty limits editable and rejects them before preview serialization through the stable preparation consumer",async()=>{const user=await preview();await user.click(screen.getByText("Budget and limits"));await user.clear(screen.getByRole("spinbutton",{name:"Maximum requests including retries"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));expect(await screen.findByRole("alert")).toHaveFocus();expect(screen.getByRole("spinbutton",{name:"Maximum requests including retries"})).toHaveAttribute("aria-invalid","true");expect(invoke.mock.calls.filter(([c])=>c==="prepare_work_plan")).toHaveLength(1);expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it("saves a normal candidate without issuing a translation selection",async()=>{const user=await preview();await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));await waitFor(()=>expect(invoke.mock.calls.some(([c])=>c==="adopt_execution")).toBe(true));expect(invoke.mock.calls.some(([c])=>c==="select_translation_revision")).toBe(false);expect(screen.getAllByText(/Total usage/).length).toBeGreaterThan(0);});
 it("keeps an uncertain start identity and blocks leaving until reconciliation",async()=>{const user=await preview();const original=invoke.getMockImplementation()!;let checks=0;invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject({code:"outcome-unknown"}):command==="read_work_plan_start_action"&&++checks===1?Promise.reject(new Error("Automatic check unavailable")):original(command,args));await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await screen.findByText(/Start may have succeeded/);expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();await user.click(screen.getByRole("button",{name:"Check saved result"}));await waitFor(()=>expect(screen.queryByText(/Start may have succeeded/)).not.toBeInTheDocument());const calls=invoke.mock.calls.filter(([c])=>c==="start_work_plan");expect(calls).toHaveLength(1);expect(calls[0][1].request).toMatchObject({planId,expectedGeneration:"1",actionId:fixtureIdentity(510)});expect(invoke.mock.calls.filter(([c])=>c==="read_work_plan_start_action")).toHaveLength(2);});

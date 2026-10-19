@@ -120,6 +120,7 @@ export type MemberReply =
   | {
       kind: "prepared";
       requestId: ExecutionId;
+      sharedView: MemberSharedView | null;
     }
   | {
       body: string;
@@ -287,6 +288,14 @@ export interface MemberTool {
 export interface Usage {
   completionTokens: number;
   promptTokens: number;
+}
+/**
+ * This interface was referenced by `MemberFrame`'s JSON-Schema
+ * via the `definition` "MemberSharedView".
+ */
+export interface MemberSharedView {
+  utf8: string;
+  viewId: ExecutionId;
 }
 /**
  * This interface was referenced by `MemberFrame`'s JSON-Schema

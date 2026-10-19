@@ -437,7 +437,7 @@ pub async fn run_member(
                             .dispatch(handler, call.clone(), &|| authorized(), deadline)
                             .await?;
                         validate_reply(&call, &reply)?;
-                        if let (MemberCall::Prepare { .. }, MemberReply::Prepared { request_id }) =
+                        if let (MemberCall::Prepare { .. }, MemberReply::Prepared { request_id, .. }) =
                             (&call, &reply)
                         {
                             turns += 1;

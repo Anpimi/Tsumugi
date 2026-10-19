@@ -96,6 +96,29 @@ it("keeps generations exact and rejects unsupported semantic or raw input fields
   expect(validators.validateRequestWorkPlanControl(missingControlInstances)).toBe(false);
 });
 
+it("binds discussion opt-in and its disclosure to the exact prepared plan", async () => {
+  const request = { ...requests.workPlanPrepare, options: {
+    ...requests.workPlanPrepare.options, teamDiscussions: { profile: "current-plan-1" as const },
+  } };
+  const response = { ...fixture.responses.discussionPlan, options: request.options };
+  expect(validators.validateRequestWorkPlanPrepare(request)).toBe(true);
+  expect(validators.validateResponseWorkPlan(response)).toBe(true);
+  invoke.mockResolvedValueOnce(response);
+  expect(await workPlanCommands.prepare(request)).toEqual(response);
+  expect(invoke).toHaveBeenLastCalledWith("prepare_work_plan", { request });
+  const withoutLimits = { ...response, teamDiscussionLimits: undefined };
+  for (const wrong of [fixture.responses.plan, withoutLimits]) {
+    invoke.mockResolvedValueOnce(wrong);
+    await expect(workPlanCommands.prepare(request)).rejects.toMatchObject({ reason: "invalid-work-plan-acknowledgement", outcome: "unknown" });
+  }
+  invoke.mockResolvedValueOnce(response);
+  await expect(workPlanCommands.prepare(requests.workPlanPrepare)).rejects.toMatchObject({ reason: "invalid-work-plan-acknowledgement", outcome: "unknown" });
+  expect(validators.validateRequestWorkPlanPrepare({ ...request, options: { ...request.options, teamDiscussions: { profile: "other-plan" } } })).toBe(false);
+  expect(validators.validateRequestWorkPlanPrepare({ ...request, options: { ...request.options, teamDiscussions: { profile: "current-plan-1", maxPosts: 900 } } })).toBe(false);
+  invoke.mockResolvedValueOnce({ ...fixture.responses.status, plan: withoutLimits });
+  await expect(workPlanCommands.status(requests.workPlanStatus)).rejects.toMatchObject({ reason: "invalid-work-plan-acknowledgement", outcome: "unknown" });
+});
+
 it("rejects duplicate or mixed-generation instance consent and keeps revoking controls free of lifetime grants", async () => {
   const basis = { instanceId: fixtureIdentity(1800), activationGeneration: 1 };
   for (const applicationToolExecutions of [[basis, basis], [basis, { ...basis, activationGeneration: 2 }]]) {

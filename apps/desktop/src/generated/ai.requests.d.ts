@@ -13,7 +13,8 @@ export type AutomationEffect =
   | "replace-captured-selection"
   | "adopt-resources"
   | "deliver"
-  | "query-tools";
+  | "query-tools"
+  | "publish-discussion";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
 export type MaintenanceAction = "keep" | "recheck" | "repair" | "unresolved";
 /**
@@ -82,6 +83,9 @@ export type NativeHostProfile = "native-application-host-v1";
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
+export type TeamDiscussionPolicy = {
+  profile: "current-plan-1";
+};
 
 export interface Requests {
   effectRetry: AiEffectRetryRequest;
@@ -663,6 +667,10 @@ export interface PlanOptions {
   deliver: boolean;
   selectionPolicy: SelectionPolicy;
   stages: StageChoice[];
+  /**
+   * Explicit consent for bounded, same-plan published discussions.
+   */
+  teamDiscussions?: TeamDiscussionPolicy | null;
 }
 /**
  * Captured by the trusted package adapter. Selecting these rules neither

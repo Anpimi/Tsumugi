@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = tsumugi_plugin_sdk::MAX_PROCESS_FRAME_BYTES;
 pub const MAX_SESSION_BYTES: usize = 64 * 1024 * 1024;
 
@@ -20,7 +20,7 @@ macro_rules! wire {
 wire! {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct MemberFrame {
-        #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 1)))]
+        #[cfg_attr(feature = "wire-schema", schemars(range(min = 2, max = 2)))]
         pub protocol_version: u32,
         pub session_id: ExecutionId,
         pub sequence: u32,
@@ -41,6 +41,13 @@ wire! {
 }
 wire! {
     pub enum TokenField { #[serde(rename = "max_tokens")] MaxTokens, #[serde(rename = "max_completion_tokens")] MaxCompletionTokens }
+}
+wire! {
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct MemberSharedView {
+        pub view_id: ExecutionId,
+        pub utf8: String,
+    }
 }
 wire! {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -81,7 +88,7 @@ wire! {
 wire! {
     #[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase", deny_unknown_fields)]
     pub enum MemberReply {
-        Prepared { request_id: ExecutionId },
+        Prepared { request_id: ExecutionId, shared_view: Option<MemberSharedView> },
         Http { request_id: ExecutionId, status: u16, content_type: Option<String>, body: String },
         ToolAdmission { block: bool, reason: Option<String> },
         ToolResult { content: Value, details: Value, is_error: bool },

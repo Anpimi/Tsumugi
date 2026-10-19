@@ -377,6 +377,9 @@ export type ReviewCheckerView =
     };
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
+export type TeamDiscussionPolicy = {
+  profile: "current-plan-1";
+};
 export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
 export type InvocationOutcome =
@@ -442,7 +445,8 @@ export type AutomationEffect =
   | "replace-captured-selection"
   | "adopt-resources"
   | "deliver"
-  | "query-tools";
+  | "query-tools"
+  | "publish-discussion";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
 
 export interface Responses {
@@ -1192,6 +1196,7 @@ export interface WorkPlanView {
   planId: ExecutionId;
   preview: AiPreviewView | null;
   scope: PlanSelectionBasis[];
+  teamDiscussionLimits?: TeamDiscussionLimits | null;
   tools: WorkPlanTools | null;
 }
 export interface PluginReviewView {
@@ -1233,6 +1238,10 @@ export interface PlanOptions {
   deliver: boolean;
   selectionPolicy: SelectionPolicy;
   stages: StageChoice[];
+  /**
+   * Explicit consent for bounded, same-plan published discussions.
+   */
+  teamDiscussions?: TeamDiscussionPolicy | null;
 }
 export interface StageChoice {
   mode: StageMode;
@@ -1244,6 +1253,14 @@ export interface PlanSelectionBasis {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
+}
+export interface TeamDiscussionLimits {
+  maxMembers: number;
+  maxPostBytes: number;
+  maxPosts: number;
+  maxRoleVersionsPerMember: number;
+  maxViewBytes: number;
+  maxViewPosts: number;
 }
 export interface WorkPlanTools {
   /**

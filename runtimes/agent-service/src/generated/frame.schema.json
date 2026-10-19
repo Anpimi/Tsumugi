@@ -893,11 +893,22 @@
             },
             "requestId": {
               "$ref": "#/$defs/ExecutionId"
+            },
+            "sharedView": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MemberSharedView"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
             "kind",
-            "requestId"
+            "requestId",
+            "sharedView"
           ],
           "type": "object"
         },
@@ -1051,6 +1062,22 @@
         }
       ]
     },
+    "MemberSharedView": {
+      "additionalProperties": false,
+      "properties": {
+        "utf8": {
+          "type": "string"
+        },
+        "viewId": {
+          "$ref": "#/$defs/ExecutionId"
+        }
+      },
+      "required": [
+        "viewId",
+        "utf8"
+      ],
+      "type": "object"
+    },
     "MemberTool": {
       "additionalProperties": false,
       "properties": {
@@ -1116,8 +1143,8 @@
       "$ref": "#/$defs/MemberBody"
     },
     "protocolVersion": {
-      "maximum": 1,
-      "minimum": 1,
+      "maximum": 2,
+      "minimum": 2,
       "type": "integer"
     },
     "sequence": {

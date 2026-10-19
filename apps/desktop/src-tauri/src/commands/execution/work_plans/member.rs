@@ -18,7 +18,11 @@ use tsumugi_core::{
         },
         provider::{MemberProviderSession, ProviderService},
     },
-    application::{AgentToolRequest, WorkPlanAgentExecutionBinding, WorkPlanToolSpec},
+    application::{
+        AgentToolRequest, CapturedTeamAuthor, CapturedTeamDiscussionView,
+        PublishTeamDiscussion, ReadTeamDiscussion, WorkPlanAgentExecutionBinding, WorkPlanToolSpec,
+        team_discussion_tools,
+    },
 };
 use tsumugi_plugin_host::{
     HostError,
@@ -131,12 +135,19 @@ impl Owner {
                 "member-tool-revision",
             )));
         }
+        let plan = store.work_plan(scope.lease().plan_id).map_err(map_recover)?;
+        let team_author = if plan.options.team_discussions.is_some() {
+            Some(store.capture_team_execution_author(&scope, request).map_err(map_recover)?)
+        } else {
+            None
+        };
         Ok(CapturedScope {
             scope_id,
             scope,
             consent,
             tools,
             tool_revision: revisions.into_iter().next(),
+            team_author,
         })
     }
     fn check_scope(
@@ -198,6 +209,7 @@ struct CapturedScope {
     consent: Option<Arc<WorkPlanToolConsent>>,
     tools: Vec<WorkPlanToolSpec>,
     tool_revision: Option<UnsignedDecimal>,
+    team_author: Option<CapturedTeamAuthor>,
 }
 
 pub(in crate::commands::execution) struct MemberFactory {
@@ -292,17 +304,24 @@ impl MemberFactory {
             .filter(|n| *n > 0)
             .ok_or_else(|| fail(ErrorCode::Cancelled, "member-deadline"))?;
         let profile = tsumugi_core::ai::provider::ProviderProfile::compatible(seed.config())?;
-        let roster = captured.tools.iter().map(|tool| MemberTool {
+        let mut roster: Vec<MemberTool> = captured.tools.iter().map(|tool| MemberTool {
             name: tool_name(tool.handle), description: tool.binding.declaration.description.clone(),
             parameters: json!({"type":"object","properties":{"unitId":{"type":"string","enum":[seed.item().unit_id]}},
                 "required":["unitId"],"additionalProperties":false}),
         }).collect();
+        if captured.team_author.is_some() {
+            roster.extend(team_discussion_tools().into_iter().map(|tool| MemberTool {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.input_schema,
+            }));
+        }
         let start = MemberFrame {
             protocol_version: wire::PROTOCOL,
             session_id: ExecutionId::new(),
             sequence: 0,
             body: MemberBody::Start {
-                member_id: seed.binding().caller_id,
+                member_id: captured.team_author.as_ref().map_or(seed.binding().caller_id, |author| author.author().member_id),
                 work_item_id: request.item_id,
                 context_version: request.input.digest().into(),
                 profile: MemberProfile {
@@ -467,6 +486,10 @@ struct ToolRun {
     request: broker::WorkPlanAgentToolStartRequest,
     cancel_id: ExecutionId,
 }
+enum TeamToolRequest {
+    Publish(PublishTeamDiscussion),
+    Read(ReadTeamDiscussion),
+}
 struct Handler {
     owner: Owner,
     captured: CapturedScope,
@@ -497,6 +520,21 @@ impl Handler {
         self.request.check_service_dispatch()
     }
     async fn provider_call(&mut self, call: MemberCall) -> Result<MemberReply, ExecutionError> {
+        let view = if matches!(&call, MemberCall::Prepare { .. }) {
+            match self.capture_view().await {
+                Ok(view) => view,
+                Err(error) => {
+                    self.provider_failure.get_or_insert_with(|| error.clone());
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        let shared_view = view.as_ref().map(|view| wire::MemberSharedView {
+            view_id: view.view().view_id,
+            utf8: view.utf8().into(),
+        });
         let provider = self.provider.clone();
         self.pending_provider = true;
         self.pending = Some(tokio::task::spawn_blocking(move || {
@@ -505,7 +543,8 @@ impl Handler {
                 .map_err(|_| fail(ErrorCode::StorageFailed, "member-provider"))?;
             match call {
                 MemberCall::Prepare { .. } => Ok(MemberReply::Prepared {
-                    request_id: provider.prepare()?,
+                    request_id: provider.prepare_with_view(view)?,
+                    shared_view,
                 }),
                 MemberCall::Http {
                     request_id, body, ..
@@ -536,6 +575,23 @@ impl Handler {
         self.record_provider_failure(&result);
         result
     }
+    async fn capture_view(&self) -> Result<Option<CapturedTeamDiscussionView>, ExecutionError> {
+        let Some(author) = self.captured.team_author.clone() else { return Ok(None); };
+        let owner = self.owner.clone();
+        let captured = self.captured.clone();
+        let revision = self.runtime_revision;
+        self.owner.context.callback.submit(
+            "member.discussions.capture", CommandStage::ExecutionRecover,
+            move |sessions| {
+                owner.context.plugins.with_environment_revision(revision, || {
+                    owner.check_scope(sessions, &captured)?;
+                    let (_, store) = owner.original(sessions)?;
+                    // Preserve Core's actionable material/permission failure.
+                    Ok(store.capture_team_discussion_view(&author))
+                })
+            },
+        ).map_err(command_error)?.await.map_err(command_error)?.map(Some)
+    }
     fn record_provider_failure(&mut self, result: &Result<MemberReply, ExecutionError>) {
         if let Err(error) = result {
             // Only this trusted Core boundary supplies authoritative failures.
@@ -562,6 +618,64 @@ impl Handler {
             .iter()
             .find(|tool| tool_name(tool.handle) == name)
             .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-tool-handle"))
+    }
+    fn team_tool(&self, name: &str, arguments: &Value) -> Result<Option<TeamToolRequest>, ExecutionError> {
+        let decode_error = |_| fail(ErrorCode::InvalidInput, "member-discussion-arguments");
+        let tool = match name {
+            "publish_team_discussion" => TeamToolRequest::Publish(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+            "read_team_discussion" => TeamToolRequest::Read(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+            _ => return Ok(None),
+        };
+        if self.captured.team_author.is_none() {
+            return Err(fail(ErrorCode::Unauthorized, "member-discussions-disabled"));
+        }
+        Ok(Some(tool))
+    }
+    async fn execute_team_tool(&mut self, tool: TeamToolRequest) -> Result<MemberReply, ExecutionError> {
+        let owner = self.owner.clone();
+        let captured = self.captured.clone();
+        let author = captured.team_author.clone().ok_or_else(|| fail(ErrorCode::Unauthorized, "member-discussions-disabled"))?;
+        let revision = self.runtime_revision;
+        let request = self.request.clone();
+        self.pending_provider = false;
+        self.pending = Some(tokio::spawn(async move {
+            let submitting = owner.clone();
+            let post = submitting.context.callback.submit(
+                "member.discussions.tool", CommandStage::ExecutionRecover,
+                move |sessions| {
+                    owner.context.plugins.with_environment_revision(revision, || {
+                        owner.check_scope(sessions, &captured)?;
+                        request.check_service_dispatch().map_err(map_recover)?;
+                        let (_, store) = owner.original(sessions)?;
+                        Ok(match tool {
+                            TeamToolRequest::Publish(publication) => store.publish_team_discussion(&author, &publication),
+                            TeamToolRequest::Read(read) => store.read_team_discussion(&captured.scope, read.post_id),
+                        })
+                    })
+                },
+            ).map_err(command_error)?.await.map_err(command_error)?;
+            let (value, details, is_error) = match post {
+                Ok(post) => {
+                    let details = json!({"postId":post.publication.post_id});
+                    (serde_json::to_value(post), details, false)
+                }
+                Err(error) => (serde_json::to_value(error), json!({}), true),
+            };
+            let text = serde_json::to_string(&value.map_err(|_| fail(ErrorCode::OutputInvalid, "member-discussion-result"))?)
+                .map_err(|_| fail(ErrorCode::OutputInvalid, "member-discussion-result"))?;
+            Ok(MemberReply::ToolResult {
+                content: json!([{"type":"text","text":text}]),
+                details,
+                is_error,
+            })
+        }));
+        let result = self.pending.as_mut().unwrap().await;
+        self.pending.take();
+        result.map_err(|_| {
+            let error = fail(ErrorCode::OutcomeUnknown, "member-discussion-operation");
+            self.join_failure.get_or_insert_with(|| error.clone());
+            error
+        })?
     }
     async fn check_scope(&self) -> Result<(), ExecutionError> {
         let owner = self.owner.clone();
@@ -593,6 +707,9 @@ impl Handler {
         arguments: Value,
     ) -> Result<MemberReply, ExecutionError> {
         self.live()?;
+        if let Some(tool) = self.team_tool(&name, &arguments)? {
+            return self.execute_team_tool(tool).await;
+        }
         let handle = self.selected_tool(&name, &arguments)?.handle;
         let operation = ToolOperation {
             owner: self.owner.clone(),
@@ -996,7 +1113,9 @@ impl MemberHandler for Handler {
                 MemberCall::BeforeTool {
                     name, arguments, ..
                 } => {
-                    self.selected_tool(&name, &arguments)?;
+                    if self.team_tool(&name, &arguments)?.is_none() {
+                        self.selected_tool(&name, &arguments)?;
+                    }
                     self.check_scope().await?;
                     Ok(MemberReply::ToolAdmission {
                         block: false,

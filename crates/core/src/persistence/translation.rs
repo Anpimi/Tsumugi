@@ -772,7 +772,7 @@ fn source_basis(
     Ok((id(snapshot)?, id(revision)?))
 }
 
-fn check_target(
+pub(super) fn check_target(
     connection: &Connection,
     project: ExecutionId,
     locale: &str,
@@ -1962,17 +1962,7 @@ fn save_receipt_in(
     project_id: ExecutionId,
     selection: &TranslationSelection,
 ) -> Result<TranslationSaveReceipt, ExecutionError> {
-    let revision = connection
-        .query_row(
-            "SELECT revision_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,
-                    origin_kind,action_id,attempt_id,result_id,item_id,artifact_id,
-                    logical_path,declared_locale,native_key,file_digest
-             FROM translation_revisions WHERE project_id=?1 AND revision_id=?2",
-            params![project_id.to_string(), selection.revision_id.to_string()],
-            RawRevision::from_row,
-        )
-        .map_err(super::ledger::sql_error)?
-        .parse()?;
+    let revision = revision_in(connection, project_id, selection.revision_id)?;
     if revision.unit_id != selection.unit_id
         || revision.locale != selection.locale
         || revision.action_id != selection.action_id
@@ -1991,6 +1981,25 @@ fn save_receipt_in(
         selection: selection.clone(),
         revision,
     })
+}
+
+/// Exact immutable identity reader shared by action receipts and artifact references.
+pub(super) fn revision_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    revision_id: ExecutionId,
+) -> Result<TranslationRevision, ExecutionError> {
+    connection
+        .query_row(
+            "SELECT revision_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,
+                    origin_kind,action_id,attempt_id,result_id,item_id,artifact_id,
+                    logical_path,declared_locale,native_key,file_digest
+             FROM translation_revisions WHERE project_id=?1 AND revision_id=?2",
+            params![project_id.to_string(), revision_id.to_string()],
+            RawRevision::from_row,
+        )
+        .map_err(super::ledger::sql_error)?
+        .parse()
 }
 
 struct RawRevision {

@@ -94,15 +94,15 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         }
     }
     let mut statement = c
-        .prepare("SELECT request_id,usage,capture,capture_digest,attempt_id FROM execution_provider_requests")
+        .prepare("SELECT request_id,usage,capture,capture_digest,attempt_id,item_id FROM execution_provider_requests")
         .map_err(sql_error)?;
     for row in statement
         .query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<Vec<u8>>>(1)?, r.get::<_, Option<Vec<u8>>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<Vec<u8>>>(1)?, r.get::<_, Option<Vec<u8>>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?))
         })
         .map_err(sql_error)?
     {
-        let (id, bytes, capture, digest, attempt) = row.map_err(sql_error)?;
+        let (id, bytes, capture, digest, attempt, item) = row.map_err(sql_error)?;
         parse_id(id)?;
         if let Some(bytes) = bytes {
             let _: Usage = codec::decode(&bytes, 1024)?;
@@ -115,8 +115,14 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
                 let settings = crate::ai::settings(&input)?;
                 if settings.agent.is_none() { return Err(error(ErrorCode::CorruptLedger, "provider-member-association")); }
                 capture.validate(&settings.config).map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
+                crate::persistence::validate_team_provider_view_history_in(c, &input, parse_id(item)?, capture.team_view.as_ref())
+                    .map_err(|_| error(ErrorCode::CorruptLedger, "provider-team-view"))?;
             }
-            (None, None) => {}
+            (None, None) => {
+                let input = load_input(c, parse_id(attempt)?)?;
+                crate::persistence::validate_team_provider_view_history_in(c, &input, parse_id(item)?, None)
+                    .map_err(|_| error(ErrorCode::CorruptLedger, "provider-team-view"))?;
+            }
             _ => return Err(error(ErrorCode::CorruptLedger, "provider-request-capture")),
         }
     }
@@ -398,6 +404,9 @@ impl ProjectStore {
         let tx = self.execution_write()?;
         super::super::application::check_input(&tx, &request.input)?;
         super::super::application::check_service_input(&tx, &request.input, &authority)?;
+        crate::persistence::validate_team_provider_view_in(
+            &tx, request, capture.and_then(|capture| capture.team_view.as_ref()),
+        )?;
         let e = request.input.envelope();
         let ancestors = {
             let mut statement = tx.prepare("SELECT DISTINCT x.ancestor_id FROM execution_budget_ancestry x JOIN execution_cancellations c ON c.task_id=x.ancestor_id WHERE x.task_id=?1").map_err(sql_error)?;

@@ -979,7 +979,7 @@ function validAiPayload(payload: CommandPayload | undefined): payload is AiComma
       && validMinutes(payload.minutes) && typeof payload.confirmed === "boolean" && typeof payload.toolExecution === "boolean"
       && validApplicationToolExecutions(payload.applicationToolExecutions)
       && Array.isArray(payload.checkerExecutions) && Array.isArray(payload.effects) && new Set(payload.effects).size === payload.effects.length
-      && payload.effects.every(value => ["save-candidate","run-checks","select-missing","replace-captured-selection","adopt-resources","deliver","query-tools"].includes(value));
+      && payload.effects.every(value => ["save-candidate","run-checks","select-missing","replace-captured-selection","adopt-resources","deliver","query-tools","publish-discussion"].includes(value));
     case "ai-start-pending": return validIdentity(payload.attemptId) && editSequence(payload.editSeq) && aiValidation.validateRequestWorkPlanStart(payload.request);
     case "ai-plan-control": return ["pause","stop","take-over","continue"].includes(payload.command)
       && validIdentity(payload.planId) && taskRevision(payload.expectedGeneration) && (payload.minutes === null || validMinutes(payload.minutes))
