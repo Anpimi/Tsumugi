@@ -2,6 +2,8 @@
 use super::*;
 #[path = "team_recovery.rs"]
 mod recovery;
+#[path = "team_concurrency.rs"]
+mod concurrency;
 
 struct TeamFixture(
     Option<Fixture>,
@@ -197,11 +199,20 @@ fn wait_work(fixture: &Fixture, plan: &Value, attempt: &Value, candidate: bool) 
 }
 
 fn team_plan(fixture: &Fixture, peers: &[&Peer; 3], ids: &[ExecutionId; 3]) -> (Value, Value) {
+    team_plan_with_kinds(fixture, peers, ids, [&["translation"], &["review"], &["evidence"]])
+}
+
+fn team_plan_with_kinds(
+    fixture: &Fixture,
+    peers: &[&Peer; 3],
+    ids: &[ExecutionId; 3],
+    kinds: [&[&str]; 3],
+) -> (Value, Value) {
     let members: Vec<_> = peers.iter().enumerate().map(|(index, peer)| json!({
         "memberId":ids[index],"roleVersionId":ExecutionId::new(),
         "displayName":format!("Member {}", index + 1),"role":format!("Captured role {}", index + 1),
         "config":peer.config,"unitIds":[fixture.unit],"toolHandles":[],
-        "kinds":if index==0 {json!(["translation"])} else if index==1 {json!(["review"])} else {json!(["evidence"])}
+        "kinds":kinds[index]
     })).collect();
     let mut options = serde_json::to_value(PlanOptions::default()).unwrap();
     options["teamDiscussions"] = json!({"profile":"current-plan-2"});
