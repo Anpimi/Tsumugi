@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The internal Pi member channel has its own protocol 1, generated from Core's
+Rust authority. Bounded Agent input now selects that captured runtime explicitly
+and does not fall back to fixed single-completion execution. The member artifact
+contains application code and dependency notices, uses an independently approved
+Node tool, and leaves SDK/Process3, WorkPlan3 and schema 53 unchanged. The esbuild
+build dependency and generated member channel remain in the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; bilingual Unreleased
+entries are synchronized without another application version bump.
+
 Delivery recovery performs one bounded read of the original saved export action
 following a lost or uncertain acknowledgement. Explicit folder selection, previews,
 exports and reconciliation retain their existing authority; the original receipt

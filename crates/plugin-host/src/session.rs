@@ -109,7 +109,7 @@ impl Default for HostLimits {
     }
 }
 impl HostLimits {
-    fn validate(&self) -> HostResult<()> {
+    pub(crate) fn validate(&self) -> HostResult<()> {
         if self.max_frame_bytes == 0
             || self.max_frame_bytes > MAX_PROCESS_FRAME_BYTES
             || self.max_session_output_bytes < self.max_frame_bytes
@@ -242,15 +242,15 @@ pub struct CloseReceipt {
     pub direct_child_reaped: bool,
     pub exit_code: Option<i32>,
 }
-enum Event {
+pub(crate) enum Event {
     Frame(Vec<u8>),
     Fault(HostError),
 }
-struct Pipes {
-    sender: mpsc::Sender<Vec<u8>>,
-    receiver: mpsc::Receiver<Event>,
-    overflow: Arc<AtomicBool>,
-    tasks: Vec<JoinHandle<()>>,
+pub(crate) struct Pipes {
+    pub(crate) sender: mpsc::Sender<Vec<u8>>,
+    pub(crate) receiver: mpsc::Receiver<Event>,
+    pub(crate) overflow: Arc<AtomicBool>,
+    pub(crate) tasks: Vec<JoinHandle<()>>,
 }
 
 /// One serialized capability roster on an owned component instance. Multiple
@@ -1151,14 +1151,18 @@ impl Drop for ProcessSession {
 
 // A cancelled launch future cannot run async rollback. In that case the same
 // conservative Drop rule applies as to an already established session.
-struct PendingChild {
-    child: Option<Child>,
-    directory: Option<StagedDirectory>,
-    pid: Option<u32>,
+pub(crate) struct PendingChild {
+    pub(crate) child: Option<Child>,
+    pub(crate) directory: Option<StagedDirectory>,
+    pub(crate) pid: Option<u32>,
     cleanup: Option<LaunchCleanup>,
 }
 impl PendingChild {
-    fn new(child: Child, directory: StagedDirectory, cleanup: Option<LaunchCleanup>) -> Self {
+    pub(crate) fn new(
+        child: Child,
+        directory: StagedDirectory,
+        cleanup: Option<LaunchCleanup>,
+    ) -> Self {
         if let Some(cleanup) = &cleanup {
             cleanup.spawned();
         }
@@ -1169,7 +1173,7 @@ impl PendingChild {
             cleanup,
         }
     }
-    async fn rollback(&mut self, timeout_ms: u32) {
+    pub(crate) async fn rollback(&mut self, timeout_ms: u32) {
         let child = self.child.as_mut().unwrap();
         kill_owned_child(child, self.pid);
         if matches!(
@@ -1195,7 +1199,7 @@ impl Drop for PendingChild {
         }
     }
 }
-fn kill_owned_child(child: &mut Child, pid: Option<u32>) {
+pub(crate) fn kill_owned_child(child: &mut Child, pid: Option<u32>) {
     #[cfg(unix)]
     if child.id().is_some()
         && let Some(pid) = pid
@@ -1388,7 +1392,7 @@ fn publish(sender: &mpsc::Sender<Event>, overflow: &AtomicBool, event: Event) {
         overflow.store(true, Ordering::Release);
     }
 }
-fn attach_pipes(child: &mut Child, limits: &HostLimits) -> HostResult<Pipes> {
+pub(crate) fn attach_pipes(child: &mut Child, limits: &HostLimits) -> HostResult<Pipes> {
     let mut stdin = child.stdin.take().ok_or(HostError::ChannelFailed)?;
     let stdout = child.stdout.take().ok_or(HostError::ChannelFailed)?;
     let mut stderr = child.stderr.take().ok_or(HostError::ChannelFailed)?;

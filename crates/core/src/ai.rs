@@ -6,6 +6,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
+pub mod member;
+pub mod member_wire;
 pub mod provider;
 
 pub mod arena;
@@ -227,6 +229,7 @@ pub fn preview_digest(config: &AiConfig, items: &[AiItem]) -> Result<String, Exe
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -410,6 +413,10 @@ pub(super) fn validate_item_output(
     result: &FixedResult,
 ) -> Result<AiOutput, ExecutionError> {
     let out: AiOutput = codec::decode(&codec::encode(&result.envelope().output, 65536)?, 65536)?;
+    validate_output_scope(item, &out)?;
+    Ok(out)
+}
+fn validate_output_scope(item: &AiItem, out: &AiOutput) -> Result<(), ExecutionError> {
     if out.unit_id != item.unit_id
         || out.target_locale != item.target_locale
         || out.text.len() > 16384
@@ -417,16 +424,29 @@ pub(super) fn validate_item_output(
     {
         return Err(error(ErrorCode::OutputInvalid, "ai-output"));
     }
-    Ok(out)
+    Ok(())
 }
 
 #[derive(Default)]
 pub struct AiRunner {
     service: Arc<provider::ProviderService>,
+    member_executor: Option<Arc<dyn member::MemberExecutor>>,
 }
 impl AiRunner {
     pub fn with_service(service: Arc<provider::ProviderService>) -> Self {
-        Self { service }
+        Self {
+            service,
+            member_executor: None,
+        }
+    }
+    pub fn with_member_executor(
+        service: Arc<provider::ProviderService>,
+        member_executor: Arc<dyn member::MemberExecutor>,
+    ) -> Self {
+        Self {
+            service,
+            member_executor: Some(member_executor),
+        }
     }
     fn execute(
         &self,
@@ -435,6 +455,16 @@ impl AiRunner {
     ) -> Result<AiOutput, ExecutionError> {
         let s = settings(&request.input)?;
         let item = item_payload(&request.input, request.item_id)?;
+        if s.agent.is_some() {
+            let executor = self
+                .member_executor
+                .as_ref()
+                .ok_or_else(|| error(ErrorCode::DependencyConflict, "member-runtime"))?;
+            request.check_service_dispatch()?;
+            let output = executor.execute(request.clone(), cancel.clone(), self.service.clone())?;
+            member::validate_output(&s.config, &item, &output)?;
+            return Ok(output);
+        }
         self.execute_config(request, cancel, &s.config, &item)
     }
     pub(super) fn execute_config(
@@ -445,19 +475,40 @@ impl AiRunner {
         item: &AiItem,
     ) -> Result<AiOutput, ExecutionError> {
         let completion = execute_completion(
-            &self.service, request, cancel, config, request_body(config, item)?,
+            &self.service,
+            request,
+            cancel,
+            config,
+            request_body(config, item)?,
         )?;
-        let model: ModelOutput = codec::decode(completion.content.as_bytes(),
-            provider::ProviderProfile::compatible(config)?.max_output_bytes)
-            .map_err(|_| error(ErrorCode::OutputInvalid, "ai-output"))?;
-        if model.unit_id != item.unit_id || model.target_locale != item.target_locale
-            || model.text.len() > 16384 {
-            return Err(error(ErrorCode::OutputInvalid, "ai-output"));
-        }
-        Ok(AiOutput { unit_id: model.unit_id, target_locale: model.target_locale,
-            text: model.text, usage: completion.usage, requests: completion.requests,
-            usage_incomplete: completion.usage_incomplete })
+        let model = decode_model_output(config, item, &completion.content)?;
+        Ok(AiOutput {
+            unit_id: model.unit_id,
+            target_locale: model.target_locale,
+            text: model.text,
+            usage: completion.usage,
+            requests: completion.requests,
+            usage_incomplete: completion.usage_incomplete,
+        })
     }
+}
+fn decode_model_output(
+    config: &AiConfig,
+    item: &AiItem,
+    content: &str,
+) -> Result<ModelOutput, ExecutionError> {
+    let model: ModelOutput = codec::decode(
+        content.as_bytes(),
+        provider::ProviderProfile::compatible(config)?.max_output_bytes,
+    )
+    .map_err(|_| error(ErrorCode::OutputInvalid, "ai-output"))?;
+    if model.unit_id != item.unit_id
+        || model.target_locale != item.target_locale
+        || model.text.len() > 16384
+    {
+        return Err(error(ErrorCode::OutputInvalid, "ai-output"));
+    }
+    Ok(model)
 }
 
 /// The original provider transport owns reservations, retry accounting and

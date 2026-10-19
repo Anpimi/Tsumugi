@@ -20,6 +20,7 @@ pub(in crate::commands) mod application;
 pub(super) mod builds;
 pub(super) mod defaults;
 mod environment;
+pub(in crate::commands) mod member;
 pub(super) mod generation;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(in crate::commands) use environment::test_support::Fixture as InstalledFixture;
@@ -248,6 +249,7 @@ pub(super) struct ApplicationPlugins {
     // waits for Store IO or holds the inverse publication/instance lock order.
     environment_epoch: Mutex<Option<EnvironmentEpoch>>,
     application_instances: Mutex<application::Instances>,
+    member_resources: Mutex<Option<PathBuf>>,
 }
 impl Default for ApplicationPlugins {
     fn default() -> Self {
@@ -256,6 +258,7 @@ impl Default for ApplicationPlugins {
             open: AtomicBool::new(true),
             environment_epoch: Mutex::default(),
             application_instances: Mutex::default(),
+            member_resources: Mutex::default(),
         }
     }
 }

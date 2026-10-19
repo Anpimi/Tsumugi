@@ -39,6 +39,7 @@ conformance-worker = []
 javascript-conformance = []
 native-application-conformance = ["tsumugi-plugin-sdk/native-worker"]
 core-adapter = ["dep:tsumugi-core"]
+member-conformance = ["core-adapter"]
 
 [dev-dependencies]
 aws-lc-rs = "=1.18.1"

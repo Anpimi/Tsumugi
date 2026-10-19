@@ -1,3 +1,4 @@
+import { standaloneValidator } from './schema-output.mjs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -76,7 +77,7 @@ const ajvLicense = await readFile(new URL('LICENSE', ajvPackageURL), 'utf8');
 const sourceValidatorAttribution = `// Standalone generator: ${ajvPackage.name} ${ajvPackage.version} (${ajvPackage.license}).\n`
   + ajvLicense.trimEnd().split('\n').map(line => line ? `// ${line}` : '//').join('\n') + '\n';
 const ajv = new Ajv({ strict: true, code: { source: true, esm: true, lines: true } });
-const processValidator = standaloneCode(ajv, ajv.compile(schema));
+const processValidator = standaloneValidator(ajv, schema);
 const sourceInputValidator = standaloneCode(ajv, ajv.compile(sourceInput));
 const sourceCheckInputValidator = standaloneCode(ajv, ajv.compile(sourceCheckInput));
 for (const validator of [sourceInputValidator, sourceCheckInputValidator]) {

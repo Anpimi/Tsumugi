@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Run bounded Agent generation through a captured Pi member process with
+  controlled model transport and the original read-only tool permissions.
+  Missing or ambiguous approved runtime selections fail explicitly. Internal
+  process frames and cleanup keep the original request and child identities;
+  the SDK plugin protocol remains unchanged.
+
 - Store each controlled member model request beside its original provider budget
   reservation before sending HTTP. Unknown usage stays occupied; conflicting
   usage cannot replace an earlier report. Shared model IO now interrupts pending

@@ -306,6 +306,15 @@ fn member_provider_rejects_changed_profile_before_reservation_or_http() {
 
 #[test]
 fn member_provider_cancel_drops_stalled_sse_and_keeps_durable_unknown_capture() {
+    cancel_stalled_member_response(false);
+}
+
+#[test]
+fn member_provider_chunked_cancel_closes_socket_while_shared_service_stays_alive() {
+    cancel_stalled_member_response(true);
+}
+
+fn cancel_stalled_member_response(chunked: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!(
         "http://{}/v1/chat/completions",
@@ -315,7 +324,14 @@ fn member_provider_cancel_drops_stalled_sse_and_keeps_durable_unknown_capture() 
     let wire = std::thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         request(&mut socket);
-        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 10000\r\n\r\ndata: partial\n\n").unwrap();
+        if chunked {
+            // This is one complete HTTP chunk and an unfinished response. The
+            // chunk's eleven bytes contain an SSE comment, not a provider result.
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\nB\r\n: waiting\n\n\r\n").unwrap();
+        } else {
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 10000\r\n\r\ndata: partial\n\n").unwrap();
+        }
+        socket.flush().unwrap();
         started.send(()).unwrap();
         let mut byte = [0];
         socket
@@ -334,21 +350,21 @@ fn member_provider_cancel_drops_stalled_sse_and_keeps_durable_unknown_capture() 
     let (budget, events) = crate::ai::provider::budget_channel();
     dispatch.provider = Some(budget);
     let worker_dispatch = dispatch.clone();
+    // The desktop retains this service beyond any member. Holding the owner
+    // through the socket observation prevents client/runtime destruction from
+    // being mistaken for cancellation of this individual physical request.
+    let service = Arc::new(ProviderService::default());
+    let worker_service = service.clone();
     let before = Instant::now();
     let mut paused = false;
     std::thread::scope(|scope| {
         let worker = scope.spawn(move || {
-            let mut session = MemberProviderSession::new(
-                Arc::new(ProviderService::default()),
-                worker_dispatch,
-                worker_cancel,
-            )
-            .unwrap();
+            let mut session =
+                MemberProviderSession::new(worker_service, worker_dispatch, worker_cancel).unwrap();
             let id = session.prepare().unwrap();
-            assert_eq!(
-                session.exchange(id, payload).err().unwrap().code,
-                ErrorCode::OutcomeUnknown
-            );
+            let error = session.exchange(id, payload).err().unwrap();
+            assert_eq!(error.code, ErrorCode::OutcomeUnknown);
+            assert_eq!(error.stage, "ai-cancelled-after-dispatch");
             assert!(session.prepare().is_err());
         });
         while !worker.is_finished() {
@@ -369,6 +385,10 @@ fn member_provider_cancel_drops_stalled_sse_and_keeps_durable_unknown_capture() 
                     .unwrap();
             }
             if started_rx.try_recv().is_ok() {
+                assert!(
+                    Arc::strong_count(&service) >= 2,
+                    "shared transport service must outlive the pending request"
+                );
                 cancellation.request();
                 paused = true;
             }
@@ -379,7 +399,14 @@ fn member_provider_cancel_drops_stalled_sse_and_keeps_durable_unknown_capture() 
         }
         worker.join().unwrap();
     });
+    assert_eq!(
+        Arc::strong_count(&service),
+        1,
+        "only the external service owner remains after the member drains"
+    );
     wire.join().unwrap();
+    // Keep the exact shared client/runtime owner alive until after real EOF.
+    drop(service);
     assert!(paused);
     let budget = store
         .provider_budget(plan.execution_input().unwrap().task_id)

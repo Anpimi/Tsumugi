@@ -10,7 +10,8 @@
     "resources": {
       "resources/javascript-runtime/tool/": "runtimes/javascript/tool/",
       "resources/javascript-runtime/host/": "runtimes/javascript/host/",
-      "resources/bundled-plugins/": "bundled-plugins/"
+      "resources/bundled-plugins/": "bundled-plugins/",
+      "resources/member-runtime/": "member-runtime/"
     },
     "macOS": {
       "minimumSystemVersion": "13.5"

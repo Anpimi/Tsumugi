@@ -1,5 +1,7 @@
 //! Actual caller and query workers use independent grants in the original ledger.
 use super::*;
+#[path = "prepared_tool_services/member.rs"]
+mod member;
 use crate::commands::execution::test_fixtures::{
     OwnedDirectory, approved_runtime, provision_packages,
 };

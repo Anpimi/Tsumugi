@@ -7,6 +7,8 @@ pub mod catalog;
 pub mod core;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod filesystem;
+#[cfg(feature = "core-adapter")]
+pub mod member;
 mod native_runtime;
 mod pack;
 mod package;

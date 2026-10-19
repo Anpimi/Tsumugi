@@ -261,6 +261,12 @@ impl ExecutionHost {
         self.quiescing
     }
     fn new(store: &ProjectStore) -> Result<Self, CommandError> {
+        Self::with_member_factory(store, |_| None)
+    }
+    fn with_member_factory(
+        store: &ProjectStore,
+        member: impl FnOnce(ExecutionId) -> Option<Arc<dyn tsumugi_core::ai::member::MemberExecutor>>,
+    ) -> Result<Self, CommandError> {
         #[allow(unused_mut)]
         let mut host = Self {
             runtime: ExecutionRuntime::new(store).map_err(map_read)?,
@@ -315,11 +321,15 @@ impl ExecutionHost {
             .register_read_only(Arc::new(tsumugi_core::content::WebvttBuildRunner))
             .map_err(map_read)?;
         let provider_service = Arc::new(tsumugi_core::ai::provider::ProviderService::default());
+        let translation = match member(host.runtime.generation()) {
+            Some(member) => tsumugi_core::ai::AiRunner::with_member_executor(
+                provider_service.clone(), member,
+            ),
+            None => tsumugi_core::ai::AiRunner::with_service(provider_service.clone()),
+        };
         host.runtime
             .register_with_policy(
-                Arc::new(tsumugi_core::ai::AiRunner::with_service(
-                    provider_service.clone(),
-                )),
+                Arc::new(translation),
                 tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
             )
             .map_err(map_read)?;
@@ -687,7 +697,20 @@ impl ActiveSession {
     }
     fn execution_parts(&mut self) -> Result<(&mut ExecutionHost, &mut ProjectStore), CommandError> {
         if self.execution.is_none() {
-            let mut host = ExecutionHost::new(&self.store)?;
+            let services = self.services.clone();
+            let token = self.token.clone();
+            let project = ExecutionId::parse(&self.store.metadata()
+                .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?
+                .project_id().to_string()).map_err(map_read)?;
+            let mut host = if let Some(context) = services {
+                ExecutionHost::with_member_factory(&self.store, move |generation| {
+                    Some(Arc::new(work_plans::member::MemberFactory::new(
+                        context, token, project, generation,
+                    )))
+                })?
+            } else {
+                ExecutionHost::new(&self.store)?
+            };
             if let Some(context) = &self.services {
                 host.service_factory =
                     Some(Arc::new(work_plans::generation::GenerationFactory::new(

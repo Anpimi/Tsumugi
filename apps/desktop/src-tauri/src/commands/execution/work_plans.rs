@@ -3,6 +3,7 @@ pub(crate) mod agent;
 pub(crate) mod broker;
 pub(crate) mod generation;
 pub(crate) mod guidance;
+pub(crate) mod member;
 use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{

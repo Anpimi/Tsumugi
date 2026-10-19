@@ -771,6 +771,111 @@ pub async fn prepare_work_plan_agent_tool(
         .await
 }
 
+pub(super) type AgentToolAdmission = (
+    ExecutionId,
+    Arc<PreparedWorkPlanTool>,
+    Arc<WorkPlanToolConsent>,
+);
+pub(super) type AgentToolRunner = (UnsignedDecimal, Arc<RunnerProxy>, PluginExecutionBinding);
+
+pub(super) fn begin_agent_tool(
+    sessions: &mut SessionManager,
+    initial: &WorkPlanAgentToolStartRequest,
+) -> Result<Option<AgentToolAdmission>, CommandError> {
+    let active = authorized(
+        sessions,
+        &initial.session_token,
+        initial.project_id,
+        CommandStage::ExecutionRecover,
+    )?;
+    let (host, store) = active.execution_parts()?;
+    host.allow_mutation()?;
+    let scope = agent::scope(host, store, initial.scope_id)?;
+    let consent = current_consent(host, store, &scope)?;
+    let prepared = store
+        .prepare_work_plan_agent_tool(&scope, &initial.tool)
+        .map_err(map_recover)?;
+    if prepared.input().digest() != initial.input_digest {
+        return Err(stale());
+    }
+    if let Some(prior) = host.work_plans.tool_starts.get(&initial.tool.attempt_id) {
+        if prior.request != *initial {
+            return Err(stale());
+        }
+        return match store.execution_input(initial.tool.attempt_id) {
+            Ok(input) if input.bytes() == prepared.input().bytes() => Ok(None),
+            Ok(_) => Err(stale()),
+            Err(error) if error.code == ErrorCode::InvalidInput => {
+                Err(CommandError::unknown(CommandStage::ExecutionRecover))
+            }
+            Err(error) => Err(map_recover(error)),
+        };
+    }
+    if host.work_plans.tool_starts.len() >= 300 {
+        return Err(map_recover(ExecutionError::new(
+            ErrorCode::LimitExceeded,
+            "work-plan-tool-starts",
+        )));
+    }
+    Ok(Some((
+        host.tools.begin(initial.tool.attempt_id)?,
+        Arc::new(prepared),
+        consent,
+    )))
+}
+
+pub(super) fn finish_agent_tool(
+    sessions: &mut SessionManager,
+    plugins: &ApplicationPlugins,
+    request: WorkPlanAgentToolStartRequest,
+    ticket: ExecutionId,
+    prepared: Arc<PreparedWorkPlanTool>,
+    consent: Arc<WorkPlanToolConsent>,
+    loaded: Result<AgentToolRunner, CommandError>,
+) -> Result<ExecutionId, CommandError> {
+    let active = super::super::tools::finish_job(
+        sessions,
+        &request.session_token,
+        request.project_id,
+        ticket,
+    )?;
+    let (host, store) = active.execution_parts()?;
+    let scope = agent::scope(host, store, request.scope_id)?;
+    let actual_consent = current_consent(host, store, &scope)?;
+    if !Arc::ptr_eq(&consent, &actual_consent) {
+        return Err(stale());
+    }
+    let actual = store
+        .prepare_work_plan_agent_tool(&scope, &request.tool)
+        .map_err(map_recover)?;
+    if actual.input().bytes() != prepared.input().bytes() {
+        return Err(stale());
+    }
+    let (revision, proxy, binding) = loaded?;
+    plugins.with_environment_revision(revision, || {
+        host.register_plugin(proxy, binding).map_err(map_recover)?;
+        let start = ToolStart {
+            request: request.clone(),
+            grant_id: ExecutionId::new(),
+        };
+        host.work_plans
+            .tool_starts
+            .insert(request.tool.attempt_id, start.clone());
+        // Preserve the first identity if commit/acknowledgement is uncertain.
+        // Reconciliation observes the ledger; it never submits a second call.
+        if let Err(error) =
+            host.runtime
+                .submit_work_plan_tool(store, &actual, &consent, start.grant_id)
+        {
+            if error.code != ErrorCode::OutcomeUnknown {
+                host.work_plans.tool_starts.remove(&request.tool.attempt_id);
+            }
+            return Err(map_recover(error));
+        }
+        Ok(request.tool.attempt_id)
+    })
+}
+
 #[tauri::command]
 pub async fn start_work_plan_agent_tool(
     state: State<'_, AppState>,
@@ -782,48 +887,7 @@ pub async fn start_work_plan_agent_tool(
     let admitted = lease.submit(
         "start_work_plan_agent_tool.begin",
         CommandStage::ExecutionRecover,
-        move |sessions| {
-            let active = authorized(
-                sessions,
-                &initial.session_token,
-                initial.project_id,
-                CommandStage::ExecutionRecover,
-            )?;
-            let (host, store) = active.execution_parts()?;
-            host.allow_mutation()?;
-            let scope = agent::scope(host, store, initial.scope_id)?;
-            let consent = current_consent(host, store, &scope)?;
-            let prepared = store
-                .prepare_work_plan_agent_tool(&scope, &initial.tool)
-                .map_err(map_recover)?;
-            if prepared.input().digest() != initial.input_digest {
-                return Err(stale());
-            }
-            if let Some(prior) = host.work_plans.tool_starts.get(&initial.tool.attempt_id) {
-                if prior.request != initial {
-                    return Err(stale());
-                }
-                return match store.execution_input(initial.tool.attempt_id) {
-                    Ok(input) if input.bytes() == prepared.input().bytes() => Ok(None),
-                    Ok(_) => Err(stale()),
-                    Err(error) if error.code == ErrorCode::InvalidInput => {
-                        Err(CommandError::unknown(CommandStage::ExecutionRecover))
-                    }
-                    Err(error) => Err(map_recover(error)),
-                };
-            }
-            if host.work_plans.tool_starts.len() >= 300 {
-                return Err(map_recover(ExecutionError::new(
-                    ErrorCode::LimitExceeded,
-                    "work-plan-tool-starts",
-                )));
-            }
-            Ok(Some((
-                host.tools.begin(initial.tool.attempt_id)?,
-                Arc::new(prepared),
-                consent,
-            )))
-        },
+        move |sessions| begin_agent_tool(sessions, &initial),
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
@@ -851,49 +915,9 @@ pub async fn start_work_plan_agent_tool(
                 "start_work_plan_agent_tool.finish",
                 CommandStage::ExecutionRecover,
                 move |sessions| {
-                    let active = super::super::tools::finish_job(
-                        sessions,
-                        &request.session_token,
-                        request.project_id,
-                        ticket,
-                    )?;
-                    let (host, store) = active.execution_parts()?;
-                    let scope = agent::scope(host, store, request.scope_id)?;
-                    let actual_consent = current_consent(host, store, &scope)?;
-                    if !Arc::ptr_eq(&consent, &actual_consent) {
-                        return Err(stale());
-                    }
-                    let actual = store
-                        .prepare_work_plan_agent_tool(&scope, &request.tool)
-                        .map_err(map_recover)?;
-                    if actual.input().bytes() != prepared.input().bytes() {
-                        return Err(stale());
-                    }
-                    let (revision, proxy, binding) = loaded?;
-                    plugins.with_environment_revision(revision, || {
-                        host.register_plugin(proxy, binding).map_err(map_recover)?;
-                        let start = ToolStart {
-                            request: request.clone(),
-                            grant_id: ExecutionId::new(),
-                        };
-                        host.work_plans
-                            .tool_starts
-                            .insert(request.tool.attempt_id, start.clone());
-                        // Preserve the first identity if commit/acknowledgement is uncertain.
-                        // Reconciliation observes the ledger; it never submits a second call.
-                        if let Err(error) = host.runtime.submit_work_plan_tool(
-                            store,
-                            &actual,
-                            &consent,
-                            start.grant_id,
-                        ) {
-                            if error.code != ErrorCode::OutcomeUnknown {
-                                host.work_plans.tool_starts.remove(&request.tool.attempt_id);
-                            }
-                            return Err(map_recover(error));
-                        }
-                        Ok(request.tool.attempt_id)
-                    })
+                    finish_agent_tool(
+                        sessions, &plugins, request, ticket, prepared, consent, loaded,
+                    )
                 },
             )
             .await

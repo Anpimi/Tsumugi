@@ -24,6 +24,7 @@ export interface MemberPorts {
   prepare(request: PreparedMemberRequest, signal?: AbortSignal): Promise<string>;
   /** The trusted host owns credentials, physical-attempt budgets, IO and usage. */
   request(request: MemberHttpRequest): Promise<Response>;
+  providerEvent(identity: MemberRequestIdentity, event: unknown): Promise<void>;
   beforeToolCall(identity: MemberRequestIdentity, ...args: Parameters<NonNullable<AgentOptions["beforeToolCall"]>>): ReturnType<NonNullable<AgentOptions["beforeToolCall"]>>;
   afterToolCall(identity: MemberRequestIdentity, ...args: Parameters<NonNullable<AgentOptions["afterToolCall"]>>): ReturnType<NonNullable<AgentOptions["afterToolCall"]>>;
   finishTurn(identity: MemberRequestIdentity, ...args: Parameters<NonNullable<AgentOptions["finishTurn"]>>): ReturnType<NonNullable<AgentOptions["finishTurn"]>>;
@@ -36,6 +37,7 @@ export interface MemberOptions {
   model: Model<"openai-completions">;
   /** Exact authorized endpoint, including the chat/completions suffix. */
   endpoint: string;
+  systemPrompt: string;
   context: AgentMessage[];
   tools: AgentTool[];
   maxTurns: number;
@@ -73,7 +75,7 @@ export class MemberKernel {
     this.ports = options.ports;
     const model = structuredClone(options.model), maxTurns = options.maxTurns;
     this.agent = new Agent({
-      initialState: { model, messages: structuredClone(options.context), tools: [...options.tools], thinkingLevel: "off" },
+      initialState: { model, systemPrompt: options.systemPrompt, messages: structuredClone(options.context), tools: [...options.tools], thinkingLevel: "off" },
       transport: "sse",
       toolExecution: "sequential",
       // No ambient credentials, provider catalog, extensions or arbitrary file tools.
@@ -91,6 +93,7 @@ export class MemberKernel {
           apiKey: "controlled-host-transport",
           env: {},
           maxRetries: 0,
+          onProviderStreamEvent: event => this.ports.providerEvent(this.identity(), event),
           transport: "sse",
           maxTokens: model.maxTokens,
           fetch: (input, init) => this.fetch(input, init),

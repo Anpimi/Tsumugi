@@ -72,6 +72,34 @@ pub(crate) fn materialize(
     }
 }
 
+/// The application member uses only the separately approved Node tool. Its
+/// captured entry is not the plugin Host and does not run the Host's loader.
+#[cfg(feature = "core-adapter")]
+pub(crate) fn materialize_member(
+    staging_parent: &Path,
+    manifest: &[u8],
+    files: &BTreeMap<String, RuntimeArtifactFile>,
+    runtime: &CapturedRuntime,
+    authorized: impl Fn() -> bool,
+) -> HostResult<StagedDirectory> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        platform::materialize_runtime(
+            staging_parent,
+            manifest,
+            files,
+            Some(runtime),
+            true,
+            authorized,
+        )
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (staging_parent, manifest, files, runtime, authorized);
+        Err(HostError::UnsupportedPlatform)
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod platform {
     use super::*;
@@ -397,6 +425,24 @@ mod platform {
         runtime: Option<&CapturedRuntime>,
         authorized: impl Fn() -> bool,
     ) -> HostResult<StagedDirectory> {
+        materialize_runtime(
+            staging_parent,
+            manifest,
+            package_files,
+            runtime,
+            false,
+            authorized,
+        )
+    }
+
+    pub(super) fn materialize_runtime(
+        staging_parent: &Path,
+        manifest: &[u8],
+        package_files: &BTreeMap<String, RuntimeArtifactFile>,
+        runtime: Option<&CapturedRuntime>,
+        tool_only: bool,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<StagedDirectory> {
         let guard = Guard {
             authorized,
             deadline: Instant::now() + STAGE_TIMEOUT,
@@ -414,13 +460,15 @@ mod platform {
         if let Some(runtime) = runtime {
             staged.owned.create_directory("runtime", &guard)?;
             staged.owned.create_directory("runtime/tool", &guard)?;
-            staged.owned.create_directory("runtime/host", &guard)?;
             staged
                 .owned
                 .write_tree("runtime/tool", runtime.tool_files(), false, &guard)?;
-            staged
-                .owned
-                .write_tree("runtime/host", runtime.host_files(), false, &guard)?;
+            if !tool_only {
+                staged.owned.create_directory("runtime/host", &guard)?;
+                staged
+                    .owned
+                    .write_tree("runtime/host", runtime.host_files(), false, &guard)?;
+            }
         }
         for relative in staged.owned.directories.keys() {
             guard.check()?;
