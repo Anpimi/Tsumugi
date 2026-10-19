@@ -5,11 +5,13 @@ import { CommandFailureDetails, commandFailure } from "./CommandFailure";
 import { useSessionQuery } from "./SessionReadProvider";
 import type { SessionRequest } from "./executionCommands";
 import { workPlanCommands, type WorkPlanStatusView } from "./workPlanCommands";
+import { TeamWorkToolHistory, type OpenTeamToolTask } from "./TeamWorkToolHistory";
 
 /** Read the original team facts; this pane never runs or adopts a model output. */
-export function TeamExecutionHistory({ context, status, open, onOpenTask, onReadPost }: {
+export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpenToolTask, onReadPost }: {
   context: SessionRequest; status: WorkPlanStatusView; open: boolean;
   onOpenTask?: (taskId: string, attemptId: string) => Promise<boolean>; onReadPost: (postId: string) => void;
+  onOpenToolTask?: OpenTeamToolTask;
 }) {
   const { t } = useTranslation(), errorRef = useRef<HTMLDivElement>(null), [afterWork, setAfterWork] = useState<string | null>(null), [afterMessage, setAfterMessage] = useState<string | null>(null);
   const planId = status.plan.planId, policy = status.plan.options.teamExecution;
@@ -52,6 +54,9 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onRead
           {outcome?.kind === "waiting" ? <p>{t("ai.team.waiting", { count: outcome.requestedIntentIds.length })}</p> : null}
           {work.output ? <p>{work.output.usage ? t("ai.usage", { ...work.output.usage, defaultValue: enUS.ai.usage }) : t("ai.usageUnknown")}{work.output.usage && work.output.usageIncomplete ? ` · ${t("ai.usageUnknown")}` : ""}</p> : null}
           {onOpenTask ? <button type="button" className="secondary-button" onClick={() => { void onOpenTask(work.receipt.taskId, work.receipt.attemptId); }}>{t("ai.team.openTask")}</button> : null}
+          <TeamWorkToolHistory key={work.receipt.inputDigest} context={context} plan={status.plan}
+            work={{ taskId: work.receipt.taskId, attemptId: work.receipt.attemptId, inputDigest: work.receipt.inputDigest }}
+            open={open} current={!read.isFetching && !read.isStale && !read.error} onOpenTask={onOpenToolTask}/>
           <details><summary>{t("ai.team.identityDetails")}</summary><p>{work.receipt.intentId}</p><p>{work.receipt.roleVersionId}</p><p>{work.receipt.taskId}</p><p>{work.receipt.attemptId}</p>
             {work.author ? <p>{work.author.memberId} · {work.author.roleVersionId}</p> : null}
             {work.candidateRevisionId ? <p>{t("ai.team.candidateRevision", { revision: work.candidateRevisionId })}</p> : null}

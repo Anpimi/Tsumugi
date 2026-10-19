@@ -4,6 +4,9 @@ use super::*;
 mod recovery;
 #[path = "team_concurrency.rs"]
 mod concurrency;
+#[path = "team_tool_history.rs"]
+#[cfg(feature = "execution-test-host")]
+mod tool_history;
 
 struct TeamFixture(
     Option<Fixture>,
@@ -17,6 +20,12 @@ impl TeamFixture {
             &fixture.directory.path().join("member-resources"),
         );
         Self(Some(fixture), Some(runtime))
+    }
+    #[cfg(feature = "execution-test-host")]
+    fn query(pending: bool) -> (Self, Value) {
+        let (fixture, installation, selection) =
+            super::super::generation_tests::prepared_tool_services::team_query_fixture(pending);
+        (Self(Some(fixture), Some(installation)), selection)
     }
 }
 impl std::ops::Deref for TeamFixture {
@@ -208,10 +217,23 @@ fn team_plan_with_kinds(
     ids: &[ExecutionId; 3],
     kinds: [&[&str]; 3],
 ) -> (Value, Value) {
+    team_plan_with_tools(fixture, peers, ids, kinds, None)
+}
+
+fn team_plan_with_tools(
+    fixture: &Fixture,
+    peers: &[&Peer; 3],
+    ids: &[ExecutionId; 3],
+    kinds: [&[&str]; 3],
+    tool_selection: Option<&Value>,
+) -> (Value, Value) {
+    let handles: Vec<_> = tool_selection.into_iter().flat_map(|selection| {
+        selection["entries"].as_array().unwrap().iter().map(|entry| entry["handle"].clone())
+    }).collect();
     let members: Vec<_> = peers.iter().enumerate().map(|(index, peer)| json!({
         "memberId":ids[index],"roleVersionId":ExecutionId::new(),
         "displayName":format!("Member {}", index + 1),"role":format!("Captured role {}", index + 1),
-        "config":peer.config,"unitIds":[fixture.unit],"toolHandles":[],
+        "config":peer.config,"unitIds":[fixture.unit],"toolHandles":if index==0 { handles.clone() } else { Vec::new() },
         "kinds":kinds[index]
     })).collect();
     let mut options = serde_json::to_value(PlanOptions::default()).unwrap();
@@ -225,7 +247,7 @@ fn team_plan_with_kinds(
         .call(
             "prepare_work_plan",
             json!({"config":root,"locale":"zh-CN",
-        "unitIds":[fixture.unit],"options":options,"advisoryChecks":[],"toolSelection":null}),
+        "unitIds":[fixture.unit],"options":options,"advisoryChecks":[],"toolSelection":tool_selection}),
         )
         .unwrap();
     let previews = plan["memberPreviews"].as_array().unwrap();
@@ -235,10 +257,21 @@ fn team_plan_with_kinds(
         assert_eq!(preview["preview"]["config"], json!(peers[index].config));
         assert_eq!(preview["preview"]["items"][0]["sourceText"], "Hello");
     }
+    let mut effects = vec!["save-candidate", "publish-discussion", "dispatch-team-work", "send-team-message"];
+    let mut application_executions: Vec<Value> = Vec::new();
+    if tool_selection.is_some() {
+        effects.push("query-tools");
+        for tool in plan["tools"]["entries"].as_array().unwrap() {
+            let basis = &tool["execution"]["applicationScope"];
+            if !basis.is_null() && !application_executions.contains(basis) {
+                application_executions.push(basis.clone());
+            }
+        }
+    }
     let grant = fixture.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],
         "actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),
-        "toolExecution":false,"applicationToolExecutions":[],
-        "effects":["save-candidate","publish-discussion","dispatch-team-work","send-team-message"],"expiresAt":expiry()})).unwrap();
+        "toolExecution":tool_selection.is_some(),"applicationToolExecutions":application_executions,
+        "effects":effects,"expiresAt":expiry()})).unwrap();
     let start = json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]});
     assert_eq!(
         fixture.call("start_work_plan", start.clone()).unwrap(),

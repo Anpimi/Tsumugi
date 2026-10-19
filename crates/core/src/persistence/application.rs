@@ -9,6 +9,7 @@ mod selection;
 mod services;
 pub(crate) mod team;
 mod tools;
+mod tool_history;
 use super::ProjectStore;
 use crate::{
     ai::{self, AiConfig},

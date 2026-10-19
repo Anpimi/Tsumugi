@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Original team-work tool history adds a bounded read-only query and task
+navigation using the existing execution, delegation and result records. It does
+not add a persisted ledger, revive a stopped scope or replay an unresolved tool.
+Team preparation captures selected tools before validating member subsets,
+while retaining the final plan, environment and package-lifecycle checks.
+An exact accepted team-root start is acknowledged from its original Core
+receipt without reacquiring live tool state or restoring execution permission.
+The additive experimental Desktop query requires its generated contracts but
+does not alter existing request/response shapes, current-only project format
+57, member protocol 2, SDK/Process3 or WorkPlan3. It stays in the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with synchronized bilingual
+Unreleased entries and no additional package bump or dependency source.
+
 Paused team recovery adds explicitly captured authorization revisions and
 trusted human work under the original plan, action, execution and budget owners.
 Member and role changes preserve immutable historical identities; new model

@@ -55,7 +55,7 @@ mod philosophy_generation;
     target_arch = "aarch64"
 ))]
 #[path = "prepared_tool_services.rs"]
-mod prepared_tool_services;
+pub(super) mod prepared_tool_services;
 
 #[cfg(all(
     feature = "execution-test-host",

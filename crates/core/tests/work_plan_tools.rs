@@ -5,6 +5,8 @@ mod application;
 mod guidance;
 #[path = "work_plan_tools/subsets.rs"]
 mod subsets;
+#[path = "work_plan_tools/team_history.rs"]
+mod team_history;
 mod support;
 use serde_json::json;
 use std::{

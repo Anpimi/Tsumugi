@@ -11,9 +11,11 @@ import type {
   MaintenanceAssessmentRequest,
   WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest,
   WorkPlanTeamExecutionRequest, WorkPlanTeamRecoveryPrepareRequest, WorkPlanTeamRecoveryAuthorizeRequest, WorkPlanTeamRecoveryStateRequest,
+  WorkPlanTeamWorkToolsRequest,
 } from "./generated/ai.requests";
 import type { AttemptDetail, ExecutionOutputView, WorkPlanView, TeamDiscussionPost, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
-  WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView, WorkPlanTeamRecoveryPreviewView, TeamRecoveryReceipt, WorkPlanTeamRecoveryStateView, WorkPlanTeamRecoveryActionView } from "./generated/ai.responses";
+  WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView, WorkPlanTeamRecoveryPreviewView, TeamRecoveryReceipt, WorkPlanTeamRecoveryStateView, WorkPlanTeamRecoveryActionView,
+  TeamWorkReference, TeamWorkToolHistory } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -27,6 +29,16 @@ export type {
 } from "./generated/ai.responses";
 export type { WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest } from "./generated/ai.requests";
 export type { PlanOptions, WorkPlanCommand, AutomationEffect } from "./generated/ai.requests";
+export type { TeamWorkReference, TeamWorkToolHistory } from "./generated/ai.responses";
+export type TeamToolHistoryAttempt = TeamWorkToolHistory["attempts"][number];
+
+const teamToolHistoryRows = new WeakMap<TeamToolHistoryAttempt, { request: WorkPlanTeamWorkToolsRequest; identity: string | undefined }>();
+/** A transport read witness for navigation only; it grants no execution authority. */
+export function checkedTeamToolHistoryTask(context: Pick<WorkPlanTeamWorkToolsRequest, "sessionToken" | "projectId">, planId: string, work: TeamWorkReference, row: TeamToolHistoryAttempt): boolean {
+  const witness = teamToolHistoryRows.get(row);
+  return !!witness && witness.request.sessionToken === context.sessionToken && witness.request.projectId === context.projectId
+    && witness.request.planId === planId && jsonIdentity(witness.request.work) === jsonIdentity(work) && witness.identity === jsonIdentity(row);
+}
 
 function invalidAcknowledgement(): never {
   throw Object.assign(new Error("Invalid work-plan acknowledgement"), {
@@ -88,6 +100,23 @@ function recoveryActionMatches(value: WorkPlanTeamRecoveryActionView, request: W
 
 /** Receipts report an action's historical result. Read status for current authority. */
 export const workPlanCommands = {
+  teamWorkTools: async (input: WorkPlanTeamWorkToolsRequest) => {
+    const request = structuredClone(input);
+    if (!validators.validateRequestWorkPlanTeamWorkTools(request)) throw new Error("Invalid team tool history read");
+    const value = await checkedInvoke("read_work_plan_team_work_tools", request, validators.validateResponseWorkPlanTeamWorkTools);
+    if (value.projectId !== request.projectId || value.planId !== request.planId || jsonIdentity(value.work) !== jsonIdentity(request.work)
+      || value.attempts.length > request.limit
+      || value.attempts.some((row, index) => BigInt(row.sequence) <= BigInt(index ? value.attempts[index - 1].sequence : request.after ?? "0")
+        || row.reference.taskId === request.work.taskId || row.reference.attemptId === request.work.attemptId
+        || new Set(row.unitIds).size !== row.unitIds.length || row.unitIds.length === 0
+        || row.storedResultItems > row.progress.total || row.progress.total !== row.unitIds.length
+        || row.progress.succeeded + row.progress.failed + row.progress.unknown + row.progress.running + row.progress.queued + row.progress.cancelled !== row.progress.total
+        || row.progress.adopted > row.progress.succeeded)
+      || new Set(value.attempts.map(row => row.reference.attemptId)).size !== value.attempts.length
+      || value.nextAfter !== null && value.nextAfter !== value.attempts.at(-1)?.sequence) invalidAcknowledgement();
+    for (const row of value.attempts) teamToolHistoryRows.set(row, { request, identity: jsonIdentity(row) });
+    return value;
+  },
   teamRecoveryState: async (request: WorkPlanTeamRecoveryStateRequest) => {
     if (!validators.validateRequestWorkPlanTeamRecoveryState(request)) throw new Error("Invalid team recovery read");
     const value = await checkedInvoke("read_work_plan_team_recovery_state", request, validators.validateResponseWorkPlanTeamRecoveryState);

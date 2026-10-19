@@ -529,6 +529,36 @@ struct ToolRun {
     request: broker::WorkPlanAgentToolStartRequest,
     cancel_id: ExecutionId,
 }
+#[cfg(test)]
+pub(super) struct ToolReplyObservation {
+    pub tool: AgentToolRequest,
+    pub input_digest: String,
+    pub item_id: ExecutionId,
+    pub result_id: ExecutionId,
+}
+#[cfg(test)]
+pub(super) struct ToolReplyProbe {
+    reached: std::sync::mpsc::Sender<ToolReplyObservation>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+#[cfg(test)]
+impl ToolReplyProbe {
+    pub(super) fn new(
+        reached: std::sync::mpsc::Sender<ToolReplyObservation>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) -> Self {
+        Self { reached, release }
+    }
+    async fn before_delivery(self, observation: ToolReplyObservation) {
+        let _ = self.reached.send(observation);
+        // The owner callback and its Store access have already returned. Only
+        // delivery to this member waits; dropping the sender releases the wait.
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let _ = self.release.recv_timeout(Duration::from_secs(10));
+        })
+        .await;
+    }
+}
 #[derive(Clone)]
 enum TeamToolRequest {
     Publish(PublishTeamDiscussion),
@@ -1137,6 +1167,8 @@ impl ToolOperation {
             let owner = self.owner.clone();
             let captured = self.captured.clone();
             let reading = run.clone();
+            #[cfg(test)]
+            let parent = self.request.input.envelope().attempt_id;
             let outcome = self
                 .owner
                 .context
@@ -1157,6 +1189,8 @@ impl ToolOperation {
                             .execution_current_result(attempt, item)
                             .map_err(map_read)?
                         {
+                            #[cfg(test)]
+                            let result_id = result;
                             let result = store
                                 .read_work_plan_agent_tool_output(
                                     &captured.scope,
@@ -1166,18 +1200,30 @@ impl ToolOperation {
                                     result,
                                 )
                                 .map_err(map_read)?;
-                            return Ok(Some(
-                                result
-                                    .envelope()
-                                    .plugin
-                                    .as_ref()
-                                    .ok_or_else(|| {
-                                        map_read(fail(ErrorCode::OutputInvalid, "member-tool"))
-                                    })?
-                                    .result
-                                    .outcome
-                                    .clone(),
-                            ));
+                            let outcome = result
+                                .envelope()
+                                .plugin
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    map_read(fail(ErrorCode::OutputInvalid, "member-tool"))
+                                })?
+                                .result
+                                .outcome
+                                .clone();
+                            #[cfg(test)]
+                            {
+                                let probe = host.work_plans.tool_reply_probes.remove(&parent).map(|probe| {
+                                    (probe, ToolReplyObservation {
+                                        tool: reading.request.tool,
+                                        input_digest: reading.request.input_digest,
+                                        item_id: item,
+                                        result_id,
+                                    })
+                                });
+                                return Ok(Some((outcome, probe)));
+                            }
+                            #[cfg(not(test))]
+                            return Ok(Some(outcome));
                         }
                         let detail = store.execution_attempt(attempt, false).map_err(map_read)?;
                         if detail.items.iter().all(|item| {
@@ -1195,6 +1241,14 @@ impl ToolOperation {
                 .await
                 .map_err(command_error)?;
             if let Some(outcome) = outcome {
+                #[cfg(test)]
+                let outcome = {
+                    let (outcome, probe) = outcome;
+                    if let Some((probe, observation)) = probe {
+                        probe.before_delivery(observation).await;
+                    }
+                    outcome
+                };
                 let (payload, is_error) = match outcome {
                     sdk::InvocationOutcome::Succeeded { output } => (output, false),
                     sdk::InvocationOutcome::Failed { error } => (error, true),

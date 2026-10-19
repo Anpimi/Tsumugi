@@ -3060,6 +3060,47 @@
         ],
         "type": "object"
       },
+      "WorkPlanTeamWorkToolsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 16,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "work": {
+            "$ref": "#/definitions/TeamWorkReference"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "work",
+          "limit"
+        ],
+        "type": "object"
+      },
       "WorkPlanToolSelection": {
         "additionalProperties": false,
         "properties": {
@@ -3351,6 +3392,9 @@
       "workPlanTeamRecoveryState": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryStateRequest"
       },
+      "workPlanTeamWorkTools": {
+        "$ref": "#/definitions/WorkPlanTeamWorkToolsRequest"
+      },
       "workProtectionRead": {
         "$ref": "#/definitions/WorkProtectionReadRequest"
       },
@@ -3377,6 +3421,7 @@
       "workPlanAgentOpen",
       "workPlanTeamHistory",
       "workPlanTeamExecution",
+      "workPlanTeamWorkTools",
       "workPlanTeamRecoveryPrepare",
       "workPlanTeamRecoveryAuthorize",
       "workPlanTeamRecoveryAction",
@@ -9681,6 +9726,100 @@
         ],
         "type": "object"
       },
+      "TeamWorkToolAttempt": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "The display title captured in the original tool declaration.",
+            "type": "string"
+          },
+          "progress": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/Progress"
+              }
+            ],
+            "description": "The existing historical projection cannot confirm a live producer."
+          },
+          "reference": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/TeamWorkReference"
+              }
+            ],
+            "description": "An exact tool execution identity; it is not a team work or a scope."
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "storedResultItems": {
+            "description": "Items with a current result, not proof of validation, effect or drainage.",
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "toolHandle": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "sequence",
+          "reference",
+          "toolHandle",
+          "name",
+          "unitIds",
+          "progress",
+          "storedResultItems"
+        ],
+        "type": "object"
+      },
+      "TeamWorkToolHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "items": {
+              "$ref": "#/definitions/TeamWorkToolAttempt"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "nextAfter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "work": {
+            "$ref": "#/definitions/TeamWorkReference"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "work",
+          "attempts",
+          "nextAfter"
+        ],
+        "type": "object"
+      },
       "TeamWorkView": {
         "additionalProperties": false,
         "properties": {
@@ -11571,6 +11710,9 @@
       "workPlanTeamRecoveryState": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryStateView"
       },
+      "workPlanTeamWorkTools": {
+        "$ref": "#/definitions/TeamWorkToolHistory"
+      },
       "workProtection": {
         "$ref": "#/definitions/WorkProtection"
       }
@@ -11587,6 +11729,7 @@
       "workPlanAgent",
       "workPlanTeamHistory",
       "workPlanTeamExecution",
+      "workPlanTeamWorkTools",
       "workPlanTeamRecoveryPreview",
       "workPlanTeamRecoveryReceipt",
       "workPlanTeamRecoveryAction",

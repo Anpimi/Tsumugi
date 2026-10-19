@@ -11,7 +11,7 @@ import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import { workPlanCommands, type MaintenanceAssessment, type MaintenancePlanBasis, type MaintenanceChoice, type WorkPlanView, type WorkPlanStatusView, type PlanOptions } from "./workPlanCommands";
+import { workPlanCommands, checkedTeamToolHistoryTask, type TeamWorkReference, type TeamToolHistoryAttempt, type MaintenanceAssessment, type MaintenancePlanBasis, type MaintenanceChoice, type WorkPlanView, type WorkPlanStatusView, type PlanOptions } from "./workPlanCommands";
 import { useWorkPlanControlSession } from "./WorkPlanControls";
 import { useWorkPlanAgentSession } from "./WorkPlanAgentControls";
 import { childLifecycleKey, childRunWorking, hasChildUncertainty } from "./WorkPlanChildControls";
@@ -184,6 +184,10 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   function canOpenChildHistory(taskId: string, attemptId: string) {
     return canRunChild(true) && agent.current().child.children.some(child => child.runs.some(action =>
       action.phase !== "not-enqueued" && action.request.taskId === taskId && action.request.attemptId === attemptId));
+  }
+  function canOpenTeamToolHistory(planId: string, work: TeamWorkReference, row: TeamToolHistoryAttempt) {
+    return live() && !parentReserved(true) && !agent.current().child.pending && current().planId === planId
+      && checkedTeamToolHistoryTask(session, planId, work, row);
   }
   function available(locale = current().locale) { return locale !== "" && locales.current.includes(locale); }
   function connectionCurrent() {
@@ -738,7 +742,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }), [reads,state.attempt,contentToolAttempt]);
   const contentRangeAvailable = useSyncExternalStore(subscribeContentAvailability, canReceiveContentSelection, canReceiveContentSelection);
   return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan, contentRangeAvailable,
-    planControl, agent, component, discussions, recovery,
+    planControl, agent, component, discussions, recovery, canOpenTeamToolHistory,
     canOpenRecoveryTask: (taskId: string, attemptId: string) => live() && !parentReserved(true) && recovery.taskReferences().some(reference => reference.taskId === taskId && reference.attemptId === attemptId), captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),

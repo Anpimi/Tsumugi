@@ -133,6 +133,16 @@ struct Setup {
     tool_selection: Value,
     query: sdk::CapabilityToolBinding,
 }
+pub(in crate::commands::execution::work_plans::tests) fn team_query_fixture(
+    pending: bool,
+) -> (Fixture, OwnedDirectory, Value) {
+    let setup = Setup::new(pending);
+    crate::commands::execution::test_fixtures::configure_member_resources(
+        &setup.fixture.app.state::<AppState>().plugins,
+        &setup.fixture.directory.path().join("member-resources"),
+    );
+    (setup.fixture, setup._installation, setup.tool_selection)
+}
 impl Setup {
     fn new(pending: bool) -> Self {
         let fixture = Fixture::create();

@@ -593,6 +593,7 @@ export interface Responses {
   workPlanTeamRecoveryPreview: WorkPlanTeamRecoveryPreviewView;
   workPlanTeamRecoveryReceipt: TeamRecoveryReceipt;
   workPlanTeamRecoveryState: WorkPlanTeamRecoveryStateView;
+  workPlanTeamWorkTools: TeamWorkToolHistory;
   workProtection: WorkProtection;
 }
 export interface MaintenanceAssessment {
@@ -2595,4 +2596,187 @@ export interface TeamRecoveryStateView {
   state: WorkPlanState;
   unconfirmedCompletions: number;
   unresolvedWork: TeamWorkReference[];
+}
+export interface TeamWorkToolHistory {
+  /**
+   * @maxItems 16
+   */
+  attempts:
+    | []
+    | [TeamWorkToolAttempt]
+    | [TeamWorkToolAttempt, TeamWorkToolAttempt]
+    | [TeamWorkToolAttempt, TeamWorkToolAttempt, TeamWorkToolAttempt]
+    | [TeamWorkToolAttempt, TeamWorkToolAttempt, TeamWorkToolAttempt, TeamWorkToolAttempt]
+    | [TeamWorkToolAttempt, TeamWorkToolAttempt, TeamWorkToolAttempt, TeamWorkToolAttempt, TeamWorkToolAttempt]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ]
+    | [
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt,
+        TeamWorkToolAttempt
+      ];
+  nextAfter: Revision | null;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  work: TeamWorkReference;
+}
+export interface TeamWorkToolAttempt {
+  /**
+   * The display title captured in the original tool declaration.
+   */
+  name: string;
+  /**
+   * The existing historical projection cannot confirm a live producer.
+   */
+  progress: Progress;
+  /**
+   * An exact tool execution identity; it is not a team work or a scope.
+   */
+  reference: TeamWorkReference;
+  sequence: Revision;
+  /**
+   * Items with a current result, not proof of validation, effect or drainage.
+   */
+  storedResultItems: number;
+  toolHandle: ExecutionId;
+  /**
+   * @maxItems 100
+   */
+  unitIds: ExecutionId[];
 }

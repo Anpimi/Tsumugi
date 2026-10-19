@@ -129,6 +129,7 @@ macro_rules! handlers {
         work_plans::guidance::read_work_plan_agent_resource,
         work_plans::team::read_work_plan_team_history,work_plans::team::read_work_plan_team_post,
         work_plans::coordination::read_work_plan_team_execution,
+        work_plans::coordination::read_work_plan_team_work_tools,
         work_plans::recovery::prepare_work_plan_team_recovery,
         work_plans::recovery::authorize_work_plan_team_recovery,
         work_plans::recovery::read_work_plan_team_recovery_action,

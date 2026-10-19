@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Prepare teams with their explicitly selected reference tools.
+  Rechecking an accepted team start returns its original task during tool
+  execution and after reopening, without starting it again.
+
+- Inspect the original tool tasks and saved results from a team's recorded work,
+  including after stopping or reopening the project. Unresolved outcomes remain
+  distinct from saved results; opening this history does not rerun tools.
+
 - Prepare a paused team's next work after its original workers have drained,
   with new approval for member, role, model and sharing changes. Existing
   publications and their required reasons are disclosed for each destination.

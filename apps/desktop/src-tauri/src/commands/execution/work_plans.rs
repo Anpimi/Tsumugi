@@ -40,6 +40,8 @@ pub(super) struct WorkPlanSession {
     recovery: Option<recovery::RecoveryPreparation>,
     #[cfg(test)]
     recovery_authorize_probe: Option<generation::CaptureProbe>,
+    #[cfg(test)]
+    tool_reply_probes: BTreeMap<ExecutionId, member::ToolReplyProbe>,
 }
 impl WorkPlanSession {
     pub(super) fn stop_package(
@@ -635,21 +637,28 @@ pub async fn prepare_work_plan(
                         .advisory_checks
                         .iter()
                         .map(|choice| choice.package.clone())
+                        .chain(initial.tool_selection.iter().flat_map(|selection| {
+                            selection.entries.iter().map(|choice| choice.tool.package.clone())
+                        }))
                         .collect(),
                 )
             },
         )
         .await?;
     let accepted_work = selected_work.clone();
-    let advisory = state
+    let selected = request.tool_selection.clone();
+    let (advisory, tools) = state
         .io
         .run(CommandStage::ExecutionRead, move || {
             accepted_work.check()?;
-            capture_advisory(&plugins, &selections)
+            let advisory = capture_advisory(&plugins, &selections)?;
+            let tools = broker::capture_selection(&plugins, selected.as_ref())?;
+            Ok((advisory, tools))
         })
         .await?;
     let mut initial = request.clone();
     initial.options.advisory_checks = advisory;
+    let captured_tools = tools.clone();
     let captured = lease.submit(
         "prepare_work_plan.capture",
         CommandStage::ExecutionRead,
@@ -679,14 +688,15 @@ pub async fn prepare_work_plan(
                     &initial.locale,
                     &initial.unit_ids,
                     initial.options,
-                    None,
+                    captured_tools,
                     basis,
                 ),
-                None => store.prepare_work_plan(
+                None => store.prepare_work_plan_with_tools(
                     initial.config,
                     &initial.locale,
                     &initial.unit_ids,
                     initial.options,
+                    captured_tools,
                 ),
             }
             .map_err(map_read)?;
@@ -696,6 +706,11 @@ pub async fn prepare_work_plan(
                 checkers
                     .iter()
                     .map(|checker| package_lifecycle::binding_package(&checker.binding))
+                    .chain(plan.tools.iter().flat_map(|tools| {
+                        tools.entries.iter().map(|tool| {
+                            package_lifecycle::binding_package(&tool.execution)
+                        })
+                    }))
                     .collect(),
             )?;
             Ok((plan, source, checkers, work, host.runtime.generation()))
@@ -705,14 +720,6 @@ pub async fn prepare_work_plan(
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
         let (plan, source, checkers, work, generation) = captured.await?;
-        let selected = request.tool_selection.clone();
-        let current_plugins = plugins.clone();
-        let tools = io
-            .clone()
-            .run(CommandStage::ExecutionRead, move || {
-                broker::capture_selection(&current_plugins, selected.as_ref())
-            })
-            .await?;
         let (environments, views) = load_checkers(
             io,
             plugins.clone(),
@@ -1036,7 +1043,8 @@ pub async fn start_work_plan(
                     if let Some(input) = receipt.input.filter(|input| input.operation == ai::team::OPERATION) {
                         let fixed = FixedInput::capture(input).map_err(map_read)?;
                         if matches!(ai::team::settings(&fixed).map_err(map_read)?.binding,
-                            tsumugi_core::application::TeamWorkBinding::HumanContinuation { .. }) {
+                            tsumugi_core::application::TeamWorkBinding::Root { .. }
+                            | tsumugi_core::application::TeamWorkBinding::HumanContinuation { .. }) {
                             if let Some(start) = active.store.work_plan_start_action_read(
                                 request.project_id, request.plan_id, request.action_id, request.expected_generation,
                             ).map_err(map_read)? {

@@ -35,7 +35,7 @@ fn assert_held(http: &Http) {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn owned_member_pids(fixture: &TeamFixture) -> Vec<u32> {
+pub(super) fn owned_member_pids(fixture: &TeamFixture) -> Vec<u32> {
     let children = std::process::Command::new("/usr/bin/pgrep")
         .args(["-P", &std::process::id().to_string()])
         .output()

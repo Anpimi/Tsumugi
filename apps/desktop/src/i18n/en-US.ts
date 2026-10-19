@@ -1135,6 +1135,18 @@ ai: {
       "tools": "A selected reference provider was removed. Correct the member’s choices before preparing."
     }
   },
+  "teamTools": {
+    "title": "Original tool tasks for this work",
+    "help": "These children are matched to this exact work using its recorded input and original tool authorization. Names and scope come from the captured version, even if the tool has changed or been removed. Reading this history does not restore permission, run a tool or resend a model request.",
+    "refresh": "Refresh original tool tasks", "loading": "Reading the original tool task history…", "stale": "This page needs a fresh read before opening a task.",
+    "failed": "The original tool history could not be confirmed. No other work's records are shown. Refresh to try the same read again.",
+    "empty": "No tool child attempts were recorded for this work on this page.",
+    "entries": "Captured original entries: {{entries}} · {{locale}}",
+    "recorded": "Items with a recorded result: {{count}}",
+    "resultHelp": "A recorded result does not prove validation, model receipt, an adopted effect or completed cleanup. Inspect the original task for its full result and available actions.",
+    "unknown": "Some original tool outcomes remain unknown. Missing results do not prove failure or safe replay; an outcome query may be unavailable. This history does not retry the tool.",
+    "openTask": "Inspect {{name}} original task", "firstPage": "First tool attempts", "nextPage": "Next tool attempts"
+  },
   "recovery": {
     "title": "Change this team and prepare human work",
     "unresolvedTitle": "{{count}} original work results remain unresolved",

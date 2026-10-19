@@ -32,7 +32,7 @@ import { AiEffectStatus } from "./AiEffectStatus";
 import { StrategyWorkbench } from "./StrategyWorkbench";
 import { useOptionalStrategyDraftSession } from "./StrategyDraftSession";
 import { TextReviewSelections } from "./TextReviewSelections";
-import type { PlanOptions, WorkPlanStatusView } from "./workPlanCommands";
+import type { PlanOptions, WorkPlanStatusView, TeamWorkReference, TeamToolHistoryAttempt } from "./workPlanCommands";
 import type { TranslationRevision } from "./translationCommands";
 import type {EditorTarget} from "./TranslationWorkbench";
 import type { ContentPage } from "./sourceCommands";
@@ -56,7 +56,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolve=useRef<((v:boolean)=>void)|null>(null),errorRef=useRef<HTMLDivElement>(null);
   const mounted=useRef(false),navigationGeneration=useRef(0);
-  const childHistoryIntent = useRef<{ taskId: string; attemptId: string } | null>(null);
+  const childHistoryIntent = useRef<{ taskId: string; attemptId: string; current: () => boolean } | null>(null);
   useLayoutEffect(()=>{mounted.current=true;return()=>{mounted.current=false;navigationGeneration.current++;};},[]);
   useLayoutEffect(()=>{navigationGeneration.current++;},[open,disabled,project.sessionToken]);
   const scopeOptions=sourceReads.scope(context),scopeRead=useSessionQuery({...scopeOptions,enabled:open});
@@ -124,14 +124,23 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   function allowNavigate(destination?:WorkspaceDestination):Promise<boolean> {
     const history = childHistoryIntent.current;
     if(history && destination?.kind === "task" && destination.taskId === history.taskId && destination.attemptId === history.attemptId
-      && !cancelUnresolved && !translationDraft.candidates.blocked() && preparation.canOpenChildHistory(history.taskId,history.attemptId)) return Promise.resolve(true);
+      && !cancelUnresolved && !translationDraft.candidates.blocked() && history.current()) return Promise.resolve(true);
     if(destination?.kind === "task" && !cancelUnresolved && !translationDraft.candidates.blocked() && preparation.canOpenRecoveryTask(destination.taskId,destination.attemptId)) return Promise.resolve(true);
     if(preparation.reserved()||translationDraft.candidates.blocked()){setOpen(true);return Promise.resolve(false);}
     return Promise.resolve(true);
   }
   async function openChildHistory(taskId:string,attemptId:string) {
     if(!onOpenTask || childHistoryIntent.current || !preparation.canOpenChildHistory(taskId,attemptId))return false;
-    const intent={taskId,attemptId};childHistoryIntent.current=intent;
+    const intent={taskId,attemptId,current:()=>preparation.canOpenChildHistory(taskId,attemptId)};childHistoryIntent.current=intent;
+    try{return await onOpenTask(taskId,attemptId);}
+    finally{if(childHistoryIntent.current===intent)childHistoryIntent.current=null;}
+  }
+  async function openTeamToolHistory(work:TeamWorkReference,row:TeamToolHistoryAttempt) {
+    const originalPlan=status?.plan.planId;
+    if(!onOpenTask || disabled || !open || !mounted.current || childHistoryIntent.current || !originalPlan
+      || !preparation.canOpenTeamToolHistory(originalPlan,work,row))return false;
+    const {taskId,attemptId}=row.reference;
+    const intent={taskId,attemptId,current:()=>preparation.canOpenTeamToolHistory(originalPlan,work,row)};childHistoryIntent.current=intent;
     try{return await onOpenTask(taskId,attemptId);}
     finally{if(childHistoryIntent.current===intent)childHistoryIntent.current=null;}
   }
@@ -420,6 +429,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       writable={!disabled&&!scopeRead.error&&!!scopeRead.data?.currentSnapshot&&project.metadata.targetLocales.includes(status.plan.locale)
         &&status.plan.scope.every(unit=>unit.sourceSnapshotId===scopeRead.data?.currentSnapshot)}/>:null}
     {status?.plan.options.teamExecution?<TeamExecutionHistory key={`team-execution:${status.plan.planId}`} context={context} status={status} open={open} onOpenTask={onOpenTask}
+      onOpenToolTask={onOpenTask?openTeamToolHistory:undefined}
       onReadPost={postId=>preparation.discussions.focusPost(status.plan.planId,postId)}/>:null}
     {status?.plan.preview&&!status.plan.options.teamExecution?<WorkPlanAgentControls context={context} status={status} open={open} disabled={disabled||planBlocked||!!pendingAdopt||active} busy={busy}
       session={preparation.agent} component={preparation.component} ownerBusy={()=>preparation.current().busy} run={perform} onBlockedChange={()=>{}} onGenerated={preparation.recordGenerated}

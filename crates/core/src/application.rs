@@ -20,6 +20,8 @@ pub mod team_execution;
 pub use team_execution::*;
 pub mod team_recovery;
 pub use team_recovery::*;
+pub mod team_tool_history;
+pub use team_tool_history::*;
 pub mod mcp_retrieval;
 pub use mcp_retrieval::*;
 mod maintenance;

@@ -43,6 +43,7 @@ export declare function validateRequestWorkPlanTeamRecoveryAuthorize(value: unkn
 export declare function validateRequestWorkPlanTeamRecoveryEnd(value: unknown): value is Requests["workPlanTeamRecoveryEnd"];
 export declare function validateRequestWorkPlanTeamRecoveryPrepare(value: unknown): value is Requests["workPlanTeamRecoveryPrepare"];
 export declare function validateRequestWorkPlanTeamRecoveryState(value: unknown): value is Requests["workPlanTeamRecoveryState"];
+export declare function validateRequestWorkPlanTeamWorkTools(value: unknown): value is Requests["workPlanTeamWorkTools"];
 export declare function validateRequestWorkProtectionRead(value: unknown): value is Requests["workProtectionRead"];
 export declare function validateRequestWorkProtectionSet(value: unknown): value is Requests["workProtectionSet"];
 export declare function validateResponseEffectRetry(value: unknown): value is Responses["effectRetry"];
@@ -79,4 +80,5 @@ export declare function validateResponseWorkPlanTeamRecoveryEnd(value: unknown):
 export declare function validateResponseWorkPlanTeamRecoveryPreview(value: unknown): value is Responses["workPlanTeamRecoveryPreview"];
 export declare function validateResponseWorkPlanTeamRecoveryReceipt(value: unknown): value is Responses["workPlanTeamRecoveryReceipt"];
 export declare function validateResponseWorkPlanTeamRecoveryState(value: unknown): value is Responses["workPlanTeamRecoveryState"];
+export declare function validateResponseWorkPlanTeamWorkTools(value: unknown): value is Responses["workPlanTeamWorkTools"];
 export declare function validateResponseWorkProtection(value: unknown): value is Responses["workProtection"];

@@ -156,6 +156,7 @@ export interface Requests {
   workPlanTeamRecoveryEnd: WorkPlanTeamRecoveryAuthorizeRequest;
   workPlanTeamRecoveryPrepare: WorkPlanTeamRecoveryPrepareRequest;
   workPlanTeamRecoveryState: WorkPlanTeamRecoveryStateRequest;
+  workPlanTeamWorkTools: WorkPlanTeamWorkToolsRequest;
   workProtectionRead: WorkProtectionReadRequest;
   workProtectionSet: WorkProtectionSetRequest;
 }
@@ -1309,6 +1310,14 @@ export interface WorkPlanTeamRecoveryStateRequest {
   planId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
+}
+export interface WorkPlanTeamWorkToolsRequest {
+  after?: Revision | null;
+  limit: number;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+  work: TeamWorkReference;
 }
 export interface WorkProtectionReadRequest {
   locale: string;
