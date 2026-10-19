@@ -83,9 +83,13 @@ export type NativeHostProfile = "native-application-host-v1";
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
-export type TeamDiscussionPolicy = {
-  profile: "current-plan-1";
-};
+export type TeamDiscussionPolicy =
+  | {
+      profile: "current-plan-1";
+    }
+  | {
+      profile: "current-plan-2";
+    };
 
 export interface Requests {
   effectRetry: AiEffectRetryRequest;

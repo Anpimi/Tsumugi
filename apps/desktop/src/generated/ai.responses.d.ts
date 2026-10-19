@@ -377,9 +377,13 @@ export type ReviewCheckerView =
     };
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
-export type TeamDiscussionPolicy = {
-  profile: "current-plan-1";
-};
+export type TeamDiscussionPolicy =
+  | {
+      profile: "current-plan-1";
+    }
+  | {
+      profile: "current-plan-2";
+    };
 export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
 export type InvocationOutcome =
@@ -1255,6 +1259,7 @@ export interface PlanSelectionBasis {
   unitId: ExecutionId;
 }
 export interface TeamDiscussionLimits {
+  maxArtifactBytes: number;
   maxMembers: number;
   maxPostBytes: number;
   maxPosts: number;

@@ -1,10 +1,25 @@
 # Application versioning and changelog maintenance
 
+An additional, separately selected same-plan sharing profile permits reading
+the exact saved translation revision or the target's original adopted source
+text referenced by a published discussion. Existing discussion-only plans keep
+their original scope. The new policy is persisted in PlanOptions and frozen
+views, advancing the current-only project format to schema 55; schema 54 and
+earlier directories remain preserved and refused without migration or reset.
+Desktop experimental policy and limits consumers must regenerate their
+contracts, including the profile-specific artifact result limit. The existing
+generic tool result and opaque shared view keep internal member protocol 2,
+SDK/Process3 and WorkPlan3 unchanged. No dependency or package version source
+changes are required. This remains in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with synchronized bilingual
+Unreleased entries and no additional package version bump.
+
 Explicit, opt-in same-plan discussions add immutable member, role and publication
 facts under the original WorkPlan authority. Their frozen per-request view is
 recorded with the exact serialized provider request in the existing reservation.
-The current-only project format advances to schema 54; schema 53 and earlier
-development directories remain preserved and refused without migration or reset.
+That initial discussion unit advanced the current-only project format to schema
+54; schema 53 and earlier development directories remain preserved and refused
+without migration or reset.
 The internal member protocol advances to 2 for its required nullable prepared
 shared view, so old member artifacts cannot launch. WorkPlan3 gains an optional,
 default-disabled discussion policy and a separately disclosed authorization

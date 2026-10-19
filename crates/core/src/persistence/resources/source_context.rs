@@ -210,6 +210,24 @@ impl SourceContextReader {
         Ok(first)
     }
 
+    /// Select the same canonical occurrence as AI preview, within an exact result.
+    pub(in crate::persistence) fn source_for_result_reference(
+        &self,
+        attempt_id: ExecutionId,
+        result_id: ExecutionId,
+        unit_id: ExecutionId,
+        source_revision_id: ExecutionId,
+    ) -> Result<&crate::content::ContentRow, ExecutionError> {
+        if self.source_attempt_id != attempt_id || self.source_result_id != result_id {
+            return Err(failure(ErrorCode::Unauthorized, "source-result-reference"));
+        }
+        let row = self.source_for_unit(unit_id)?;
+        if row.source_revision_id != Some(source_revision_id) {
+            return Err(failure(ErrorCode::Unauthorized, "source-result-reference"));
+        }
+        Ok(row)
+    }
+
     pub fn project(
         &self,
         request: &SourceContextRequest,

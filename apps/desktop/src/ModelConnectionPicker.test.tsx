@@ -40,3 +40,17 @@ it("shows sharing and request limits without duplicating the Arena shared reques
 it("describes incomplete numeric input without substituting defaults or showing NaN",()=>{
  render(<PreparationBudgetSummary config={{...config,maxRequests:Number.NaN}}/>);expect(screen.getByText(i18n.t("connections.incompleteBudget"))).toBeInTheDocument();expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
 });
+it.each(["en-US","zh-CN"])("keeps the sharing summary within its explicit discussion profile in %s",async locale=>{
+ await i18n.changeLanguage(locale);
+ const {rerender}=render(<PreparationBudgetSummary config={config}/>);
+ expect(screen.getByText(i18n.t("ai.costUnknown"))).toBeInTheDocument();
+ rerender(<PreparationBudgetSummary config={config} policy={{profile:"current-plan-1"}}/>);
+ expect(screen.getByText(i18n.t("ai.discussions.costUnknown"))).toBeInTheDocument();
+ expect(screen.queryByText(i18n.t("ai.discussions.artifactCostUnknown"))).not.toBeInTheDocument();
+ rerender(<PreparationBudgetSummary config={config} policy={{profile:"current-plan-2"}}/>);
+ expect(screen.getByText(i18n.t("ai.discussions.artifactCostUnknown"))).toBeInTheDocument();
+ expect(screen.queryByText(i18n.t("ai.costUnknown"))).not.toBeInTheDocument();
+ rerender(<PreparationBudgetSummary config={config}/>);
+ expect(screen.getByText(i18n.t("ai.costUnknown"))).toBeInTheDocument();
+ expect(invoke).not.toHaveBeenCalled();
+});

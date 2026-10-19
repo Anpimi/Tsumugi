@@ -6,6 +6,7 @@ import { connectionConfigCurrent, connectionReadOptions, currentConnections, use
 import { CommandFailureDetails, commandFailure } from "./CommandFailure";
 import type { AiConfig } from "./aiCommands";
 import type { ConnectionReadView } from "./connectionCommands";
+import type { PlanOptions } from "./generated/ai.requests";
 
 interface Props {
   config: AiConfig;
@@ -47,13 +48,13 @@ export function ModelConnectionPicker({ config, label, active, disabled, editSeq
   </section>;
 }
 
-export function PreparationBudgetSummary({ config, perRequest = false }: { config: AiConfig; perRequest?: boolean }) {
+export function PreparationBudgetSummary({ config, perRequest = false, policy }: { config: AiConfig; perRequest?: boolean; policy?: PlanOptions["teamDiscussions"] }) {
   const { t } = useTranslation();
   const complete = [config.maxItems,config.maxRequests,config.concurrency,config.maxOutputTokens,config.maxRetries,config.timeoutSeconds].every(Number.isFinite);
   const message = !complete ? "incompleteBudget" : perRequest ? "requestSummary" : "invocationSummary";
   const sharing = config.shareTerms && config.shareContext ? "connections.sharingBoth" : config.shareTerms ? "connections.sharingTerms" : config.shareContext ? "connections.sharingContext" : "connections.sharingNone";
   return <section className="preparation-budget-summary" aria-label={t("connections.invocationSummaryTitle")}>
     <p>{t(`connections.${message}`, { defaultValue: enUS.connections[message], items: config.maxItems, requests: config.maxRequests, concurrency: config.concurrency, tokens: config.maxOutputTokens, retries: config.maxRetries, timeout: config.timeoutSeconds })}</p>
-    <p>{t(sharing)}</p><SourceContextSelectionSummary value={config.sourceContext}/><p>{t("ai.costUnknown")}</p>
+    <p>{t(sharing)}</p><SourceContextSelectionSummary value={config.sourceContext}/><p>{t(policy?.profile === "current-plan-2" ? "ai.discussions.artifactCostUnknown" : policy ? "ai.discussions.costUnknown" : "ai.costUnknown")}</p>
   </section>;
 }

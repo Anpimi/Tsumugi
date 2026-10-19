@@ -125,8 +125,9 @@ it("keeps newer discussion choices and clears consent after a late preparation",
   let completion!: Promise<void>;
   act(() => { completion = owner.preview(); });
   act(() => { owner.setOptions(before => ({ ...before, teamDiscussions: { profile: "current-plan-1" } })); });
+  act(() => { owner.setOptions(before => ({ ...before, teamDiscussions: { profile: "current-plan-2" } })); });
   await act(async () => { pending.resolve(response); await completion; });
-  expect(owner.options.teamDiscussions).toEqual({ profile: "current-plan-1" });
+  expect(owner.options.teamDiscussions).toEqual({ profile: "current-plan-2" });
   expect(owner.prepared).toBeNull(); expect(owner.preparedPlan).toBeNull(); expect(owner.consent).toBe(false);
   act(() => { owner.reset(); });
   expect(owner.options).not.toHaveProperty("teamDiscussions");

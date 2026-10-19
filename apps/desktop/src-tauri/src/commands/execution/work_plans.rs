@@ -472,8 +472,11 @@ impl TryFrom<&WorkPlan> for WorkPlanView {
             digest: plan.digest.clone(),
             locale: plan.locale.clone(),
             options: plan.options.clone(),
-            team_discussion_limits: plan.options.team_discussions.as_ref()
-                .map(|_| tsumugi_core::application::TeamDiscussionLimits::current_plan()),
+            team_discussion_limits: plan
+                .options
+                .team_discussions
+                .as_ref()
+                .map(|policy| tsumugi_core::application::TeamDiscussionLimits::for_policy(*policy)),
             scope: plan.selection_basis.clone(),
             preview,
             attempt_id: plan.input.as_ref().map(|input| input.attempt_id),
@@ -1579,8 +1582,18 @@ mod tests {
         }
         round_trip!("requests", "prepare", WorkPlanPrepareRequest);
         round_trip!("requests", "discussionPrepare", WorkPlanPrepareRequest);
+        round_trip!(
+            "requests",
+            "artifactDiscussionPrepare",
+            WorkPlanPrepareRequest
+        );
         round_trip!("requests", "authorize", WorkPlanAuthorizeRequest);
         round_trip!("requests", "discussionAuthorize", WorkPlanAuthorizeRequest);
+        round_trip!(
+            "requests",
+            "artifactDiscussionAuthorize",
+            WorkPlanAuthorizeRequest
+        );
         round_trip!("requests", "start", WorkPlanStartRequest);
         round_trip!("requests", "control", WorkPlanControlRequest);
         round_trip!("requests", "status", WorkPlanStatusRequest);
@@ -1589,6 +1602,17 @@ mod tests {
         round_trip!("requests", "protectionSet", WorkProtectionSetRequest);
         round_trip!("responses", "plan", WorkPlanView);
         round_trip!("responses", "discussionPlan", WorkPlanView);
+        round_trip!("responses", "artifactDiscussionPlan", WorkPlanView);
+        for key in ["discussionPlan", "artifactDiscussionPlan"] {
+            let plan: WorkPlanView =
+                serde_json::from_value(fixture["responses"][key].clone()).unwrap();
+            assert_eq!(
+                plan.team_discussion_limits,
+                Some(tsumugi_core::application::TeamDiscussionLimits::for_policy(
+                    plan.options.team_discussions.unwrap()
+                ))
+            );
+        }
         round_trip!("responses", "receipt", WorkPlanReceiptView);
         round_trip!("responses", "control", WorkPlanReceiptView);
         round_trip!("responses", "status", WorkPlanStatusView);
@@ -3486,60 +3510,69 @@ mod tests {
 
     #[test]
     fn team_discussion_preparation_captures_limits_and_requires_the_original_effect() {
-        let fixture = Fixture::create();
-        let config = AiConfig {
-            endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
-            model: "synthetic-discussion-disclosure".into(),
-            credential_env: String::new(),
-            ..AiConfig::default()
-        };
-        let prepare = json!({
-            "config":config,"locale":"zh-CN","unitIds":[fixture.unit],
-            "options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null
-        });
-        let before = fixture.bytes();
-        let ordinary = fixture.call("prepare_work_plan", prepare.clone()).unwrap();
-        assert!(ordinary["options"].get("teamDiscussions").is_none());
-        assert!(ordinary.get("teamDiscussionLimits").is_none());
-        let mut enabled = prepare;
-        enabled["options"]["teamDiscussions"] = json!({"profile":"current-plan-1"});
-        let plan = fixture.call("prepare_work_plan", enabled).unwrap();
-        assert_eq!(fixture.bytes(), before);
-        assert_eq!(plan["preview"]["config"], ordinary["preview"]["config"]);
-        assert_eq!(
-            plan["teamDiscussionLimits"],
-            serde_json::to_value(tsumugi_core::application::TeamDiscussionLimits::current_plan())
-                .unwrap()
-        );
-        let mut authorization = json!({
-            "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
-            "confirmed":true,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],
-            "effects":["save-candidate"],"expiresAt":expiry()
-        });
-        assert!(
-            fixture
-                .call("authorize_work_plan", authorization.clone())
-                .is_err()
-        );
-        assert_eq!(fixture.bytes(), before);
-        authorization["effects"] = json!(["save-candidate", "publish-discussion"]);
-        fixture.call("authorize_work_plan", authorization).unwrap();
-        let status = fixture
-            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
-            .unwrap();
-        assert_eq!(
-            status["effects"],
-            json!(["save-candidate", "publish-discussion"])
-        );
-        assert_eq!(status["plan"]["options"], plan["options"]);
-        assert_eq!(
-            status["plan"]["teamDiscussionLimits"],
-            plan["teamDiscussionLimits"]
-        );
-        assert_eq!(
-            status["plan"]["preview"]["config"],
-            plan["preview"]["config"]
-        );
+        use tsumugi_core::application::{TeamDiscussionLimits, TeamDiscussionPolicy};
+        for (profile, policy) in [
+            ("current-plan-1", TeamDiscussionPolicy::CurrentPlanV1 {}),
+            ("current-plan-2", TeamDiscussionPolicy::CurrentPlanV2 {}),
+        ] {
+            let fixture = Fixture::create();
+            let config = AiConfig {
+                endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+                model: "synthetic-discussion-disclosure".into(),
+                credential_env: String::new(),
+                ..AiConfig::default()
+            };
+            let prepare = json!({
+                "config":config,"locale":"zh-CN","unitIds":[fixture.unit],
+                "options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null
+            });
+            let before = fixture.bytes();
+            let ordinary = fixture.call("prepare_work_plan", prepare.clone()).unwrap();
+            assert!(ordinary["options"].get("teamDiscussions").is_none());
+            assert!(ordinary.get("teamDiscussionLimits").is_none());
+            let mut enabled = prepare;
+            enabled["options"]["teamDiscussions"] = json!({"profile":profile});
+            let plan = fixture.call("prepare_work_plan", enabled).unwrap();
+            assert_eq!(fixture.bytes(), before);
+            assert_eq!(plan["preview"]["config"], ordinary["preview"]["config"]);
+            assert_eq!(
+                plan["teamDiscussionLimits"],
+                serde_json::to_value(TeamDiscussionLimits::for_policy(policy)).unwrap()
+            );
+            assert_eq!(
+                plan["options"]["teamDiscussions"],
+                json!({"profile":profile})
+            );
+            let mut authorization = json!({
+                "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
+                "confirmed":true,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],
+                "effects":["save-candidate"],"expiresAt":expiry()
+            });
+            assert!(
+                fixture
+                    .call("authorize_work_plan", authorization.clone())
+                    .is_err()
+            );
+            assert_eq!(fixture.bytes(), before);
+            authorization["effects"] = json!(["save-candidate", "publish-discussion"]);
+            fixture.call("authorize_work_plan", authorization).unwrap();
+            let status = fixture
+                .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+                .unwrap();
+            assert_eq!(
+                status["effects"],
+                json!(["save-candidate", "publish-discussion"])
+            );
+            assert_eq!(status["plan"]["options"], plan["options"]);
+            assert_eq!(
+                status["plan"]["teamDiscussionLimits"],
+                plan["teamDiscussionLimits"]
+            );
+            assert_eq!(
+                status["plan"]["preview"]["config"],
+                plan["preview"]["config"]
+            );
+        }
     }
 
     #[test]

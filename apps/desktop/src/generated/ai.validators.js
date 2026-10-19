@@ -7088,7 +7088,7 @@ return errors === 0;
 
 const schema166 = {"additionalProperties":false,"properties":{"adoptResources":{"type":"boolean"},"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"deliver":{"type":"boolean"},"selectionPolicy":{"$ref":"#/definitions/SelectionPolicy"},"stages":{"items":{"$ref":"#/definitions/StageChoice"},"type":"array"},"teamDiscussions":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionPolicy"},{"type":"null"}],"description":"Explicit consent for bounded, same-plan published discussions."}},"required":["stages","selectionPolicy","advisoryChecks","adoptResources","deliver"],"type":"object"};
 const schema204 = {"enum":["candidates-only","missing-only","replace-captured-selection"],"type":"string"};
-const schema208 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"}]};
+const schema208 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"},{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-2","type":"string"}},"required":["profile"],"type":"object"}]};
 const schema167 = {"additionalProperties":false,"description":"Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.","properties":{"binding":{"$ref":"#/definitions/TextReviewBinding"},"declarationResourceId":{"type":"string"},"execution":{"$ref":"#/definitions/PluginExecutionBinding"},"resourcePins":{"items":{"$ref":"#/definitions/TextReviewResourcePin"},"type":"array"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["binding","execution","declarationResourceId","resourcePins","rules"],"type":"object"};
 const schema168 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/TextReviewDeclaration"},"resources":{"items":{"$ref":"#/definitions/TextReviewResourceBinding"},"type":"array"}},"required":["declaration","checker","resources"],"type":"object"};
 const schema169 = {"additionalProperties":false,"description":"Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.","properties":{"declaration":{"$ref":"#/definitions/CapabilityDeclaration"},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["provider","declaration"],"type":"object"};
@@ -10949,13 +10949,91 @@ if(_valid1){
 valid6 = true;
 passing0 = 0;
 }
-if(!valid6){
-const err5 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const _errs25 = errors;
+if(errors === _errs25){
+if(data7 && typeof data7 == "object" && !Array.isArray(data7)){
+let missing2;
+if((data7.profile === undefined) && (missing2 = "profile")){
+const err5 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
 if(vErrors === null){
 vErrors = [err5];
 }
 else {
 vErrors.push(err5);
+}
+errors++;
+}
+else {
+const _errs27 = errors;
+for(const key2 in data7){
+if(!(key2 === "profile")){
+const err6 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err6];
+}
+else {
+vErrors.push(err6);
+}
+errors++;
+break;
+}
+}
+if(_errs27 === errors){
+if(data7.profile !== undefined){
+let data9 = data7.profile;
+if(typeof data9 !== "string"){
+const err7 = {instancePath:instancePath+"/teamDiscussions/profile",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/properties/profile/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err7];
+}
+else {
+vErrors.push(err7);
+}
+errors++;
+}
+if("current-plan-2" !== data9){
+const err8 = {instancePath:instancePath+"/teamDiscussions/profile",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/properties/profile/const",keyword:"const",params:{allowedValue: "current-plan-2"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err8];
+}
+else {
+vErrors.push(err8);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err9 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err9];
+}
+else {
+vErrors.push(err9);
+}
+errors++;
+}
+}
+var _valid1 = _errs25 === errors;
+if(_valid1 && valid6){
+valid6 = false;
+passing0 = [passing0, 1];
+}
+else {
+if(_valid1){
+valid6 = true;
+passing0 = 1;
+}
+}
+if(!valid6){
+const err10 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err10];
+}
+else {
+vErrors.push(err10);
 }
 errors++;
 }
@@ -10973,27 +11051,27 @@ vErrors = null;
 var _valid0 = _errs17 === errors;
 valid4 = valid4 || _valid0;
 if(!valid4){
-const _errs25 = errors;
+const _errs30 = errors;
 if(data7 !== null){
-const err6 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/properties/teamDiscussions/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+const err11 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/properties/teamDiscussions/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
-vErrors = [err6];
+vErrors = [err11];
 }
 else {
-vErrors.push(err6);
+vErrors.push(err11);
 }
 errors++;
 }
-var _valid0 = _errs25 === errors;
+var _valid0 = _errs30 === errors;
 valid4 = valid4 || _valid0;
 }
 if(!valid4){
-const err7 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/properties/teamDiscussions/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err12 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/properties/teamDiscussions/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err7];
+vErrors = [err12];
 }
 else {
-vErrors.push(err7);
+vErrors.push(err12);
 }
 errors++;
 validate115.errors = vErrors;
@@ -33735,7 +33813,7 @@ return errors === 0;
 export const validateResponseWorkPlan = validate625;
 const schema841 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlan","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlan"};
 const schema667 = {"additionalProperties":false,"properties":{"attemptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"checkers":{"items":{"$ref":"#/definitions/WorkPlanCheckerView"},"type":"array"},"digest":{"type":"string"},"locale":{"type":"string"},"maintenance":{"anyOf":[{"$ref":"#/definitions/MaintenancePlanBasis"},{"type":"null"}]},"options":{"$ref":"#/definitions/PlanOptions"},"planId":{"$ref":"#/definitions/ExecutionId"},"preview":{"anyOf":[{"$ref":"#/definitions/AiPreviewView"},{"type":"null"}]},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"teamDiscussionLimits":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionLimits"},{"type":"null"}]},"tools":{"anyOf":[{"$ref":"#/definitions/WorkPlanTools"},{"type":"null"}]}},"required":["planId","digest","locale","options","scope","preview","attemptId","checkers","tools","maintenance"],"type":"object"};
-const schema696 = {"additionalProperties":false,"properties":{"maxMembers":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPostBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRoleVersionsPerMember":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxMembers","maxRoleVersionsPerMember","maxPosts","maxPostBytes","maxViewPosts","maxViewBytes"],"type":"object"};
+const schema696 = {"additionalProperties":false,"properties":{"maxArtifactBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxMembers":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPostBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRoleVersionsPerMember":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxMembers","maxRoleVersionsPerMember","maxPosts","maxPostBytes","maxViewPosts","maxViewBytes","maxArtifactBytes"],"type":"object"};
 const schema669 = {"oneOf":[{"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"kind":{"const":"ready","type":"string"},"plugin":{"$ref":"#/definitions/ReviewCheckerView"}},"required":["kind","checker","plugin"],"type":"object"},{"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"error":{"$ref":"#/definitions/CommandError"},"kind":{"const":"unavailable","type":"string"}},"required":["kind","checker","error"],"type":"object"}]};
 const schema670 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"format","type":"string"},"plugin":{"$ref":"#/definitions/PluginReviewView"}},"required":["kind","plugin"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"advisory-text","type":"string"},"plugin":{"$ref":"#/definitions/PluginTextReviewView"}},"required":["kind","plugin"],"type":"object"}]};
 const schema671 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/ReviewDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","declaration","checker","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
@@ -35205,7 +35283,7 @@ return errors === 0;
 }
 
 const schema684 = {"additionalProperties":false,"properties":{"adoptResources":{"type":"boolean"},"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"deliver":{"type":"boolean"},"selectionPolicy":{"$ref":"#/definitions/SelectionPolicy"},"stages":{"items":{"$ref":"#/definitions/StageChoice"},"type":"array"},"teamDiscussions":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionPolicy"},{"type":"null"}],"description":"Explicit consent for bounded, same-plan published discussions."}},"required":["stages","selectionPolicy","advisoryChecks","adoptResources","deliver"],"type":"object"};
-const schema689 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"}]};
+const schema689 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"},{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-2","type":"string"}},"required":["profile"],"type":"object"}]};
 const schema686 = {"additionalProperties":false,"properties":{"mode":{"$ref":"#/definitions/StageMode"},"stage":{"$ref":"#/definitions/WorkStage"}},"required":["stage","mode"],"type":"object"};
 const schema687 = {"enum":["manual","assisted","skipped"],"type":"string"};
 const schema688 = {"enum":["understanding","resources","generation","checks","delivery"],"type":"string"};
@@ -35479,13 +35557,91 @@ if(_valid1){
 valid6 = true;
 passing0 = 0;
 }
-if(!valid6){
-const err5 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const _errs25 = errors;
+if(errors === _errs25){
+if(data7 && typeof data7 == "object" && !Array.isArray(data7)){
+let missing2;
+if((data7.profile === undefined) && (missing2 = "profile")){
+const err5 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
 if(vErrors === null){
 vErrors = [err5];
 }
 else {
 vErrors.push(err5);
+}
+errors++;
+}
+else {
+const _errs27 = errors;
+for(const key2 in data7){
+if(!(key2 === "profile")){
+const err6 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err6];
+}
+else {
+vErrors.push(err6);
+}
+errors++;
+break;
+}
+}
+if(_errs27 === errors){
+if(data7.profile !== undefined){
+let data9 = data7.profile;
+if(typeof data9 !== "string"){
+const err7 = {instancePath:instancePath+"/teamDiscussions/profile",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/properties/profile/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err7];
+}
+else {
+vErrors.push(err7);
+}
+errors++;
+}
+if("current-plan-2" !== data9){
+const err8 = {instancePath:instancePath+"/teamDiscussions/profile",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/properties/profile/const",keyword:"const",params:{allowedValue: "current-plan-2"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err8];
+}
+else {
+vErrors.push(err8);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err9 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err9];
+}
+else {
+vErrors.push(err9);
+}
+errors++;
+}
+}
+var _valid1 = _errs25 === errors;
+if(_valid1 && valid6){
+valid6 = false;
+passing0 = [passing0, 1];
+}
+else {
+if(_valid1){
+valid6 = true;
+passing0 = 1;
+}
+}
+if(!valid6){
+const err10 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/definitions/TeamDiscussionPolicy/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err10];
+}
+else {
+vErrors.push(err10);
 }
 errors++;
 }
@@ -35503,27 +35659,27 @@ vErrors = null;
 var _valid0 = _errs17 === errors;
 valid4 = valid4 || _valid0;
 if(!valid4){
-const _errs25 = errors;
+const _errs30 = errors;
 if(data7 !== null){
-const err6 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/properties/teamDiscussions/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+const err11 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/properties/teamDiscussions/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
-vErrors = [err6];
+vErrors = [err11];
 }
 else {
-vErrors.push(err6);
+vErrors.push(err11);
 }
 errors++;
 }
-var _valid0 = _errs25 === errors;
+var _valid0 = _errs30 === errors;
 valid4 = valid4 || _valid0;
 }
 if(!valid4){
-const err7 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/properties/teamDiscussions/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err12 = {instancePath:instancePath+"/teamDiscussions",schemaPath:"#/properties/teamDiscussions/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err7];
+vErrors = [err12];
 }
 else {
-vErrors.push(err7);
+vErrors.push(err12);
 }
 errors++;
 validate499.errors = vErrors;
@@ -38169,7 +38325,7 @@ const _errs36 = errors;
 if(errors === _errs36){
 if(data11 && typeof data11 == "object" && !Array.isArray(data11)){
 let missing1;
-if(((((((data11.maxMembers === undefined) && (missing1 = "maxMembers")) || ((data11.maxRoleVersionsPerMember === undefined) && (missing1 = "maxRoleVersionsPerMember"))) || ((data11.maxPosts === undefined) && (missing1 = "maxPosts"))) || ((data11.maxPostBytes === undefined) && (missing1 = "maxPostBytes"))) || ((data11.maxViewPosts === undefined) && (missing1 = "maxViewPosts"))) || ((data11.maxViewBytes === undefined) && (missing1 = "maxViewBytes"))){
+if((((((((data11.maxMembers === undefined) && (missing1 = "maxMembers")) || ((data11.maxRoleVersionsPerMember === undefined) && (missing1 = "maxRoleVersionsPerMember"))) || ((data11.maxPosts === undefined) && (missing1 = "maxPosts"))) || ((data11.maxPostBytes === undefined) && (missing1 = "maxPostBytes"))) || ((data11.maxViewPosts === undefined) && (missing1 = "maxViewPosts"))) || ((data11.maxViewBytes === undefined) && (missing1 = "maxViewBytes"))) || ((data11.maxArtifactBytes === undefined) && (missing1 = "maxArtifactBytes"))){
 const err8 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/definitions/TeamDiscussionLimits/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
 if(vErrors === null){
 vErrors = [err8];
@@ -38182,7 +38338,7 @@ errors++;
 else {
 const _errs38 = errors;
 for(const key1 in data11){
-if(!((((((key1 === "maxMembers") || (key1 === "maxPostBytes")) || (key1 === "maxPosts")) || (key1 === "maxRoleVersionsPerMember")) || (key1 === "maxViewBytes")) || (key1 === "maxViewPosts"))){
+if(!(((((((key1 === "maxArtifactBytes") || (key1 === "maxMembers")) || (key1 === "maxPostBytes")) || (key1 === "maxPosts")) || (key1 === "maxRoleVersionsPerMember")) || (key1 === "maxViewBytes")) || (key1 === "maxViewPosts"))){
 const err9 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/definitions/TeamDiscussionLimits/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err9];
@@ -38195,11 +38351,11 @@ break;
 }
 }
 if(_errs38 === errors){
-if(data11.maxMembers !== undefined){
-let data12 = data11.maxMembers;
+if(data11.maxArtifactBytes !== undefined){
+let data12 = data11.maxArtifactBytes;
 const _errs39 = errors;
 if(!(((typeof data12 == "number") && (!(data12 % 1) && !isNaN(data12))) && (isFinite(data12)))){
-const err10 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err10 = {instancePath:instancePath+"/teamDiscussionLimits/maxArtifactBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxArtifactBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err10];
 }
@@ -38211,7 +38367,7 @@ errors++;
 if(errors === _errs39){
 if((typeof data12 == "number") && (isFinite(data12))){
 if(data12 > 4294967295 || isNaN(data12)){
-const err11 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err11 = {instancePath:instancePath+"/teamDiscussionLimits/maxArtifactBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxArtifactBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err11];
 }
@@ -38222,7 +38378,7 @@ errors++;
 }
 else {
 if(data12 < 0 || isNaN(data12)){
-const err12 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err12 = {instancePath:instancePath+"/teamDiscussionLimits/maxArtifactBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxArtifactBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err12];
 }
@@ -38240,11 +38396,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxPostBytes !== undefined){
-let data13 = data11.maxPostBytes;
+if(data11.maxMembers !== undefined){
+let data13 = data11.maxMembers;
 const _errs41 = errors;
 if(!(((typeof data13 == "number") && (!(data13 % 1) && !isNaN(data13))) && (isFinite(data13)))){
-const err13 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err13 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err13];
 }
@@ -38256,7 +38412,7 @@ errors++;
 if(errors === _errs41){
 if((typeof data13 == "number") && (isFinite(data13))){
 if(data13 > 4294967295 || isNaN(data13)){
-const err14 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err14 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err14];
 }
@@ -38267,7 +38423,7 @@ errors++;
 }
 else {
 if(data13 < 0 || isNaN(data13)){
-const err15 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err15 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err15];
 }
@@ -38285,11 +38441,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxPosts !== undefined){
-let data14 = data11.maxPosts;
+if(data11.maxPostBytes !== undefined){
+let data14 = data11.maxPostBytes;
 const _errs43 = errors;
 if(!(((typeof data14 == "number") && (!(data14 % 1) && !isNaN(data14))) && (isFinite(data14)))){
-const err16 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err16 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err16];
 }
@@ -38301,7 +38457,7 @@ errors++;
 if(errors === _errs43){
 if((typeof data14 == "number") && (isFinite(data14))){
 if(data14 > 4294967295 || isNaN(data14)){
-const err17 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err17 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err17];
 }
@@ -38312,7 +38468,7 @@ errors++;
 }
 else {
 if(data14 < 0 || isNaN(data14)){
-const err18 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err18 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err18];
 }
@@ -38330,11 +38486,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxRoleVersionsPerMember !== undefined){
-let data15 = data11.maxRoleVersionsPerMember;
+if(data11.maxPosts !== undefined){
+let data15 = data11.maxPosts;
 const _errs45 = errors;
 if(!(((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15))) && (isFinite(data15)))){
-const err19 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err19 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err19];
 }
@@ -38346,7 +38502,7 @@ errors++;
 if(errors === _errs45){
 if((typeof data15 == "number") && (isFinite(data15))){
 if(data15 > 4294967295 || isNaN(data15)){
-const err20 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err20 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err20];
 }
@@ -38357,7 +38513,7 @@ errors++;
 }
 else {
 if(data15 < 0 || isNaN(data15)){
-const err21 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err21 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err21];
 }
@@ -38375,11 +38531,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxViewBytes !== undefined){
-let data16 = data11.maxViewBytes;
+if(data11.maxRoleVersionsPerMember !== undefined){
+let data16 = data11.maxRoleVersionsPerMember;
 const _errs47 = errors;
 if(!(((typeof data16 == "number") && (!(data16 % 1) && !isNaN(data16))) && (isFinite(data16)))){
-const err22 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err22 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err22];
 }
@@ -38391,7 +38547,7 @@ errors++;
 if(errors === _errs47){
 if((typeof data16 == "number") && (isFinite(data16))){
 if(data16 > 4294967295 || isNaN(data16)){
-const err23 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err23 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err23];
 }
@@ -38402,7 +38558,7 @@ errors++;
 }
 else {
 if(data16 < 0 || isNaN(data16)){
-const err24 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err24 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err24];
 }
@@ -38420,11 +38576,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxViewPosts !== undefined){
-let data17 = data11.maxViewPosts;
+if(data11.maxViewBytes !== undefined){
+let data17 = data11.maxViewBytes;
 const _errs49 = errors;
 if(!(((typeof data17 == "number") && (!(data17 % 1) && !isNaN(data17))) && (isFinite(data17)))){
-const err25 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err25 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err25];
 }
@@ -38436,7 +38592,7 @@ errors++;
 if(errors === _errs49){
 if((typeof data17 == "number") && (isFinite(data17))){
 if(data17 > 4294967295 || isNaN(data17)){
-const err26 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err26 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err26];
 }
@@ -38447,7 +38603,7 @@ errors++;
 }
 else {
 if(data17 < 0 || isNaN(data17)){
-const err27 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err27 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err27];
 }
@@ -38464,16 +38620,12 @@ var valid10 = _errs49 === errors;
 else {
 var valid10 = true;
 }
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err28 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/definitions/TeamDiscussionLimits/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(valid10){
+if(data11.maxViewPosts !== undefined){
+let data18 = data11.maxViewPosts;
+const _errs51 = errors;
+if(!(((typeof data18 == "number") && (!(data18 % 1) && !isNaN(data18))) && (isFinite(data18)))){
+const err28 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err28];
 }
@@ -38482,13 +38634,10 @@ vErrors.push(err28);
 }
 errors++;
 }
-}
-var _valid3 = _errs35 === errors;
-valid8 = valid8 || _valid3;
-if(!valid8){
-const _errs51 = errors;
-if(data11 !== null){
-const err29 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/properties/teamDiscussionLimits/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(errors === _errs51){
+if((typeof data18 == "number") && (isFinite(data18))){
+if(data18 > 4294967295 || isNaN(data18)){
+const err29 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err29];
 }
@@ -38497,16 +38646,69 @@ vErrors.push(err29);
 }
 errors++;
 }
-var _valid3 = _errs51 === errors;
-valid8 = valid8 || _valid3;
-}
-if(!valid8){
-const err30 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/properties/teamDiscussionLimits/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+else {
+if(data18 < 0 || isNaN(data18)){
+const err30 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err30];
 }
 else {
 vErrors.push(err30);
+}
+errors++;
+}
+}
+}
+}
+var valid10 = _errs51 === errors;
+}
+else {
+var valid10 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err31 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/definitions/TeamDiscussionLimits/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err31];
+}
+else {
+vErrors.push(err31);
+}
+errors++;
+}
+}
+var _valid3 = _errs35 === errors;
+valid8 = valid8 || _valid3;
+if(!valid8){
+const _errs53 = errors;
+if(data11 !== null){
+const err32 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/properties/teamDiscussionLimits/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err32];
+}
+else {
+vErrors.push(err32);
+}
+errors++;
+}
+var _valid3 = _errs53 === errors;
+valid8 = valid8 || _valid3;
+}
+if(!valid8){
+const err33 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/properties/teamDiscussionLimits/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err33];
+}
+else {
+vErrors.push(err33);
 }
 errors++;
 validate626.errors = vErrors;
@@ -38530,56 +38732,56 @@ var valid0 = true;
 }
 if(valid0){
 if(data.tools !== undefined){
-let data18 = data.tools;
-const _errs53 = errors;
-const _errs54 = errors;
-let valid11 = false;
+let data19 = data.tools;
 const _errs55 = errors;
-if(!(validate507(data18, {instancePath:instancePath+"/tools",parentData:data,parentDataProperty:"tools",rootData}))){
+const _errs56 = errors;
+let valid11 = false;
+const _errs57 = errors;
+if(!(validate507(data19, {instancePath:instancePath+"/tools",parentData:data,parentDataProperty:"tools",rootData}))){
 vErrors = vErrors === null ? validate507.errors : vErrors.concat(validate507.errors);
 errors = vErrors.length;
 }
-var _valid4 = _errs55 === errors;
+var _valid4 = _errs57 === errors;
 valid11 = valid11 || _valid4;
 if(!valid11){
-const _errs56 = errors;
-if(data18 !== null){
-const err31 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+const _errs58 = errors;
+if(data19 !== null){
+const err34 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
-vErrors = [err31];
+vErrors = [err34];
 }
 else {
-vErrors.push(err31);
+vErrors.push(err34);
 }
 errors++;
 }
-var _valid4 = _errs56 === errors;
+var _valid4 = _errs58 === errors;
 valid11 = valid11 || _valid4;
 }
 if(!valid11){
-const err32 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err35 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err32];
+vErrors = [err35];
 }
 else {
-vErrors.push(err32);
+vErrors.push(err35);
 }
 errors++;
 validate626.errors = vErrors;
 return false;
 }
 else {
-errors = _errs54;
+errors = _errs56;
 if(vErrors !== null){
-if(_errs54){
-vErrors.length = _errs54;
+if(_errs56){
+vErrors.length = _errs56;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs53 === errors;
+var valid0 = _errs55 === errors;
 }
 else {
 var valid0 = true;
@@ -47652,7 +47854,7 @@ const _errs36 = errors;
 if(errors === _errs36){
 if(data11 && typeof data11 == "object" && !Array.isArray(data11)){
 let missing1;
-if(((((((data11.maxMembers === undefined) && (missing1 = "maxMembers")) || ((data11.maxRoleVersionsPerMember === undefined) && (missing1 = "maxRoleVersionsPerMember"))) || ((data11.maxPosts === undefined) && (missing1 = "maxPosts"))) || ((data11.maxPostBytes === undefined) && (missing1 = "maxPostBytes"))) || ((data11.maxViewPosts === undefined) && (missing1 = "maxViewPosts"))) || ((data11.maxViewBytes === undefined) && (missing1 = "maxViewBytes"))){
+if((((((((data11.maxMembers === undefined) && (missing1 = "maxMembers")) || ((data11.maxRoleVersionsPerMember === undefined) && (missing1 = "maxRoleVersionsPerMember"))) || ((data11.maxPosts === undefined) && (missing1 = "maxPosts"))) || ((data11.maxPostBytes === undefined) && (missing1 = "maxPostBytes"))) || ((data11.maxViewPosts === undefined) && (missing1 = "maxViewPosts"))) || ((data11.maxViewBytes === undefined) && (missing1 = "maxViewBytes"))) || ((data11.maxArtifactBytes === undefined) && (missing1 = "maxArtifactBytes"))){
 const err8 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/definitions/TeamDiscussionLimits/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
 if(vErrors === null){
 vErrors = [err8];
@@ -47665,7 +47867,7 @@ errors++;
 else {
 const _errs38 = errors;
 for(const key1 in data11){
-if(!((((((key1 === "maxMembers") || (key1 === "maxPostBytes")) || (key1 === "maxPosts")) || (key1 === "maxRoleVersionsPerMember")) || (key1 === "maxViewBytes")) || (key1 === "maxViewPosts"))){
+if(!(((((((key1 === "maxArtifactBytes") || (key1 === "maxMembers")) || (key1 === "maxPostBytes")) || (key1 === "maxPosts")) || (key1 === "maxRoleVersionsPerMember")) || (key1 === "maxViewBytes")) || (key1 === "maxViewPosts"))){
 const err9 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/definitions/TeamDiscussionLimits/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err9];
@@ -47678,11 +47880,11 @@ break;
 }
 }
 if(_errs38 === errors){
-if(data11.maxMembers !== undefined){
-let data12 = data11.maxMembers;
+if(data11.maxArtifactBytes !== undefined){
+let data12 = data11.maxArtifactBytes;
 const _errs39 = errors;
 if(!(((typeof data12 == "number") && (!(data12 % 1) && !isNaN(data12))) && (isFinite(data12)))){
-const err10 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err10 = {instancePath:instancePath+"/teamDiscussionLimits/maxArtifactBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxArtifactBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err10];
 }
@@ -47694,7 +47896,7 @@ errors++;
 if(errors === _errs39){
 if((typeof data12 == "number") && (isFinite(data12))){
 if(data12 > 4294967295 || isNaN(data12)){
-const err11 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err11 = {instancePath:instancePath+"/teamDiscussionLimits/maxArtifactBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxArtifactBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err11];
 }
@@ -47705,7 +47907,7 @@ errors++;
 }
 else {
 if(data12 < 0 || isNaN(data12)){
-const err12 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err12 = {instancePath:instancePath+"/teamDiscussionLimits/maxArtifactBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxArtifactBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err12];
 }
@@ -47723,11 +47925,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxPostBytes !== undefined){
-let data13 = data11.maxPostBytes;
+if(data11.maxMembers !== undefined){
+let data13 = data11.maxMembers;
 const _errs41 = errors;
 if(!(((typeof data13 == "number") && (!(data13 % 1) && !isNaN(data13))) && (isFinite(data13)))){
-const err13 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err13 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err13];
 }
@@ -47739,7 +47941,7 @@ errors++;
 if(errors === _errs41){
 if((typeof data13 == "number") && (isFinite(data13))){
 if(data13 > 4294967295 || isNaN(data13)){
-const err14 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err14 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err14];
 }
@@ -47750,7 +47952,7 @@ errors++;
 }
 else {
 if(data13 < 0 || isNaN(data13)){
-const err15 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err15 = {instancePath:instancePath+"/teamDiscussionLimits/maxMembers",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxMembers/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err15];
 }
@@ -47768,11 +47970,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxPosts !== undefined){
-let data14 = data11.maxPosts;
+if(data11.maxPostBytes !== undefined){
+let data14 = data11.maxPostBytes;
 const _errs43 = errors;
 if(!(((typeof data14 == "number") && (!(data14 % 1) && !isNaN(data14))) && (isFinite(data14)))){
-const err16 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err16 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err16];
 }
@@ -47784,7 +47986,7 @@ errors++;
 if(errors === _errs43){
 if((typeof data14 == "number") && (isFinite(data14))){
 if(data14 > 4294967295 || isNaN(data14)){
-const err17 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err17 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err17];
 }
@@ -47795,7 +47997,7 @@ errors++;
 }
 else {
 if(data14 < 0 || isNaN(data14)){
-const err18 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err18 = {instancePath:instancePath+"/teamDiscussionLimits/maxPostBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPostBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err18];
 }
@@ -47813,11 +48015,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxRoleVersionsPerMember !== undefined){
-let data15 = data11.maxRoleVersionsPerMember;
+if(data11.maxPosts !== undefined){
+let data15 = data11.maxPosts;
 const _errs45 = errors;
 if(!(((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15))) && (isFinite(data15)))){
-const err19 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err19 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err19];
 }
@@ -47829,7 +48031,7 @@ errors++;
 if(errors === _errs45){
 if((typeof data15 == "number") && (isFinite(data15))){
 if(data15 > 4294967295 || isNaN(data15)){
-const err20 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err20 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err20];
 }
@@ -47840,7 +48042,7 @@ errors++;
 }
 else {
 if(data15 < 0 || isNaN(data15)){
-const err21 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err21 = {instancePath:instancePath+"/teamDiscussionLimits/maxPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxPosts/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err21];
 }
@@ -47858,11 +48060,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxViewBytes !== undefined){
-let data16 = data11.maxViewBytes;
+if(data11.maxRoleVersionsPerMember !== undefined){
+let data16 = data11.maxRoleVersionsPerMember;
 const _errs47 = errors;
 if(!(((typeof data16 == "number") && (!(data16 % 1) && !isNaN(data16))) && (isFinite(data16)))){
-const err22 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err22 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err22];
 }
@@ -47874,7 +48076,7 @@ errors++;
 if(errors === _errs47){
 if((typeof data16 == "number") && (isFinite(data16))){
 if(data16 > 4294967295 || isNaN(data16)){
-const err23 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err23 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err23];
 }
@@ -47885,7 +48087,7 @@ errors++;
 }
 else {
 if(data16 < 0 || isNaN(data16)){
-const err24 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err24 = {instancePath:instancePath+"/teamDiscussionLimits/maxRoleVersionsPerMember",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxRoleVersionsPerMember/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err24];
 }
@@ -47903,11 +48105,11 @@ else {
 var valid10 = true;
 }
 if(valid10){
-if(data11.maxViewPosts !== undefined){
-let data17 = data11.maxViewPosts;
+if(data11.maxViewBytes !== undefined){
+let data17 = data11.maxViewBytes;
 const _errs49 = errors;
 if(!(((typeof data17 == "number") && (!(data17 % 1) && !isNaN(data17))) && (isFinite(data17)))){
-const err25 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err25 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err25];
 }
@@ -47919,7 +48121,7 @@ errors++;
 if(errors === _errs49){
 if((typeof data17 == "number") && (isFinite(data17))){
 if(data17 > 4294967295 || isNaN(data17)){
-const err26 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+const err26 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err26];
 }
@@ -47930,7 +48132,7 @@ errors++;
 }
 else {
 if(data17 < 0 || isNaN(data17)){
-const err27 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+const err27 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewBytes",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewBytes/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err27];
 }
@@ -47947,16 +48149,12 @@ var valid10 = _errs49 === errors;
 else {
 var valid10 = true;
 }
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err28 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/definitions/TeamDiscussionLimits/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(valid10){
+if(data11.maxViewPosts !== undefined){
+let data18 = data11.maxViewPosts;
+const _errs51 = errors;
+if(!(((typeof data18 == "number") && (!(data18 % 1) && !isNaN(data18))) && (isFinite(data18)))){
+const err28 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err28];
 }
@@ -47965,13 +48163,10 @@ vErrors.push(err28);
 }
 errors++;
 }
-}
-var _valid3 = _errs35 === errors;
-valid8 = valid8 || _valid3;
-if(!valid8){
-const _errs51 = errors;
-if(data11 !== null){
-const err29 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/properties/teamDiscussionLimits/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(errors === _errs51){
+if((typeof data18 == "number") && (isFinite(data18))){
+if(data18 > 4294967295 || isNaN(data18)){
+const err29 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err29];
 }
@@ -47980,16 +48175,69 @@ vErrors.push(err29);
 }
 errors++;
 }
-var _valid3 = _errs51 === errors;
-valid8 = valid8 || _valid3;
-}
-if(!valid8){
-const err30 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/properties/teamDiscussionLimits/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+else {
+if(data18 < 0 || isNaN(data18)){
+const err30 = {instancePath:instancePath+"/teamDiscussionLimits/maxViewPosts",schemaPath:"#/definitions/TeamDiscussionLimits/properties/maxViewPosts/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err30];
 }
 else {
 vErrors.push(err30);
+}
+errors++;
+}
+}
+}
+}
+var valid10 = _errs51 === errors;
+}
+else {
+var valid10 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err31 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/definitions/TeamDiscussionLimits/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err31];
+}
+else {
+vErrors.push(err31);
+}
+errors++;
+}
+}
+var _valid3 = _errs35 === errors;
+valid8 = valid8 || _valid3;
+if(!valid8){
+const _errs53 = errors;
+if(data11 !== null){
+const err32 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/properties/teamDiscussionLimits/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err32];
+}
+else {
+vErrors.push(err32);
+}
+errors++;
+}
+var _valid3 = _errs53 === errors;
+valid8 = valid8 || _valid3;
+}
+if(!valid8){
+const err33 = {instancePath:instancePath+"/teamDiscussionLimits",schemaPath:"#/properties/teamDiscussionLimits/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err33];
+}
+else {
+vErrors.push(err33);
 }
 errors++;
 validate476.errors = vErrors;
@@ -48013,56 +48261,56 @@ var valid0 = true;
 }
 if(valid0){
 if(data.tools !== undefined){
-let data18 = data.tools;
-const _errs53 = errors;
-const _errs54 = errors;
-let valid11 = false;
+let data19 = data.tools;
 const _errs55 = errors;
-if(!(validate507(data18, {instancePath:instancePath+"/tools",parentData:data,parentDataProperty:"tools",rootData}))){
+const _errs56 = errors;
+let valid11 = false;
+const _errs57 = errors;
+if(!(validate507(data19, {instancePath:instancePath+"/tools",parentData:data,parentDataProperty:"tools",rootData}))){
 vErrors = vErrors === null ? validate507.errors : vErrors.concat(validate507.errors);
 errors = vErrors.length;
 }
-var _valid4 = _errs55 === errors;
+var _valid4 = _errs57 === errors;
 valid11 = valid11 || _valid4;
 if(!valid11){
-const _errs56 = errors;
-if(data18 !== null){
-const err31 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+const _errs58 = errors;
+if(data19 !== null){
+const err34 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
-vErrors = [err31];
+vErrors = [err34];
 }
 else {
-vErrors.push(err31);
+vErrors.push(err34);
 }
 errors++;
 }
-var _valid4 = _errs56 === errors;
+var _valid4 = _errs58 === errors;
 valid11 = valid11 || _valid4;
 }
 if(!valid11){
-const err32 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err35 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err32];
+vErrors = [err35];
 }
 else {
-vErrors.push(err32);
+vErrors.push(err35);
 }
 errors++;
 validate476.errors = vErrors;
 return false;
 }
 else {
-errors = _errs54;
+errors = _errs56;
 if(vErrors !== null){
-if(_errs54){
-vErrors.length = _errs54;
+if(_errs56){
+vErrors.length = _errs56;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs53 === errors;
+var valid0 = _errs55 === errors;
 }
 else {
 var valid0 = true;

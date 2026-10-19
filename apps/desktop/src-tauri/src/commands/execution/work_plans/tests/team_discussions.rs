@@ -5,6 +5,7 @@ use std::{
     io::{Read, Write},
     net::TcpStream,
 };
+use tsumugi_core::application::TeamDiscussionPolicy;
 
 struct Peer {
     listener: TcpListener,
@@ -161,10 +162,14 @@ fn protection(fixture: &Fixture) -> Value {
         )
         .unwrap()
 }
-fn start_plan(fixture: &Fixture, peer: &Peer, discussions: bool) -> (Value, Value, Value) {
+fn start_plan(
+    fixture: &Fixture,
+    peer: &Peer,
+    discussions: Option<TeamDiscussionPolicy>,
+) -> (Value, Value, Value) {
     let mut options = serde_json::to_value(PlanOptions::default()).unwrap();
-    if discussions {
-        options["teamDiscussions"] = json!({"profile":"current-plan-1"});
+    if let Some(policy) = discussions {
+        options["teamDiscussions"] = serde_json::to_value(policy).unwrap();
     }
     let plan = fixture
         .call(
@@ -173,7 +178,7 @@ fn start_plan(fixture: &Fixture, peer: &Peer, discussions: bool) -> (Value, Valu
         "unitIds":[fixture.unit],"options":options,"advisoryChecks":[],"toolSelection":null}),
         )
         .unwrap();
-    let effects = if discussions {
+    let effects = if discussions.is_some() {
         json!(["save-candidate", "publish-discussion"])
     } else {
         json!(["save-candidate"])
@@ -335,20 +340,36 @@ fn pi_members_publish_original_references_and_refresh_only_the_next_frozen_reque
     assert_eq!(manual_protection["protected"], true);
     let reference_revision = manual["rows"][0]["revisionId"].clone();
     let peer = Peer::new();
-    let (plan, scope, item) = start_plan(&fixture, &peer, true);
+    let (plan, scope, item) = start_plan(
+        &fixture,
+        &peer,
+        Some(TeamDiscussionPolicy::CurrentPlanV1 {}),
+    );
     let before_discussion = history(&fixture);
     let snapshot = fixture.snapshot;
-    let source = fixture.app.state::<AppState>().sessions.with(move |sessions| {
-        let store = &sessions.active.as_ref().unwrap().store;
-        let page = store.source_content(snapshot, 0, 1).unwrap();
-        json!({"kind":"source-result","snapshotId":page.snapshot_id.unwrap(),
+    let source = fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let store = &sessions.active.as_ref().unwrap().store;
+            let page = store.source_content(snapshot, 0, 1).unwrap();
+            json!({"kind":"source-result","snapshotId":page.snapshot_id.unwrap(),
             "attemptId":page.attempt_id,"resultId":page.result_id})
-    });
+        });
     let references =
         json!([{"kind":"translation-revision","revisionId":reference_revision},source]);
 
     let (_, member_b) = start_member(&fixture, &scope);
     let b1 = peer.accept();
+    assert_eq!(b1.body["tools"].as_array().unwrap().len(), 2);
+    assert!(
+        !b1.body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["function"]["name"] == "read_team_artifact")
+    );
     let (_, initial_b) = shared_view(&b1.body);
     assert_eq!(initial_b["planId"], plan["planId"]);
     assert_eq!(initial_b["author"]["attemptId"], member_b["attemptId"]);
@@ -476,7 +497,7 @@ fn pi_member_without_discussion_policy_has_no_discussion_tools_or_shared_view() 
         &fixture.directory.path().join("member-resources"),
     );
     let peer = Peer::new();
-    let (_, scope, item) = start_plan(&fixture, &peer, false);
+    let (_, scope, item) = start_plan(&fixture, &peer, None);
     let (_, generation) = start_member(&fixture, &scope);
     let member = peer.accept();
     assert_eq!(member.body["stream"], true);
@@ -502,4 +523,165 @@ fn pi_member_without_discussion_policy_has_no_discussion_tools_or_shared_view() 
     assert!(captured[0].get("teamView").is_none());
     member.finish(&item, "Member without shared discussions");
     fixture.wait_saved_for(&generation["attemptId"], Duration::from_secs(30));
+}
+
+#[test]
+fn pi_member_reads_published_artifact_indices_without_expanding_shared_source_scope() {
+    const ORIGINAL: &str = "Original cited wording: \"quoted\"\r\nA distinct version 🧵";
+    const LATEST: &str = "Newer human selection, which is not the cited revision";
+    const UNSHARED: &str = "OTHER_UNIT_SENTINEL_MUST_STAY_LOCAL";
+    let _runtime;
+    let fixture = Fixture::create_with_source(
+        br#"{"first":"Authorized source wording","second":"OTHER_UNIT_SENTINEL_MUST_STAY_LOCAL"}"#,
+    );
+    _runtime = crate::commands::execution::test_fixtures::provision_member_runtime(
+        &fixture.app.state::<AppState>().plugins,
+        &fixture.directory.path().join("member-resources"),
+    );
+    let original = fixture
+        .call(
+            "save_translation_revision",
+            json!({"actionId":ExecutionId::new(),
+        "unitId":fixture.unit,"locale":"zh-CN","sourceRevisionId":fixture.source_revision,
+        "expectedSelectionId":null,"text":ORIGINAL}),
+        )
+        .unwrap();
+    let original_revision = original["revision"]["revisionId"].clone();
+    assert!(original_revision.is_string());
+    fixture
+        .call(
+            "save_translation_revision",
+            json!({"actionId":ExecutionId::new(),
+        "unitId":fixture.unit,"locale":"zh-CN","sourceRevisionId":fixture.source_revision,
+        "expectedSelectionId":original["selection"]["eventId"],"text":LATEST}),
+        )
+        .unwrap();
+    let selected = history(&fixture);
+    let protected = protection(&fixture);
+    assert_eq!(selected["currentText"], LATEST);
+    assert_ne!(selected["current"]["revisionId"], original_revision);
+    assert_eq!(protected["protected"], true);
+    let snapshot = fixture.snapshot;
+    let unit = fixture.unit;
+    let (source_reference, source_artifact) =
+        fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let store = &sessions.active.as_ref().unwrap().store;
+                let page = store.source_content(snapshot, 0, 100).unwrap();
+                assert_eq!(page.rows.len(), 2);
+                assert!(
+                    page.rows
+                        .iter()
+                        .any(|row| row.unit_id != Some(unit) && row.occurrence.text == UNSHARED)
+                );
+                let row = page
+                    .rows
+                    .iter()
+                    .find(|row| row.unit_id == Some(unit))
+                    .unwrap();
+                assert_eq!(row.occurrence.text, "Authorized source wording");
+                (
+                    json!({"kind":"source-result","snapshotId":snapshot,
+            "attemptId":page.attempt_id,"resultId":page.result_id}),
+                    json!({"kind":"source-result","snapshotId":snapshot,
+            "attemptId":page.attempt_id,"resultId":page.result_id,
+            "occurrenceId":row.occurrence_id.unwrap(),"nativeKey":row.occurrence.key,
+            "text":row.occurrence.text}),
+                )
+            });
+    let peer = Peer::new();
+    let (plan, scope, item) = start_plan(
+        &fixture,
+        &peer,
+        Some(TeamDiscussionPolicy::CurrentPlanV2 {}),
+    );
+    assert_eq!(
+        plan["options"]["teamDiscussions"]["profile"],
+        "current-plan-2"
+    );
+    assert!(!peer.config.share_context);
+    assert!(!peer.config.source_context.is_enabled());
+    let (_, publisher) = start_member(&fixture, &scope);
+    let publish = peer.accept();
+    let (_, publisher_view) = shared_view(&publish.body);
+    assert_eq!(publish.body["tools"].as_array().unwrap().len(), 3);
+    let post_id = ExecutionId::new();
+    let target = publisher_view["target"].clone();
+    publish.tool("publish-evidence", "publish_team_discussion", json!({"postId":post_id,
+        "target":target,"kind":"note","body":"Inspect the two cited original versions.",
+        "references":[{"kind":"translation-revision","revisionId":original_revision},source_reference],
+        "replyTo":null,"supersedes":null}));
+    let published = peer.accept();
+    let post = tool_result(&published.body, "publish-evidence");
+    assert_eq!(post["publication"]["postId"], json!(post_id));
+    assert_eq!(post["author"]["author"], publisher_view["author"]);
+    assert!(!published.raw.contains(UNSHARED));
+    published.finish(&item, "Publisher candidate");
+    fixture.wait_saved_for(&publisher["attemptId"], Duration::from_secs(30));
+    let before_reads = history(&fixture);
+
+    let (_, reader) = start_member(&fixture, &scope);
+    let first = peer.accept();
+    let (first_utf8, reader_view) = shared_view(&first.body);
+    let own_input = own_users(&first.body, &first_utf8);
+    assert_eq!(reader_view["posts"], json!([post]));
+    assert!(!first.raw.contains(UNSHARED));
+    assert_capture(&fixture, &reader, 0, &first, &reader_view);
+    first.tool(
+        "read-cited-translation",
+        "read_team_artifact",
+        json!({"postId":post_id,"referenceIndex":0}),
+    );
+    let second = peer.accept();
+    let (second_utf8, second_view) = shared_view(&second.body);
+    let translation = tool_result(&second.body, "read-cited-translation");
+    assert_eq!(
+        translation,
+        json!({"kind":"untrusted-team-artifact","postId":post_id,
+        "referenceIndex":0,"target":target,
+        "artifact":{"kind":"translation-revision","revisionId":original_revision,"text":ORIGINAL}})
+    );
+    assert_ne!(translation["artifact"]["text"], selected["currentText"]);
+    assert_eq!(own_users(&second.body, &second_utf8), own_input);
+    assert_capture(&fixture, &reader, 1, &second, &second_view);
+    second.tool(
+        "read-cited-source",
+        "read_team_artifact",
+        json!({"postId":post_id,"referenceIndex":1}),
+    );
+    let third = peer.accept();
+    let (third_utf8, third_view) = shared_view(&third.body);
+    assert_eq!(
+        tool_result(&third.body, "read-cited-translation"),
+        translation
+    );
+    assert_eq!(
+        tool_result(&third.body, "read-cited-source"),
+        json!({"kind":"untrusted-team-artifact","postId":post_id,
+            "referenceIndex":1,"target":target,"artifact":source_artifact})
+    );
+    assert_eq!(own_users(&third.body, &third_utf8), own_input);
+    assert_eq!(third_view["posts"], reader_view["posts"]);
+    assert_capture(&fixture, &reader, 2, &third, &third_view);
+    assert!(!third.raw.contains(UNSHARED));
+    assert_eq!(history(&fixture), before_reads);
+    assert_eq!(protection(&fixture), protected);
+    third.finish(&item, "Reader candidate");
+    fixture.wait_saved_for(&reader["attemptId"], Duration::from_secs(30));
+    let after = history(&fixture);
+    assert_eq!(after["current"], selected["current"]);
+    assert_eq!(after["currentText"], LATEST);
+    assert_eq!(
+        after["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["revisionId"] == original_revision)
+            .unwrap()["text"],
+        ORIGINAL
+    );
+    assert_eq!(protection(&fixture), protected);
 }

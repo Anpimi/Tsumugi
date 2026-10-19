@@ -1424,6 +1424,19 @@
               "profile"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-2",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -7400,6 +7413,12 @@
       "TeamDiscussionLimits": {
         "additionalProperties": false,
         "properties": {
+          "maxArtifactBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
           "maxMembers": {
             "format": "uint32",
             "maximum": 4294967295,
@@ -7443,7 +7462,8 @@
           "maxPosts",
           "maxPostBytes",
           "maxViewPosts",
-          "maxViewBytes"
+          "maxViewBytes",
+          "maxArtifactBytes"
         ],
         "type": "object"
       },
@@ -7454,6 +7474,19 @@
             "properties": {
               "profile": {
                 "const": "current-plan-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-2",
                 "type": "string"
               }
             },

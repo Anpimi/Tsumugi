@@ -20,7 +20,7 @@ import {validateRequestPrepare} from "./generated/execution.validators";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { aiAttempt, aiViewFixture, aiWorkPlanFixture, teamDiscussionLimitsFixture } from "./testSupport/aiFixture";
+import { aiAttempt, aiViewFixture, aiWorkPlanFixture, teamDiscussionLimitsFixture, teamArtifactLimitsFixture, teamDiscussionLimitsForFixture } from "./testSupport/aiFixture";
 import { formatReviewSlotFixture } from "./testSupport/textReviewFixture";
 import { connectionFixture } from "./testSupport/connectionFixture";
 import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSupport/pluginToolFixture";
@@ -75,7 +75,7 @@ beforeEach(async()=>{
   if(command==="prepare_work_plan"){
    if(request.config)prepared.preview.config=request.config as typeof defaultAiConfig;
    plan={maintenance:structuredClone(request.maintenance) as WorkPlanView["maintenance"],tools:null,checkers: request.options && (request.options as WorkPlanView["options"]).stages.some(choice=>choice.stage==="checks"&&choice.mode==="assisted") ? [formatCheckerFixture()] : [],planId,digest:"plan-digest",locale:String(request.locale),options:request.options as WorkPlanView["options"],scope:[{unitId:item.unitId,sourceSnapshotId:item.sourceSnapshotId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,selectionId:null}],attemptId:request.config?aiAttempt:null,preview:request.config?prepared.preview:null};
-   if(plan.options.teamDiscussions)plan.teamDiscussionLimits=structuredClone(teamDiscussionLimitsFixture);
+   if(plan.options.teamDiscussions)plan.teamDiscussionLimits=teamDiscussionLimitsForFixture(plan.options.teamDiscussions);
    return plan;
   }
   if(command==="authorize_work_plan"){
@@ -403,9 +403,11 @@ it("requires explicit discussion sharing before authorizing future same-plan pos
  const user=await preview();
  const choice=screen.getByRole("checkbox",{name:"Allow members to publish and share this plan’s discussions"});
  expect(choice).not.toBeChecked();
+ expect(screen.queryByRole("checkbox",{name:"Share the text of versions referenced by published posts"})).not.toBeInTheDocument();
  expect(invoke.mock.calls.find(([command])=>command==="prepare_work_plan")![1].request.options).not.toHaveProperty("teamDiscussions");
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));
  await user.click(choice);
+ expect(screen.getByRole("checkbox",{name:"Share the text of versions referenced by published posts"})).not.toBeChecked();
  expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
  expect(invoke.mock.calls.some(([command])=>command==="authorize_work_plan")).toBe(false);
  await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
@@ -413,6 +415,7 @@ it("requires explicit discussion sharing before authorizing future same-plan pos
  expect(within(disclosure).getByText(/Discussions published later may be shared only within each member’s assigned entries/)).toBeInTheDocument();
  expect(within(disclosure).getByText("Discussion destination: http://127.0.0.1:4000/v1/chat/completions · model test-model")).toBeInTheDocument();
  expect(within(disclosure).getByText(`Up to ${teamDiscussionLimitsFixture.maxPosts} published posts in this plan; each post may contain up to ${teamDiscussionLimitsFixture.maxPostBytes} UTF-8 bytes.`)).toBeInTheDocument();
+ expect(within(disclosure).queryByText(/A referenced translation may differ/)).not.toBeInTheDocument();
  expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();
  await user.click(screen.getByRole("checkbox",{name:/I authorize the displayed selection policy and member discussion publication/}));
  await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
@@ -420,13 +423,64 @@ it("requires explicit discussion sharing before authorizing future same-plan pos
  const grant=invoke.mock.calls.find(([command])=>command==="authorize_work_plan")![1].request;
  expect(grant).toMatchObject({planId,digest:"plan-digest",confirmed:true,effects:["save-candidate","publish-discussion"]});
  expect(plan.options.teamDiscussions).toEqual({profile:"current-plan-1"});
+ expect(screen.queryByText(/A referenced translation may differ/)).not.toBeInTheDocument();
+});
+
+it("requires a separate default-off choice and fresh consent for referenced version text",async()=>{
+ const user=await preview(), configBefore=structuredClone(prepared.preview.config);
+ const discussions=screen.getByRole("checkbox",{name:"Allow members to publish and share this plan’s discussions"});
+ await user.click(discussions);
+ const artifacts=screen.getByRole("checkbox",{name:"Share the text of versions referenced by published posts"});
+ expect(artifacts).not.toBeChecked();
+ expect(within(screen.getByRole("region",{name:"Preparation budget and sharing"})).getByText(i18n.t("ai.discussions.costUnknown"))).toBeInTheDocument();
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ await screen.findByRole("region",{name:"Team discussions"});
+ await user.click(screen.getByRole("checkbox",{name:/I authorize the displayed selection policy and member discussion publication/}));
+ await user.click(artifacts);
+ expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+ expect(within(screen.getByRole("region",{name:"Preparation budget and sharing"})).getByText(i18n.t("ai.discussions.artifactCostUnknown"))).toBeInTheDocument();
+ expect(screen.queryByText(i18n.t("ai.costUnknown"))).not.toBeInTheDocument();
+ expect(invoke.mock.calls.some(([command])=>command==="authorize_work_plan")).toBe(false);
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ const disclosure=await screen.findByRole("region",{name:"Team discussions"});
+ expect(plan.options.teamDiscussions).toEqual({profile:"current-plan-2"});
+ expect(plan.preview!.config).toEqual(configBefore);
+ expect(within(disclosure).getByText(/A referenced translation may differ from the currently selected translation/)).toBeInTheDocument();
+ expect(within(disclosure).getByText(`Each referenced text result, including its identity metadata, may contain up to ${teamArtifactLimitsFixture.maxArtifactBytes} UTF-8 bytes when fully encoded. Oversized results are rejected, not shortened; the complete model request must still fit its own limits.`)).toBeInTheDocument();
+ expect(within(disclosure).getByText(/does not include whole source snapshots, neighboring entries, files or stored source blocks/)).toBeInTheDocument();
+ const bodyConsent=()=>screen.getByRole("checkbox",{name:/Referenced translations may differ from the current selection/});
+ expect(bodyConsent()).not.toBeChecked();
+ expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();
+ await user.click(bodyConsent());
+ await user.click(artifacts);
+ expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ await screen.findByRole("region",{name:"Team discussions"});
+ expect(plan.options.teamDiscussions).toEqual({profile:"current-plan-1"});
+ expect(screen.queryByText(/A referenced translation may differ/)).not.toBeInTheDocument();
+ expect(screen.getByRole("checkbox",{name:/I authorize the displayed selection policy and member discussion publication/})).not.toBeChecked();
+ await user.click(discussions);
+ expect(screen.queryByRole("checkbox",{name:"Share the text of versions referenced by published posts"})).not.toBeInTheDocument();
+ await user.click(discussions);
+ expect(screen.getByRole("checkbox",{name:"Share the text of versions referenced by published posts"})).not.toBeChecked();
+ await user.click(screen.getByRole("checkbox",{name:"Share the text of versions referenced by published posts"}));
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ await screen.findByRole("region",{name:"Team discussions"});
+ await user.click(bodyConsent());
+ await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+ await waitFor(()=>expect(invoke.mock.calls.some(([command])=>command==="start_work_plan")).toBe(true));
+ const grant=invoke.mock.calls.find(([command])=>command==="authorize_work_plan")![1].request;
+ expect(grant).toMatchObject({planId,digest:"plan-digest",confirmed:true,effects:["save-candidate","publish-discussion"]});
+ expect(plan.options.teamDiscussions).toEqual({profile:"current-plan-2"});
 });
 
 it("removes discussion permission when generation becomes manual",async()=>{
  const user=await preview();
  await user.click(screen.getByRole("checkbox",{name:"Allow members to publish and share this plan’s discussions"}));
+ await user.click(screen.getByRole("checkbox",{name:"Share the text of versions referenced by published posts"}));
  await user.selectOptions(screen.getByRole("combobox",{name:"Translate"}),"manual");
  expect(screen.queryByRole("checkbox",{name:"Allow members to publish and share this plan’s discussions"})).not.toBeInTheDocument();
+ expect(screen.queryByRole("checkbox",{name:"Share the text of versions referenced by published posts"})).not.toBeInTheDocument();
  await user.click(screen.getByRole("button",{name:"Prepare manual plan"}));
  await waitFor(()=>expect(invoke.mock.calls.filter(([command])=>command==="prepare_work_plan")).toHaveLength(2));
  const request=invoke.mock.calls.filter(([command])=>command==="prepare_work_plan").at(-1)![1].request;

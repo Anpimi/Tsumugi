@@ -1087,14 +1087,20 @@ ai: {
   "discussions": {
     "title": "Team discussions",
     "enable": "Allow members to publish and share this plan’s discussions",
+    "enableArtifacts": "Share the text of versions referenced by published posts",
     "sharing": "Members may publish discussions for this plan. Discussions published later may be shared only within each member’s assigned entries; this does not include private reasoning or discussions from other plans.",
     "destination": "Discussion destination: {{endpoint}} · model {{model}}",
     "members": "Up to {{members}} members, with {{versions}} recorded role versions per member.",
     "posts": "Up to {{posts}} published posts in this plan; each post may contain up to {{bytes}} UTF-8 bytes.",
     "view": "Each model request may include up to {{posts}} complete posts and {{bytes}} UTF-8 bytes of discussions.",
     "bounds": "Required discussion and source material must fit the captured limits. Otherwise, the request is blocked. Model requests use this plan’s original budget and permission period; there is no automatic summarization.",
-    "costUnknown": "Cost is unknown. Limits bound application requests, not third-party billing. Only the captured source, resources and permitted same-plan discussions and references may be shared.",
-    "consent": "I authorize the displayed selection policy and member discussion publication, and confirm sending these strings, included resources and permitted future discussions for this plan to this endpoint within the shown scope and limits."
+    "costUnknown": "Cost is unknown. Limits bound application requests, not third-party billing. Only the captured source, resources and permitted same-plan discussions and reference identities may be shared.",
+    "consent": "I authorize the displayed selection policy and member discussion publication, and confirm sending these strings, included resources and permitted future discussions for this plan to this endpoint within the shown scope and limits.",
+    "artifactSharing": "Members may also read and share the exact saved translation version and original source-entry text referenced by a published post, within its target and each member’s assigned entries. A referenced translation may differ from the currently selected translation.",
+    "artifactLimit": "Each referenced text result, including its identity metadata, may contain up to {{bytes}} UTF-8 bytes when fully encoded. Oversized results are rejected, not shortened; the complete model request must still fit its own limits.",
+    "artifactScope": "This permits only the referenced version’s text. It does not include whole source snapshots, neighboring entries, files or stored source blocks, and does not expand the separate source-context sharing choices.",
+    "artifactCostUnknown": "Cost is unknown. Limits bound application requests, not third-party billing. Only the captured source, resources, permitted same-plan discussions and the exact referenced version text within the displayed scope may be shared.",
+    "artifactConsent": "I authorize the displayed selection policy and member discussion publication, and confirm sending these strings, included resources, permitted future discussions and their referenced saved translation versions or original source-entry text to this endpoint within the shown scope and limits. Referenced translations may differ from the current selection."
   },
   "scope": "Selected original strings: {{count}}",
   "clearSelectedRange": "Clear selected range",

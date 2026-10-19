@@ -10,7 +10,7 @@ import type {
   WorkPlanAgentReconcileRequest,
   MaintenanceAssessmentRequest,
 } from "./generated/ai.requests";
-import type { AttemptDetail, ExecutionOutputView, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
+import type { AttemptDetail, ExecutionOutputView, WorkPlanView, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
   WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
@@ -27,6 +27,13 @@ function invalidAcknowledgement(): never {
   throw Object.assign(new Error("Invalid work-plan acknowledgement"), {
     outcome: "unknown", reason: "invalid-work-plan-acknowledgement",
   });
+}
+
+function validDiscussionDisclosure(plan: WorkPlanView): boolean {
+  const policy = plan.options.teamDiscussions, limits = plan.teamDiscussionLimits;
+  if (!policy) return !limits;
+  if (!limits || !plan.preview) return false;
+  return policy.profile === "current-plan-1" ? limits.maxArtifactBytes === 0 : limits.maxArtifactBytes > 0;
 }
 
 /** Receipts report an action's historical result. Read status for current authority. */
@@ -56,7 +63,7 @@ export const workPlanCommands = {
       || value.options.adoptResources !== request.options.adoptResources
       || value.options.deliver !== request.options.deliver
       || jsonIdentity(value.options.teamDiscussions) !== jsonIdentity(request.options.teamDiscussions)
-      || Boolean(value.teamDiscussionLimits) !== Boolean(request.options.teamDiscussions)
+      || !validDiscussionDisclosure(value)
       || value.options.stages.length !== stages.size
       || value.options.stages.some(choice => stages.get(choice.stage) !== choice.mode)
       || value.options.advisoryChecks.length !== request.advisoryChecks.length
@@ -166,8 +173,7 @@ export const workPlanCommands = {
     const value = await checkedInvoke("read_work_plan_status", request, validators.validateResponseWorkPlanStatus);
     if (value.plan.planId !== request.planId || value.lease.planId !== request.planId
       || BigInt(value.lease.generation) === 0n
-      || Boolean(value.plan.options.teamDiscussions) !== Boolean(value.plan.teamDiscussionLimits)
-      || (value.plan.options.teamDiscussions && !value.plan.preview)
+      || !validDiscussionDisclosure(value.plan)
       || Boolean(value.plan.tools) !== Boolean(value.toolInvocations)
       || (value.plan.tools && (!value.toolInvocations || value.toolInvocations.limit !== value.plan.tools.maxInvocations
         || value.toolInvocations.reserved > value.toolInvocations.limit || !validWorkPlanApplicationTools(value.plan.tools.entries)))) invalidAcknowledgement();

@@ -14,6 +14,10 @@ import { fixtureIdentity } from "./executionFixture";
 export const aiAttempt = fixtureIdentity(401);
 export const aiTask = fixtureIdentity(402);
 export const teamDiscussionLimitsFixture = workPlan.responses.discussionPlan.teamDiscussionLimits;
+export const teamArtifactLimitsFixture = workPlan.responses.artifactDiscussionPlan.teamDiscussionLimits;
+export function teamDiscussionLimitsForFixture(policy: NonNullable<PlanOptions["teamDiscussions"]>) {
+  return structuredClone(policy.profile === "current-plan-2" ? teamArtifactLimitsFixture : teamDiscussionLimitsFixture);
+}
 
 export function aiViewFixture(item: AiItem, config: AiConfig): AiView {
   const view: unknown = structuredClone(ai.responses.view);
@@ -56,7 +60,7 @@ export function aiWorkPlanFixture(prepared:AiPrepared,options?:PlanOptions):Work
   const value:unknown=structuredClone(workPlan.responses.plan);
   if(!validateResponseWorkPlan(value))throw new Error("Invalid work-plan fixture");
   return {...value,attemptId:prepared.attemptId,preview:structuredClone(prepared.preview),locale:prepared.preview.items[0].targetLocale,
-    ...(options?.teamDiscussions?{teamDiscussionLimits:structuredClone(teamDiscussionLimitsFixture)}:{}),
+    ...(options?.teamDiscussions?{teamDiscussionLimits:teamDiscussionLimitsForFixture(options.teamDiscussions)}:{}),
     ...(options?{options:{...structuredClone(options),advisoryChecks:options.advisoryChecks.map(check=>({...structuredClone(check),
       execution:{...structuredClone(check.execution),profile:structuredClone(check.execution.profile??null)}}))}}:{}),maintenance:null,checkers:[],tools:null,
     scope:prepared.preview.items.map(item=>({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:item.nativeKey,selectionId:null})).sort((left,right)=>left.unitId.localeCompare(right.unitId))};

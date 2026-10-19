@@ -407,6 +407,23 @@ fn capture_author(
     })
 }
 
+fn translation_reference(
+    c: &Connection,
+    plan: &WorkPlan,
+    target: &TeamDiscussionTarget,
+    revision_id: ExecutionId,
+) -> Result<crate::TranslationRevision, ExecutionError> {
+    let revision = super::super::translation::revision_in(c, plan.project_id, revision_id)?;
+    if revision.unit_id != target.unit_id
+        || revision.locale != target.locale
+        || revision.source_snapshot_id != target.source_snapshot_id
+        || revision.source_revision_id != target.source_revision_id
+    {
+        return Err(denied());
+    }
+    Ok(revision)
+}
+
 fn check_references(
     c: &Connection,
     plan: &WorkPlan,
@@ -423,15 +440,7 @@ fn check_references(
         }
         match reference {
             TeamArtifactReference::TranslationRevision { revision_id } => {
-                let revision =
-                    super::super::translation::revision_in(c, plan.project_id, *revision_id)?;
-                if revision.unit_id != target.unit_id
-                    || revision.locale != target.locale
-                    || revision.source_snapshot_id != target.source_snapshot_id
-                    || revision.source_revision_id != target.source_revision_id
-                {
-                    return Err(denied());
-                }
+                translation_reference(c, plan, target, *revision_id)?;
             }
             TeamArtifactReference::SourceResult {
                 snapshot_id,
@@ -750,6 +759,96 @@ impl ProjectStore {
                 &value.publication.references,
             )?;
             Ok(value)
+        })
+    }
+    /// Read one cited body under the current member's explicitly shared profile.
+    pub fn read_team_artifact(
+        &self,
+        author: &CapturedTeamAuthor,
+        request: &ReadTeamArtifact,
+    ) -> Result<TeamArtifactRead, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| sql(rusqlite::Error::InvalidQuery))?;
+        super::super::review::read_snapshot(c, |c| {
+            self.check_work_plan_agent_scope(&author.scope)?;
+            author_live(c, &author.scope, &author.author)?;
+            let plan = live_plan(c, &author.scope)?;
+            let policy = policy(&plan)?;
+            if !matches!(policy, TeamDiscussionPolicy::CurrentPlanV2 {}) {
+                return Err(denied());
+            }
+            let published = post(c, request.post_id)?
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "team-post"))?;
+            if published.plan_id != plan.plan_id || published.publication.target != author.target {
+                return Err(denied());
+            }
+            check_target(&plan, &author.scope, &published.publication.target)?;
+            let reference = published
+                .publication
+                .references
+                .get(request.reference_index as usize)
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "team-reference-index"))?;
+            let artifact = match reference {
+                TeamArtifactReference::TranslationRevision { revision_id } => {
+                    let revision = translation_reference(c, &plan, &author.target, *revision_id)?;
+                    TeamArtifactBody::TranslationRevision {
+                        revision_id: *revision_id,
+                        text: revision.text,
+                    }
+                }
+                TeamArtifactReference::SourceResult {
+                    snapshot_id,
+                    attempt_id,
+                    result_id,
+                } => {
+                    if *snapshot_id != author.target.source_snapshot_id {
+                        return Err(denied());
+                    }
+                    let source = super::super::resources::SourceContextReader::historical_in(
+                        c,
+                        &crate::SourceContextRequest {
+                            project_id: plan.project_id,
+                            source_snapshot_id: *snapshot_id,
+                            unit_id: author.target.unit_id,
+                            source_revision_id: author.target.source_revision_id,
+                            locale: author.target.locale.clone(),
+                        },
+                    )?;
+                    let row = source.source_for_result_reference(
+                        *attempt_id,
+                        *result_id,
+                        author.target.unit_id,
+                        author.target.source_revision_id,
+                    )?;
+                    let input = super::super::ledger::load_input(c, author.author.attempt_id)?;
+                    if row.occurrence.key
+                        != crate::ai::item_payload(&input, author.author.item_id)?.native_key
+                    {
+                        return Err(conflict());
+                    }
+                    TeamArtifactBody::SourceResult {
+                        snapshot_id: *snapshot_id,
+                        attempt_id: *attempt_id,
+                        result_id: *result_id,
+                        occurrence_id: row.occurrence_id.ok_or_else(corrupt)?,
+                        native_key: row.occurrence.key.clone(),
+                        text: row.occurrence.text.clone(),
+                    }
+                }
+            };
+            let read = TeamArtifactRead {
+                kind: TeamArtifactReadKind::UntrustedTeamArtifact,
+                post_id: request.post_id,
+                reference_index: request.reference_index,
+                target: author.target.clone(),
+                artifact,
+            };
+            codec::encode(
+                &read,
+                TeamDiscussionLimits::for_policy(policy).max_artifact_bytes as usize,
+            )?;
+            Ok(read)
         })
     }
     pub fn capture_team_discussion_view(
@@ -1109,9 +1208,20 @@ mod tests {
         WorkPlanAgentScope,
         Vec<ExecutionId>,
     ) {
+        setup_for(TeamDiscussionPolicy::CurrentPlanV1 {})
+    }
+    fn setup_for(
+        policy: TeamDiscussionPolicy,
+    ) -> (
+        tempfile::TempDir,
+        ProjectStore,
+        WorkPlan,
+        WorkPlanAgentScope,
+        Vec<ExecutionId>,
+    ) {
         let (temp, mut store, units) = fixture();
         let mut options = PlanOptions::default();
-        options.team_discussions = Some(TeamDiscussionPolicy::CurrentPlanV1 {});
+        options.team_discussions = Some(policy);
         let plan = store
             .prepare_work_plan(Some(config()), "zh-CN", &units, options)
             .unwrap();
@@ -1170,6 +1280,426 @@ mod tests {
             confirmed: continuing,
             expires_at: continuing.then(|| consent(plan).expires_at),
         }
+    }
+
+    fn save_text(
+        store: &mut ProjectStore,
+        plan: &WorkPlan,
+        target: &TeamDiscussionTarget,
+        text: &str,
+    ) -> crate::TranslationSelection {
+        let current = store
+            .translation_history(plan.project_id, target.unit_id, &target.locale, 0, 1)
+            .unwrap()
+            .current;
+        store
+            .save_translation_revision(&crate::SaveTranslationRevision {
+                project_id: plan.project_id,
+                action_id: ExecutionId::new(),
+                unit_id: target.unit_id,
+                locale: target.locale.clone(),
+                source_revision_id: target.source_revision_id,
+                expected_selection_id: current.map(|selection| selection.event_id),
+                text: text.into(),
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn team_artifact_reads_keep_exact_versions_canonical_source_and_current_item_without_writes() {
+        let (_temp, mut store, plan, scope, units) =
+            setup_for(TeamDiscussionPolicy::CurrentPlanV2 {});
+        let request = dispatch(&mut store, &scope, units.clone());
+        let author = store
+            .capture_team_execution_author(&scope, &request)
+            .unwrap();
+        let item = crate::ai::item_payload(&request.input, request.item_id).unwrap();
+        let old_text = "Original NFD e\u{301} and emoji 👩🏽‍💻";
+        let old = save_text(&mut store, &plan, author.target(), old_text);
+        let source = store
+            .source_content(author.target.source_snapshot_id, 0, 100)
+            .unwrap();
+        assert!(
+            source
+                .rows
+                .iter()
+                .any(|row| row.unit_id != Some(author.target.unit_id))
+        );
+        let mut write = publication(
+            &author,
+            "These two precise immutable versions support the discussion.",
+        );
+        write.references = vec![
+            TeamArtifactReference::TranslationRevision {
+                revision_id: old.revision_id,
+            },
+            TeamArtifactReference::SourceResult {
+                snapshot_id: author.target.source_snapshot_id,
+                attempt_id: source.attempt_id,
+                result_id: source.result_id,
+            },
+        ];
+        store.publish_team_discussion(&author, &write).unwrap();
+        let newest = save_text(
+            &mut store,
+            &plan,
+            author.target(),
+            "New human selection must remain selected.",
+        );
+        assert_ne!(newest.revision_id, old.revision_id);
+        let other_item = request
+            .input
+            .envelope()
+            .items
+            .iter()
+            .find(|i| i.item_id != request.item_id)
+            .unwrap()
+            .item_id;
+        let other_request = store
+            .dispatch_execution_item(request.input.envelope().attempt_id, other_item)
+            .unwrap();
+        let other = store
+            .capture_team_execution_author(&scope, &other_request)
+            .unwrap();
+        let mut other_post =
+            publication(&other, "A separate work item has separate cited material.");
+        other_post.references = vec![write.references[1].clone()];
+        store.publish_team_discussion(&other, &other_post).unwrap();
+        let before = std::fs::read(
+            store
+                .directory()
+                .join(super::super::super::DATABASE_FILENAME),
+        )
+        .unwrap();
+        let sequence = store.execution_sequence().unwrap();
+        let budget = store.provider_budget(scope.parent_task()).unwrap();
+        let translated = store
+            .read_team_artifact(
+                &author,
+                &ReadTeamArtifact {
+                    post_id: write.post_id,
+                    reference_index: 0,
+                },
+            )
+            .unwrap();
+        assert_eq!(translated.kind, TeamArtifactReadKind::UntrustedTeamArtifact);
+        assert_eq!(
+            translated.artifact,
+            TeamArtifactBody::TranslationRevision {
+                revision_id: old.revision_id,
+                text: old_text.into()
+            }
+        );
+        let source_read = store
+            .read_team_artifact(
+                &author,
+                &ReadTeamArtifact {
+                    post_id: write.post_id,
+                    reference_index: 1,
+                },
+            )
+            .unwrap();
+        let canonical = source
+            .rows
+            .iter()
+            .find(|row| row.unit_id == Some(author.target.unit_id))
+            .unwrap();
+        assert_eq!(
+            source_read.artifact,
+            TeamArtifactBody::SourceResult {
+                snapshot_id: author.target.source_snapshot_id,
+                attempt_id: source.attempt_id,
+                result_id: source.result_id,
+                occurrence_id: canonical.occurrence_id.unwrap(),
+                native_key: item.native_key,
+                text: item.source_text,
+            }
+        );
+        let bytes = codec::encode(
+            &source_read,
+            TeamDiscussionLimits::for_policy(TeamDiscussionPolicy::CurrentPlanV2 {})
+                .max_artifact_bytes as usize,
+        )
+        .unwrap();
+        assert_eq!(
+            codec::decode::<TeamArtifactRead>(&bytes, 32768).unwrap(),
+            source_read
+        );
+        let json = serde_json::to_value(&source_read).unwrap();
+        assert_eq!(json["artifact"].as_object().unwrap().len(), 7);
+        for row in source
+            .rows
+            .iter()
+            .filter(|row| row.unit_id != Some(author.target.unit_id))
+        {
+            assert!(!String::from_utf8_lossy(&bytes).contains(&row.occurrence.text));
+        }
+        assert_eq!(
+            store
+                .read_team_artifact(
+                    &author,
+                    &ReadTeamArtifact {
+                        post_id: other_post.post_id,
+                        reference_index: 0
+                    }
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        assert_eq!(
+            store
+                .read_team_artifact(
+                    &author,
+                    &ReadTeamArtifact {
+                        post_id: write.post_id,
+                        reference_index: 2
+                    }
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+        assert!(
+            store
+                .read_team_artifact(
+                    &author,
+                    &ReadTeamArtifact {
+                        post_id: ExecutionId::new(),
+                        reference_index: 0
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .translation_history(
+                    plan.project_id,
+                    author.target.unit_id,
+                    &author.target.locale,
+                    0,
+                    1
+                )
+                .unwrap()
+                .current,
+            Some(newest)
+        );
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        assert_eq!(store.provider_budget(scope.parent_task()).unwrap(), budget);
+        assert_eq!(
+            std::fs::read(
+                store
+                    .directory()
+                    .join(super::super::super::DATABASE_FILENAME)
+            )
+            .unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn team_artifact_profile_and_encoded_limit_fail_closed_for_missing_or_inactive_authority() {
+        let (_old_temp, mut old_store, _old_plan, old_scope, old_units) = setup();
+        let old_request = dispatch(&mut old_store, &old_scope, vec![old_units[0]]);
+        let old_author = old_store
+            .capture_team_execution_author(&old_scope, &old_request)
+            .unwrap();
+        let old_post = publication(
+            &old_author,
+            "A v1 publication does not grant cited-body sharing.",
+        );
+        old_store
+            .publish_team_discussion(&old_author, &old_post)
+            .unwrap();
+        assert_eq!(
+            old_store
+                .read_team_artifact(
+                    &old_author,
+                    &ReadTeamArtifact {
+                        post_id: old_post.post_id,
+                        reference_index: 0
+                    }
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        assert_eq!(
+            team_discussion_tools(TeamDiscussionPolicy::CurrentPlanV1 {}).len(),
+            2
+        );
+        assert!(
+            !team_discussion_tools(TeamDiscussionPolicy::CurrentPlanV1 {})
+                .iter()
+                .any(|tool| tool.name == "read_team_artifact")
+        );
+        assert_eq!(
+            team_discussion_tools(TeamDiscussionPolicy::CurrentPlanV2 {})
+                .iter()
+                .filter(|tool| tool.name == "read_team_artifact")
+                .count(),
+            1
+        );
+        assert_eq!(TeamDiscussionLimits::current_plan().max_artifact_bytes, 0);
+        assert_eq!(
+            TeamDiscussionLimits::for_policy(TeamDiscussionPolicy::CurrentPlanV2 {})
+                .max_artifact_bytes,
+            32768
+        );
+        for profile in ["current-plan-1", "current-plan-2"] {
+            assert!(
+                serde_json::from_value::<TeamDiscussionPolicy>(
+                    serde_json::json!({"profile":profile,"maxArtifactBytes":999})
+                )
+                .is_err()
+            );
+        }
+        assert!(serde_json::from_value::<ReadTeamArtifact>(serde_json::json!({"postId":old_post.post_id,"referenceIndex":0,"revisionId":ExecutionId::new()})).is_err());
+        let short_plan = old_store
+            .prepare_work_plan(
+                Some(config()),
+                "zh-CN",
+                &old_units,
+                PlanOptions {
+                    team_discussions: Some(TeamDiscussionPolicy::CurrentPlanV2 {}),
+                    ..PlanOptions::default()
+                },
+            )
+            .unwrap();
+        let mut permission = consent(&short_plan);
+        permission.effects = short_plan.authorization_effects().unwrap();
+        permission.expires_at = control::now().unwrap() + 2;
+        let grant = old_store
+            .authorize_work_plan(&short_plan, &permission)
+            .unwrap();
+        old_store
+            .enqueue_execution(&FixedInput::capture(grant.input.unwrap()).unwrap())
+            .unwrap();
+        let short_scope = old_store.work_plan_agent_scope(grant.lease).unwrap();
+        let short_request = dispatch(&mut old_store, &short_scope, vec![old_units[0]]);
+        let short_author = old_store
+            .capture_team_execution_author(&short_scope, &short_request)
+            .unwrap();
+        let revision = old_store
+            .translation_history(
+                short_plan.project_id,
+                short_author.target.unit_id,
+                &short_author.target.locale,
+                0,
+                1,
+            )
+            .unwrap()
+            .rows[0]
+            .revision_id;
+        let mut short_post = publication(
+            &short_author,
+            "The original absolute lease must still be live.",
+        );
+        short_post.references = vec![TeamArtifactReference::TranslationRevision {
+            revision_id: revision,
+        }];
+        old_store
+            .publish_team_discussion(&short_author, &short_post)
+            .unwrap();
+        let short_read = ReadTeamArtifact {
+            post_id: short_post.post_id,
+            reference_index: 0,
+        };
+        old_store
+            .read_team_artifact(&short_author, &short_read)
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2100));
+        assert_eq!(
+            old_store
+                .read_team_artifact(&short_author, &short_read)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        let (_temp, mut store, plan, scope, units) =
+            setup_for(TeamDiscussionPolicy::CurrentPlanV2 {});
+        let request = dispatch(&mut store, &scope, vec![units[0]]);
+        let author = store
+            .capture_team_execution_author(&scope, &request)
+            .unwrap();
+        let oversized_text = "\u{0001}".repeat(6000);
+        let revision = save_text(&mut store, &plan, author.target(), &oversized_text);
+        let mut write = publication(
+            &author,
+            "A complete encoded body may exceed the artifact limit.",
+        );
+        write.references = vec![TeamArtifactReference::TranslationRevision {
+            revision_id: revision.revision_id,
+        }];
+        let saved = store.publish_team_discussion(&author, &write).unwrap();
+        let read = ReadTeamArtifact {
+            post_id: write.post_id,
+            reference_index: 0,
+        };
+        let before = std::fs::read(
+            store
+                .directory()
+                .join(super::super::super::DATABASE_FILENAME),
+        )
+        .unwrap();
+        assert!(oversized_text.len() < crate::content::MAX_TEXT_BYTES);
+        assert_eq!(
+            store.read_team_artifact(&author, &read).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+        assert_eq!(
+            std::fs::read(
+                store
+                    .directory()
+                    .join(super::super::super::DATABASE_FILENAME)
+            )
+            .unwrap(),
+            before
+        );
+        // Inject an unavailable original reference without changing the body's typed shape.
+        let mut missing = saved.clone();
+        missing.publication.references = vec![TeamArtifactReference::TranslationRevision {
+            revision_id: ExecutionId::new(),
+        }];
+        let bytes = codec::encode(&missing, MAX_RECORD_BYTES).unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE application_team_posts SET record=?2,digest=?3 WHERE post_id=?1",
+                params![write.post_id.to_string(), bytes, codec::digest(&bytes)],
+            )
+            .unwrap();
+        assert!(store.read_team_artifact(&author, &read).is_err());
+        let bytes = codec::encode(&saved, MAX_RECORD_BYTES).unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE application_team_posts SET record=?2,digest=?3 WHERE post_id=?1",
+                params![write.post_id.to_string(), bytes, codec::digest(&bytes)],
+            )
+            .unwrap();
+        let mut stale_epoch = author.clone();
+        stale_epoch.scope.store_epoch.push('x');
+        assert_eq!(
+            store
+                .read_team_artifact(&stale_epoch, &read)
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        store
+            .control_work_plan(&control(
+                &plan,
+                scope.lease.generation.get(),
+                WorkPlanCommand::Pause,
+            ))
+            .unwrap();
+        assert_eq!(
+            store.read_team_artifact(&author, &read).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
     }
 
     #[test]

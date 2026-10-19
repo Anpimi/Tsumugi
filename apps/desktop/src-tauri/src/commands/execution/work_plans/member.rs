@@ -20,7 +20,8 @@ use tsumugi_core::{
     },
     application::{
         AgentToolRequest, CapturedTeamAuthor, CapturedTeamDiscussionView,
-        PublishTeamDiscussion, ReadTeamDiscussion, WorkPlanAgentExecutionBinding, WorkPlanToolSpec,
+        PublishTeamDiscussion, ReadTeamArtifact, ReadTeamDiscussion, TeamDiscussionPolicy,
+        WorkPlanAgentExecutionBinding, WorkPlanToolSpec,
         team_discussion_tools,
     },
 };
@@ -136,7 +137,8 @@ impl Owner {
             )));
         }
         let plan = store.work_plan(scope.lease().plan_id).map_err(map_recover)?;
-        let team_author = if plan.options.team_discussions.is_some() {
+        let team_policy = plan.options.team_discussions;
+        let team_author = if team_policy.is_some() {
             Some(store.capture_team_execution_author(&scope, request).map_err(map_recover)?)
         } else {
             None
@@ -148,6 +150,7 @@ impl Owner {
             tools,
             tool_revision: revisions.into_iter().next(),
             team_author,
+            team_policy,
         })
     }
     fn check_scope(
@@ -210,6 +213,7 @@ struct CapturedScope {
     tools: Vec<WorkPlanToolSpec>,
     tool_revision: Option<UnsignedDecimal>,
     team_author: Option<CapturedTeamAuthor>,
+    team_policy: Option<TeamDiscussionPolicy>,
 }
 
 pub(in crate::commands::execution) struct MemberFactory {
@@ -309,8 +313,8 @@ impl MemberFactory {
             parameters: json!({"type":"object","properties":{"unitId":{"type":"string","enum":[seed.item().unit_id]}},
                 "required":["unitId"],"additionalProperties":false}),
         }).collect();
-        if captured.team_author.is_some() {
-            roster.extend(team_discussion_tools().into_iter().map(|tool| MemberTool {
+        if let Some(policy) = captured.team_policy {
+            roster.extend(team_discussion_tools(policy).into_iter().map(|tool| MemberTool {
                 name: tool.name,
                 description: tool.description,
                 parameters: tool.input_schema,
@@ -489,6 +493,7 @@ struct ToolRun {
 enum TeamToolRequest {
     Publish(PublishTeamDiscussion),
     Read(ReadTeamDiscussion),
+    ReadArtifact(ReadTeamArtifact),
 }
 struct Handler {
     owner: Owner,
@@ -624,10 +629,16 @@ impl Handler {
         let tool = match name {
             "publish_team_discussion" => TeamToolRequest::Publish(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
             "read_team_discussion" => TeamToolRequest::Read(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+            "read_team_artifact" => TeamToolRequest::ReadArtifact(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
             _ => return Ok(None),
         };
         if self.captured.team_author.is_none() {
             return Err(fail(ErrorCode::Unauthorized, "member-discussions-disabled"));
+        }
+        if !self.captured.team_policy.is_some_and(|policy| {
+            team_discussion_tools(policy).iter().any(|tool| tool.name == name)
+        }) {
+            return Err(fail(ErrorCode::Unauthorized, "member-discussion-tool-policy"));
         }
         Ok(Some(tool))
     }
@@ -637,6 +648,11 @@ impl Handler {
         let author = captured.team_author.clone().ok_or_else(|| fail(ErrorCode::Unauthorized, "member-discussions-disabled"))?;
         let revision = self.runtime_revision;
         let request = self.request.clone();
+        let post_id = match &tool {
+            TeamToolRequest::Publish(publication) => publication.post_id,
+            TeamToolRequest::Read(read) => read.post_id,
+            TeamToolRequest::ReadArtifact(read) => read.post_id,
+        };
         self.pending_provider = false;
         self.pending = Some(tokio::spawn(async move {
             let submitting = owner.clone();
@@ -648,16 +664,17 @@ impl Handler {
                         request.check_service_dispatch().map_err(map_recover)?;
                         let (_, store) = owner.original(sessions)?;
                         Ok(match tool {
-                            TeamToolRequest::Publish(publication) => store.publish_team_discussion(&author, &publication),
-                            TeamToolRequest::Read(read) => store.read_team_discussion(&captured.scope, read.post_id),
+                            TeamToolRequest::Publish(publication) => store.publish_team_discussion(&author, &publication).map(serde_json::to_value),
+                            TeamToolRequest::Read(read) => store.read_team_discussion(&captured.scope, read.post_id).map(serde_json::to_value),
+                            TeamToolRequest::ReadArtifact(read) => store.read_team_artifact(&author, &read).map(serde_json::to_value),
                         })
                     })
                 },
             ).map_err(command_error)?.await.map_err(command_error)?;
             let (value, details, is_error) = match post {
-                Ok(post) => {
-                    let details = json!({"postId":post.publication.post_id});
-                    (serde_json::to_value(post), details, false)
+                Ok(value) => {
+                    let details = json!({"postId":post_id});
+                    (value, details, false)
                 }
                 Err(error) => (serde_json::to_value(error), json!({}), true),
             };

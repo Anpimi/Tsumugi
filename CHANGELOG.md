@@ -6,13 +6,21 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Add a separate opt-in for reading text linked by same-plan published
+  discussions. Members can read the exact referenced translation revision or
+  the target's original source text, within a disclosed result limit; other
+  units and additional source context remain excluded. Existing discussion-only
+  plans keep their original scope. Current-only project schema 55 requires a
+  new development project and preserves earlier directories without migration
+  or reset; internal member protocol 2 and the SDK plugin protocol are unchanged.
+
 - Add explicitly enabled, same-plan published discussions with stable member and
   role identities, immutable references and bounded original-post reads. The
   original plan authorization separately discloses sharing future publications
   with its captured model destination. Each Pi request uses a Core-frozen view
   without changing local input or tool history, and records that view with its
   original physical request. Internal member protocol 2 and current-only project
-  schema 54 require matching application artifacts and a new development project;
+  schema 55 require matching application artifacts and a new development project;
   earlier directories are preserved and refused without migration or reset.
 
 - Run bounded Agent generation through a captured Pi member process with
@@ -29,7 +37,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   reservation before sending HTTP. Unknown usage stays occupied; conflicting
   usage cannot replace an earlier report. Shared model IO now interrupts pending
   JSON/SSE response waits when cancelled. The current-only project format is
-  schema 54; keep earlier development directories and create a new project to
+  schema 55; keep earlier development directories and create a new project to
   reimport sources, as they are preserved and refused without migration or reset.
 
 - Confirm uncertain translation match previews from their original saved projection

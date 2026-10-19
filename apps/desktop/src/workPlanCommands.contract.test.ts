@@ -107,7 +107,8 @@ it("binds discussion opt-in and its disclosure to the exact prepared plan", asyn
   expect(await workPlanCommands.prepare(request)).toEqual(response);
   expect(invoke).toHaveBeenLastCalledWith("prepare_work_plan", { request });
   const withoutLimits = { ...response, teamDiscussionLimits: undefined };
-  for (const wrong of [fixture.responses.plan, withoutLimits]) {
+  const artifactCapOnV1 = { ...response, teamDiscussionLimits: fixture.responses.artifactDiscussionPlan.teamDiscussionLimits };
+  for (const wrong of [fixture.responses.plan, withoutLimits, artifactCapOnV1]) {
     invoke.mockResolvedValueOnce(wrong);
     await expect(workPlanCommands.prepare(request)).rejects.toMatchObject({ reason: "invalid-work-plan-acknowledgement", outcome: "unknown" });
   }
@@ -117,6 +118,31 @@ it("binds discussion opt-in and its disclosure to the exact prepared plan", asyn
   expect(validators.validateRequestWorkPlanPrepare({ ...request, options: { ...request.options, teamDiscussions: { profile: "current-plan-1", maxPosts: 900 } } })).toBe(false);
   invoke.mockResolvedValueOnce({ ...fixture.responses.status, plan: withoutLimits });
   await expect(workPlanCommands.status(requests.workPlanStatus)).rejects.toMatchObject({ reason: "invalid-work-plan-acknowledgement", outcome: "unknown" });
+  invoke.mockResolvedValueOnce({ ...fixture.responses.status, plan: artifactCapOnV1 });
+  await expect(workPlanCommands.status(requests.workPlanStatus)).rejects.toMatchObject({ reason: "invalid-work-plan-acknowledgement", outcome: "unknown" });
+});
+
+it("binds referenced text disclosure to v2 without upgrading a v1 acknowledgement", async () => {
+  const request = { ...requests.workPlanPrepare, options: {
+    ...requests.workPlanPrepare.options, teamDiscussions: { profile: "current-plan-2" as const },
+  } };
+  const response = { ...fixture.responses.artifactDiscussionPlan, options: request.options };
+  expect(validators.validateRequestWorkPlanPrepare(request)).toBe(true);
+  expect(validators.validateResponseWorkPlan(response)).toBe(true);
+  invoke.mockResolvedValueOnce(response);
+  expect(await workPlanCommands.prepare(request)).toEqual(response);
+  const withoutArtifactCap = { ...response, teamDiscussionLimits: fixture.responses.discussionPlan.teamDiscussionLimits };
+  for (const wrong of [fixture.responses.discussionPlan, withoutArtifactCap]) {
+    invoke.mockResolvedValueOnce(wrong);
+    await expect(workPlanCommands.prepare(request)).rejects.toMatchObject({ reason: "invalid-work-plan-acknowledgement", outcome: "unknown" });
+  }
+  invoke.mockResolvedValueOnce({ ...fixture.responses.status, plan: response });
+  expect((await workPlanCommands.status(requests.workPlanStatus)).plan).toEqual(response);
+  invoke.mockResolvedValueOnce({ ...fixture.responses.status, plan: withoutArtifactCap });
+  await expect(workPlanCommands.status(requests.workPlanStatus)).rejects.toMatchObject({ reason: "invalid-work-plan-acknowledgement", outcome: "unknown" });
+  expect(validators.validateRequestWorkPlanPrepare({ ...request, options: { ...request.options, teamDiscussions: { profile: "current-plan-2", shareArtifacts: true } } })).toBe(false);
+  const { maxArtifactBytes: _cap, ...missingCap } = response.teamDiscussionLimits;
+  expect(validators.validateResponseWorkPlan({ ...response, teamDiscussionLimits: missingCap })).toBe(false);
 });
 
 it("rejects duplicate or mixed-generation instance consent and keeps revoking controls free of lifetime grants", async () => {

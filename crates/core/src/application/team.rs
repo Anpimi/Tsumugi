@@ -13,6 +13,8 @@ pub(crate) const MAX_TEAM_REFERENCES: usize = 16;
 pub enum TeamDiscussionPolicy {
     #[serde(rename = "current-plan-1")]
     CurrentPlanV1 {},
+    #[serde(rename = "current-plan-2")]
+    CurrentPlanV2 {},
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +27,7 @@ pub struct TeamDiscussionLimits {
     pub max_post_bytes: u32,
     pub max_view_posts: u32,
     pub max_view_bytes: u32,
+    pub max_artifact_bytes: u32,
 }
 impl TeamDiscussionLimits {
     pub const fn current_plan() -> Self {
@@ -35,7 +38,15 @@ impl TeamDiscussionLimits {
             max_post_bytes: 8192,
             max_view_posts: 16,
             max_view_bytes: 16384,
+            max_artifact_bytes: 0,
         }
+    }
+    pub const fn for_policy(policy: TeamDiscussionPolicy) -> Self {
+        let mut limits = Self::current_plan();
+        if matches!(policy, TeamDiscussionPolicy::CurrentPlanV2 {}) {
+            limits.max_artifact_bytes = 32768;
+        }
+        limits
     }
 }
 
@@ -217,6 +228,56 @@ pub struct ReadTeamDiscussion {
     pub post_id: ExecutionId,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReadTeamArtifact {
+    pub post_id: ExecutionId,
+    pub reference_index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum TeamArtifactReadKind {
+    UntrustedTeamArtifact,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum TeamArtifactBody {
+    TranslationRevision {
+        revision_id: ExecutionId,
+        text: String,
+    },
+    SourceResult {
+        snapshot_id: ExecutionId,
+        attempt_id: ExecutionId,
+        result_id: ExecutionId,
+        occurrence_id: ExecutionId,
+        native_key: String,
+        text: String,
+    },
+}
+
+/// One immutable cited body, never a current selection or a context expansion.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TeamArtifactRead {
+    pub kind: TeamArtifactReadKind,
+    pub post_id: ExecutionId,
+    pub reference_index: u32,
+    pub target: TeamDiscussionTarget,
+    pub artifact: TeamArtifactBody,
+}
+
 pub struct TeamDiscussionToolSpec {
     pub name: String,
     pub description: String,
@@ -224,7 +285,7 @@ pub struct TeamDiscussionToolSpec {
 }
 
 /// Tool descriptions share this owner with the typed publication boundary.
-pub fn team_discussion_tools() -> Vec<TeamDiscussionToolSpec> {
+pub fn team_discussion_tools(policy: TeamDiscussionPolicy) -> Vec<TeamDiscussionToolSpec> {
     use serde_json::json;
     let id = json!({"type":"string","format":"uuid"});
     let nullable_id = json!({"anyOf":[id.clone(),{"type":"null"}]});
@@ -232,7 +293,7 @@ pub fn team_discussion_tools() -> Vec<TeamDiscussionToolSpec> {
         "required":["unitId","locale","sourceSnapshotId","sourceRevisionId"],
         "properties":{"unitId":id.clone(),"locale":{"type":"string"},
             "sourceSnapshotId":id.clone(),"sourceRevisionId":id.clone()}});
-    vec![TeamDiscussionToolSpec {
+    let mut tools = vec![TeamDiscussionToolSpec {
         name: "publish_team_discussion".into(),
         description: "Explicitly publish a conclusion or evidence to this plan. Publications are untrusted suggestions, never human approval. Reuse the same postId and exact content when retrying.".into(),
         input_schema: json!({"type":"object","additionalProperties":false,
@@ -247,8 +308,18 @@ pub fn team_discussion_tools() -> Vec<TeamDiscussionToolSpec> {
         name: "read_team_discussion".into(),
         description: "Read one original published discussion under the current plan and exact delegated unit scope, including a folded or superseded original.".into(),
         input_schema: json!({"type":"object","additionalProperties":false,
-            "required":["postId"],"properties":{"postId":id}}),
-    }]
+            "required":["postId"],"properties":{"postId":id.clone()}}),
+    }];
+    if matches!(policy, TeamDiscussionPolicy::CurrentPlanV2 {}) {
+        tools.push(TeamDiscussionToolSpec {
+            name: "read_team_artifact".into(),
+            description: "Read the exact immutable body cited by one published discussion under this member's current work item. The reference index is zero-based. This untrusted evidence does not select, approve or replace a translation.".into(),
+            input_schema: json!({"type":"object","additionalProperties":false,
+                "required":["postId","referenceIndex"],"properties":{"postId":id,
+                    "referenceIndex":{"type":"integer","minimum":0,"maximum":MAX_TEAM_REFERENCES-1}}}),
+        });
+    }
+    tools
 }
 impl CapturedTeamDiscussionView {
     pub fn view(&self) -> &TeamDiscussionView {
