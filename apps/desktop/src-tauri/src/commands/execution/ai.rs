@@ -67,6 +67,9 @@ impl AiSession {
     pub(super) fn active(&self) -> bool {
         self.automation.active()
     }
+    pub(super) fn plan_active(&self, plan: ExecutionId) -> bool {
+        self.automation.plan_active(plan)
+    }
     pub(super) fn stop(&mut self) {
         self.automation.stop();
     }

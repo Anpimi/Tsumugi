@@ -543,6 +543,19 @@ impl Automation {
                 })
             })
     }
+    pub(super) fn plan_active(&self, plan: ExecutionId) -> bool {
+        let owns = |id: ExecutionId| {
+            self.attempts.get(&id).is_some_and(|attempt| {
+                attempt.input.envelope().automation.is_some_and(|lease| lease.plan_id == plan)
+            })
+        };
+        self.jobs.iter().any(|job| owns(job.attempt))
+            || self.retired.iter().any(|(id, _)| owns(*id))
+            || self.attempts.iter().filter(|(id, _)| owns(**id)).any(|(_, attempt)| {
+                attempt.items.values().any(|item| item.awaiting_effect()
+                    || item.checker.as_ref().is_some_and(|check| check.pending))
+            })
+    }
     pub(super) fn release_terminal_service_origins(
         &mut self,
         store: &ProjectStore,

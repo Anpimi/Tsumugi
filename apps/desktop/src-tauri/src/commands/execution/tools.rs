@@ -12,7 +12,7 @@ const OPERATION: &str = "plugin-tool-query";
 
 #[derive(Default)]
 pub(super) struct ToolSession {
-    pending: Option<(ExecutionId, ExecutionId)>,
+    pending: Option<(ExecutionId, ExecutionId, Option<ExecutionId>)>,
     prepared: Option<Arc<PreparedTool>>,
     last_start: Option<PluginToolStartRequest>,
 }
@@ -34,19 +34,29 @@ impl ToolSession {
     pub(super) fn active(&self) -> bool {
         self.pending.is_some()
     }
+    pub(super) fn plan_active(&self, plan: ExecutionId) -> bool {
+        self.pending.is_some_and(|(_, _, owner)| owner == Some(plan))
+    }
     pub(super) fn stop(&mut self) {
         *self = Self::default();
     }
     /// Release only the preparation whose IO has already joined. This never
     /// admits a query, and a stopped session may already have cleared the slot.
     pub(super) fn abandon(&mut self, ticket: ExecutionId) -> Result<(), CommandError> {
-        if self.pending.is_some_and(|(current, _)| current != ticket) {
+        if self.pending.is_some_and(|(current, _, _)| current != ticket) {
             return Err(stale());
         }
         self.pending = None;
         Ok(())
     }
     pub(super) fn begin(&mut self, attempt: ExecutionId) -> Result<ExecutionId, CommandError> {
+        self.begin_for_plan(attempt, None)
+    }
+    pub(super) fn begin_for_plan(
+        &mut self,
+        attempt: ExecutionId,
+        plan: Option<ExecutionId>,
+    ) -> Result<ExecutionId, CommandError> {
         if self.active() {
             return Err(map_recover(ExecutionError::new(
                 ErrorCode::Busy,
@@ -54,12 +64,12 @@ impl ToolSession {
             )));
         }
         let ticket = ExecutionId::new();
-        self.pending = Some((ticket, attempt));
+        self.pending = Some((ticket, attempt, plan));
         Ok(ticket)
     }
     fn discard(&mut self, attempt: ExecutionId) -> bool {
         let mut discarded = false;
-        if self.pending.is_some_and(|(_, id)| id == attempt) {
+        if self.pending.is_some_and(|(_, id, _)| id == attempt) {
             self.pending = None;
             discarded = true;
         }
@@ -163,7 +173,7 @@ pub(super) fn finish_job<'a>(
     let active = authorized(sessions, token, project, CommandStage::ExecutionRecover)?;
     let (host, _) = active.execution_parts()?;
     host.allow_mutation()?;
-    if host.tools.pending.map(|(id, _)| id) != Some(ticket) {
+    if host.tools.pending.map(|(id, _, _)| id) != Some(ticket) {
         return Err(stale());
     }
     host.tools.pending = None;

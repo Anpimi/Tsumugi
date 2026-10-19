@@ -18,6 +18,13 @@ impl super::WorkPlan {
         &self,
         root: &AiConfig,
     ) -> Result<(), crate::execution::ExecutionError> {
+        self.validate_team_members(root, true)
+    }
+    pub(crate) fn validate_team_members(
+        &self,
+        root: &AiConfig,
+        initial: bool,
+    ) -> Result<(), crate::execution::ExecutionError> {
         use std::collections::BTreeSet;
         let fail = || {
             crate::execution::ExecutionError::new(
@@ -57,15 +64,17 @@ impl super::WorkPlan {
         {
             return Err(fail());
         }
-        let initial = policy
-            .members()
-            .iter()
-            .find(|m| m.member_id == policy.initial_member_id())
-            .ok_or_else(fail)?;
-        if !initial.unit_ids.contains(&policy.initial_unit_id())
-            || !initial.kinds.contains(&TeamWorkKind::Translation)
-        {
-            return Err(fail());
+        if initial {
+            let initial = policy
+                .members()
+                .iter()
+                .find(|m| m.member_id == policy.initial_member_id())
+                .ok_or_else(fail)?;
+            if !initial.unit_ids.contains(&policy.initial_unit_id())
+                || !initial.kinds.contains(&TeamWorkKind::Translation)
+            {
+                return Err(fail());
+            }
         }
         for member in policy.members() {
             member.config.validate()?;
@@ -256,16 +265,26 @@ pub enum TeamWorkBinding {
         role_version_id: ExecutionId,
         scope: WorkPlanAgentExecutionBinding,
     },
+    HumanContinuation {
+        work_id: ExecutionId,
+        member_id: ExecutionId,
+        role_version_id: ExecutionId,
+        scope: WorkPlanAgentExecutionBinding,
+    },
 }
 impl TeamWorkBinding {
     pub fn scope(&self) -> &WorkPlanAgentExecutionBinding {
         match self {
-            Self::Root { scope, .. } | Self::Child { scope, .. } => scope,
+            Self::Root { scope, .. }
+            | Self::Child { scope, .. }
+            | Self::HumanContinuation { scope, .. } => scope,
         }
     }
     pub fn member_id(&self) -> ExecutionId {
         match self {
-            Self::Root { member_id, .. } | Self::Child { member_id, .. } => *member_id,
+            Self::Root { member_id, .. }
+            | Self::Child { member_id, .. }
+            | Self::HumanContinuation { member_id, .. } => *member_id,
         }
     }
     pub fn role_version_id(&self) -> ExecutionId {
@@ -274,6 +293,9 @@ impl TeamWorkBinding {
                 role_version_id, ..
             }
             | Self::Child {
+                role_version_id, ..
+            }
+            | Self::HumanContinuation {
                 role_version_id, ..
             } => *role_version_id,
         }
@@ -369,6 +391,7 @@ pub struct TeamMessage {
     pub plan_id: ExecutionId,
     pub sender: TeamMemberAuthor,
     pub recipient_member_id: ExecutionId,
+    pub recipient_role_version_id: ExecutionId,
     pub target: TeamDiscussionTarget,
     pub body: String,
     pub post_ids: Vec<ExecutionId>,
@@ -457,6 +480,7 @@ pub enum TeamStopReason {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct TeamWorkView {
+    pub origin: TeamWorkOrigin,
     pub sequence: Revision,
     pub receipt: TeamWorkReceipt,
     pub author: Option<TeamMemberAuthor>,
@@ -483,6 +507,10 @@ pub struct ReadTeamExecution {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct TeamExecutionView {
     pub plan_id: ExecutionId,
+    pub effective_version: super::TeamEffectiveVersion,
+    pub roster: Vec<TeamExecutionMember>,
+    pub retired_member_ids: Vec<ExecutionId>,
+    pub role_versions: Vec<TeamMemberRole>,
     pub members: Vec<TeamMemberRole>,
     pub works: Vec<TeamWorkView>,
     pub messages: Vec<TeamMessage>,
@@ -491,6 +519,25 @@ pub struct TeamExecutionView {
     pub stop_reason: Option<TeamStopReason>,
     pub next_work_after: Option<Revision>,
     pub next_message_after: Option<Revision>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum TeamWorkOrigin {
+    Start {
+        action_id: ExecutionId,
+    },
+    Member {},
+    HumanContinuation {
+        action_id: ExecutionId,
+        work: super::TeamHumanWork,
+    },
 }
 
 pub fn team_execution_tools() -> Vec<super::TeamDiscussionToolSpec> {

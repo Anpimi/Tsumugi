@@ -33,13 +33,16 @@ export function teamExecutionViewFixture(validation: ValidationState = "valid"):
   const sender = { ...original.author, memberId: first.memberId, roleVersionId: first.roleVersionId,
     binding: { ...original.author.binding, lease: status.lease } };
   const messageId = fixtureIdentity(9313);
-  const value: unknown = { planId: status.plan.planId,
+  const roles = policy.members.map(member => ({ planId: status.plan.planId, version: "1", generation: status.lease.generation, request: {
+    memberId: member.memberId, roleVersionId: member.roleVersionId, expectedRoleVersionId: null, displayName: member.displayName, role: member.role }, config: member.config }));
+  const value: unknown = { planId: status.plan.planId, effectiveVersion: { actionId: fixtureIdentity(9315), lease: status.lease, digest: status.plan.digest },
+    roster: structuredClone(policy.members), retiredMemberIds: [], roleVersions: structuredClone(roles),
     members: policy.members.map(member => ({ planId: status.plan.planId, version: "1", generation: status.lease.generation, request: {
       memberId: member.memberId, roleVersionId: member.roleVersionId, expectedRoleVersionId: null, displayName: member.displayName, role: member.role }, config: member.config })),
-    works: [{ sequence: "1", receipt, target, author: sender, request: { intentId: receipt.intentId, recipientMemberId: second.memberId, target, kind: "review",
+    works: [{ origin: { kind: "member" }, sequence: "1", receipt, target, author: sender, request: { intentId: receipt.intentId, recipientMemberId: second.memberId, target, kind: "review",
       instructions: "Read the complete original objection before deciding.", postIds: [post.publication.postId], causeMessageId: messageId }, execution: "succeeded", validation, candidateRevisionId: null,
       output: validation === "valid" ? { outcome: { kind: "review", reviewed: { kind: "post", postId: post.publication.postId }, postIds: [post.publication.postId], verdict: "revise" }, usage: null, requests: 1, usageIncomplete: true } : null }],
-    messages: [{ messageId, sequence: "1", planId: status.plan.planId, sender, recipientMemberId: second.memberId, target,
+    messages: [{ messageId, sequence: "1", planId: status.plan.planId, sender, recipientMemberId: second.memberId, recipientRoleVersionId: second.roleVersionId, target,
       body: "The earlier rejection remains unresolved. Read its original reason.", postIds: [post.publication.postId], causeMessageId: null }],
     consumptions: [{ messageId, taskId: receipt.taskId, providerRequestId: fixtureIdentity(9314) }],
     budget: { limit: 20, dispatched: 2, legacyHeld: 0, unresolved: 1, usageUnknown: 1, promptTokens: "17", completionTokens: "5" },

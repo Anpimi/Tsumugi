@@ -1,5 +1,7 @@
 //! Synthetic providers choose the work graph through actual Pi tool calls.
 use super::*;
+#[path = "team_recovery.rs"]
+mod recovery;
 
 struct TeamFixture(
     Option<Fixture>,

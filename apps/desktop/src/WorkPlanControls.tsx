@@ -85,6 +85,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   const toolKey = toolsRequired && plan ? JSON.stringify([context.sessionToken, context.projectId, plan.planId, plan.digest, status?.lease.generation ?? "prepared", plan.tools]) : null;
   const toolsConfirmed = !toolsRequired || (toolKey !== null && toolConsent === toolKey);
   const blocked = busy || disabled || Boolean(pending);
+  const confirmOriginal = !status || !status.plan.options.teamExecution && (status.state === "paused" || status.state === "taken-over");
 
   function expiry() {
     if (!validMinutes) throw { reason: "work-plan-expiry", outcome: "rejected" };
@@ -405,7 +406,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
           {applicationTools.groups.map(group => <fieldset key={jsonIdentity(group.basis)}>
             <legend>{t("ai.tools.applicationInstance", { name: group.tools[0].binding.declaration.title })}</legend>
             <WorkPlanApplicationToolDetails group={group} />
-            {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
+            {confirmOriginal ? <label className="source-check">
               <input type="checkbox" checked={applicationToolConsent.includes(applicationConsentKey(group))}
                 disabled={blocked || Boolean(ready) || !applicationTools.current()} onChange={event => {
                   const key = applicationConsentKey(group), checked = event.target.checked;
@@ -417,7 +418,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
           <WorkPlanApplicationToolObservation observation={applicationTools.observation} />
         </section> : null}
         <p>{t("sourcePlugin.unsandboxed")}</p>
-        {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
+        {confirmOriginal ? <label className="source-check">
           <input type="checkbox" checked={toolKey !== null && toolConsent === toolKey} disabled={blocked || Boolean(ready)}
             onChange={event => setToolConsent(event.target.checked ? toolKey : null)} />{t("ai.tools.consent")}
         </label> : null}
@@ -429,7 +430,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         {plan.checkers.map(checker => checker.kind === "ready" ? <fieldset key={checkerIdentity(checker.checker)}>
           <legend>{t("review.checkerConsentScope", { plugin: `${checker.checker.provider.plugin.publisher}/${checker.checker.provider.plugin.id} ${checker.checker.provider.plugin.version}`, profile: checker.checker.profile.id })}</legend>
           <ReviewCheckerDetails view={checker.plugin} />
-          {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
+          {confirmOriginal ? <label className="source-check">
             <input type="checkbox" checked={checkerConsent.includes(checkerConsentKey(checker))} disabled={blocked || Boolean(ready)}
               onChange={event => { const key = checkerConsentKey(checker); setCheckerConsent(previous => event.target.checked ? [...previous.filter(value => value !== key), key] : previous.filter(value => value !== key)); }} />{t("ai.plan.checkerConsent")}
           </label> : null}
@@ -453,7 +454,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         {status.state !== "taken-over" ? <button className="secondary-button" disabled={!controlAvailability(controlPayload("take-over")).enabled}
           onClick={() => dispatchControl("take-over")}>{t("ai.plan.takeOver")}</button> : null}
       </> : null}
-      {status.plan.options.teamExecution && (status.state !== "active" || BigInt(status.expiresAt) <= BigInt(Math.floor(Date.now() / 1000))) ? <p>{t("ai.team.reprepare")}</p> : null}
+      {status.plan.options.teamExecution && (status.state === "stopped" || BigInt(status.expiresAt) <= BigInt(Math.floor(Date.now() / 1000))) ? <p>{t("ai.team.reprepare")}</p> : null}
       {(status.state === "paused" || status.state === "taken-over") && !status.plan.options.teamExecution ? <>
         <p>{t("ai.plan.continueHelp")}</p>{duration}
         <label className="source-check"><input type="checkbox" checked={renewConsent} disabled={blocked || Boolean(ready)}

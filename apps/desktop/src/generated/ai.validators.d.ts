@@ -38,6 +38,11 @@ export declare function validateRequestWorkPlanTeamHistory(value: unknown): valu
 export declare function validateRequestWorkPlanTeamPost(value: unknown): value is Requests["workPlanTeamPost"];
 export declare function validateRequestWorkPlanTeamPublicationAction(value: unknown): value is Requests["workPlanTeamPublicationAction"];
 export declare function validateRequestWorkPlanTeamPublish(value: unknown): value is Requests["workPlanTeamPublish"];
+export declare function validateRequestWorkPlanTeamRecoveryAction(value: unknown): value is Requests["workPlanTeamRecoveryAction"];
+export declare function validateRequestWorkPlanTeamRecoveryAuthorize(value: unknown): value is Requests["workPlanTeamRecoveryAuthorize"];
+export declare function validateRequestWorkPlanTeamRecoveryEnd(value: unknown): value is Requests["workPlanTeamRecoveryEnd"];
+export declare function validateRequestWorkPlanTeamRecoveryPrepare(value: unknown): value is Requests["workPlanTeamRecoveryPrepare"];
+export declare function validateRequestWorkPlanTeamRecoveryState(value: unknown): value is Requests["workPlanTeamRecoveryState"];
 export declare function validateRequestWorkProtectionRead(value: unknown): value is Requests["workProtectionRead"];
 export declare function validateRequestWorkProtectionSet(value: unknown): value is Requests["workProtectionSet"];
 export declare function validateResponseEffectRetry(value: unknown): value is Responses["effectRetry"];
@@ -69,4 +74,9 @@ export declare function validateResponseWorkPlanTeamExecution(value: unknown): v
 export declare function validateResponseWorkPlanTeamHistory(value: unknown): value is Responses["workPlanTeamHistory"];
 export declare function validateResponseWorkPlanTeamPost(value: unknown): value is Responses["workPlanTeamPost"];
 export declare function validateResponseWorkPlanTeamPublicationAction(value: unknown): value is Responses["workPlanTeamPublicationAction"];
+export declare function validateResponseWorkPlanTeamRecoveryAction(value: unknown): value is Responses["workPlanTeamRecoveryAction"];
+export declare function validateResponseWorkPlanTeamRecoveryEnd(value: unknown): value is Responses["workPlanTeamRecoveryEnd"];
+export declare function validateResponseWorkPlanTeamRecoveryPreview(value: unknown): value is Responses["workPlanTeamRecoveryPreview"];
+export declare function validateResponseWorkPlanTeamRecoveryReceipt(value: unknown): value is Responses["workPlanTeamRecoveryReceipt"];
+export declare function validateResponseWorkPlanTeamRecoveryState(value: unknown): value is Responses["workPlanTeamRecoveryState"];
 export declare function validateResponseWorkProtection(value: unknown): value is Responses["workProtection"];

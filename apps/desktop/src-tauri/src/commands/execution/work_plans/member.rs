@@ -2,7 +2,7 @@
 //! and independently consented tool boundary. No plugin caller is fabricated.
 use super::*;
 mod coordination;
-mod environment;
+pub(super) mod environment;
 use environment::{EnvironmentAdmission, EnvironmentAttempt};
 use serde_json::{Value, json};
 use std::{

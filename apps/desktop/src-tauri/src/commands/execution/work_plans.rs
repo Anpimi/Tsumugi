@@ -2,6 +2,7 @@
 pub(crate) mod agent;
 pub(crate) mod broker;
 pub(crate) mod coordination;
+pub(crate) mod recovery;
 pub(crate) mod generation;
 pub(crate) mod guidance;
 pub(crate) mod member;
@@ -36,6 +37,9 @@ pub(super) struct WorkPlanSession {
     tool_consents: BTreeMap<ExecutionId, (AutomationLease, Arc<WorkPlanToolConsent>)>,
     tool_starts: BTreeMap<ExecutionId, broker::ToolStart>,
     tool_intents: BTreeMap<ExecutionId, broker::HumanToolIntent>,
+    recovery: Option<recovery::RecoveryPreparation>,
+    #[cfg(test)]
+    recovery_authorize_probe: Option<generation::CaptureProbe>,
 }
 impl WorkPlanSession {
     pub(super) fn stop_package(
@@ -74,7 +78,11 @@ impl WorkPlanSession {
     pub(super) fn generation_preparation_active(&self) -> bool {
         self.generation.active()
     }
+    pub(super) fn plan_generation_preparation_active(&self, plan: ExecutionId) -> bool {
+        self.generation.plan_active(plan)
+    }
     pub(super) fn stop(&mut self) {
+        self.clear_recovery();
         self.prepared = None;
         self.generation.stop();
         self.environments.clear();
@@ -83,6 +91,11 @@ impl WorkPlanSession {
         self.tool_consents.clear();
         self.tool_starts.clear();
         self.tool_intents.clear();
+    }
+    fn clear_recovery(&mut self) {
+        if let Some(preparation) = self.recovery.take() {
+            preparation.stop.request();
+        }
     }
 }
 
@@ -616,6 +629,7 @@ pub async fn prepare_work_plan(
                 )?;
                 let (host, _) = active.execution_parts()?;
                 host.allow_mutation()?;
+                host.work_plans.clear_recovery();
                 host.begin_package_work(
                     initial
                         .advisory_checks
@@ -858,7 +872,8 @@ pub async fn authorize_work_plan(
                 )?;
                 let environments =
                     consent_environments(host, store, &plan, &initial.checker_executions)?;
-                let work = host.begin_package_work(
+                let work = host.begin_plan_work(
+                    plan.plan_id,
                     environments
                         .iter()
                         .map(|(_, checker)| package_lifecycle::binding_package(&checker.binding))
@@ -1015,6 +1030,21 @@ pub async fn start_work_plan(
                     request.project_id,
                     CommandStage::ExecutionRecover,
                 )?;
+                // Exact acknowledgement is separate from admitting a new work.
+                // It remains readable after its original Host or grant is gone.
+                if let Some(receipt) = active.store.work_plan_receipt(request.action_id).map_err(map_recover)? {
+                    if let Some(input) = receipt.input.filter(|input| input.operation == ai::team::OPERATION) {
+                        let fixed = FixedInput::capture(input).map_err(map_read)?;
+                        if matches!(ai::team::settings(&fixed).map_err(map_read)?.binding,
+                            tsumugi_core::application::TeamWorkBinding::HumanContinuation { .. }) {
+                            if let Some(start) = active.store.work_plan_start_action_read(
+                                request.project_id, request.plan_id, request.action_id, request.expected_generation,
+                            ).map_err(map_read)? {
+                                return Ok(start.attempt_id);
+                            }
+                        }
+                    }
+                }
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 let receipt = store
@@ -1045,15 +1075,19 @@ pub async fn start_work_plan(
                 let checker = current_checker_consent(host, store, &plan, receipt.lease)?;
                 let checker_revision = checker.as_ref().map(|consent| consent.settings_revision);
                 if plan.options.team_execution.is_some() {
-                    let prepared = store.prepare_team_root(receipt.lease, request.action_id)
+                    let prepared = store.prepare_team_start(receipt.lease, request.action_id)
                         .map_err(map_recover)?;
+                    let recovery_revision = recovery::start_revision(host, &prepared, request.action_id)?;
+                    if recovery_revision.zip(checker_revision).is_some_and(|(recovery, checker)| recovery != checker) {
+                        return Err(super::review::checkers::stale());
+                    }
                     let start = || {
                         let accepted = host.runtime.submit_team_work(store, &prepared)
                             .map_err(map_recover)?;
                         host.ai.track(store, prepared.input(), checker).map_err(map_recover)?;
                         Ok(accepted.attempt_id)
                     };
-                    return with_plan_environment_revision(&plugins, &plan, checker_revision, start);
+                    return with_plan_environment_revision(&plugins, &plan, recovery_revision.or(checker_revision), start);
                 }
                 let envelope = receipt.input.ok_or_else(|| {
                     map_recover(ExecutionError::new(
@@ -1198,7 +1232,8 @@ pub async fn control_work_plan(
             }
             let environments =
                 consent_environments(host, store, &plan, &initial.checker_executions)?;
-            let work = host.begin_package_work(
+            let work = host.begin_plan_work(
+                plan.plan_id,
                 environments
                     .iter()
                     .map(|(_, checker)| package_lifecycle::binding_package(&checker.binding))
@@ -1346,7 +1381,8 @@ pub async fn read_work_plan_status(
                 .work_plan_review_checkers(&plan)
                 .map_err(map_read)?;
             let (host, _) = active.execution_parts()?;
-            let work = host.begin_package_work(
+            let work = host.begin_plan_work(
+                plan.plan_id,
                 checkers
                     .iter()
                     .map(|checker| package_lifecycle::binding_package(&checker.binding))

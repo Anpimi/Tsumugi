@@ -56,7 +56,8 @@ fn policy(plan: &WorkPlan) -> Result<TeamDiscussionPolicy, ExecutionError> {
 fn live_plan(c: &Connection, scope: &WorkPlanAgentScope) -> Result<WorkPlan, ExecutionError> {
     control::check_scope_in(c, scope)?;
     let stored = control::load(c, scope.lease.plan_id)?;
-    policy(&stored.plan)?;
+    let effective = super::recovery::plan_in(c, scope.lease.plan_id, scope.lease.generation)?;
+    policy(&effective)?;
     if !stored
         .effects
         .contains(&AutomationEffect::PublishDiscussion)
@@ -73,7 +74,7 @@ fn live_plan(c: &Connection, scope: &WorkPlanAgentScope) -> Result<WorkPlan, Exe
     {
         return Err(conflict());
     }
-    Ok(stored.plan)
+    Ok(effective)
 }
 fn check_target(
     plan: &WorkPlan,
@@ -167,7 +168,9 @@ fn register(
     write: &TeamMemberRoleWrite,
 ) -> Result<TeamMemberRole, ExecutionError> {
     let plan = live_plan(c, scope)?;
-    if plan.options.team_execution.is_some(){return Err(denied());}
+    if plan.options.team_execution.is_some() {
+        return Err(denied());
+    }
     if write.display_name.trim().is_empty()
         || write.display_name.len() > 128
         || write.role.trim().is_empty()
@@ -501,7 +504,10 @@ pub(super) fn post(
     })
     .transpose()
 }
-fn all_posts(c: &Connection, plan: ExecutionId) -> Result<Vec<TeamDiscussionPost>, ExecutionError> {
+pub(super) fn all_posts(
+    c: &Connection,
+    plan: ExecutionId,
+) -> Result<Vec<TeamDiscussionPost>, ExecutionError> {
     let mut query = c
         .prepare("SELECT post_id FROM application_team_posts WHERE plan_id=?1 ORDER BY sequence")
         .map_err(sql)?;
@@ -621,6 +627,60 @@ fn publish(
     )
     .map_err(sql)?;
     Ok(value)
+}
+
+pub(super) fn artifact_in(
+    c: &Connection,
+    plan: &WorkPlan,
+    target: &TeamDiscussionTarget,
+    reference: &TeamArtifactReference,
+    native_key: &str,
+) -> Result<TeamArtifactBody, ExecutionError> {
+    Ok(match reference {
+        TeamArtifactReference::TranslationRevision { revision_id } => {
+            let revision = translation_reference(c, &plan, &target, *revision_id)?;
+            TeamArtifactBody::TranslationRevision {
+                revision_id: *revision_id,
+                text: revision.text,
+            }
+        }
+        TeamArtifactReference::SourceResult {
+            snapshot_id,
+            attempt_id,
+            result_id,
+        } => {
+            if *snapshot_id != target.source_snapshot_id {
+                return Err(denied());
+            }
+            let source = super::super::resources::SourceContextReader::historical_in(
+                c,
+                &crate::SourceContextRequest {
+                    project_id: plan.project_id,
+                    source_snapshot_id: *snapshot_id,
+                    unit_id: target.unit_id,
+                    source_revision_id: target.source_revision_id,
+                    locale: target.locale.clone(),
+                },
+            )?;
+            let row = source.source_for_result_reference(
+                *attempt_id,
+                *result_id,
+                target.unit_id,
+                target.source_revision_id,
+            )?;
+            if row.occurrence.key != native_key {
+                return Err(conflict());
+            }
+            TeamArtifactBody::SourceResult {
+                snapshot_id: *snapshot_id,
+                attempt_id: *attempt_id,
+                result_id: *result_id,
+                occurrence_id: row.occurrence_id.ok_or_else(corrupt)?,
+                native_key: row.occurrence.key.clone(),
+                text: row.occurrence.text.clone(),
+            }
+        }
+    })
 }
 
 impl ProjectStore {
@@ -916,54 +976,9 @@ impl ProjectStore {
                 .references
                 .get(request.reference_index as usize)
                 .ok_or_else(|| fail(ErrorCode::InvalidInput, "team-reference-index"))?;
-            let artifact = match reference {
-                TeamArtifactReference::TranslationRevision { revision_id } => {
-                    let revision = translation_reference(c, &plan, &author.target, *revision_id)?;
-                    TeamArtifactBody::TranslationRevision {
-                        revision_id: *revision_id,
-                        text: revision.text,
-                    }
-                }
-                TeamArtifactReference::SourceResult {
-                    snapshot_id,
-                    attempt_id,
-                    result_id,
-                } => {
-                    if *snapshot_id != author.target.source_snapshot_id {
-                        return Err(denied());
-                    }
-                    let source = super::super::resources::SourceContextReader::historical_in(
-                        c,
-                        &crate::SourceContextRequest {
-                            project_id: plan.project_id,
-                            source_snapshot_id: *snapshot_id,
-                            unit_id: author.target.unit_id,
-                            source_revision_id: author.target.source_revision_id,
-                            locale: author.target.locale.clone(),
-                        },
-                    )?;
-                    let row = source.source_for_result_reference(
-                        *attempt_id,
-                        *result_id,
-                        author.target.unit_id,
-                        author.target.source_revision_id,
-                    )?;
-                    let input = super::super::ledger::load_input(c, author.author.attempt_id)?;
-                    if row.occurrence.key
-                        != crate::ai::item_payload(&input, author.author.item_id)?.native_key
-                    {
-                        return Err(conflict());
-                    }
-                    TeamArtifactBody::SourceResult {
-                        snapshot_id: *snapshot_id,
-                        attempt_id: *attempt_id,
-                        result_id: *result_id,
-                        occurrence_id: row.occurrence_id.ok_or_else(corrupt)?,
-                        native_key: row.occurrence.key.clone(),
-                        text: row.occurrence.text.clone(),
-                    }
-                }
-            };
+            let input = super::super::ledger::load_input(c, author.author.attempt_id)?;
+            let item = crate::ai::item_payload(&input, author.author.item_id)?;
+            let artifact = artifact_in(c, &plan, &author.target, reference, &item.native_key)?;
             let read = TeamArtifactRead {
                 kind: TeamArtifactReadKind::UntrustedTeamArtifact,
                 post_id: request.post_id,
@@ -1259,20 +1274,22 @@ fn history_in(c: &Connection, plan: &WorkPlan) -> Result<TeamHistory, ExecutionE
         if ids.is_empty() || ids.len() > limits.max_role_versions_per_member as usize {
             return Err(corrupt());
         }
-        let config = if let Some(policy) = &plan.options.team_execution {
-            policy
-                .members()
-                .iter()
-                .find(|m| m.member_id == member)
-                .ok_or_else(corrupt)?
-                .config
-                .clone()
-        } else {
-            crate::ai::settings(&FixedInput::capture(plan.execution_input()?.clone())?)?.config
-        };
         let mut previous: Option<TeamMemberRole> = None;
         for (i, id) in ids.into_iter().enumerate() {
             let role = load_role(c, ExecutionId::parse(&id)?)?;
+            let config = if plan.options.team_execution.is_some() {
+                let at = super::recovery::plan_in(c, plan.plan_id, role.generation)?;
+                at.options
+                    .team_execution
+                    .as_ref()
+                    .and_then(|p| p.members().iter().find(|m| m.member_id == member))
+                    .ok_or_else(corrupt)?
+                    .config
+                    .clone()
+            } else {
+                crate::ai::settings(&plan.fixed_input()?)?.config
+            };
+
             if role.plan_id != plan.plan_id
                 || role.request.member_id != member
                 || role.version.get() != i as u64 + 1

@@ -1,5 +1,24 @@
 # Application versioning and changelog maintenance
 
+Paused team recovery adds explicitly captured authorization revisions and
+trusted human work under the original plan, action, execution and budget owners.
+Member and role changes preserve immutable historical identities; new model
+sharing is prepared and approved per destination. This advances the current-only
+project format to schema 57. Schema 56 and earlier development directories are
+preserved and refused without migration or reset; create a new project to reimport
+sources.
+
+Recovery is limited to the original live application runtime and its retained
+monotonic deadline. It does not renew an expired or stopped grant, restore an
+old scope after reopen, refund unknown exposure or reset the original request,
+activation or unconfirmed-completion limits. The additional experimental Desktop
+recovery contracts and exact historical-role projections require regenerated
+consumers. They reuse internal member protocol 2, SDK/Process3 and WorkPlan3,
+without another version source or dependency change. This remains in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+synchronized bilingual Unreleased entries and no additional package version bump.
+Earlier source assessments below retain their own format and feature baselines.
+
 Explicitly approved bounded teams capture each member's real model configuration,
 sharing projection, role and permitted item/tool subset. Their typed work and
 message facts link to the original execution, budget, request and translation

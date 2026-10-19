@@ -7,6 +7,7 @@ import { AiPreparationSession, useAiPreparation, defaultPlanOptions } from "./Ai
 import { AiWorkbench } from "./AiWorkbench";
 import { TeamExecutionDisclosure } from "./TeamExecutionDisclosure";
 import { TeamExecutionHistory } from "./TeamExecutionHistory";
+import { teamRecoveryFixture } from "./testSupport/teamRecoveryFixture";
 import { teamExecutionStatusFixture, teamExecutionViewFixture } from "./testSupport/teamExecutionFixture";
 import { teamContext } from "./testSupport/teamDiscussionFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
@@ -64,6 +65,10 @@ beforeEach(async () => {
     if (command === "prepare_work_plan" && validators.validateRequestWorkPlanPrepare(request)) return prepareFixture(request);
     if (command === "read_work_plan_status") return structuredClone(status);
     if (command === "read_work_plan_team_history") return { planId: request.planId, members: [], authorRoles: [], posts: [], nextAfter: null };
+    if (command === "read_work_plan_team_recovery_state") {
+      const recovery = teamRecoveryFixture().state;
+      return { ...recovery, state: { ...recovery.state, planId: status.plan.planId, lease: status.lease, state: status.state, expiresAtMs: (BigInt(status.expiresAt) * 1000n).toString() } };
+    }
     if (command === "read_work_plan_team_execution") return teamExecutionViewFixture();
     throw new Error(command);
   });
@@ -177,7 +182,7 @@ it("routes a started team to original team facts and allows explicit preparation
   status.state = "paused";
   act(() => { owner.recordPlanStart(status.plan.attemptId!, status.plan.planId, status.plan, status.lease.generation, owner.current().editSeq); });
   await screen.findByText("Read the complete original objection before deciding.");
-  expect(screen.getByText(i18n.t("ai.team.reprepare"))).toBeVisible();
+  expect(await screen.findByText(i18n.t("ai.recovery.available"))).toBeVisible();
   expect(screen.queryByRole("button", { name: i18n.t("ai.plan.continue") })).not.toBeInTheDocument();
   expect(calls("read_ai_translation")).toHaveLength(0);
   expect(screen.getByRole("combobox", { name: i18n.t("ai.team.initial") })).toBeEnabled();

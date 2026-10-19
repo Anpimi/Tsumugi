@@ -121,7 +121,7 @@ impl CaptureProbe {
         Self { reached, release }
     }
 
-    async fn after_successful_capture(self, revision: UnsignedDecimal) {
+    pub(super) async fn after_successful_capture(self, revision: UnsignedDecimal) {
         let _ = self.reached.send(revision);
         // Dropping the test's sender releases immediately. A forgotten sender
         // cannot hold a project operation indefinitely or change its result.
@@ -133,7 +133,7 @@ impl CaptureProbe {
 }
 #[derive(Default)]
 pub(super) struct GenerationSession {
-    pending: BTreeMap<ExecutionId, ExecutionId>,
+    pending: BTreeMap<ExecutionId, (ExecutionId, ExecutionId)>,
     prepared: BTreeMap<ExecutionId, Arc<PreparedComponent>>,
     starts: BTreeMap<ExecutionId, ComponentStart>,
     #[cfg(test)]
@@ -161,6 +161,9 @@ impl GenerationSession {
 
     pub(super) fn active(&self) -> bool {
         !self.pending.is_empty()
+    }
+    pub(super) fn plan_active(&self, plan: ExecutionId) -> bool {
+        self.pending.values().any(|(_, owner)| *owner == plan)
     }
     pub(super) fn stop(&mut self) {
         self.pending.clear();
@@ -402,6 +405,7 @@ pub async fn prepare_work_plan_generation_component(
             host.allow_mutation()?;
             let scope = agent::scope(host, store, initial.scope_id)?;
             let tools = tool_services::prepare(store, &scope, &initial)?;
+            let work = host.begin_plan_work(scope.lease().plan_id, Vec::new())?;
             let generation = &mut host.work_plans.generation;
             if let Some(prepared) = generation.prepared.get(&initial.attempt_id) {
                 if prepared.request != initial || prepared.scope != scope {
@@ -422,16 +426,16 @@ pub async fn prepare_work_plan_generation_component(
                 return Err(limit());
             }
             let ticket = ExecutionId::new();
-            generation.pending.insert(initial.attempt_id, ticket);
+            generation.pending.insert(initial.attempt_id, (ticket, scope.lease().plan_id));
             #[cfg(test)]
             {
                 let probe = generation
                     .probes
                     .remove(&(CapturePhase::Prepare, initial.attempt_id));
-                return Ok((Some((ticket, scope, tools, probe)), None));
+                return Ok((Some((ticket, scope, tools, work, probe)), None));
             }
             #[cfg(not(test))]
-            Ok((Some((ticket, scope, tools)), None))
+            Ok((Some((ticket, scope, tools, work)), None))
         },
     )?;
     let io = state.io.clone();
@@ -442,14 +446,16 @@ pub async fn prepare_work_plan_generation_component(
             return Ok(view);
         }
         #[cfg(test)]
-        let (ticket, captured_scope, tools, probe) = pending.ok_or_else(mismatch)?;
+        let (ticket, captured_scope, tools, work, probe) = pending.ok_or_else(mismatch)?;
         #[cfg(not(test))]
-        let (ticket, captured_scope, tools) = pending.ok_or_else(mismatch)?;
+        let (ticket, captured_scope, tools, work) = pending.ok_or_else(mismatch)?;
         let component = request.component.clone();
         let capture_plugins = plugins.clone();
         let captured_tools = tools.clone();
+        let capturing_work = work.clone();
         let loaded = io
             .run(CommandStage::ExecutionRead, move || {
+                capturing_work.check()?;
                 let environment = capture_plugins.capture_generation_component(&component)?;
                 tool_services::recapture(
                     &capture_plugins,
@@ -478,7 +484,8 @@ pub async fn prepare_work_plan_generation_component(
                     )?;
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
-                    if host.work_plans.generation.pending.get(&request.attempt_id) != Some(&ticket)
+                    work.check()?;
+                    if host.work_plans.generation.pending.get(&request.attempt_id).map(|(ticket, _)| *ticket) != Some(ticket)
                     {
                         return Err(mismatch());
                     }
@@ -626,10 +633,11 @@ pub async fn start_work_plan_generation_component(
                 .then(|| broker::current_consent(host, store, &scope))
                 .transpose()?;
             let ticket = ExecutionId::new();
+            let work = host.begin_plan_work(scope.lease().plan_id, Vec::new())?;
             host.work_plans
                 .generation
                 .pending
-                .insert(initial.attempt_id, ticket);
+                .insert(initial.attempt_id, (ticket, scope.lease().plan_id));
             #[cfg(test)]
             {
                 let probe = host
@@ -637,30 +645,32 @@ pub async fn start_work_plan_generation_component(
                     .generation
                     .probes
                     .remove(&(CapturePhase::Start, initial.attempt_id));
-                return Ok(Some((ticket, prepared, deadline, tool_consent, probe)));
+                return Ok(Some((ticket, prepared, deadline, tool_consent, work, probe)));
             }
             #[cfg(not(test))]
-            Ok(Some((ticket, prepared, deadline, tool_consent)))
+            Ok(Some((ticket, prepared, deadline, tool_consent, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
         #[cfg(test)]
-        let Some((ticket, prepared, deadline, tool_consent, probe)) = admitted.await? else {
+        let Some((ticket, prepared, deadline, tool_consent, work, probe)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
         #[cfg(not(test))]
-        let Some((ticket, prepared, deadline, tool_consent)) = admitted.await? else {
+        let Some((ticket, prepared, deadline, tool_consent, work)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
         let fixed = prepared.clone();
         let capture_plugins = plugins.clone();
+        let capturing_work = work.clone();
         let ready_deadline = tool_consent
             .as_ref()
             .map(|consent| consent.deadline().min(deadline));
         let loaded = io
             .run(CommandStage::ExecutionRecover, move || {
+                capturing_work.check()?;
                 let environment =
                     capture_plugins.capture_generation_component(&fixed.request.component)?;
                 if environment.view()? != fixed.view.component
@@ -715,7 +725,8 @@ pub async fn start_work_plan_generation_component(
                     )?;
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
-                    if host.work_plans.generation.pending.get(&request.attempt_id) != Some(&ticket)
+                    work.check()?;
+                    if host.work_plans.generation.pending.get(&request.attempt_id).map(|(ticket, _)| *ticket) != Some(ticket)
                     {
                         return Err(mismatch());
                     }

@@ -1,7 +1,7 @@
 //! Local contention waits retain the original member lifetime and authority.
 use super::*;
 
-pub(super) enum EnvironmentAttempt<T> {
+pub(in crate::commands::execution::work_plans) enum EnvironmentAttempt<T> {
     Waiting,
     Complete(Result<T, CommandError>),
 }
@@ -10,7 +10,7 @@ fn plugin_busy(error: &CommandError) -> bool {
 }
 impl<T> EnvironmentAttempt<T> {
     // Only a completely read-only capture may use this classification.
-    pub(super) fn read_only(result: Result<T, CommandError>) -> Self {
+    pub(in crate::commands::execution::work_plans) fn read_only(result: Result<T, CommandError>) -> Self {
         if result.as_ref().is_err_and(|error| plugin_busy(error)) {
             Self::Waiting
         } else {
@@ -20,15 +20,15 @@ impl<T> EnvironmentAttempt<T> {
 }
 
 #[derive(Clone)]
-pub(super) struct EnvironmentAdmission {
+pub(in crate::commands::execution::work_plans) struct EnvironmentAdmission {
     deadline: Instant,
     stops: Vec<Cancellation>,
 }
 impl EnvironmentAdmission {
-    pub(super) fn new(deadline: Instant, stops: Vec<Cancellation>) -> Self {
+    pub(in crate::commands::execution::work_plans) fn new(deadline: Instant, stops: Vec<Cancellation>) -> Self {
         Self { deadline, stops }
     }
-    pub(super) fn check(&self) -> Result<(), ExecutionError> {
+    pub(in crate::commands::execution::work_plans) fn check(&self) -> Result<(), ExecutionError> {
         if self.stops.iter().any(Cancellation::is_requested) {
             return Err(fail(ErrorCode::Cancelled, "member-cancelled"));
         }
@@ -59,7 +59,7 @@ impl EnvironmentAdmission {
             EnvironmentAttempt::Complete(result)
         }
     }
-    pub(super) async fn wait<T, F, Fut>(
+    pub(in crate::commands::execution::work_plans) async fn wait<T, F, Fut>(
         &self,
         current: impl Fn() -> Result<(), ExecutionError>,
         mut attempt: F,

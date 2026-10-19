@@ -86,7 +86,7 @@ pub(super) struct StoredPlan {
     pub(super) state: WorkPlanState,
     pub(super) expires_at: u64,
     pub(super) effects: Vec<AutomationEffect>,
-    cancellation_revision: Revision,
+    pub(super) cancellation_revision: Revision,
 }
 pub(super) fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, ExecutionError> {
     let (bytes, digest, generation, state, effects, expires, cancellation): (Vec<u8>, String, i64, String, Vec<u8>, i64, i64) =
@@ -126,7 +126,7 @@ pub(super) fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, Execut
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-enum Request {
+pub(super) enum Request {
     Authorize {
         plan_id: ExecutionId,
         request: AuthorizeWorkPlan,
@@ -134,22 +134,31 @@ enum Request {
     Control {
         request: ControlWorkPlan,
     },
+    TeamRecovery {
+        request: AuthorizeTeamRecovery,
+        capture: Box<TeamRecoveryCapture>,
+    },
 }
 impl Request {
-    fn action(&self) -> ExecutionId {
+    pub(super) fn action(&self) -> ExecutionId {
         match self {
             Self::Authorize { request, .. } => request.action_id,
             Self::Control { request } => request.action_id,
+            Self::TeamRecovery { request, .. } => request.action_id,
         }
     }
-    fn plan(&self) -> ExecutionId {
+    pub(super) fn plan(&self) -> ExecutionId {
         match self {
             Self::Authorize { plan_id, .. } => *plan_id,
             Self::Control { request } => request.plan_id,
+            Self::TeamRecovery { capture, .. } => capture.plan.plan_id,
         }
     }
 }
-fn existing(c: &Connection, request: &Request) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
+pub(super) fn existing(
+    c: &Connection,
+    request: &Request,
+) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
     let row: Option<(Vec<u8>, String, Vec<u8>, String)> = c.query_row(
         "SELECT request,request_digest,receipt,receipt_digest FROM application_actions WHERE action_id=?1", [request.action().to_string()],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(sql)?;
@@ -169,7 +178,7 @@ fn existing(c: &Connection, request: &Request) -> Result<Option<WorkPlanReceipt>
     }
     Ok(Some(receipt))
 }
-fn save(
+pub(super) fn save(
     c: &Connection,
     request: &Request,
     receipt: &WorkPlanReceipt,
@@ -1097,6 +1106,9 @@ fn validate_receipt(
     stored: &StoredPlan,
 ) -> Result<(), ExecutionError> {
     let valid = match request {
+        Request::TeamRecovery { request, capture } => {
+            return super::recovery::validate_receipt(capture, request, receipt, stored);
+        }
         Request::Authorize { request, .. } => {
             request.confirmed
                 && request.plan_digest == stored.plan.digest
@@ -1180,6 +1192,9 @@ fn validate_history(c: &Connection, stored: &StoredPlan) -> Result<(), Execution
         let request: Request = codec::decode(&request, MAX_INPUT_BYTES)?;
         let receipt: WorkPlanReceipt = codec::decode(&receipt, MAX_INPUT_BYTES)?;
         validate_receipt(&request, &receipt, stored)?;
+        if let Request::TeamRecovery { capture, .. } = &request {
+            super::recovery::validate_history_in(c, capture, &receipt)?;
+        }
         if history
             .insert(receipt.lease.generation.get(), (request, receipt))
             .is_some()
@@ -1204,6 +1219,22 @@ fn validate_history(c: &Connection, stored: &StoredPlan) -> Result<(), Execution
         match request {
             Request::Authorize { request, .. } if *generation == 1 => {
                 expires = request.expires_at;
+            }
+            Request::TeamRecovery {
+                request: _,
+                capture,
+            } if *generation > 1 => {
+                if previous_state != Some(WorkPlanState::Paused)
+                    && previous_state != Some(WorkPlanState::TakenOver)
+                {
+                    return Err(err(ErrorCode::CorruptLedger, "team-recovery-history"));
+                }
+                if capture.preview.base_lease.generation.next()? != receipt.lease.generation
+                    || receipt.cancellation_revision < cancellation
+                {
+                    return Err(err(ErrorCode::CorruptLedger, "team-recovery-history"));
+                }
+                cancellation = receipt.cancellation_revision;
             }
             Request::Control { request } if *generation > 1 => {
                 if request.command == WorkPlanCommand::Continue {
@@ -1434,7 +1465,7 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
     Ok(())
 }
 
-fn revoke_tools_in(
+pub(super) fn revoke_tools_in(
     c: &Connection,
     authority: &crate::execution::plugin_authority::PluginAuthority,
     plan: ExecutionId,

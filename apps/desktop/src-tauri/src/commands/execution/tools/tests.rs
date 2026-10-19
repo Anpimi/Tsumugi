@@ -81,9 +81,9 @@ fn tool_pending_preparation_is_exclusive_and_stop_revokes_its_ticket() {
         session.begin(attempt).unwrap_err().code,
         CommandErrorCode::Busy
     );
-    assert_eq!(session.pending, Some((ticket, attempt)));
+    assert_eq!(session.pending, Some((ticket, attempt, None)));
     assert!(!session.discard(ExecutionId::new()));
-    assert_eq!(session.pending, Some((ticket, attempt)));
+    assert_eq!(session.pending, Some((ticket, attempt, None)));
     assert!(session.discard(attempt));
     assert!(!session.active());
     assert_ne!(session.begin(attempt).unwrap(), ticket);
@@ -91,6 +91,18 @@ fn tool_pending_preparation_is_exclusive_and_stop_revokes_its_ticket() {
     assert!(!session.active());
     assert!(session.prepared.is_none() && session.last_start.is_none());
     assert_ne!(session.begin(attempt).unwrap(), ticket);
+    let plan = ExecutionId::new();
+    assert!(!session.plan_active(plan), "ordinary tool preparation has no plan owner");
+    session.stop();
+    let owned = session.begin_for_plan(attempt, Some(plan)).unwrap();
+    assert_eq!(session.pending, Some((owned, attempt, Some(plan))));
+    assert!(session.plan_active(plan));
+    assert!(!session.plan_active(ExecutionId::new()));
+    assert!(session.abandon(ExecutionId::new()).is_err());
+    assert_eq!(session.pending, Some((owned, attempt, Some(plan))));
+    assert!(session.plan_active(plan), "an unrelated ticket cannot clear the original pending owner");
+    session.abandon(owned).unwrap();
+    assert!(!session.active() && !session.plan_active(plan));
 }
 
 #[cfg(all(

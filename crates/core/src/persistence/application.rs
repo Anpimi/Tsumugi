@@ -2,6 +2,7 @@
 mod agents;
 mod control;
 pub(crate) mod coordination;
+pub(crate) mod recovery;
 mod guidance;
 pub(in crate::persistence) mod maintenance;
 mod selection;

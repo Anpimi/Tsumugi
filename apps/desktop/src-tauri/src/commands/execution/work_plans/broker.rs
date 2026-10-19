@@ -126,6 +126,32 @@ pub(super) fn capture_human_intent(
     confirmed: bool,
     plugins: &ApplicationPlugins,
 ) -> Result<(), CommandError> {
+    capture_intent(host, plan, action, root_expires_at, None, request, applications, confirmed, plugins)
+}
+pub(super) fn capture_recovery_intent(
+    host: &mut ExecutionHost,
+    plan: &WorkPlan,
+    action: ExecutionId,
+    root_expires_at: u64,
+    original_deadline: Instant,
+    request: &impl Serialize,
+    applications: &[ApplicationScopeBasis],
+    confirmed: bool,
+    plugins: &ApplicationPlugins,
+) -> Result<(), CommandError> {
+    capture_intent(host, plan, action, root_expires_at, Some(original_deadline), request, applications, confirmed, plugins)
+}
+fn capture_intent(
+    host: &mut ExecutionHost,
+    plan: &WorkPlan,
+    action: ExecutionId,
+    root_expires_at: u64,
+    original_deadline: Option<Instant>,
+    request: &impl Serialize,
+    applications: &[ApplicationScopeBasis],
+    confirmed: bool,
+    plugins: &ApplicationPlugins,
+) -> Result<(), CommandError> {
     if plan.tools.is_none() {
         return Ok(());
     }
@@ -158,6 +184,8 @@ pub(super) fn capture_human_intent(
     let deadline = Instant::now()
         .checked_add(Duration::from_millis(duration))
         .ok_or_else(denied)?;
+    let deadline = original_deadline.map_or(deadline, |original| original.min(deadline));
+    if Instant::now() >= deadline { return Err(denied()); }
     let selected = application_selection(plan)?;
     check_application_selection(&selected, applications)?;
     if !selected.is_empty() && !confirmed {
@@ -321,6 +349,19 @@ pub(super) fn capture_selection(
         return Err(stale());
     }
     Ok(Some(tools))
+}
+pub(super) fn recapture_tools(plugins: &ApplicationPlugins, plan: &WorkPlan) -> Result<(), CommandError> {
+    for tool in plan.tools.iter().flat_map(|tools| &tools.entries) {
+        let environment = plugins.capture_tool(&selector(tool))?;
+        let application = if tool.execution.component_scope == tsumugi_plugin_sdk::ComponentScope::Application {
+            Some(plugins.work_plan_tool_instance(tool)?)
+        } else { None };
+        let observed = spec(environment.view()?, &WorkPlanToolSelectionEntry {
+            handle: tool.handle, tool: selector(tool), target: tool.target.clone(), selections: tool.selections.clone(),
+        }, application.as_ref())?;
+        if observed != *tool { return Err(stale()); }
+    }
+    Ok(())
 }
 
 pub(super) fn tools_revision(plan: &WorkPlan) -> Result<Option<UnsignedDecimal>, CommandError> {
@@ -839,7 +880,7 @@ fn begin_tool_in_scope(
         )));
     }
     Ok(Some((
-        host.tools.begin(initial.tool.attempt_id)?,
+        host.tools.begin_for_plan(initial.tool.attempt_id, Some(scope.lease().plan_id))?,
         Arc::new(prepared),
         consent,
     )))

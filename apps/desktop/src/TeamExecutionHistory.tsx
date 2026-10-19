@@ -17,7 +17,8 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onRead
     read: () => workPlanCommands.teamExecution({ ...context, planId, afterWork, afterMessage, limit: 16 }) });
   const view = !read.error ? read.data : null;
   useEffect(() => { if (open && read.error) errorRef.current?.focus(); }, [open, read.error]);
-  const memberName = (id: string) => policy?.members.find(member => member.memberId === id)?.displayName ?? view?.members.find(member => member.request.memberId === id)?.request.displayName ?? t("ai.team.recordedMember");
+  const roleAt = (id: string, version: string) => view?.roleVersions.find(member => member.request.memberId === id && member.request.roleVersionId === version);
+  const memberName = (id: string, version: string) => roleAt(id, version)?.request.displayName ?? t("ai.team.recordedMember");
   const entryName = (id: string) => status.plan.scope.find(unit => unit.unitId === id)?.nativeKey ?? t("ai.teamHistory.savedEntry");
   const postButtons = (ids: readonly string[]) => ids.map(postId => <button type="button" className="secondary-button" key={postId} onClick={() => onReadPost(postId)}>{t("ai.team.readReason")}</button>);
   if (!policy) return null;
@@ -28,18 +29,23 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onRead
     {read.error ? <div role="alert" tabIndex={-1} ref={errorRef}><p>{t("ai.team.readFailed")}</p><CommandFailureDetails failure={commandFailure(read.error)}/></div> : null}
     {view ? <>
       <h4>{t("ai.teamHistory.members")}</h4><ul>{view.members.map(member => <li key={member.request.memberId}><strong>{member.request.displayName}</strong><pre className="ai-text">{member.request.role}</pre><p>{member.config.endpoint} · {member.config.model}</p></li>)}</ul>
+      {view.retiredMemberIds.length ? <details><summary>{t("ai.recovery.retiredMembers")}</summary><ul>{view.retiredMemberIds.map(id => <li key={id}><code>{id}</code></li>)}</ul></details> : null}
       {view.stopReason ? <p role="status">{t(`ai.team.stops.${view.stopReason}`)}</p> : null}
       {view.budget ? <><p>{t("ai.budgetSummary", { ...view.budget, defaultValue: enUS.ai.budgetSummary })}</p><p>{t("ai.budgetUsage", { ...view.budget, defaultValue: enUS.ai.budgetUsage })}</p>
         {view.budget.legacyHeld > 0 ? <p>{t("ai.legacyBudget", { count: view.budget.legacyHeld, defaultValue: enUS.ai.legacyBudget })}</p> : null}</> : <p>{t("ai.team.noBudget")}</p>}
       <h4>{t("ai.team.works")}</h4>
       {view.works.length ? view.works.map(work => {
-        const target = work.target, outcome = work.validation === "valid" ? work.output?.outcome : null;
+        const target = work.target, outcome = work.validation === "valid" ? work.output?.outcome : null, human = work.origin.kind === "human-continuation" ? work.origin.work : null;
         return <article key={work.receipt.intentId}>
-          <h5>{memberName(work.receipt.memberId)} · {entryName(target.unitId)} · {target.locale}</h5>
-          <p>{t(`ai.team.workKinds.${work.request?.kind ?? "translation"}`)} · {t(`ai.states.${work.execution}`)}</p>
+          <h5>{memberName(work.receipt.memberId, work.receipt.roleVersionId)} · {entryName(target.unitId)} · {target.locale}</h5>
+          <p>{t(`ai.team.workKinds.${work.request?.kind ?? human?.kind ?? "translation"}`)} · {t(`ai.states.${work.execution}`)}</p>
           <p>{t(`ai.team.validation.${work.validation}`)}</p>
-          {work.author ? <p>{t("ai.team.requestedBy", { member: memberName(work.author.memberId) })}</p> : null}
-          {work.request ? <pre className="ai-text">{work.request.instructions}</pre> : <p>{t("ai.team.initialWork")}</p>}
+          {work.author ? <p>{t("ai.team.requestedBy", { member: memberName(work.author.memberId, work.author.roleVersionId) })}</p> : null}
+          {human ? <><p>{t("ai.recovery.humanRequester")}</p><pre className="ai-text">{human.instructions}</pre>{postButtons(human.postIds)}
+            <details><summary>{t("ai.recovery.selectedWorkDetails")}</summary>{human.priorWork.map(reference => <div key={reference.attemptId}><pre className="ai-text">{JSON.stringify(reference, null, 2)}</pre>
+              {onOpenTask ? <button type="button" className="secondary-button" onClick={() => { void onOpenTask(reference.taskId, reference.attemptId); }}>{t("ai.team.openTask")}</button> : null}</div>)}</details></>
+            : work.request ? <pre className="ai-text">{work.request.instructions}</pre> : <p>{t("ai.team.initialWork")}</p>}
+          <details><summary>{t("ai.recovery.roleWhenWork")}</summary><pre className="ai-text">{roleAt(work.receipt.memberId, work.receipt.roleVersionId)?.request.role}</pre></details>
           {outcome?.kind === "translation" ? <><p>{t(work.candidateRevisionId ? "ai.team.candidateSaved" : "ai.team.translationSuggestion")}</p><pre className="ai-text">{outcome.text}</pre></> : null}
           {outcome?.kind === "review" ? <><p>{t(`ai.team.verdicts.${outcome.verdict}`)}</p>{postButtons(outcome.postIds)}</> : null}
           {outcome?.kind === "evidence" ? <><p>{t("ai.team.evidence")}</p>{postButtons(outcome.postIds)}</> : null}
@@ -58,7 +64,7 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onRead
       <h4>{t("ai.team.messages")}</h4>
       {view.messages.length ? view.messages.map(message => {
         const included = view.consumptions.filter(value => value.messageId === message.messageId);
-        return <article key={message.messageId}><h5>{memberName(message.sender.memberId)} → {memberName(message.recipientMemberId)}</h5>
+        return <article key={message.messageId}><h5>{memberName(message.sender.memberId, message.sender.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h5>
           <p>{entryName(message.target.unitId)} · {message.target.locale}</p><pre className="ai-text">{message.body}</pre>
           <p>{t(included.length ? "ai.team.included" : "ai.team.addressed", { count: included.length })}</p>{postButtons(message.postIds)}
           <details><summary>{t("ai.team.identityDetails")}</summary><p>{message.messageId}</p>{message.causeMessageId ? <p>{message.causeMessageId}</p> : null}

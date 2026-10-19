@@ -129,6 +129,11 @@ macro_rules! handlers {
         work_plans::guidance::read_work_plan_agent_resource,
         work_plans::team::read_work_plan_team_history,work_plans::team::read_work_plan_team_post,
         work_plans::coordination::read_work_plan_team_execution,
+        work_plans::recovery::prepare_work_plan_team_recovery,
+        work_plans::recovery::authorize_work_plan_team_recovery,
+        work_plans::recovery::read_work_plan_team_recovery_action,
+        work_plans::recovery::read_work_plan_team_recovery_state,
+        work_plans::recovery::end_work_plan_team_recovery,
         work_plans::team::publish_work_plan_team_discussion,work_plans::team::read_work_plan_team_publication_action,
         work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,work_plans::read_work_plan_authorization_action,work_plans::read_work_plan_control_action,
         work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*

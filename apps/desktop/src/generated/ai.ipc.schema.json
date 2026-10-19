@@ -345,6 +345,34 @@
         ],
         "type": "object"
       },
+      "AuthorizeTeamRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/definitions/AutomationEffect"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actionId",
+          "digest",
+          "confirmed",
+          "effects"
+        ],
+        "type": "object"
+      },
       "AutomationEffect": {
         "description": "Requested automatic effects, never a human language-review approval.",
         "enum": [
@@ -1210,6 +1238,43 @@
         ],
         "type": "object"
       },
+      "PrepareTeamRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedEffectiveVersion": {
+            "$ref": "#/definitions/TeamEffectiveVersion"
+          },
+          "expectedLease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/TeamExecutionMember"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "work": {
+            "$ref": "#/definitions/TeamHumanWork"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "expectedLease",
+          "expectedEffectiveVersion",
+          "members",
+          "work"
+        ],
+        "type": "object"
+      },
       "ProviderSelectionBinding": {
         "additionalProperties": false,
         "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
@@ -1583,6 +1648,27 @@
         ],
         "type": "object"
       },
+      "TeamEffectiveVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          }
+        },
+        "required": [
+          "actionId",
+          "lease",
+          "digest"
+        ],
+        "type": "object"
+      },
       "TeamExecutionLimits": {
         "additionalProperties": false,
         "properties": {
@@ -1697,6 +1783,52 @@
           }
         ]
       },
+      "TeamHumanWork": {
+        "additionalProperties": false,
+        "properties": {
+          "instructions": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TeamWorkKind"
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "postIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "priorWork": {
+            "items": {
+              "$ref": "#/definitions/TeamWorkReference"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          },
+          "workId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "workId",
+          "memberId",
+          "target",
+          "kind",
+          "instructions",
+          "postIds",
+          "priorWork"
+        ],
+        "type": "object"
+      },
       "TeamWorkKind": {
         "enum": [
           "translation",
@@ -1704,6 +1836,27 @@
           "evidence"
         ],
         "type": "string"
+      },
+      "TeamWorkReference": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
       },
       "TextReviewBinding": {
         "additionalProperties": false,
@@ -2816,6 +2969,97 @@
         ],
         "type": "object"
       },
+      "WorkPlanTeamRecoveryAuthorizeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationToolExecutions": {
+            "items": {
+              "$ref": "#/definitions/ApplicationScopeBasis"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "checkerExecutions": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckerKey"
+            },
+            "type": "array"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "preparationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recovery": {
+            "$ref": "#/definitions/AuthorizeTeamRecovery"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "toolExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "preparationId",
+          "planId",
+          "recovery",
+          "checkerExecutions",
+          "toolExecution",
+          "applicationToolExecutions"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamRecoveryPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "preparationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recovery": {
+            "$ref": "#/definitions/PrepareTeamRecovery"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "preparationId",
+          "recovery"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamRecoveryStateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId"
+        ],
+        "type": "object"
+      },
       "WorkPlanToolSelection": {
         "additionalProperties": false,
         "properties": {
@@ -3092,6 +3336,21 @@
       "workPlanTeamPublish": {
         "$ref": "#/definitions/WorkPlanTeamPublishRequest"
       },
+      "workPlanTeamRecoveryAction": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryAuthorizeRequest"
+      },
+      "workPlanTeamRecoveryAuthorize": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryAuthorizeRequest"
+      },
+      "workPlanTeamRecoveryEnd": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryAuthorizeRequest"
+      },
+      "workPlanTeamRecoveryPrepare": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryPrepareRequest"
+      },
+      "workPlanTeamRecoveryState": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryStateRequest"
+      },
       "workProtectionRead": {
         "$ref": "#/definitions/WorkProtectionReadRequest"
       },
@@ -3118,6 +3377,11 @@
       "workPlanAgentOpen",
       "workPlanTeamHistory",
       "workPlanTeamExecution",
+      "workPlanTeamRecoveryPrepare",
+      "workPlanTeamRecoveryAuthorize",
+      "workPlanTeamRecoveryAction",
+      "workPlanTeamRecoveryState",
+      "workPlanTeamRecoveryEnd",
       "workPlanTeamPost",
       "workPlanTeamPublish",
       "workPlanTeamPublicationAction",
@@ -3688,6 +3952,34 @@
           "items",
           "recovery",
           "nextOffset"
+        ],
+        "type": "object"
+      },
+      "AuthorizeTeamRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/definitions/AutomationEffect"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actionId",
+          "digest",
+          "confirmed",
+          "effects"
         ],
         "type": "object"
       },
@@ -7963,6 +8255,106 @@
         ],
         "type": "string"
       },
+      "TeamArtifactBody": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "translation-revision",
+                "type": "string"
+              },
+              "revisionId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "revisionId",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-result",
+                "type": "string"
+              },
+              "nativeKey": {
+                "type": "string"
+              },
+              "occurrenceId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "resultId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "snapshotId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "snapshotId",
+              "attemptId",
+              "resultId",
+              "occurrenceId",
+              "nativeKey",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamArtifactRead": {
+        "additionalProperties": false,
+        "description": "One immutable cited body, never a current selection or a context expansion.",
+        "properties": {
+          "artifact": {
+            "$ref": "#/definitions/TeamArtifactBody"
+          },
+          "kind": {
+            "$ref": "#/definitions/TeamArtifactReadKind"
+          },
+          "postId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "referenceIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "kind",
+          "postId",
+          "referenceIndex",
+          "target",
+          "artifact"
+        ],
+        "type": "object"
+      },
+      "TeamArtifactReadKind": {
+        "enum": [
+          "untrusted-team-artifact"
+        ],
+        "type": "string"
+      },
       "TeamArtifactReference": {
         "oneOf": [
           {
@@ -8195,6 +8587,27 @@
         ],
         "type": "object"
       },
+      "TeamEffectiveVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          }
+        },
+        "required": [
+          "actionId",
+          "lease",
+          "digest"
+        ],
+        "type": "object"
+      },
       "TeamExecutionLimits": {
         "additionalProperties": false,
         "properties": {
@@ -8328,6 +8741,9 @@
             },
             "type": "array"
           },
+          "effectiveVersion": {
+            "$ref": "#/definitions/TeamEffectiveVersion"
+          },
           "members": {
             "items": {
               "$ref": "#/definitions/TeamMemberRole"
@@ -8363,6 +8779,24 @@
           "planId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "retiredMemberIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "roleVersions": {
+            "items": {
+              "$ref": "#/definitions/TeamMemberRole"
+            },
+            "type": "array"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/definitions/TeamExecutionMember"
+            },
+            "type": "array"
+          },
           "stopReason": {
             "anyOf": [
               {
@@ -8382,6 +8816,10 @@
         },
         "required": [
           "planId",
+          "effectiveVersion",
+          "roster",
+          "retiredMemberIds",
+          "roleVersions",
           "members",
           "works",
           "messages",
@@ -8437,6 +8875,52 @@
           "authorRoles",
           "posts",
           "nextAfter"
+        ],
+        "type": "object"
+      },
+      "TeamHumanWork": {
+        "additionalProperties": false,
+        "properties": {
+          "instructions": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TeamWorkKind"
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "postIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "priorWork": {
+            "items": {
+              "$ref": "#/definitions/TeamWorkReference"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          },
+          "workId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "workId",
+          "memberId",
+          "target",
+          "kind",
+          "instructions",
+          "postIds",
+          "priorWork"
         ],
         "type": "object"
       },
@@ -8583,6 +9067,9 @@
           "recipientMemberId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "recipientRoleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
           "sender": {
             "$ref": "#/definitions/TeamMemberAuthor"
           },
@@ -8599,6 +9086,7 @@
           "planId",
           "sender",
           "recipientMemberId",
+          "recipientRoleVersionId",
           "target",
           "body",
           "postIds",
@@ -8624,6 +9112,265 @@
           "messageId",
           "taskId",
           "providerRequestId"
+        ],
+        "type": "object"
+      },
+      "TeamRecoveryDiscussionPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/definitions/TeamArtifactRead"
+            },
+            "type": "array"
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "posts": {
+            "items": {
+              "$ref": "#/definitions/TeamDiscussionPost"
+            },
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          },
+          "throughSequence": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "memberId",
+          "target",
+          "throughSequence",
+          "posts",
+          "artifacts"
+        ],
+        "type": "object"
+      },
+      "TeamRecoveryPreviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "activations": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "baseEffectiveVersion": {
+            "$ref": "#/definitions/TeamEffectiveVersion"
+          },
+          "baseLease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "budget": {
+            "$ref": "#/definitions/ProviderBudget"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "discussionPreviews": {
+            "items": {
+              "$ref": "#/definitions/TeamRecoveryDiscussionPreview"
+            },
+            "type": "array"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/definitions/TeamExecutionLimits"
+          },
+          "memberPreviews": {
+            "items": {
+              "$ref": "#/definitions/TeamMemberPreviewView"
+            },
+            "type": "array"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/TeamExecutionMember"
+            },
+            "type": "array"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "retiredMemberIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "rootTaskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unconfirmedCompletions": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "work": {
+            "$ref": "#/definitions/TeamHumanWork"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "baseLease",
+          "baseEffectiveVersion",
+          "digest",
+          "members",
+          "retiredMemberIds",
+          "memberPreviews",
+          "discussionPreviews",
+          "work",
+          "taskId",
+          "attemptId",
+          "inputDigest",
+          "rootTaskId",
+          "expiresAtMs",
+          "limits",
+          "budget",
+          "activations",
+          "unconfirmedCompletions"
+        ],
+        "type": "object"
+      },
+      "TeamRecoveryReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "baseLease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "cancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "effectiveVersion": {
+            "$ref": "#/definitions/TeamEffectiveVersion"
+          },
+          "inputDigest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "workId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "baseLease",
+          "effectiveVersion",
+          "state",
+          "cancellationRevision",
+          "workId",
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "TeamRecoveryRuntimeState": {
+        "additionalProperties": false,
+        "description": "A runtime observation is descriptive. It is not a continuation permit.",
+        "properties": {
+          "originalDeadlineAvailable": {
+            "type": "boolean"
+          },
+          "producersDrained": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "originalDeadlineAvailable",
+          "producersDrained"
+        ],
+        "type": "object"
+      },
+      "TeamRecoveryStateView": {
+        "additionalProperties": false,
+        "properties": {
+          "activations": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "budget": {
+            "$ref": "#/definitions/ProviderBudget"
+          },
+          "effectiveVersion": {
+            "$ref": "#/definitions/TeamEffectiveVersion"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rootTaskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          },
+          "unconfirmedCompletions": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unresolvedWork": {
+            "items": {
+              "$ref": "#/definitions/TeamWorkReference"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "lease",
+          "state",
+          "effectiveVersion",
+          "rootTaskId",
+          "expiresAtMs",
+          "budget",
+          "activations",
+          "unconfirmedCompletions",
+          "unresolvedWork"
         ],
         "type": "object"
       },
@@ -8690,6 +9437,61 @@
           "evidence"
         ],
         "type": "string"
+      },
+      "TeamWorkOrigin": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actionId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "start",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "actionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "member",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actionId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "human-continuation",
+                "type": "string"
+              },
+              "work": {
+                "$ref": "#/definitions/TeamHumanWork"
+              }
+            },
+            "required": [
+              "kind",
+              "actionId",
+              "work"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "TeamWorkOutcome": {
         "oneOf": [
@@ -8858,6 +9660,27 @@
         ],
         "type": "object"
       },
+      "TeamWorkReference": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
       "TeamWorkView": {
         "additionalProperties": false,
         "properties": {
@@ -8883,6 +9706,9 @@
           },
           "execution": {
             "$ref": "#/definitions/ExecutionState"
+          },
+          "origin": {
+            "$ref": "#/definitions/TeamWorkOrigin"
           },
           "output": {
             "anyOf": [
@@ -8918,6 +9744,7 @@
           }
         },
         "required": [
+          "origin",
           "sequence",
           "receipt",
           "author",
@@ -10196,6 +11023,167 @@
         ],
         "type": "object"
       },
+      "WorkPlanTeamRecoveryActionView": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "receipt": {
+            "$ref": "#/definitions/TeamRecoveryReceipt"
+          },
+          "request": {
+            "$ref": "#/definitions/WorkPlanTeamRecoveryRecordedRequest"
+          }
+        },
+        "required": [
+          "projectId",
+          "request",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamRecoveryEndView": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "$ref": "#/definitions/WorkPlanTeamRecoveryActionView"
+              },
+              "kind": {
+                "const": "authorization-recorded",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "preparation-closed",
+                "type": "string"
+              },
+              "preparationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "projectId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "request": {
+                "$ref": "#/definitions/WorkPlanTeamRecoveryRecordedRequest"
+              }
+            },
+            "required": [
+              "kind",
+              "projectId",
+              "preparationId",
+              "request"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WorkPlanTeamRecoveryPreviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "checkers": {
+            "items": {
+              "$ref": "#/definitions/WorkPlanCheckerView"
+            },
+            "type": "array"
+          },
+          "preparationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "preview": {
+            "$ref": "#/definitions/TeamRecoveryPreviewView"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanTools"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "preparationId",
+          "preview",
+          "tools",
+          "checkers"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamRecoveryRecordedRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationToolExecutions": {
+            "items": {
+              "$ref": "#/definitions/ApplicationScopeBasis"
+            },
+            "type": "array"
+          },
+          "checkerExecutions": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckerKey"
+            },
+            "type": "array"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recovery": {
+            "$ref": "#/definitions/AuthorizeTeamRecovery"
+          },
+          "toolExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "planId",
+          "recovery",
+          "checkerExecutions",
+          "toolExecution",
+          "applicationToolExecutions"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamRecoveryStateView": {
+        "additionalProperties": false,
+        "properties": {
+          "hostCallbacksDrained": {
+            "type": "boolean"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamRecoveryRuntimeState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/definitions/TeamRecoveryStateView"
+          }
+        },
+        "required": [
+          "state",
+          "runtime",
+          "hostCallbacksDrained"
+        ],
+        "type": "object"
+      },
       "WorkPlanToolSpec": {
         "additionalProperties": false,
         "description": "Captured by the trusted host from an installed package, never model text.",
@@ -10561,6 +11549,28 @@
           }
         ]
       },
+      "workPlanTeamRecoveryAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/WorkPlanTeamRecoveryActionView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "workPlanTeamRecoveryEnd": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryEndView"
+      },
+      "workPlanTeamRecoveryPreview": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryPreviewView"
+      },
+      "workPlanTeamRecoveryReceipt": {
+        "$ref": "#/definitions/TeamRecoveryReceipt"
+      },
+      "workPlanTeamRecoveryState": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryStateView"
+      },
       "workProtection": {
         "$ref": "#/definitions/WorkProtection"
       }
@@ -10577,6 +11587,11 @@
       "workPlanAgent",
       "workPlanTeamHistory",
       "workPlanTeamExecution",
+      "workPlanTeamRecoveryPreview",
+      "workPlanTeamRecoveryReceipt",
+      "workPlanTeamRecoveryAction",
+      "workPlanTeamRecoveryState",
+      "workPlanTeamRecoveryEnd",
       "workPlanTeamPost",
       "workPlanTeamPublicationAction",
       "workPlanAgentReconcile",

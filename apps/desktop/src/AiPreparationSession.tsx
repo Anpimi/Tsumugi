@@ -16,6 +16,7 @@ import { useWorkPlanControlSession } from "./WorkPlanControls";
 import { useWorkPlanAgentSession } from "./WorkPlanAgentControls";
 import { childLifecycleKey, childRunWorking, hasChildUncertainty } from "./WorkPlanChildControls";
 import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
+import { useTeamRecoverySession } from "./TeamRecoverySession";
 import { useTeamDiscussionSession } from "./TeamDiscussionSession";
 import { editTeamMemberConfig, teamDraftProblem, type TeamExecutionDraft } from "./TeamExecutionDraft";
 import type { PlanToolDraft, PlanToolChoiceHandle } from "./WorkPlanToolChoice";
@@ -160,11 +161,17 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   useEffect(() => { defaultWait.current = loadStrategyDefault(); return () => { defaultGeneration.current++; }; }, []);
   const planControl = useWorkPlanControlSession(live), agent = useWorkPlanAgentSession(live), component = useWorkPlanGenerationSession(live);
   const discussions = useTeamDiscussionSession(live, session, () => reads.invalidate(["execution"]));
-  function parentReserved() {
+  const recovery = useTeamRecoverySession(live, session, () => !flight.current && !current().busy && !current().pendingStart && !current().pendingAdopt
+    && !planControl.current().pending && !planControl.current().ready && !agent.current().pending && !component.current().operation,
+    () => reads.invalidate(["execution", "translation", "review"]), (prepared, receipt, unitId) => {
+      update(before => before.planId !== null && before.planId !== prepared.planId ? before : ({ ...before, planId: prepared.planId, attempt: receipt.attemptId, checkedTask: null, started: null,
+        startedPlan: { prepared, attemptId: receipt.attemptId, taskId: receipt.taskId, generation: receipt.effectiveVersion.lease.generation, unitIds: [unitId] } }));
+    });
+  function parentReserved(excludeRecovery = false) {
     const toolRun = agent.current().toolRun;
     const toolView = toolRun && reads.client.getQueryData<AttemptDetail | null>(reads.key(["agent-tool-attempt",toolRun.prepared.attemptId]));
     const toolWorking = !!toolRun && (!toolView || toolView.items.some(item => item.status.execution === "queued" || item.status.execution === "dispatched"));
-    return !!flight.current || !!current().pendingStart || !!current().pendingAdopt
+    return (!excludeRecovery && recovery.blocked()) || !!flight.current || !!current().pendingStart || !!current().pendingAdopt
       || !!planControl.current().pending || !!planControl.current().ready || !!agent.current().pending || toolWorking || !!component.current().operation;
   }
   function reserved() {
@@ -283,6 +290,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     finally { if (live() && flight.current === ticket) { flight.current = null; update(before => ({ ...before,busy:false })); } }
   }
   useEffect(() => reads.subscribeChanges(scopes => {
+    if (scopes.some(scope => ["project", "source", "resources", "translation", "review"].includes(scope))) recovery.invalidateCapture();
     if (scopes.includes("project") || scopes.includes("source") || scopes.includes("resources")) {
       invalidatePreview(scopes.includes("source") ? "source" : "preview");
       if (scopes.includes("project") || scopes.includes("source")) update(before => ({ ...before,sourceGeneration:before.sourceGeneration+1 }));
@@ -716,8 +724,8 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       started:before.started?.prepared.attemptId === attempt ? before.started : null,failure:null,notice:null })); return true;
   }
   function reset() {
-    if (!live() || reserved() || discussions.blocked()) return false;
-    if (!discussions.discard()) return false;
+    if (!live() || reserved() || discussions.blocked() || recovery.blocked()) return false;
+    if (!discussions.discard() || !recovery.discard()) return false;
     defaultCaptureSequence.current = current().editSeq + 1;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
     update(before => ({ ...before,maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,strategyDefault:"loading",strategyDefaultFailure:null,
@@ -730,7 +738,8 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }), [reads,state.attempt,contentToolAttempt]);
   const contentRangeAvailable = useSyncExternalStore(subscribeContentAvailability, canReceiveContentSelection, canReceiveContentSelection);
   return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan, contentRangeAvailable,
-    planControl, agent, component, discussions, captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
+    planControl, agent, component, discussions, recovery,
+    canOpenRecoveryTask: (taskId: string, attemptId: string) => live() && !parentReserved(true) && recovery.taskReferences().some(reference => reference.taskId === taskId && reference.attemptId === attemptId), captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
     setTeamDraft:(value:TeamExecutionDraft|null) => edit("teamDraft",value), editTeamConfig, selectTeamConnection,

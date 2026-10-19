@@ -10,10 +10,10 @@ import type {
   WorkPlanAgentReconcileRequest,
   MaintenanceAssessmentRequest,
   WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest,
-  WorkPlanTeamExecutionRequest,
+  WorkPlanTeamExecutionRequest, WorkPlanTeamRecoveryPrepareRequest, WorkPlanTeamRecoveryAuthorizeRequest, WorkPlanTeamRecoveryStateRequest,
 } from "./generated/ai.requests";
 import type { AttemptDetail, ExecutionOutputView, WorkPlanView, TeamDiscussionPost, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
-  WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView } from "./generated/ai.responses";
+  WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView, WorkPlanTeamRecoveryPreviewView, TeamRecoveryReceipt, WorkPlanTeamRecoveryStateView, WorkPlanTeamRecoveryActionView } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -70,20 +70,113 @@ function publicationMatches(post: TeamDiscussionPost, request: WorkPlanTeamPubli
     && jsonIdentity(post.publication) === jsonIdentity(request.publication);
 }
 
+function validRecoveryReceipt(receipt: TeamRecoveryReceipt, request: WorkPlanTeamRecoveryAuthorizeRequest, capture: WorkPlanTeamRecoveryPreviewView): boolean {
+  const preview = capture.preview, version = receipt.effectiveVersion;
+  return receipt.actionId === request.recovery.actionId && version.actionId === request.recovery.actionId
+    && request.recovery.digest === preview.digest && version.digest === preview.digest
+    && jsonIdentity(receipt.baseLease) === jsonIdentity(preview.baseLease)
+    && version.lease.planId === preview.planId && version.lease.generation === (BigInt(preview.baseLease.generation) + 1n).toString()
+    && receipt.state === "active" && receipt.workId === preview.work.workId && receipt.taskId === preview.taskId
+    && receipt.attemptId === preview.attemptId && receipt.inputDigest === preview.inputDigest;
+}
+
+function recoveryActionMatches(value: WorkPlanTeamRecoveryActionView, request: WorkPlanTeamRecoveryAuthorizeRequest, capture: WorkPlanTeamRecoveryPreviewView): boolean {
+  const { sessionToken: _session, projectId: _project, preparationId: _slot, ...recorded } = request;
+  return value.projectId === request.projectId && jsonIdentity(value.request) === jsonIdentity(recorded)
+    && validRecoveryReceipt(value.receipt, request, capture);
+}
+
 /** Receipts report an action's historical result. Read status for current authority. */
 export const workPlanCommands = {
+  teamRecoveryState: async (request: WorkPlanTeamRecoveryStateRequest) => {
+    if (!validators.validateRequestWorkPlanTeamRecoveryState(request)) throw new Error("Invalid team recovery read");
+    const value = await checkedInvoke("read_work_plan_team_recovery_state", request, validators.validateResponseWorkPlanTeamRecoveryState);
+    const state = value.state;
+    if (state.projectId !== request.projectId || state.planId !== request.planId || state.lease.planId !== request.planId
+      || state.effectiveVersion.lease.planId !== request.planId) invalidAcknowledgement();
+    return value;
+  },
+  prepareTeamRecovery: async (request: WorkPlanTeamRecoveryPrepareRequest, plan: WorkPlanView, observation: WorkPlanTeamRecoveryStateView) => {
+    if (!validators.validateRequestWorkPlanTeamRecoveryPrepare(request)) throw new Error("Invalid team recovery preparation");
+    const value = await checkedInvoke("prepare_work_plan_team_recovery", request, validators.validateResponseWorkPlanTeamRecoveryPreview);
+    const preview = value.preview, recovery = request.recovery, members = preview.members;
+    if (value.preparationId !== request.preparationId || preview.projectId !== request.projectId || preview.planId !== recovery.planId
+      || preview.planId !== plan.planId || jsonIdentity(preview.baseLease) !== jsonIdentity(recovery.expectedLease)
+      || jsonIdentity(preview.baseEffectiveVersion) !== jsonIdentity(recovery.expectedEffectiveVersion)
+      || jsonIdentity(members) !== jsonIdentity(recovery.members) || jsonIdentity(preview.work) !== jsonIdentity(recovery.work)
+      || preview.rootTaskId !== observation.state.rootTaskId || preview.expiresAtMs !== observation.state.expiresAtMs
+      || jsonIdentity(preview.limits) !== jsonIdentity(plan.options.teamExecution?.limits)
+      || jsonIdentity(value.checkers.map(checker => checker.checker)) !== jsonIdentity(plan.checkers.map(checker => checker.checker))
+      || jsonIdentity(value.tools) !== jsonIdentity(plan.tools) || !validWorkPlanApplicationTools(value.tools?.entries ?? [])
+      || members.length !== preview.memberPreviews.length || new Set(members.map(member => member.memberId)).size !== members.length
+      || new Set(members.map(member => member.roleVersionId)).size !== members.length
+      || new Set(preview.memberPreviews.map(member => member.memberId)).size !== members.length
+      || members.some(member => {
+        const input = preview.memberPreviews.find(value => value.memberId === member.memberId)?.preview;
+        return !input || !sameAiConfig(input.config, member.config) || input.recipe !== plan.preview?.recipe
+          || input.items.length !== member.unitIds.length || new Set(input.items.map(item => item.unitId)).size !== member.unitIds.length
+          || input.items.some(item => !member.unitIds.includes(item.unitId) || item.targetLocale !== plan.locale
+            || !plan.scope.some(unit => unit.unitId === item.unitId && unit.nativeKey === item.nativeKey
+              && unit.sourceRevisionId === item.sourceRevisionId && unit.sourceSnapshotId === item.sourceSnapshotId))
+          || member.toolHandles.some(handle => !value.tools?.entries.some(tool => tool.handle === handle));
+      })
+      || preview.discussionPreviews.length !== members.reduce((count, member) => count + member.unitIds.length, 0)
+      || new Set(preview.discussionPreviews.map(view => `${view.memberId}:${view.target.unitId}`)).size !== preview.discussionPreviews.length
+      || preview.discussionPreviews.some(view => !members.some(member => member.memberId === view.memberId && member.unitIds.includes(view.target.unitId))
+        || view.target.locale !== plan.locale || !plan.scope.some(unit => unit.unitId === view.target.unitId
+          && unit.sourceRevisionId === view.target.sourceRevisionId && unit.sourceSnapshotId === view.target.sourceSnapshotId)
+        || view.posts.some(post => post.planId !== plan.planId || jsonIdentity(post.publication.target) !== jsonIdentity(view.target)
+          || BigInt(post.sequence) > BigInt(view.throughSequence))
+        || view.artifacts.some(artifact => plan.options.teamDiscussions?.profile !== "current-plan-2"
+          || jsonIdentity(artifact.target) !== jsonIdentity(view.target)
+          || !view.posts.some(post => post.publication.postId === artifact.postId && post.publication.references[artifact.referenceIndex])))) invalidAcknowledgement();
+    return value;
+  },
+  authorizeTeamRecovery: async (request: WorkPlanTeamRecoveryAuthorizeRequest, capture: WorkPlanTeamRecoveryPreviewView) => {
+    if (!validators.validateRequestWorkPlanTeamRecoveryAuthorize(request)) throw new Error("Invalid team recovery authorization");
+    const value = await checkedInvoke("authorize_work_plan_team_recovery", request, validators.validateResponseWorkPlanTeamRecoveryReceipt);
+    if (!validRecoveryReceipt(value, request, capture)) invalidAcknowledgement();
+    return value;
+  },
+  teamRecoveryAction: async (request: WorkPlanTeamRecoveryAuthorizeRequest, capture: WorkPlanTeamRecoveryPreviewView) => {
+    if (!validators.validateRequestWorkPlanTeamRecoveryAuthorize(request)) throw new Error("Invalid team recovery action read");
+    const value = await checkedInvoke("read_work_plan_team_recovery_action", request, validators.validateResponseWorkPlanTeamRecoveryAction);
+    if (value && !recoveryActionMatches(value, request, capture)) invalidAcknowledgement();
+    return value;
+  },
+  endTeamRecovery: async (request: WorkPlanTeamRecoveryAuthorizeRequest, capture: WorkPlanTeamRecoveryPreviewView) => {
+    if (!validators.validateRequestWorkPlanTeamRecoveryEnd(request)) throw new Error("Invalid team recovery preparation close");
+    const value = await checkedInvoke("end_work_plan_team_recovery", request, validators.validateResponseWorkPlanTeamRecoveryEnd);
+    const { sessionToken: _session, projectId: _project, preparationId: _slot, ...recorded } = request;
+    if (value.kind === "authorization-recorded" ? !recoveryActionMatches(value.action, request, capture)
+      : value.projectId !== request.projectId || value.preparationId !== request.preparationId
+        || jsonIdentity(value.request) !== jsonIdentity(recorded)) invalidAcknowledgement();
+    return value;
+  },
   teamExecution: async (request: WorkPlanTeamExecutionRequest) => {
     if (!validators.validateRequestWorkPlanTeamExecution(request)) throw new Error("Invalid team execution read");
     const value = await checkedInvoke("read_work_plan_team_execution", request, validators.validateResponseWorkPlanTeamExecution);
     if (value.planId !== request.planId || value.works.length > request.limit || value.messages.length > request.limit
+      || value.effectiveVersion.lease.planId !== request.planId
       || value.members.some(member => member.planId !== request.planId)
+      || value.roleVersions.some(member => member.planId !== request.planId)
+      || new Set(value.roleVersions.map(member => member.request.roleVersionId)).size !== value.roleVersions.length
+      || new Set(value.roster.map(member => member.memberId)).size !== value.roster.length
+      || value.roster.some(member => value.retiredMemberIds.includes(member.memberId) || !value.members.some(role => role.request.memberId === member.memberId && role.request.roleVersionId === member.roleVersionId))
       || value.works.some((work, index) => work.receipt.planId !== request.planId
         || work.validation !== "valid" && (work.output !== null || work.candidateRevisionId !== null)
-        || (work.request ? !work.author || work.author.binding.lease.planId !== request.planId
+        || !value.roleVersions.some(role => role.request.memberId === work.receipt.memberId && role.request.roleVersionId === work.receipt.roleVersionId)
+        || (work.origin.kind === "member" ? !work.request || !work.author || work.author.binding.lease.planId !== request.planId
+          || !value.roleVersions.some(role => role.request.memberId === work.author!.memberId && role.request.roleVersionId === work.author!.roleVersionId)
           || work.request.intentId !== work.receipt.intentId || work.request.recipientMemberId !== work.receipt.memberId
-          || jsonIdentity(work.request.target) !== jsonIdentity(work.target) : work.author !== null)
+          || jsonIdentity(work.request.target) !== jsonIdentity(work.target)
+          : work.author !== null || work.request !== null || (work.origin.kind === "start" ? work.origin.actionId !== work.receipt.intentId
+            : work.origin.work.workId !== work.receipt.intentId || work.origin.work.memberId !== work.receipt.memberId
+              || jsonIdentity(work.origin.work.target) !== jsonIdentity(work.target)))
         || BigInt(work.sequence) <= BigInt(index ? value.works[index - 1].sequence : request.afterWork ?? "0"))
       || value.messages.some((message, index) => message.planId !== request.planId || message.sender.binding.lease.planId !== request.planId
+        || !value.roleVersions.some(role => role.request.memberId === message.sender.memberId && role.request.roleVersionId === message.sender.roleVersionId)
+        || !value.roleVersions.some(role => role.request.memberId === message.recipientMemberId && role.request.roleVersionId === message.recipientRoleVersionId)
         || BigInt(message.sequence) <= BigInt(index ? value.messages[index - 1].sequence : request.afterMessage ?? "0"))
       || new Set(value.works.map(work => work.receipt.intentId)).size !== value.works.length
       || new Set(value.messages.map(message => message.messageId)).size !== value.messages.length

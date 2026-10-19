@@ -16,6 +16,7 @@ import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
 import { TeamDiscussionHistory } from "./TeamDiscussionHistory";
 import { TeamExecutionChoice } from "./TeamExecutionChoice";
 import { TeamExecutionDisclosure } from "./TeamExecutionDisclosure";
+import { TeamRecoveryControls } from "./TeamRecoveryControls";
 import { TeamExecutionHistory } from "./TeamExecutionHistory";
 import { AiPreviewItems } from "./AiPreviewItems";
 import {useAiPreparation,type WorkPlanContinuation} from "./AiPreparationSession";
@@ -96,7 +97,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
 
   const failureValue=preparation.failure??(viewRead.error||planRead.error||scopeRead.error||contentRead.error?stage(viewRead.error??planRead.error??scopeRead.error??contentRead.error):null);
   const failure=failureReason(failureValue);
-  const active=!!attempt&&(capturedTeam? !status||status.plan.attemptId!==attempt||status.state==="active"&&BigInt(status.expiresAt)>BigInt(Math.floor(Date.now()/1000))
+  const active=!!attempt&&(capturedTeam? !status||status.state==="active"&&BigInt(status.expiresAt)>BigInt(Math.floor(Date.now()/1000))
     : !view||view.detail.progress.queued>0||view.detail.progress.running>0||view.rows.some(row=>row.automation&&["waiting","saving-candidate","checking"].includes(row.automation.phase)));
   const cancelUnresolved = Object.values(tasks.state).some(value => (value.target.origin === "ai" || value.target.taskId === view?.detail.taskId)
     && (value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown"));
@@ -108,18 +109,23 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   function allowLeave(current: () => boolean = () => true):Promise<boolean> {
     leaveProof.current = current;
     if(cancelUnresolved||translationDraft.candidates.blocked()||translationDraft.candidates.hasDraft()){setOpen(true);return Promise.resolve(false);}
+    if(preparation.recovery.blocked()){
+      const originalPlan=preparation.recovery.pendingPlan();if(originalPlan)preparation.recordPlan(originalPlan);
+      setOpen(true);return Promise.resolve(false);
+    }
     if(preparation.discussions.blocked()){
       const originalPlan=preparation.discussions.firstBlockedPlan();if(originalPlan)preparation.recordPlan(originalPlan);
       setOpen(true);return Promise.resolve(false);
     }
     if(preparation.reserved() || strategy?.reserved()){setOpen(true);return Promise.resolve(false);}
-    if(!dirty && !preparation.discussions.hasDraft() && !strategy?.dirty())return Promise.resolve(true);
+    if(!dirty && !preparation.discussions.hasDraft() && !preparation.recovery.hasDraft() && !strategy?.dirty())return Promise.resolve(true);
     setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});
   }
   function allowNavigate(destination?:WorkspaceDestination):Promise<boolean> {
     const history = childHistoryIntent.current;
     if(history && destination?.kind === "task" && destination.taskId === history.taskId && destination.attemptId === history.attemptId
       && !cancelUnresolved && !translationDraft.candidates.blocked() && preparation.canOpenChildHistory(history.taskId,history.attemptId)) return Promise.resolve(true);
+    if(destination?.kind === "task" && !cancelUnresolved && !translationDraft.candidates.blocked() && preparation.canOpenRecoveryTask(destination.taskId,destination.attemptId)) return Promise.resolve(true);
     if(preparation.reserved()||translationDraft.candidates.blocked()){setOpen(true);return Promise.resolve(false);}
     return Promise.resolve(true);
   }
@@ -408,10 +414,12 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}
       onStarted={(id,idPlan,taskId)=>{const original=preparation.planControl.current().pending;if(original?.kind==="start")preparation.recordPlanStart(id,idPlan,original.prepared,original.request.expectedGeneration,original.editSeq,taskId??null);}}
       onBlockedChange={()=>{}} onOpenExtensions={onOpenExtensions} onOpenTranslation={onOpenTranslation}/>
+    {status?.plan.options.teamExecution?<TeamRecoveryControls key={`team-recovery:${status.plan.planId}`} context={context} status={status} open={open}
+      disabled={disabled||busy||!!pendingAdopt||cancelUnresolved||planBlocked} session={preparation.recovery} onPlan={preparation.recordPlan} onOpenSettings={onOpenConnections} onOpenTask={onOpenTask}/>:null}
     {status?<TeamDiscussionHistory context={context} status={status} open={open} session={preparation.discussions}
       writable={!disabled&&!scopeRead.error&&!!scopeRead.data?.currentSnapshot&&project.metadata.targetLocales.includes(status.plan.locale)
         &&status.plan.scope.every(unit=>unit.sourceSnapshotId===scopeRead.data?.currentSnapshot)}/>:null}
-    {status?.plan.options.teamExecution?<TeamExecutionHistory key={status.plan.planId} context={context} status={status} open={open} onOpenTask={onOpenTask}
+    {status?.plan.options.teamExecution?<TeamExecutionHistory key={`team-execution:${status.plan.planId}`} context={context} status={status} open={open} onOpenTask={onOpenTask}
       onReadPost={postId=>preparation.discussions.focusPost(status.plan.planId,postId)}/>:null}
     {status?.plan.preview&&!status.plan.options.teamExecution?<WorkPlanAgentControls context={context} status={status} open={open} disabled={disabled||planBlocked||!!pendingAdopt||active} busy={busy}
       session={preparation.agent} component={preparation.component} ownerBusy={()=>preparation.current().busy} run={perform} onBlockedChange={()=>{}} onGenerated={preparation.recordGenerated}

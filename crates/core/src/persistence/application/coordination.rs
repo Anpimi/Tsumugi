@@ -1,5 +1,5 @@
 //! Team facts link to the original execution, Provider and candidate ledgers.
-use super::{ProjectStore, agents, control, team};
+use super::{ProjectStore, agents, control, recovery, team};
 use crate::{ai, application::*, execution::*};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -87,7 +87,7 @@ fn member<'a>(
         .and_then(|p| p.members().iter().find(|m| m.member_id == id))
         .ok_or_else(denied)
 }
-fn scope_for(
+pub(super) fn scope_for(
     plan: &WorkPlan,
     lease: AutomationLease,
     member: &TeamExecutionMember,
@@ -113,8 +113,9 @@ fn scope_for(
         }),
     }
 }
-fn derive(
+pub(super) fn derive(
     plan: &WorkPlan,
+    template: &FixedInput,
     lease: AutomationLease,
     member_id: ExecutionId,
     unit: ExecutionId,
@@ -130,7 +131,6 @@ fn derive(
         .find(|i| i.member_id == member_id)
         .and_then(|i| i.items.iter().find(|i| i.unit_id == unit))
         .ok_or_else(denied)?;
-    let template = plan.fixed_input()?;
     let mut e = template.envelope().clone();
     e.task_id = task;
     e.attempt_id = attempt;
@@ -143,7 +143,7 @@ fn derive(
     }
     e.items[0].payload = serde_json::to_value(item).map_err(|_| corrupt())?;
     e.units.retain(|u| u.item_ids.contains(&e.items[0].item_id));
-    let root = ai::settings(&template)?;
+    let root = ai::settings(template)?;
     e.settings = serde_json::to_value(ai::team::TeamWorkSettings {
         config: selected.config.clone(),
         root_request_limit: root.config.max_requests,
@@ -175,6 +175,7 @@ pub(super) fn root_input(
     };
     derive(
         plan,
+        &plan.fixed_input()?,
         lease,
         selected.member_id,
         policy.initial_unit_id(),
@@ -186,15 +187,17 @@ pub(super) fn root_input(
 }
 fn validate_input_basis(c: &Connection, input: &FixedInput) -> Result<WorkPlan, ExecutionError> {
     let s = ai::team::settings(input)?;
-    if s.binding.scope().lease.generation.get() != 1 {
-        return Err(corrupt());
-    }
-    let plan = control::load(c, s.binding.scope().lease.plan_id)?.plan;
+    let plan = recovery::plan_in(
+        c,
+        s.binding.scope().lease.plan_id,
+        s.binding.scope().lease.generation,
+    )?;
     let selected = member(&plan, s.binding.member_id())?;
     let root = plan.execution_input()?;
+    let template = control::load(c, plan.plan_id)?.plan.fixed_input()?;
     if s.binding.role_version_id() != selected.role_version_id
         || s.config != selected.config
-        || s.root_request_limit != ai::settings(&plan.fixed_input()?)?.config.max_requests
+        || s.root_request_limit != ai::settings(&template)?.config.max_requests
     {
         return Err(corrupt());
     }
@@ -215,7 +218,10 @@ fn validate_input_basis(c: &Connection, input: &FixedInput) -> Result<WorkPlan, 
     let target = ai::item_payload(input, input.envelope().items[0].item_id)?;
     let saved = match &s.binding {
         TeamWorkBinding::Root { .. } => None,
-        TeamWorkBinding::Child { intent_id, .. } => Some(RequestTeamWork {
+        TeamWorkBinding::Child { intent_id, .. }
+        | TeamWorkBinding::HumanContinuation {
+            work_id: intent_id, ..
+        } => Some(RequestTeamWork {
             intent_id: *intent_id,
             recipient_member_id: selected.member_id,
             target: TeamDiscussionTarget {
@@ -246,6 +252,7 @@ fn validate_input_basis(c: &Connection, input: &FixedInput) -> Result<WorkPlan, 
     }
     let expected = derive(
         &plan,
+        &template,
         s.binding.scope().lease,
         selected.member_id,
         target.unit_id,
@@ -276,6 +283,7 @@ pub(super) fn validate_root_receipt(
     }
     let expected = derive(
         plan,
+        &plan.fixed_input()?,
         lease,
         s.binding.member_id(),
         policy.initial_unit_id(),
@@ -308,6 +316,20 @@ pub(crate) fn validate_model_input(
         return Err(corrupt());
     }
     let s = ai::team::settings(input)?;
+    if let TeamWorkBinding::HumanContinuation { work_id, .. } = s.binding {
+        let (capture, receipt) =
+            recovery::capture_at(c, plan.plan_id, s.binding.scope().lease.generation)?
+                .ok_or_else(corrupt)?;
+        if receipt.lease != s.binding.scope().lease
+            || work_id != capture.preview.work.work_id
+            || FixedInput::capture(capture.input)?.bytes() != input.bytes()
+            || record.receipt.intent_id != work_id
+            || record.author.is_some()
+            || record.request.is_some()
+        {
+            return Err(corrupt());
+        }
+    }
     if record.receipt.member_id != s.binding.member_id()
         || record.receipt.role_version_id != s.binding.role_version_id()
         || record.receipt.task_id != input.envelope().task_id
@@ -427,13 +449,15 @@ pub(super) fn author_history(
 ) -> Result<(WorkPlan, TeamMemberRole, TeamDiscussionTarget), ExecutionError> {
     validate_model_input(c, input)?;
     let s = ai::team::settings(input)?;
-    let plan = control::load(c, s.binding.scope().lease.plan_id)?.plan;
+    let plan = recovery::plan_in(
+        c,
+        s.binding.scope().lease.plan_id,
+        s.binding.scope().lease.generation,
+    )?;
     let role = team::load_role(c, author.role_version_id)?;
     let selected = member(&plan, author.member_id)?;
-    if role.version.get() != 1
-        || role.request.display_name != selected.display_name
+    if role.request.display_name != selected.display_name
         || role.request.role != selected.role
-        || role.request.expected_role_version_id.is_some()
         || role.request.role_version_id != selected.role_version_id
     {
         return Err(corrupt());
@@ -527,7 +551,11 @@ impl ProjectStore {
                     authorization_action: None,
                 });
             }
-            let plan = control::load(c, author.author.binding.lease.plan_id)?.plan;
+            let plan = recovery::plan_in(
+                c,
+                author.author.binding.lease.plan_id,
+                author.author.binding.lease.generation,
+            )?;
             validate_request(c, &plan, author, request)?;
             if let Some(reason) = stop_reason(c, &plan)? {
                 return Err(fail(
@@ -560,6 +588,7 @@ impl ProjectStore {
             };
             let input = derive(
                 &plan,
+                &control::load(c, plan.plan_id)?.plan.fixed_input()?,
                 author.author.binding.lease,
                 selected.member_id,
                 request.target.unit_id,
@@ -657,6 +686,7 @@ fn validate_request(
         let message = message(c, id)?.ok_or_else(denied)?;
         if message.plan_id != plan.plan_id
             || message.recipient_member_id != author.author.member_id
+            || message.sender.binding.lease != author.author.binding.lease
             || message.target != request.target
         {
             return Err(denied());
@@ -701,7 +731,16 @@ pub(crate) fn check_prepared(
         }
         return Err(mismatch());
     }
-    let plan = control::load(c, prepared.receipt.plan_id)?.plan;
+    let plan = recovery::plan_in(
+        c,
+        prepared.receipt.plan_id,
+        prepared
+            .input
+            .envelope()
+            .automation
+            .ok_or_else(denied)?
+            .generation,
+    )?;
     if let Some(author) = &prepared.author {
         let scope = prepared.scope.as_ref().ok_or_else(denied)?;
         team::author_live(c, scope, author)?;
@@ -755,7 +794,16 @@ pub(crate) fn record_work(
     c: &Connection,
     prepared: &PreparedTeamWork,
 ) -> Result<(), ExecutionError> {
-    let plan = control::load(c, prepared.receipt.plan_id)?.plan;
+    let plan = recovery::plan_in(
+        c,
+        prepared.receipt.plan_id,
+        prepared
+            .input
+            .envelope()
+            .automation
+            .ok_or_else(denied)?
+            .generation,
+    )?;
     let s = ai::team::settings(prepared.input())?;
     if s.binding.is_root() {
         for m in plan
@@ -838,7 +886,11 @@ impl ProjectStore {
     ) -> Result<TeamMessage, ExecutionError> {
         let tx = self.execution_write()?;
         self.check_team_work_author(author)?;
-        let plan = control::load(&tx, author.author.binding.lease.plan_id)?.plan;
+        let plan = recovery::plan_in(
+            &tx,
+            author.author.binding.lease.plan_id,
+            author.author.binding.lease.generation,
+        )?;
         routing_target(
             &plan,
             &author.author,
@@ -863,6 +915,7 @@ impl ProjectStore {
             if m.plan_id != plan.plan_id
                 || m.target != write.target
                 || m.recipient_member_id != author.author.member_id
+                || m.sender.binding.lease != author.author.binding.lease
             {
                 return Err(denied());
             }
@@ -897,6 +950,7 @@ impl ProjectStore {
             plan_id: plan.plan_id,
             sender: author.author.clone(),
             recipient_member_id: write.recipient_member_id,
+            recipient_role_version_id: member(&plan, write.recipient_member_id)?.role_version_id,
             target: write.target.clone(),
             body: write.body.clone(),
             post_ids: write.post_ids.clone(),
@@ -941,7 +995,9 @@ impl ProjectStore {
             {
                 let value =
                     message(c, ExecutionId::parse(&id.map_err(sql)?)?)?.ok_or_else(corrupt)?;
-                if value.target == author.target {
+                if value.target == author.target
+                    && value.sender.binding.lease == author.author.binding.lease
+                {
                     messages.push(value);
                 }
             }
@@ -955,9 +1011,11 @@ impl ProjectStore {
                 author: author.author.clone(),
                 discussion,
                 messages,
-                recipients: recipients(
-                    &control::load(c, author.author.binding.lease.plan_id)?.plan,
-                )?,
+                recipients: recipients(&recovery::plan_in(
+                    c,
+                    author.author.binding.lease.plan_id,
+                    author.author.binding.lease.generation,
+                )?)?,
             };
             let bytes = codec::encode(&view, 32768)?;
             let utf8 = String::from_utf8(bytes).map_err(|_| corrupt())?;
@@ -990,7 +1048,13 @@ pub(crate) fn validate_provider_view_history_in(
     {
         return Err(corrupt());
     }
-    if view.recipients != recipients(&control::load(c, record.receipt.plan_id)?.plan)? {
+    if view.recipients
+        != recipients(&recovery::plan_in(
+            c,
+            record.receipt.plan_id,
+            view.author.binding.lease.generation,
+        )?)?
+    {
         return Err(corrupt());
     }
     team::author_history(c, &view.author)?;
@@ -999,6 +1063,7 @@ pub(crate) fn validate_provider_view_history_in(
         if message(c, value.message_id)?.as_ref() != Some(value)
             || value.plan_id != record.receipt.plan_id
             || value.recipient_member_id != view.author.member_id
+            || value.sender.binding.lease != view.author.binding.lease
             || value.target != view.discussion.target
         {
             return Err(corrupt());
@@ -1046,19 +1111,28 @@ pub(crate) fn record_consumptions_in(
     Ok(())
 }
 
+/// Cumulative work admissions and valid completions share the work ledger owner.
+pub(super) fn counts(c: &Connection, plan: ExecutionId) -> Result<(u32, u32), ExecutionError> {
+    c.query_row(
+        "SELECT COUNT(*),COALESCE(SUM(CASE WHEN i.execution='succeeded' AND i.validation='valid' THEN 1 ELSE 0 END),0) FROM application_team_work w JOIN execution_items i USING(attempt_id) WHERE w.plan_id=?1",
+        [plan.to_string()], |r| Ok((r.get(0)?,r.get(1)?)),
+    ).map_err(sql)
+}
+
 fn stop_reason(c: &Connection, plan: &WorkPlan) -> Result<Option<TeamStopReason>, ExecutionError> {
     let policy = plan.options.team_execution.as_ref().ok_or_else(denied)?;
-    let n: u32 = c
-        .query_row(
-            "SELECT COUNT(*) FROM application_team_work WHERE plan_id=?1",
-            [plan.plan_id.to_string()],
-            |r| r.get(0),
-        )
-        .map_err(sql)?;
-    let unknown:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM application_team_work w JOIN execution_items i USING(attempt_id) WHERE w.plan_id=?1 AND i.execution='unknown')",[plan.plan_id.to_string()],|r|r.get(0)).map_err(sql)?;
-    if unknown {
-        return Ok(Some(TeamStopReason::NeedsReconciliation));
+    let (n, unconfirmed) = counts(c, plan.plan_id)?;
+    let mut unknown=c.prepare("SELECT w.attempt_id FROM application_team_work w JOIN execution_items i USING(attempt_id) WHERE w.plan_id=?1 AND i.execution='unknown'").map_err(sql)?;
+    for id in unknown
+        .query_map([plan.plan_id.to_string()], |r| r.get::<_, String>(0))
+        .map_err(sql)?
+    {
+        if !recovery::acknowledged_unknown(c, plan.plan_id, ExecutionId::parse(&id.map_err(sql)?)?)?
+        {
+            return Ok(Some(TeamStopReason::NeedsReconciliation));
+        }
     }
+
     let deadline: Option<i64> = c
         .query_row(
             "SELECT MIN(deadline_at_ms) FROM application_team_work WHERE plan_id=?1",
@@ -1082,11 +1156,6 @@ fn stop_reason(c: &Connection, plan: &WorkPlan) -> Result<Option<TeamStopReason>
     {
         return Ok(Some(TeamStopReason::BudgetExhausted));
     }
-    // Model text and cited identities cannot verify progress or reset this bound.
-    let unconfirmed: u32 = c.query_row(
-        "SELECT COUNT(*) FROM application_team_work w JOIN execution_items i USING(attempt_id) WHERE w.plan_id=?1 AND i.execution='succeeded' AND i.validation='valid'",
-        [plan.plan_id.to_string()], |r| r.get(0),
-    ).map_err(sql)?;
     if unconfirmed >= policy.limits().max_no_progress {
         return Ok(Some(TeamStopReason::NoProgress));
     }
@@ -1158,7 +1227,11 @@ pub(crate) fn validate_result(
                     check_post(post_id, false)?;
                 }
                 TeamReviewBasis::Artifact { reference } => {
-                    let plan = control::load(c, s.binding.scope().lease.plan_id)?.plan;
+                    let plan = recovery::plan_in(
+                        c,
+                        s.binding.scope().lease.plan_id,
+                        s.binding.scope().lease.generation,
+                    )?;
                     team::check_references(c, &plan, &target, &[reference])?;
                 }
             }
@@ -1195,7 +1268,8 @@ impl ProjectStore {
         }
         let c = self.connection().map_err(|_| denied())?;
         super::super::review::read_snapshot(c, |c| {
-            let plan = control::load(c, request.plan_id)?.plan;
+            let status = control::load(c, request.plan_id)?;
+            let plan = recovery::plan_in(c, request.plan_id, status.lease.generation)?;
             if plan.project_id != request.project_id
                 || self
                     .metadata()
@@ -1268,7 +1342,24 @@ impl ProjectStore {
                 } else {
                     None
                 };
+                let binding = ai::team::settings(&input)?.binding;
+                let origin = if let TeamWorkBinding::HumanContinuation { .. } = binding {
+                    let (capture, receipt) =
+                        recovery::capture_at(c, plan.plan_id, binding.scope().lease.generation)?
+                            .ok_or_else(corrupt)?;
+                    TeamWorkOrigin::HumanContinuation {
+                        action_id: receipt.action_id,
+                        work: capture.preview.work,
+                    }
+                } else if record.author.is_some() {
+                    TeamWorkOrigin::Member {}
+                } else {
+                    TeamWorkOrigin::Start {
+                        action_id: record.receipt.intent_id,
+                    }
+                };
                 works.push(TeamWorkView {
+                    origin,
                     candidate_revision_id,
                     sequence: Revision::new(u64::try_from(sequence).map_err(|_| corrupt())?)?,
                     target: team::target(&input, input.envelope().items[0].item_id)?,
@@ -1310,7 +1401,30 @@ impl ProjectStore {
                 messages.push(value);
             }
             let next_message_after = more.then(|| messages.last().unwrap().sequence);
+            let mut role_ids = std::collections::BTreeSet::new();
+            for work in &works {
+                role_ids.insert(work.receipt.role_version_id);
+                if let Some(author) = &work.author {
+                    role_ids.insert(author.role_version_id);
+                }
+            }
+            for message in &messages {
+                role_ids.insert(message.sender.role_version_id);
+                role_ids.insert(message.recipient_role_version_id);
+            }
+            let role_versions = role_ids
+                .into_iter()
+                .map(|id| team::load_role(c, id))
+                .collect::<Result<Vec<_>, _>>()?;
             let value = TeamExecutionView {
+                effective_version: recovery::effective_version(
+                    c,
+                    plan.plan_id,
+                    status.lease.generation,
+                )?,
+                roster: policy.members().to_vec(),
+                retired_member_ids: recovery::retired(c, &plan)?,
+                role_versions,
                 plan_id: plan.plan_id,
                 members,
                 works,
@@ -1332,7 +1446,11 @@ pub(crate) fn runtime_identity(
     input: &FixedInput,
 ) -> Result<(ExecutionId, ExecutionId, u32, u64), ExecutionError> {
     let s = ai::team::settings(input)?;
-    let plan = control::load(c, s.binding.scope().lease.plan_id)?.plan;
+    let plan = recovery::plan_in(
+        c,
+        s.binding.scope().lease.plan_id,
+        s.binding.scope().lease.generation,
+    )?;
     let deadline: i64 = c
         .query_row(
             "SELECT MIN(deadline_at_ms) FROM application_team_work WHERE plan_id=?1",
@@ -1404,13 +1522,16 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             let target = team::target(&author_input, author.item_id)?;
             let request = record.request.as_ref().ok_or_else(corrupt)?;
             routing_target(
-                &control::load(c, record.receipt.plan_id)?.plan,
+                &recovery::plan_in(c, record.receipt.plan_id, author.binding.lease.generation)?,
                 author,
                 &target,
                 request.recipient_member_id,
                 &request.target,
             )?;
-        } else if record.request.is_some() || !s.binding.is_root() {
+        } else if record.request.is_some()
+            || !(s.binding.is_root()
+                || matches!(s.binding, TeamWorkBinding::HumanContinuation { .. }))
+        {
             return Err(corrupt());
         }
         let (result, validation): (Option<String>, String) = c
@@ -1435,7 +1556,12 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         let value = message(c, ExecutionId::parse(&id.map_err(sql)?)?)?.ok_or_else(corrupt)?;
         let input = super::super::ledger::load_input(c, value.sender.attempt_id)?;
         author_history(c, &value.sender, &input)?;
-        let plan = control::load(c, value.plan_id)?.plan;
+        let plan = recovery::plan_in(c, value.plan_id, value.sender.binding.lease.generation)?;
+        if member(&plan, value.recipient_member_id)?.role_version_id
+            != value.recipient_role_version_id
+        {
+            return Err(corrupt());
+        }
         routing_target(
             &plan,
             &value.sender,

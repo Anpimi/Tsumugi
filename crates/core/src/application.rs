@@ -18,6 +18,8 @@ pub mod team;
 pub use team::*;
 pub mod team_execution;
 pub use team_execution::*;
+pub mod team_recovery;
+pub use team_recovery::*;
 pub mod mcp_retrieval;
 pub use mcp_retrieval::*;
 mod maintenance;

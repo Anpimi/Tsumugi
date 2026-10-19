@@ -11,6 +11,7 @@ const MAX_PACKAGE_WORK: usize = 128;
 pub(super) struct PackageWork(Arc<PackageWorkState>);
 pub(super) struct PackageWorkState {
     packages: Vec<PluginPackageRequest>,
+    plan_id: Option<ExecutionId>,
     cancellation: Cancellation,
 }
 impl PackageWorkState {
@@ -38,14 +39,20 @@ pub(super) struct PackageControl {
 }
 pub(super) struct RetiredQuery {
     package: Option<PluginPackageRequest>,
+    pub(super) plan_id: Option<ExecutionId>,
     pub(super) thread: JoinHandle<()>,
 }
 impl RetiredQuery {
     pub(super) fn new(job: QueryJob) -> Self {
         Self {
             package: request_package(&job.query.request),
+            plan_id: job.query.request.input.envelope().automation.map(|lease| lease.plan_id),
             thread: job.thread,
         }
+    }
+    #[cfg(test)]
+    pub(super) fn from_test_thread(plan: ExecutionId, thread: JoinHandle<()>) -> Self {
+        Self { package: None, plan_id: Some(plan), thread }
     }
 }
 pub(super) fn input_package(input: &FixedInput) -> Option<PluginPackageRequest> {
@@ -94,6 +101,16 @@ impl ExecutionHost {
             .iter()
             .any(|work| work.strong_count() != 0)
     }
+    pub(super) fn plan_callbacks_active(&self, plan: ExecutionId) -> bool {
+        self.package_work.iter().filter_map(std::sync::Weak::upgrade)
+            .any(|work| work.plan_id == Some(plan))
+            || self.ai.plan_active(plan)
+            || self.tools.plan_active(plan)
+            || self.work_plans.plan_generation_preparation_active(plan)
+            || self.queries.iter().any(|job| job.query.request.input.envelope().automation
+                .is_some_and(|lease| lease.plan_id == plan))
+            || self.retired_queries.iter().any(|job| job.plan_id == Some(plan))
+    }
     pub(super) fn allow_package(
         &self,
         package: &PluginPackageRequest,
@@ -115,6 +132,20 @@ impl ExecutionHost {
         &mut self,
         packages: Vec<PluginPackageRequest>,
     ) -> Result<PackageWork, CommandError> {
+        self.begin_owned_package_work(packages, None)
+    }
+    pub(super) fn begin_plan_work(
+        &mut self,
+        plan: ExecutionId,
+        packages: Vec<PluginPackageRequest>,
+    ) -> Result<PackageWork, CommandError> {
+        self.begin_owned_package_work(packages, Some(plan))
+    }
+    fn begin_owned_package_work(
+        &mut self,
+        packages: Vec<PluginPackageRequest>,
+        plan_id: Option<ExecutionId>,
+    ) -> Result<PackageWork, CommandError> {
         self.allow_mutation()?;
         for package in &packages {
             self.allow_package(package).map_err(map_recover)?;
@@ -128,6 +159,7 @@ impl ExecutionHost {
         }
         let work = Arc::new(PackageWorkState {
             packages,
+            plan_id,
             cancellation: Cancellation::default(),
         });
         self.package_work.push(Arc::downgrade(&work));

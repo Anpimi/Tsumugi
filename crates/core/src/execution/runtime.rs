@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod package_quiesce;
+mod team_recovery;
 pub(crate) use package_quiesce::PackageKey;
 pub use package_quiesce::PackageQuiescence;
 use package_quiesce::{PackageControl, PackageQueries, QueryGate, RetiredWorker, RunnerEntry};
@@ -596,6 +597,17 @@ impl ExecutionRuntime {
             return Ok(receipt);
         }
         let settings = crate::ai::team::settings(prepared.input())?;
+        if !settings.binding.is_root()
+            && !self
+                .team_deadlines
+                .get(&settings.binding.scope().lease.plan_id)
+                .is_some_and(|deadline| Instant::now() < *deadline)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "team-recovery-live-anchor",
+            ));
+        }
         let parent = if settings.binding.is_root() {
             None
         } else {
@@ -604,6 +616,12 @@ impl ExecutionRuntime {
         let policy = self.submission_policy(store, prepared.input(), parent)?;
         if settings.binding.is_root() {
             let plan = settings.binding.scope().lease.plan_id;
+            self.prune_team_anchors(store)?;
+            if !self.team_deadlines.contains_key(&plan)
+                && self.team_deadlines.len() >= MAX_QUEUED_ATTEMPTS
+            {
+                return Err(ExecutionError::new(ErrorCode::Busy, "team-live-capacity"));
+            }
             let expires = store
                 .work_plan_status(plan)?
                 .expires_at
@@ -1065,30 +1083,7 @@ impl ExecutionRuntime {
             return Ok(());
         }
         let mut queued = store.queued_execution_attempts(self.initial_sequence)?;
-        let mut retained = std::collections::BTreeSet::new();
-        for input in queued
-            .iter()
-            .map(|id| store.execution_input(*id))
-            .chain(self.workers.iter().map(|w| Ok(w.request.input.clone())))
-            .chain(
-                self.retired
-                    .iter()
-                    .map(|w| store.execution_input(w.attempt)),
-            )
-        {
-            let input = input?;
-            if input.envelope().operation == crate::ai::team::OPERATION {
-                retained.insert(
-                    crate::ai::team::settings(&input)?
-                        .binding
-                        .scope()
-                        .lease
-                        .plan_id,
-                );
-            }
-        }
-        self.team_deadlines
-            .retain(|plan, _| retained.contains(plan));
+        self.prune_team_anchors(store)?;
         if let Some(cursor) = self.scheduling_cursor {
             if let Some(index) = queued.iter().position(|id| *id == cursor) {
                 let len = queued.len();
@@ -1104,6 +1099,9 @@ impl ExecutionRuntime {
                 continue;
             }
             let input = store.execution_input_cached(attempt)?;
+            if store.next_queued_execution_item(attempt)?.is_none() {
+                continue;
+            }
             let mut team_deadline = None;
             if input.envelope().operation == crate::ai::team::OPERATION {
                 let (plan, member, limit, expires) = store.team_runtime_identity(&input)?;
@@ -1134,12 +1132,16 @@ impl ExecutionRuntime {
                     .map_err(|_| ExecutionError::new(ErrorCode::Unauthorized, "team-deadline"))?
                     .as_millis();
                 let remaining = expires.saturating_sub(wall.min(u64::MAX.into()) as u64);
-                let deadline = *self
-                    .team_deadlines
-                    .entry(plan)
-                    .and_modify(|prior|*prior=(*prior).min(now+Duration::from_millis(remaining)))
-                    .or_insert_with(|| now + Duration::from_millis(remaining));
-                team_deadline = Some((deadline, expires));
+                let deadline = self.team_deadlines.get_mut(&plan).map(|deadline| {
+                    *deadline = (*deadline).min(now + Duration::from_millis(remaining));
+                    *deadline
+                });
+                if deadline.is_none_or(|deadline| now >= deadline) {
+                    let root = crate::ai::team::settings(&input)?.binding.scope().root_task;
+                    self.cancel(store, root, ExecutionId::new())?;
+                    continue;
+                }
+                team_deadline = deadline.map(|deadline| (deadline, expires));
             }
             if self.stored_input_package_stopped(store, &input)? {
                 continue;
