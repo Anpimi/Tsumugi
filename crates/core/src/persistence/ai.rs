@@ -15,6 +15,16 @@ impl ProjectStore {
         let Some(result) = self.execution_current_result(attempt, item_id)? else {
             return Ok(None);
         };
+        if input.envelope().operation == crate::ai::team::OPERATION {
+            let stored = self.execution_result(attempt, result)?;
+            if stored.envelope().outcome != ExecutionState::Succeeded {
+                return Ok(None);
+            }
+            if !matches!(crate::ai::team::validate_output(&input, &stored)?.outcome,
+                crate::application::TeamWorkOutcome::Translation { .. }) {
+                return Ok(None);
+            }
+        }
         let connection = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "ai-candidate-read"))?;
@@ -280,6 +290,36 @@ impl AiPreview {
 
 pub struct AiAdoptionHandler;
 pub struct ArenaAdoptionHandler;
+pub struct TeamTranslationAdoptionHandler;
+impl AdoptionHandler for TeamTranslationAdoptionHandler {
+    fn operation(&self) -> &str {
+        crate::ai::team::OPERATION
+    }
+    fn prepare(
+        &self,
+        input: &FixedInput,
+        action: &AdoptionAction,
+        results: &[FixedResult],
+    ) -> Result<PreparedMutation, ExecutionError> {
+        prepare_ai(input, action, results, false)
+    }
+}
+
+/// Only a real typed translation can enter the ordinary AI candidate mutation.
+/// Advisory reviews, evidence and waiting never masquerade as translated text.
+pub(crate) fn team_translation_output(
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<AiOutput, ExecutionError> {
+    let output = crate::ai::team::validate_output(input, result)?;
+    let crate::application::TeamWorkOutcome::Translation { unit_id, target_locale, text } = output.outcome else {
+        return Err(error(ErrorCode::OutputInvalid, "team-translation-required"));
+    };
+    Ok(AiOutput {
+        unit_id, target_locale, text, usage: output.usage,
+        requests: output.requests, usage_incomplete: output.usage_incomplete,
+    })
+}
 impl AdoptionHandler for ArenaAdoptionHandler {
     fn operation(&self) -> &str {
         crate::ai::arena::OPERATION
@@ -320,6 +360,11 @@ fn prepare_ai(
         (
             crate::ai::arena::validate_output(input, result)?,
             crate::ai::arena::item_payload(input, result.envelope().item_id)?.item,
+        )
+    } else if input.envelope().operation == crate::ai::team::OPERATION {
+        (
+            team_translation_output(input, result)?,
+            item_payload(input, result.envelope().item_id)?,
         )
     } else {
         (

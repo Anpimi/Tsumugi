@@ -134,6 +134,7 @@ pub struct ExecutionRuntime {
     scheduling_cursor: Option<ExecutionId>,
     workers: Vec<Worker>,
     retired: Vec<RetiredWorker>,
+    team_deadlines: BTreeMap<ExecutionId, Instant>,
     package_controls: BTreeMap<ExecutionId, PackageControl>,
     accepting: bool,
 }
@@ -152,6 +153,7 @@ impl ExecutionRuntime {
             scheduling_cursor: None,
             workers: Vec::new(),
             retired: Vec::new(),
+            team_deadlines: BTreeMap::new(),
             package_controls: BTreeMap::new(),
             accepting: true,
         })
@@ -579,6 +581,48 @@ impl ExecutionRuntime {
             self.submission_policy(store, prepared.input(), Some(prepared.scope.parent_task()))?;
         store.enqueue_work_plan_agent_generation(prepared, policy)
     }
+    pub fn submit_team_work(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedTeamWork,
+    ) -> Result<crate::application::TeamWorkReceipt, ExecutionError> {
+        if let Some(receipt) = store.team_work_receipt(prepared.receipt().intent_id)? {
+            if receipt != *prepared.receipt() {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "team-work-receipt",
+                ));
+            }
+            return Ok(receipt);
+        }
+        let settings = crate::ai::team::settings(prepared.input())?;
+        let parent = if settings.binding.is_root() {
+            None
+        } else {
+            Some(settings.binding.scope().root_task)
+        };
+        let policy = self.submission_policy(store, prepared.input(), parent)?;
+        if settings.binding.is_root() {
+            let plan = settings.binding.scope().lease.plan_id;
+            let expires = store
+                .work_plan_status(plan)?
+                .expires_at
+                .saturating_mul(1000);
+            let started = Instant::now();
+            let wall = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| ExecutionError::new(ErrorCode::Unauthorized, "team-deadline"))?
+                .as_millis();
+            let ceiling = started
+                + Duration::from_millis(expires.saturating_sub(wall.min(u64::MAX.into()) as u64));
+            self.team_deadlines
+                .entry(plan)
+                .and_modify(|prior| *prior = (*prior).min(ceiling))
+                .or_insert(ceiling);
+        }
+        store.enqueue_team_work(prepared, policy)?;
+        Ok(prepared.receipt().clone())
+    }
     /// A component proposal uses the same queue and ancestor budget, with its
     /// original caller recorded atomically alongside the child attempt.
     pub fn submit_work_plan_service_child(
@@ -911,9 +955,19 @@ impl ExecutionRuntime {
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
                 };
                 match event {
-                    crate::ai::provider::BudgetEvent::Reserve { id, limit, capture, reply } => {
+                    crate::ai::provider::BudgetEvent::Reserve {
+                        id,
+                        limit,
+                        capture,
+                        reply,
+                    } => {
                         let outcome = if self.accepting && !worker.cancellation.is_requested() {
-                            store.reserve_provider_request_capture(&worker.request, id, limit, capture.as_ref())
+                            store.reserve_provider_request_capture(
+                                &worker.request,
+                                id,
+                                limit,
+                                capture.as_ref(),
+                            )
                         } else {
                             Err(ExecutionError::new(ErrorCode::Cancelled, "ai-cancelled"))
                         };
@@ -1011,6 +1065,30 @@ impl ExecutionRuntime {
             return Ok(());
         }
         let mut queued = store.queued_execution_attempts(self.initial_sequence)?;
+        let mut retained = std::collections::BTreeSet::new();
+        for input in queued
+            .iter()
+            .map(|id| store.execution_input(*id))
+            .chain(self.workers.iter().map(|w| Ok(w.request.input.clone())))
+            .chain(
+                self.retired
+                    .iter()
+                    .map(|w| store.execution_input(w.attempt)),
+            )
+        {
+            let input = input?;
+            if input.envelope().operation == crate::ai::team::OPERATION {
+                retained.insert(
+                    crate::ai::team::settings(&input)?
+                        .binding
+                        .scope()
+                        .lease
+                        .plan_id,
+                );
+            }
+        }
+        self.team_deadlines
+            .retain(|plan, _| retained.contains(plan));
         if let Some(cursor) = self.scheduling_cursor {
             if let Some(index) = queued.iter().position(|id| *id == cursor) {
                 let len = queued.len();
@@ -1026,6 +1104,43 @@ impl ExecutionRuntime {
                 continue;
             }
             let input = store.execution_input_cached(attempt)?;
+            let mut team_deadline = None;
+            if input.envelope().operation == crate::ai::team::OPERATION {
+                let (plan, member, limit, expires) = store.team_runtime_identity(&input)?;
+                let mut running = 0;
+                let mut member_busy = false;
+                for owned in self.workers.iter().map(|w| w.request.input.clone()).chain(
+                    self.retired
+                        .iter()
+                        .map(|w| store.execution_input(w.attempt))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter(),
+                ) {
+                    if owned.envelope().operation == crate::ai::team::OPERATION {
+                        let s = crate::ai::team::settings(&owned)?;
+                        if s.binding.scope().lease.plan_id == plan {
+                            running += 1;
+                            if s.binding.member_id() == member {
+                                member_busy = true;
+                            }
+                        }
+                    }
+                }
+                if member_busy || running >= limit {
+                    continue;
+                }
+                let wall = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| ExecutionError::new(ErrorCode::Unauthorized, "team-deadline"))?
+                    .as_millis();
+                let remaining = expires.saturating_sub(wall.min(u64::MAX.into()) as u64);
+                let deadline = *self
+                    .team_deadlines
+                    .entry(plan)
+                    .and_modify(|prior|*prior=(*prior).min(now+Duration::from_millis(remaining)))
+                    .or_insert_with(|| now + Duration::from_millis(remaining));
+                team_deadline = Some((deadline, expires));
+            }
             if self.stored_input_package_stopped(store, &input)? {
                 continue;
             }
@@ -1060,6 +1175,12 @@ impl ExecutionRuntime {
                 }
                 Err(error) => return Err(error),
             };
+            if let Some((deadline, expires)) = team_deadline {
+                if let Some(original) = &mut request.original_deadline {
+                    original.instant = original.instant.min(deadline);
+                    original.expires_at_ms = original.expires_at_ms.min(expires);
+                }
+            }
             let (budget, budget_events) = crate::ai::provider::budget_channel();
             request.provider = Some(budget);
             self.scheduling_cursor = Some(attempt);

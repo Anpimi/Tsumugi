@@ -2,6 +2,26 @@
 use super::*;
 use crate::ai::{Usage, provider::ProviderRequestCapture};
 
+fn captured_member_config(input: &FixedInput) -> Result<crate::ai::AiConfig, ExecutionError> {
+    if input.envelope().operation == crate::ai::team::OPERATION {
+        return Ok(crate::ai::team::settings(input)?.config);
+    }
+    let settings = crate::ai::settings(input)?;
+    if settings.agent.is_none() {
+        return Err(error(ErrorCode::Unauthorized, "member-dispatch"));
+    }
+    Ok(settings.config)
+}
+
+fn team_budget_limit(input: &FixedInput) -> Result<u32, ExecutionError> {
+    let settings = crate::ai::team::settings(input)?;
+    Ok(if settings.binding.is_root() {
+        settings.root_request_limit
+    } else {
+        settings.config.max_requests
+    })
+}
+
 const TABLES: &[(&str, &str)] = &[
     (
         "execution_effects",
@@ -45,7 +65,7 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         return Err(error(ErrorCode::CorruptLedger, "provider-association"));
     }
     let mut members = c
-        .prepare("SELECT task_id,parent_id,request_limit FROM execution_budgets")
+        .prepare("SELECT b.task_id,b.parent_id,b.request_limit,t.operation FROM execution_budgets b JOIN execution_tasks t USING(task_id)")
         .map_err(sql_error)?;
     for member in members
         .query_map([], |r| {
@@ -53,12 +73,43 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
                 r.get::<_, String>(0)?,
                 r.get::<_, Option<String>>(1)?,
                 r.get::<_, u32>(2)?,
+                r.get::<_, String>(3)?,
             ))
         })
         .map_err(sql_error)?
     {
-        let (task, parent, limit) = member.map_err(sql_error)?;
+        let (task, parent, limit, operation) = member.map_err(sql_error)?;
         parse_id(task.clone())?;
+        if operation == crate::ai::team::OPERATION {
+            let attempt: String = c.query_row(
+                "SELECT attempt_id FROM execution_attempts WHERE task_id=?1 ORDER BY sequence DESC LIMIT 1",
+                [task.clone()], |row| row.get(0),
+            ).map_err(sql_error)?;
+            let input = load_input(c, parse_id(attempt)?)?;
+            let settings = crate::ai::team::settings(&input)?;
+            let own_requests: u32 = c.query_row(
+                "SELECT COUNT(*) FROM execution_provider_requests WHERE task_id=?1",
+                [task.clone()], |row| row.get(0),
+            ).map_err(sql_error)?;
+            if limit != team_budget_limit(&input)?
+                || settings.config.max_requests > settings.root_request_limit
+                || settings.binding.is_root() != parent.is_none()
+                || parent.as_ref().is_some_and(|parent| parent != &settings.binding.scope().root_task.to_string())
+                || own_requests > settings.config.max_requests
+            {
+                return Err(error(ErrorCode::CorruptLedger, "provider-team-budget"));
+            }
+            if let Some(parent) = &parent {
+                let attempt: String = c.query_row(
+                    "SELECT attempt_id FROM execution_attempts WHERE task_id=?1 ORDER BY sequence DESC LIMIT 1",
+                    [parent], |row| row.get(0),
+                ).map_err(sql_error)?;
+                let original = load_input(c, parse_id(attempt)?)?;
+                crate::persistence::application::coordination::validate_provider_parent_history_in(
+                    c, &input, &original,
+                )?;
+            }
+        }
         let mut expected = std::collections::BTreeSet::from([task.clone()]);
         let mut next = parent;
         while let Some(parent) = next {
@@ -103,6 +154,7 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         .map_err(sql_error)?
     {
         let (id, bytes, capture, digest, attempt, item) = row.map_err(sql_error)?;
+        let item = parse_id(item)?;
         parse_id(id)?;
         if let Some(bytes) = bytes {
             let _: Usage = codec::decode(&bytes, 1024)?;
@@ -112,16 +164,22 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
                 if codec::digest(&bytes) != digest { return Err(error(ErrorCode::CorruptLedger, "provider-request-capture")); }
                 let capture: ProviderRequestCapture = codec::decode(&bytes, 131072).map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
                 let input = load_input(c, parse_id(attempt)?)?;
-                let settings = crate::ai::settings(&input)?;
-                if settings.agent.is_none() { return Err(error(ErrorCode::CorruptLedger, "provider-member-association")); }
-                capture.validate(&settings.config).map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
-                crate::persistence::validate_team_provider_view_history_in(c, &input, parse_id(item)?, capture.team_view.as_ref())
+                let config = captured_member_config(&input)
+                    .map_err(|_| error(ErrorCode::CorruptLedger, "provider-member-association"))?;
+                capture.validate(&config).map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
+                crate::persistence::validate_team_provider_view_history_in(c, &input, item, capture.team_view.as_ref())
                     .map_err(|_| error(ErrorCode::CorruptLedger, "provider-team-view"))?;
+                crate::persistence::application::coordination::validate_provider_view_history_in(
+                    c, &input, item, capture.team_work_view.as_ref(),
+                ).map_err(|_| error(ErrorCode::CorruptLedger, "provider-team-work-view"))?;
             }
             (None, None) => {
                 let input = load_input(c, parse_id(attempt)?)?;
-                crate::persistence::validate_team_provider_view_history_in(c, &input, parse_id(item)?, None)
+                crate::persistence::validate_team_provider_view_history_in(c, &input, item, None)
                     .map_err(|_| error(ErrorCode::CorruptLedger, "provider-team-view"))?;
+                crate::persistence::application::coordination::validate_provider_view_history_in(
+                    c, &input, item, None,
+                ).map_err(|_| error(ErrorCode::CorruptLedger, "provider-team-work-view"))?;
             }
             _ => return Err(error(ErrorCode::CorruptLedger, "provider-request-capture")),
         }
@@ -175,11 +233,21 @@ pub(super) fn record_input(
         params![e.attempt_id.to_string(), encode_enum(policy)?],
     )
     .map_err(sql_error)?;
-    let limit = e
+    let limit = if e.operation == crate::ai::team::OPERATION {
+        let settings = crate::ai::team::settings(input)?;
+        if policy != RecoveryPolicy::ExternalUnknown
+            || settings.config.max_requests > settings.root_request_limit
+            || settings.binding.is_root() != parent.is_none()
+            || parent.is_some_and(|parent| parent != settings.binding.scope().root_task)
+        {
+            return Err(error(ErrorCode::Unauthorized, "provider-team-parent"));
+        }
+        Some(u64::from(team_budget_limit(input)?))
+    } else { e
         .settings
         .get("config")
         .and_then(|v| v.get("maxRequests"))
-        .and_then(|v| v.as_u64());
+        .and_then(|v| v.as_u64()) };
     if policy != RecoveryPolicy::ExternalUnknown || limit.is_none() {
         if parent.is_some() {
             return Err(error(ErrorCode::Unauthorized, "provider-parent"));
@@ -213,17 +281,24 @@ pub(super) fn record_input(
             .map_err(sql_error)?;
         let parent_attempt: String = c.query_row("SELECT attempt_id FROM execution_attempts WHERE task_id=?1 ORDER BY sequence DESC LIMIT 1",[parent.to_string()],|r|r.get(0)).map_err(sql_error)?;
         let parent_input = load_input(c, parse_id(parent_attempt)?)?;
-        if !inherits_configuration(input, &parent_input)
-            || limit > parent_limit as u64
-            || !super::super::application::allows_cancelled_ancestor(c, input, parent)?
-            || !e.items.iter().all(|i| {
-                parent_input.envelope().items.iter().any(|p| {
-                    p.scope == i.scope
-                        && p.dependencies == i.dependencies
-                        && p.payload.get("item").unwrap_or(&p.payload)
-                            == i.payload.get("item").unwrap_or(&i.payload)
+        let inherited = if e.operation == crate::ai::team::OPERATION {
+            crate::persistence::application::coordination::validate_provider_parent_in(
+                c, input, &parent_input,
+            )?;
+            true
+        } else {
+            inherits_configuration(input, &parent_input)
+                && e.items.iter().all(|i| {
+                    parent_input.envelope().items.iter().any(|p| {
+                        p.scope == i.scope
+                            && p.dependencies == i.dependencies
+                            && p.payload.get("item").unwrap_or(&p.payload)
+                                == i.payload.get("item").unwrap_or(&i.payload)
+                    })
                 })
-            })
+        };
+        if !inherited || limit > parent_limit as u64
+            || !super::super::application::allows_cancelled_ancestor(c, input, parent)?
         {
             return Err(error(ErrorCode::Unauthorized, "provider-parent-scope"));
         }
@@ -331,55 +406,60 @@ pub struct ProviderBudget {
     )]
     pub completion_tokens: String,
 }
+pub(crate) fn provider_budget_in(
+    c: &Connection,
+    task: ExecutionId,
+) -> Result<Option<ProviderBudget>, ExecutionError> {
+    let limit: Option<u32> = c
+        .query_row(
+            "SELECT request_limit FROM execution_budgets WHERE task_id=?1",
+            [task.to_string()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    let Some(limit) = limit else { return Ok(None) };
+    let mut budget = ProviderBudget {
+        limit,
+        dispatched: 0,
+        legacy_held: 0,
+        unresolved: 0,
+        usage_unknown: 0,
+        prompt_tokens: "0".into(),
+        completion_tokens: "0".into(),
+    };
+    budget.legacy_held=c.query_row("SELECT COALESCE(SUM(b.legacy_held),0) FROM execution_budgets b JOIN execution_budget_ancestry x ON b.task_id=x.task_id WHERE x.ancestor_id=?1",[task.to_string()],|r|r.get(0)).map_err(sql_error)?;
+    let (mut prompt, mut completion) = (0u128, 0u128);
+    let mut stmt=c.prepare("SELECT p.state,p.usage FROM execution_provider_requests p JOIN execution_budget_ancestry x ON p.task_id=x.task_id WHERE x.ancestor_id=?1").map_err(sql_error)?;
+    for row in stmt
+        .query_map([task.to_string()], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<Vec<u8>>>(1)?))
+        })
+        .map_err(sql_error)?
+    {
+        let (state, bytes) = row.map_err(sql_error)?;
+        budget.dispatched += 1;
+        if state == "unknown" {
+            budget.unresolved += 1;
+        }
+        if let Some(bytes) = bytes {
+            let usage: Usage = codec::decode(&bytes, 1024)?;
+            prompt += u128::from(usage.prompt_tokens);
+            completion += u128::from(usage.completion_tokens);
+        } else {
+            budget.usage_unknown += 1;
+        }
+    }
+    budget.prompt_tokens = prompt.to_string();
+    budget.completion_tokens = completion.to_string();
+    Ok(Some(budget))
+}
 impl ProjectStore {
     pub fn provider_budget(
         &self,
         task: ExecutionId,
     ) -> Result<Option<ProviderBudget>, ExecutionError> {
-        let c = self.execution_connection()?;
-        let limit: Option<u32> = c
-            .query_row(
-                "SELECT request_limit FROM execution_budgets WHERE task_id=?1",
-                [task.to_string()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(sql_error)?;
-        let Some(limit) = limit else { return Ok(None) };
-        let mut budget = ProviderBudget {
-            limit,
-            dispatched: 0,
-            legacy_held: 0,
-            unresolved: 0,
-            usage_unknown: 0,
-            prompt_tokens: "0".into(),
-            completion_tokens: "0".into(),
-        };
-        budget.legacy_held=c.query_row("SELECT COALESCE(SUM(b.legacy_held),0) FROM execution_budgets b JOIN execution_budget_ancestry x ON b.task_id=x.task_id WHERE x.ancestor_id=?1",[task.to_string()],|r|r.get(0)).map_err(sql_error)?;
-        let (mut prompt, mut completion) = (0u128, 0u128);
-        let mut stmt=c.prepare("SELECT p.state,p.usage FROM execution_provider_requests p JOIN execution_budget_ancestry x ON p.task_id=x.task_id WHERE x.ancestor_id=?1").map_err(sql_error)?;
-        for row in stmt
-            .query_map([task.to_string()], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<Vec<u8>>>(1)?))
-            })
-            .map_err(sql_error)?
-        {
-            let (state, bytes) = row.map_err(sql_error)?;
-            budget.dispatched += 1;
-            if state == "unknown" {
-                budget.unresolved += 1;
-            }
-            if let Some(bytes) = bytes {
-                let usage: Usage = codec::decode(&bytes, 1024)?;
-                prompt += u128::from(usage.prompt_tokens);
-                completion += u128::from(usage.completion_tokens);
-            } else {
-                budget.usage_unknown += 1;
-            }
-        }
-        budget.prompt_tokens = prompt.to_string();
-        budget.completion_tokens = completion.to_string();
-        Ok(Some(budget))
+        provider_budget_in(self.execution_connection()?, task)
     }
     pub(crate) fn reserve_provider_request(
         &mut self,
@@ -394,9 +474,7 @@ impl ProjectStore {
         capture: Option<&ProviderRequestCapture>,
     ) -> Result<(), ExecutionError> {
         let captured = if let Some(capture) = capture {
-            let settings = crate::ai::settings(&request.input)?;
-            if settings.agent.is_none() { return Err(error(ErrorCode::Unauthorized, "member-dispatch")); }
-            capture.validate(&settings.config)?;
+            capture.validate(&captured_member_config(&request.input)?)?;
             Some(codec::encode(capture, 131072)?)
         } else { None };
         let digest = captured.as_ref().map(|bytes| codec::digest(bytes));
@@ -406,6 +484,9 @@ impl ProjectStore {
         super::super::application::check_service_input(&tx, &request.input, &authority)?;
         crate::persistence::validate_team_provider_view_in(
             &tx, request, capture.and_then(|capture| capture.team_view.as_ref()),
+        )?;
+        crate::persistence::application::coordination::validate_provider_view_in(
+            &tx, request, capture.and_then(|capture| capture.team_work_view.as_ref()),
         )?;
         let e = request.input.envelope();
         let ancestors = {
@@ -439,6 +520,16 @@ impl ProjectStore {
         if own != limit {
             return Err(error(ErrorCode::ResultMismatch, "ai-budget-identity"));
         }
+        if e.operation == crate::ai::team::OPERATION {
+            let settings = crate::ai::team::settings(&request.input)?;
+            let issued: u32 = tx.query_row(
+                "SELECT COUNT(*) FROM execution_provider_requests WHERE task_id=?1",
+                [e.task_id.to_string()], |row| row.get(0),
+            ).map_err(sql_error)?;
+            if issued >= settings.config.max_requests {
+                return Err(error(ErrorCode::LimitExceeded, "member-request-limit"));
+            }
+        }
         let exhausted:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_budget_ancestry x JOIN execution_budgets b ON b.task_id=x.ancestor_id WHERE x.task_id=?1 AND b.request_limit<=b.legacy_held+(SELECT COUNT(*) FROM execution_provider_requests p JOIN execution_budget_ancestry a ON p.task_id=a.task_id WHERE a.ancestor_id=b.task_id))",[e.task_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
         if exhausted {
             return Err(error(ErrorCode::LimitExceeded, "ai-budget"));
@@ -455,6 +546,11 @@ impl ProjectStore {
             ],
         )
         .map_err(sql_error)?;
+        if let Some(view) = capture.and_then(|capture| capture.team_work_view.as_ref()) {
+            crate::persistence::application::coordination::record_consumptions_in(
+                &tx, request, id, view,
+            )?;
+        }
         commit(tx)
     }
     pub(crate) fn settle_provider_request(

@@ -352,7 +352,11 @@ fn capture(
         return Err(error(ErrorCode::Cancelled, "work-selection-cancelled"));
     }
     let result = ledger::load_result(c, &input, ExecutionId::parse(&result)?)?;
-    let output = crate::ai::validate_output(&input, &result)?;
+    let output = if input.envelope().operation == crate::ai::team::OPERATION {
+        super::super::ai::team_translation_output(&input, &result)?
+    } else {
+        crate::ai::validate_output(&input, &result)?
+    };
     let item = crate::ai::item_payload(&input, ExecutionId::parse(&item_id)?)?;
     if output.text != text
         || output.unit_id != request.unit_id
@@ -363,9 +367,13 @@ fn capture(
     }
     // Recheck actual shared resources, including previously empty queries. A
     // global snapshot/resource clock advancing elsewhere is not a conflict.
-    let settings = crate::ai::settings(&input)?;
+    let config = if input.envelope().operation == crate::ai::team::OPERATION {
+        crate::ai::team::settings(&input)?.config
+    } else {
+        crate::ai::settings(&input)?.config
+    };
     let mut current = store
-        .preview_ai(settings.config, &request.locale, &[request.unit_id])?
+        .preview_ai(config, &request.locale, &[request.unit_id])?
         .items
         .remove(0);
     current.source_snapshot_id = item.source_snapshot_id;

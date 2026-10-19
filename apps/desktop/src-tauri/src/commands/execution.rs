@@ -128,6 +128,7 @@ macro_rules! handlers {
         work_plans::guidance::read_work_plan_agent_guidance,work_plans::guidance::read_work_plan_agent_skill,
         work_plans::guidance::read_work_plan_agent_resource,
         work_plans::team::read_work_plan_team_history,work_plans::team::read_work_plan_team_post,
+        work_plans::coordination::read_work_plan_team_execution,
         work_plans::team::publish_work_plan_team_discussion,work_plans::team::read_work_plan_team_publication_action,
         work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,work_plans::read_work_plan_authorization_action,work_plans::read_work_plan_control_action,
         work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
@@ -267,7 +268,7 @@ impl ExecutionHost {
     }
     fn with_member_factory(
         store: &ProjectStore,
-        member: impl FnOnce(ExecutionId) -> Option<Arc<dyn tsumugi_core::ai::member::MemberExecutor>>,
+        member: impl FnOnce(ExecutionId) -> Option<Arc<work_plans::member::MemberFactory>>,
     ) -> Result<Self, CommandError> {
         #[allow(unused_mut)]
         let mut host = Self {
@@ -323,7 +324,16 @@ impl ExecutionHost {
             .register_read_only(Arc::new(tsumugi_core::content::WebvttBuildRunner))
             .map_err(map_read)?;
         let provider_service = Arc::new(tsumugi_core::ai::provider::ProviderService::default());
-        let translation = match member(host.runtime.generation()) {
+        let member = member(host.runtime.generation());
+        if let Some(member) = &member {
+            host.runtime.register_with_policy(
+                Arc::new(tsumugi_core::ai::team::TeamWorkRunner::new(
+                    provider_service.clone(), member.clone(),
+                )),
+                tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+            ).map_err(map_read)?;
+        }
+        let translation = match member {
             Some(member) => tsumugi_core::ai::AiRunner::with_member_executor(
                 provider_service.clone(), member,
             ),
@@ -338,6 +348,10 @@ impl ExecutionHost {
         host.handlers.insert(
             tsumugi_core::ai::OPERATION.into(),
             Arc::new(tsumugi_core::AiAdoptionHandler),
+        );
+        host.handlers.insert(
+            tsumugi_core::ai::team::OPERATION.into(),
+            Arc::new(tsumugi_core::TeamTranslationAdoptionHandler),
         );
         host.runtime
             .register_with_policy(
@@ -773,6 +787,8 @@ pub(super) fn tick_sessions(sessions: &mut SessionManager) {
 }
 
 pub(super) fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
+    #[cfg(test)]
+    eprintln!("desktop test core-error code={:?} command_stage={stage:?} core_stage={}", error.code, error.stage);
     let code = match error.code {
         ErrorCode::InvalidInput => CommandErrorCode::InvalidInput,
         ErrorCode::LimitExceeded => CommandErrorCode::LimitExceeded,

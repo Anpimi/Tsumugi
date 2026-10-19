@@ -1,7 +1,9 @@
 //! Pi's serialized request crosses the original Core dispatch/budget boundary.
 use super::*;
 use serde::{Deserialize, Serialize};
-use crate::application::{CapturedTeamDiscussionView, TeamDiscussionView};
+use crate::application::{
+    CapturedTeamDiscussionView, CapturedTeamWorkView, TeamDiscussionView, TeamWorkRequestView,
+};
 
 // SSE framing is larger than the final model output. Bound its carrier bytes
 // separately; the existing execution output/profile still limits decoded text.
@@ -13,6 +15,8 @@ pub struct ProviderRequestCapture {
     pub body: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_view: Option<TeamDiscussionView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_work_view: Option<TeamWorkRequestView>,
 }
 impl ProviderRequestCapture {
     pub(crate) fn validate(&self, config: &AiConfig) -> Result<(), ExecutionError> {
@@ -34,11 +38,15 @@ impl ProviderRequestCapture {
         {
             return Err(error(ErrorCode::ResultMismatch, "member-model-profile"));
         }
-        if let Some(view) = &self.team_view {
+        if self.team_view.is_some() && self.team_work_view.is_some() {
+            return Err(error(ErrorCode::ResultMismatch, "member-shared-view"));
+        }
+        let shared = self.team_view.as_ref().map(serde_json::to_string)
+            .or_else(|| self.team_work_view.as_ref().map(serde_json::to_string))
+            .transpose().map_err(|_| error(ErrorCode::InvalidInput, "member-shared-view"))?;
+        if let Some(utf8) = shared {
             // The exact Core projection is an explicit user-data message in
             // this physical request, not a replaceable identifier from Node.
-            let utf8 = serde_json::to_string(view)
-                .map_err(|_| error(ErrorCode::InvalidInput, "member-shared-view"))?;
             let count = value["messages"].as_array().unwrap().iter().filter(|message| {
                 message["role"] == "user" && message["content"] == utf8
             }).count();
@@ -62,6 +70,7 @@ struct ActiveRequest {
     response: bool,
     issued: bool,
     team_view: Option<TeamDiscussionView>,
+    team_work_view: Option<TeamWorkRequestView>,
 }
 
 /// One bounded member's physical requests share the original dispatch and budget.
@@ -70,6 +79,9 @@ pub struct MemberProviderSession {
     dispatch: DispatchRequest,
     cancellation: Cancellation,
     config: AiConfig,
+    budget_limit: u32,
+    requests: u32,
+    team_work: bool,
     active: Option<ActiveRequest>,
 }
 impl MemberProviderSession {
@@ -87,8 +99,33 @@ impl MemberProviderSession {
             service,
             dispatch,
             cancellation,
+            budget_limit: settings.config.max_requests,
             config: settings.config,
+            requests: 0,
+            team_work: false,
             active: None,
+        })
+    }
+    /// Team work has an explicitly captured member connection and a separate
+    /// root budget ceiling. It cannot enter through the old Agent binding.
+    pub fn new_team(
+        service: std::sync::Arc<ProviderService>,
+        dispatch: DispatchRequest,
+        cancellation: Cancellation,
+    ) -> Result<Self, ExecutionError> {
+        let settings = crate::ai::team::settings(&dispatch.input)?;
+        if dispatch.provider.is_none() {
+            return Err(error(ErrorCode::Unauthorized, "member-dispatch"));
+        }
+        dispatch.check_service_dispatch()?;
+        let budget_limit = if settings.binding.is_root() {
+            settings.root_request_limit
+        } else {
+            settings.config.max_requests
+        };
+        Ok(Self {
+            service, dispatch, cancellation, config: settings.config,
+            budget_limit, requests: 0, team_work: true, active: None,
         })
     }
     pub fn prepare(&mut self) -> Result<ExecutionId, ExecutionError> {
@@ -99,6 +136,25 @@ impl MemberProviderSession {
     pub fn prepare_with_view(
         &mut self,
         view: Option<CapturedTeamDiscussionView>,
+    ) -> Result<ExecutionId, ExecutionError> {
+        if self.team_work {
+            return Err(error(ErrorCode::Unauthorized, "team-work-view-required"));
+        }
+        self.prepare_captured(view.map(|view| view.view().clone()), None)
+    }
+    pub fn prepare_with_team_view(
+        &mut self,
+        view: CapturedTeamWorkView,
+    ) -> Result<ExecutionId, ExecutionError> {
+        if !self.team_work {
+            return Err(error(ErrorCode::Unauthorized, "member-team-work-view"));
+        }
+        self.prepare_captured(None, Some(view.view().clone()))
+    }
+    fn prepare_captured(
+        &mut self,
+        team_view: Option<TeamDiscussionView>,
+        team_work_view: Option<TeamWorkRequestView>,
     ) -> Result<ExecutionId, ExecutionError> {
         self.dispatch.check_service_dispatch()?;
         if self.cancellation.is_requested() {
@@ -115,7 +171,8 @@ impl MemberProviderSession {
             id,
             response: false,
             issued: false,
-            team_view: view.map(|view| view.view().clone()),
+            team_view,
+            team_work_view,
         });
         Ok(id)
     }
@@ -134,8 +191,12 @@ impl MemberProviderSession {
         let capture = ProviderRequestCapture {
             body,
             team_view: self.active.as_ref().unwrap().team_view.clone(),
+            team_work_view: self.active.as_ref().unwrap().team_work_view.clone(),
         };
         capture.validate(&self.config)?;
+        if self.requests >= self.config.max_requests {
+            return Err(error(ErrorCode::LimitExceeded, "member-request-limit"));
+        }
         let key = ProviderService::credential(&self.config)?;
         self.dispatch.check_service_dispatch()?;
         self.service.wait_rate(&self.config, &self.cancellation)?;
@@ -145,10 +206,11 @@ impl MemberProviderSession {
             .as_ref()
             .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-budget-host"))?;
         self.active.as_mut().unwrap().issued = true;
+        self.requests += 1;
         // The host's original identity and exact bytes are durable before HTTP.
         budget.reserve_captured(
             request_id,
-            self.config.max_requests,
+            self.budget_limit,
             capture.clone(),
             &self.cancellation,
         )?;

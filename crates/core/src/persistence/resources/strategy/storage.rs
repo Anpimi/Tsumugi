@@ -950,10 +950,12 @@ pub(in crate::persistence) fn verify_input_binding(
 ) -> Result<(), ExecutionError> {
     let owner = input.envelope().project_id;
     match input.envelope().operation.as_str() {
-        crate::ai::OPERATION | crate::ai::semantic_review::OPERATION => {
+        crate::ai::OPERATION | crate::ai::semantic_review::OPERATION | crate::ai::team::OPERATION => {
             let semantic = input.envelope().operation == crate::ai::semantic_review::OPERATION;
             let config = if semantic {
                 crate::ai::semantic_review::settings(input)?.config
+            } else if input.envelope().operation == crate::ai::team::OPERATION {
+                crate::ai::team::settings(input)?.config
             } else {
                 crate::ai::settings(input)?.config
             };

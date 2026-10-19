@@ -1,6 +1,7 @@
 //! Work-plan commands share the ordinary project session and runtime.
 pub(crate) mod agent;
 pub(crate) mod broker;
+pub(crate) mod coordination;
 pub(crate) mod generation;
 pub(crate) mod guidance;
 pub(crate) mod member;
@@ -424,6 +425,14 @@ request!(
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TeamMemberPreviewView {
+    pub member_id: ExecutionId,
+    pub preview: AiPreviewView,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkPlanView {
     pub plan_id: ExecutionId,
     pub digest: String,
@@ -431,6 +440,8 @@ pub struct WorkPlanView {
     pub options: PlanOptions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_discussion_limits: Option<tsumugi_core::application::TeamDiscussionLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_previews: Option<Vec<TeamMemberPreviewView>>,
     pub scope: Vec<PlanSelectionBasis>,
     pub preview: Option<AiPreviewView>,
     pub attempt_id: Option<ExecutionId>,
@@ -478,6 +489,11 @@ impl TryFrom<&WorkPlan> for WorkPlanView {
                 .team_discussions
                 .as_ref()
                 .map(|policy| tsumugi_core::application::TeamDiscussionLimits::for_policy(*policy)),
+            member_previews: if plan.options.team_execution.is_some() {
+                Some(plan.team_member_previews()?.into_iter().map(|member| TeamMemberPreviewView {
+                    member_id: member.member_id, preview: member.preview.into(),
+                }).collect())
+            } else { None },
             scope: plan.selection_basis.clone(),
             preview,
             attempt_id: plan.input.as_ref().map(|input| input.attempt_id),
@@ -566,6 +582,10 @@ fn verify_plan_connections(
         let config = ai::settings(&input).map_err(map_read)?.config;
         connections::verify_configs(connections_store, std::slice::from_ref(&config))?;
     }
+    if let Some(policy) = &plan.options.team_execution {
+        let configs: Vec<_> = policy.members().iter().map(|member| member.config.clone()).collect();
+        connections::verify_configs(connections_store, &configs)?;
+    }
     Ok(())
 }
 
@@ -634,6 +654,10 @@ pub async fn prepare_work_plan(
                     initial_connections.as_ref(),
                     std::slice::from_ref(config),
                 )?;
+            }
+            if let Some(policy) = &initial.options.team_execution {
+                let configs: Vec<_> = policy.members().iter().map(|member| member.config.clone()).collect();
+                connections::verify_configs(initial_connections.as_ref(), &configs)?;
             }
             let plan = match initial.maintenance {
                 Some(basis) => store.prepare_maintenance_work_plan(
@@ -1017,6 +1041,20 @@ pub async fn start_work_plan(
                         "work-plan-generation",
                     )));
                 }
+                let plan = store.work_plan(request.plan_id).map_err(map_recover)?;
+                let checker = current_checker_consent(host, store, &plan, receipt.lease)?;
+                let checker_revision = checker.as_ref().map(|consent| consent.settings_revision);
+                if plan.options.team_execution.is_some() {
+                    let prepared = store.prepare_team_root(receipt.lease, request.action_id)
+                        .map_err(map_recover)?;
+                    let start = || {
+                        let accepted = host.runtime.submit_team_work(store, &prepared)
+                            .map_err(map_recover)?;
+                        host.ai.track(store, prepared.input(), checker).map_err(map_recover)?;
+                        Ok(accepted.attempt_id)
+                    };
+                    return with_plan_environment_revision(&plugins, &plan, checker_revision, start);
+                }
                 let envelope = receipt.input.ok_or_else(|| {
                     map_recover(ExecutionError::new(
                         ErrorCode::Unauthorized,
@@ -1051,9 +1089,6 @@ pub async fn start_work_plan(
                             && error.stage == "execution-storage" => {}
                     Err(error) => return Err(map_recover(error)),
                 }
-                let plan = store.work_plan(request.plan_id).map_err(map_recover)?;
-                let checker = current_checker_consent(host, store, &plan, receipt.lease)?;
-                let checker_revision = checker.as_ref().map(|consent| consent.settings_revision);
                 let start = || {
                     if let Some(parent) = receipt.parent_task {
                         host.runtime

@@ -100,8 +100,8 @@ it("captures independent providers and per-provider options under one total limi
   await user.clear(limit); await user.type(limit, "3");
   const captured = ref.current?.capture();
   expect(captured).toEqual({ maxInvocations: 3, entries: [
-    { tool: { package: { plugin: toolQueryPackage.manifest.plugin, packageDigest: toolQueryPackage.packageDigest }, resourceId: toolQueryView.resourceId, environmentDigest: toolQueryView.environmentDigest }, target: "zh-CN", selections: ["term"], view: toolQueryView, readKey: expect.arrayContaining(["tool-query-environment"]) },
-    { tool: { package: { plugin: alternativePackage.manifest.plugin, packageDigest: alternativePackage.packageDigest }, resourceId: alternativeView.resourceId, environmentDigest: alternativeView.environmentDigest }, target: "ja", selections: ["other"], view: alternativeView, readKey: expect.arrayContaining(["tool-query-environment"]) },
+    { rowId: 0, tool: { package: { plugin: toolQueryPackage.manifest.plugin, packageDigest: toolQueryPackage.packageDigest }, resourceId: toolQueryView.resourceId, environmentDigest: toolQueryView.environmentDigest }, target: "zh-CN", selections: ["term"], view: toolQueryView, readKey: expect.arrayContaining(["tool-query-environment"]) },
+    { rowId: 1, tool: { package: { plugin: alternativePackage.manifest.plugin, packageDigest: alternativePackage.packageDigest }, resourceId: alternativeView.resourceId, environmentDigest: alternativeView.environmentDigest }, target: "ja", selections: ["other"], view: alternativeView, readKey: expect.arrayContaining(["tool-query-environment"]) },
   ] });
   expect(screen.getAllByRole("spinbutton", { name: "Total tool-call limit" })).toHaveLength(1);
   if (!captured) throw new Error("Expected captured references");

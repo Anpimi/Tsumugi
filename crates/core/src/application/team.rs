@@ -202,6 +202,9 @@ pub struct CapturedTeamAuthor {
     pub(crate) target: TeamDiscussionTarget,
 }
 impl CapturedTeamAuthor {
+    pub fn scope(&self) -> &WorkPlanAgentScope {
+        &self.scope
+    }
     pub fn author(&self) -> &TeamMemberAuthor {
         &self.author
     }

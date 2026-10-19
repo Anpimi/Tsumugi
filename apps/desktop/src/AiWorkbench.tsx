@@ -1,4 +1,4 @@
-import { ProjectFactPreview, SourceContextChoice, SourceContextPreview } from "./SourceContextPreparation";
+import { SourceContextChoice } from "./SourceContextPreparation";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
 import { commandFailure, failureReason, CommandFailureDetails } from "./CommandFailure";
@@ -14,6 +14,10 @@ import {aiTarget,type AiView} from "./aiCommands";
 import { AiConnectionFields } from "./AiConnectionFields";
 import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
 import { TeamDiscussionHistory } from "./TeamDiscussionHistory";
+import { TeamExecutionChoice } from "./TeamExecutionChoice";
+import { TeamExecutionDisclosure } from "./TeamExecutionDisclosure";
+import { TeamExecutionHistory } from "./TeamExecutionHistory";
+import { AiPreviewItems } from "./AiPreviewItems";
 import {useAiPreparation,type WorkPlanContinuation} from "./AiPreparationSession";
 import { WorkPlanControls } from "./WorkPlanControls";
 import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnectionPicker";
@@ -30,6 +34,7 @@ import { TextReviewSelections } from "./TextReviewSelections";
 import type { PlanOptions, WorkPlanStatusView } from "./workPlanCommands";
 import type { TranslationRevision } from "./translationCommands";
 import type {EditorTarget} from "./TranslationWorkbench";
+import type { ContentPage } from "./sourceCommands";
 import type { AiReviewOrigin, WorkspaceDestination } from "./sessionNavigation";
 import {useWorkbenchCommands,type CommandAvailability,type AiPreparationCommandPayload,
   type AiCandidateCommandPayload,type AiSavedCandidateCommandPayload,type AiTranslationCommandPayload,type AiAdoptionPendingCommandPayload,type AiEffectCommandPayload,
@@ -57,15 +62,30 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   const contentOptions=sourceReads.content(context,scopeRead.data?.currentSnapshot??"",after,scopeRead.data);
   const contentRead=useSessionQuery({...contentOptions,enabled:open&&!!scopeRead.data?.currentSnapshot&&!scopeRead.error});
   const visiblePage=!contentRead.error?contentRead.data??null:null;
+  const storedPlan = preparation.planId ? reads.client.getQueryData<WorkPlanStatusView>(reads.key(["workPlan",preparation.planId]))?.plan : null;
+  const capturedTeam = attempt ? (preparation.startedPlan?.attemptId === attempt ? preparation.startedPlan.prepared.options.teamExecution
+    : prepared?.attemptId === attempt ? prepared.options.teamExecution : storedPlan?.attemptId === attempt ? storedPlan.options.teamExecution : null) : null;
+  const selectedUnitNames = new Map<string, string>();
+  for (const [, page] of reads.client.getQueriesData<ContentPage>({ queryKey: reads.key(["source-content", scopeRead.data?.currentSnapshot ?? ""]) })) {
+    if (page && scopeRead.data?.currentSnapshot && page.snapshotId === scopeRead.data.currentSnapshot) for (const row of page.rows) if (row.unitId) selectedUnitNames.set(row.unitId, row.occurrence.key);
+  }
   const viewRead = useSessionQuery<AiView | null>({
-    key: ["aiCommands", attempt], scopes: ["execution", "source", "translation", "resources", "arena"], enabled: open && !!attempt,
+    key: ["aiCommands", attempt], scopes: ["execution", "source", "translation", "resources", "arena"], enabled: open && !!attempt && !capturedTeam,
     read: () => preparation.readView(attempt!),
   });
-  const view = viewRead.data ?? null;
+  const view = capturedTeam ? null : viewRead.data ?? null;
   const planId = preparation.planId ?? view?.planId ?? null;
   const planRead = useSessionQuery<WorkPlanStatusView>({key:["workPlan",planId],scopes:["project","execution","source","translation","resources","review"],enabled:open&&!!planId,
     read:()=>preparation.readPlan(planId!)});
   const status = !planRead.error ? planRead.data ?? null : null;
+  const [teamDeadlineTick,setTeamDeadlineTick]=useState(0);
+  useEffect(()=>{
+    if(!open||!capturedTeam||!status||status.state!=="active")return;
+    const remaining=BigInt(status.expiresAt)*1000n-BigInt(Date.now())+1n;
+    if(remaining<=0n)return;
+    const timer=window.setTimeout(()=>setTeamDeadlineTick(value=>value+1),Number(remaining>2147483647n?2147483647n:remaining));
+    return()=>window.clearTimeout(timer);
+  },[open,!!capturedTeam,status?.plan.planId,status?.state,status?.expiresAt,teamDeadlineTick]);
   const sharingPlan = prepared?.preview ? prepared : status?.plan.preview ? status.plan
     : preparation.planControl.state.ready?.prepared.preview ? preparation.planControl.state.ready.prepared
     : preparation.planControl.state.pending?.prepared;
@@ -76,7 +96,8 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
 
   const failureValue=preparation.failure??(viewRead.error||planRead.error||scopeRead.error||contentRead.error?stage(viewRead.error??planRead.error??scopeRead.error??contentRead.error):null);
   const failure=failureReason(failureValue);
-  const active=!!attempt&&(!view||view.detail.progress.queued>0||view.detail.progress.running>0||view.rows.some(row=>row.automation&&["waiting","saving-candidate","checking"].includes(row.automation.phase)));
+  const active=!!attempt&&(capturedTeam? !status||status.plan.attemptId!==attempt||status.state==="active"&&BigInt(status.expiresAt)>BigInt(Math.floor(Date.now()/1000))
+    : !view||view.detail.progress.queued>0||view.detail.progress.running>0||view.rows.some(row=>row.automation&&["waiting","saving-candidate","checking"].includes(row.automation.phase)));
   const cancelUnresolved = Object.values(tasks.state).some(value => (value.target.origin === "ai" || value.target.taskId === view?.detail.taskId)
     && (value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown"));
   const locked=disabled||preparation.reserved()||active||cancelUnresolved;
@@ -166,7 +187,15 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     const source=currentRead<NonNullable<typeof scopeRead.data>>(scopeOptions.key);
     return !prepared || prepared.scope.every(unit=>unit.sourceSnapshotId===source?.currentSnapshot);
   }
-  function generationActive(){const current=preparation.current(),value=currentView();return !!current.attempt&&(!value||value.detail.progress.queued>0||value.detail.progress.running>0);}
+  function generationActive(){
+    const current=preparation.current(),value=currentView();
+    if(!current.attempt)return false;
+    const plan=current.planId?currentRead<WorkPlanStatusView>(["workPlan",current.planId]):null;
+    const team=current.startedPlan?.attemptId===current.attempt?current.startedPlan.prepared.options.teamExecution
+      :plan?.plan.attemptId===current.attempt?plan.plan.options.teamExecution:null;
+    return team?!plan||plan.plan.attemptId!==current.attempt||plan.state==="active"&&BigInt(plan.expiresAt)>BigInt(Math.floor(Date.now()/1000))
+      :!value||value.detail.progress.queued>0||value.detail.progress.running>0;
+  }
   function preparationPayload():AiPreparationCommandPayload {
     const current=preparation.current();return{kind:"ai-preparation",editSeq:current.editSeq,locale:current.locale,unitIds:[...current.selected]};
   }
@@ -323,12 +352,13 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     <fieldset disabled={locked}><legend>{t("ai.scope",{count:selected.length})}</legend><h3>{t("ai.plan.stagesTitle")}</h3>{options.stages.map(choice=><label className="field" key={choice.stage}>{t(`ai.plan.stages.${choice.stage}`)}<select value={choice.mode} onChange={event=>{
       const mode = event.target.value;
       if(mode!=="manual"&&mode!=="assisted"&&mode!=="skipped")return;
+      if(choice.stage==="generation"&&mode!=="assisted")preparation.setTeamDraft(null);
       setOptions(previous=>{
         const next: PlanOptions = {...previous,
           selectionPolicy: (choice.stage === "generation" || choice.stage === "checks") && mode !== "assisted" ? "candidates-only" : previous.selectionPolicy,
           stages:previous.stages.map(item=>item.stage===choice.stage?{...item,mode}:choice.stage==="generation"&&mode!=="assisted"&&item.stage==="checks"&&item.mode==="assisted"?{...item,mode:"manual"}:item)
         };
-        if (choice.stage === "generation" && mode !== "assisted") delete next.teamDiscussions;
+        if (choice.stage === "generation" && mode !== "assisted") { delete next.teamDiscussions; delete next.teamExecution; }
         return next;
       });
     }}><option value="manual">{t("ai.plan.modes.manual")}</option>{choice.stage==="generation"?<option value="assisted">{t("ai.plan.modes.assisted")}</option>:choice.stage==="checks"&&assisted?<option value="assisted">{t("ai.plan.mechanicalChecks")}</option>:null}<option value="skipped">{t("ai.plan.modes.skipped")}</option></select></label>)}
@@ -339,7 +369,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
 
     }}>{(["candidates-only","missing-only","replace-captured-selection"] as const).map(policy=><option key={policy} value={policy}>{t(`ai.plan.policies.${policy}`)}</option>)}</select></label>
     {options.selectionPolicy!=="candidates-only"?<p>{t("ai.plan.checkedSelection")}</p>:null}</>:null}
-{assisted?<><ModelConnectionPicker config={config} label={t("connections.choose")} active={open} disabled={locked} editSeq={preparation.editSeq} onSelect={preparation.selectConnection} onOpenSettings={onOpenConnections}/><PreparationBudgetSummary config={config} policy={options.teamDiscussions}/><AiConnectionFields config={config} setConfig={setConfig} presetName={presetName} setPresetName={setPresetName} connectionOpen={connectionOpen} setConnectionOpen={setConnectionOpen} failure={failure}/></>:null}
+{assisted?<><ModelConnectionPicker config={config} label={t("connections.choose")} active={open} disabled={locked} editSeq={preparation.editSeq} onSelect={preparation.selectConnection} onOpenSettings={onOpenConnections}/><PreparationBudgetSummary config={config} policy={options.teamDiscussions} team={!!preparation.teamDraft}/><AiConnectionFields config={config} setConfig={setConfig} presetName={presetName} setPresetName={setPresetName} connectionOpen={connectionOpen} setConnectionOpen={setConnectionOpen} failure={failure}/></>:null}
     {assisted?<WorkPlanToolChoice ref={toolChoice} open={open} disabled={locked} value={toolDraft} onChange={setToolDraft}/>:null}
     <label className="field">{t("ai.locale")}<select value={locale} disabled={!!preparation.maintenance} onChange={e=>{setLocale(e.target.value);}}>{!targetAvailable&&locale?<option value={locale} disabled>{locale}</option>:null}{project.metadata.targetLocales.map(l=><option key={l}>{l}</option>)}</select></label>
     {assisted?<label className="source-check"><input type="checkbox" checked={!!options.teamDiscussions} onChange={event=>{
@@ -361,9 +391,18 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       ready={sourceReady()} loading={scopeRead.isFetching||contentRead.isFetching} failed={!!scopeRead.error||!!contentRead.error} disabled={locked||!!preparation.maintenance}
       onChange={setSelected} onRefresh={refreshReads} onPage={loadPage} onOpenEditor={target=>{void openSourceEditor(target);}}/>
     <button className="secondary-button" type="button" disabled={locked||!selected.length} onClick={()=>{if(locked)return;clearSelectedRange();}}>{t("ai.clearSelectedRange")}</button>
+    {assisted?<TeamExecutionChoice value={preparation.teamDraft} config={config} selected={selected} unitNames={selectedUnitNames} tools={toolDraft}
+      discussionsEnabled={!!options.teamDiscussions} disabled={locked} open={open} editSeq={preparation.editSeq} onChange={preparation.setTeamDraft} onConfig={preparation.editTeamConfig}
+      onConnection={preparation.selectTeamConnection} onOpenSettings={onOpenConnections}/>:null}
     {options.stages.some(choice=>choice.stage==="checks"&&choice.mode==="assisted")?<><p>{t("review.formatChecksRequired")}</p><TextReviewSelections value={advisoryChecks} active={open} scopeKey={JSON.stringify([context,locale])} disabled={locked} onOpenExtensions={onOpenExtensions} onSnapshotRevision={revision=>{if(prepared?.checkers.some(checker=>checker.kind==="ready"&&checker.plugin.plugin.settingsRevision!==revision))preparation.invalidatePreview();}} onChange={setAdvisoryChecks}/></>:null}
     <button className="primary-button" disabled={!previewAvailability(preparationPayload()).enabled} onClick={()=>{registry.dispatch("ai.preview",commandScope,preparationPayload());}}>{t(assisted?"ai.preview":"ai.plan.prepareManual")}</button></fieldset>
-    {sharing&&targetAvailable?<section><h3>{t("ai.previewTitle")}</h3><p>{sharing.config.endpoint} · {sharing.config.model}</p><p>{t("ai.limits",{defaultValue:enUS.ai.limits,requests:config.maxRequests,concurrency:config.concurrency,tokens:config.maxOutputTokens,retries:config.maxRetries})}</p><p>{t(sharingPlan?.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactCostUnknown":sharingPlan?.options.teamDiscussions?"ai.discussions.costUnknown":"ai.costUnknown")}</p><p>{t("ai.rateLimit")}</p>{sharing.items.map(item=><article key={item.unitId}><h4>{item.nativeKey} → {item.targetLocale}</h4><pre className="ai-text">{item.sourceText}</pre>{item.terms.map(term=><p key={term.revisionId}>{term.source} → {term.target}</p>)}{item.context?<pre className="ai-text">{item.context.text}</pre>:null}<SourceContextPreview capture={item.sourceContext}/><ProjectFactPreview capture={item.projectContext}/>{item.omissions.map(reason=><p key={reason}>{reason.startsWith("term-conflict:")?t("ai.termConflict",{term:reason.slice(14)}):t(`ai.${reason}`,{defaultValue:reason})}</p>)}</article>)}{sharingPlan?<TeamDiscussionDisclosure plan={sharingPlan}/>:null}{prepared?.preview&&!status?<label className="source-check"><input type="checkbox" checked={consent} disabled={locked||!preparation.connectionCurrent()} onChange={e=>setConsent(e.target.checked)}/>{t(prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactConsent":prepared.options.teamDiscussions?"ai.discussions.consent":"ai.consent")}</label>:null}</section>:null}
+    {sharing&&targetAvailable?<section><h3>{t("ai.previewTitle")}</h3>
+      {!sharingPlan?.options.teamExecution?<p>{sharing.config.endpoint} · {sharing.config.model}</p>:null}
+      <p>{t("ai.limits",{defaultValue:enUS.ai.limits,requests:sharing.config.maxRequests,concurrency:sharing.config.concurrency,tokens:sharing.config.maxOutputTokens,retries:sharing.config.maxRetries})}</p>
+      <p>{t(sharingPlan?.options.teamExecution?sharingPlan.options.teamDiscussions?.profile==="current-plan-2"?"ai.team.artifactCostUnknown":"ai.team.costUnknown":sharingPlan?.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactCostUnknown":sharingPlan?.options.teamDiscussions?"ai.discussions.costUnknown":"ai.costUnknown")}</p><p>{t("ai.rateLimit")}</p>
+      {sharingPlan?.options.teamExecution?<TeamExecutionDisclosure plan={sharingPlan}/>:<><AiPreviewItems items={sharing.items}/>{sharingPlan?<TeamDiscussionDisclosure plan={sharingPlan}/>:null}</>}
+      {prepared?.preview&&!status?<label className="source-check"><input type="checkbox" checked={consent} disabled={locked||!preparation.connectionCurrent()} onChange={e=>setConsent(e.target.checked)}/>{t(prepared.options.teamExecution?prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.team.artifactConsent":"ai.team.consent":prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactConsent":prepared.options.teamDiscussions?"ai.discussions.consent":"ai.consent")}</label>:null}
+    </section>:null}
     <WorkPlanControls context={context} prepared={prepared} status={status} busy={busy} disabled={disabled||!!pendingAdopt} consent={consent}
       session={preparation.planControl} editSeq={preparation.editSeq} run={perform} refresh={refreshPlan} onPlan={preparation.recordPlan}
       open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}
@@ -372,7 +411,9 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     {status?<TeamDiscussionHistory context={context} status={status} open={open} session={preparation.discussions}
       writable={!disabled&&!scopeRead.error&&!!scopeRead.data?.currentSnapshot&&project.metadata.targetLocales.includes(status.plan.locale)
         &&status.plan.scope.every(unit=>unit.sourceSnapshotId===scopeRead.data?.currentSnapshot)}/>:null}
-    {status?.plan.preview?<WorkPlanAgentControls context={context} status={status} open={open} disabled={disabled||planBlocked||!!pendingAdopt||active} busy={busy}
+    {status?.plan.options.teamExecution?<TeamExecutionHistory key={status.plan.planId} context={context} status={status} open={open} onOpenTask={onOpenTask}
+      onReadPost={postId=>preparation.discussions.focusPost(status.plan.planId,postId)}/>:null}
+    {status?.plan.preview&&!status.plan.options.teamExecution?<WorkPlanAgentControls context={context} status={status} open={open} disabled={disabled||planBlocked||!!pendingAdopt||active} busy={busy}
       session={preparation.agent} component={preparation.component} ownerBusy={()=>preparation.current().busy} run={perform} onBlockedChange={()=>{}} onGenerated={preparation.recordGenerated}
       childControls={onOpenTask?{disabled:disabled||planBlocked||!!pendingAdopt||cancelUnresolved||!sourceReady()||!project.metadata.targetLocales.includes(status.plan.locale),canRun:preparation.canRunChild,
         run:(work,recovery)=>preparation.runChildWorkPlan(work,planId,contentOptions.key,recovery),onOpenTask:openChildHistory}:undefined}/>:null}

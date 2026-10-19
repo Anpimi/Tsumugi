@@ -33,6 +33,7 @@ export declare function validateRequestWorkPlanPrepare(value: unknown): value is
 export declare function validateRequestWorkPlanStart(value: unknown): value is Requests["workPlanStart"];
 export declare function validateRequestWorkPlanStartAction(value: unknown): value is Requests["workPlanStartAction"];
 export declare function validateRequestWorkPlanStatus(value: unknown): value is Requests["workPlanStatus"];
+export declare function validateRequestWorkPlanTeamExecution(value: unknown): value is Requests["workPlanTeamExecution"];
 export declare function validateRequestWorkPlanTeamHistory(value: unknown): value is Requests["workPlanTeamHistory"];
 export declare function validateRequestWorkPlanTeamPost(value: unknown): value is Requests["workPlanTeamPost"];
 export declare function validateRequestWorkPlanTeamPublicationAction(value: unknown): value is Requests["workPlanTeamPublicationAction"];
@@ -64,6 +65,7 @@ export declare function validateResponseWorkPlanGenerationStartRead(value: unkno
 export declare function validateResponseWorkPlanReceipt(value: unknown): value is Responses["workPlanReceipt"];
 export declare function validateResponseWorkPlanStartAction(value: unknown): value is Responses["workPlanStartAction"];
 export declare function validateResponseWorkPlanStatus(value: unknown): value is Responses["workPlanStatus"];
+export declare function validateResponseWorkPlanTeamExecution(value: unknown): value is Responses["workPlanTeamExecution"];
 export declare function validateResponseWorkPlanTeamHistory(value: unknown): value is Responses["workPlanTeamHistory"];
 export declare function validateResponseWorkPlanTeamPost(value: unknown): value is Responses["workPlanTeamPost"];
 export declare function validateResponseWorkPlanTeamPublicationAction(value: unknown): value is Responses["workPlanTeamPublicationAction"];

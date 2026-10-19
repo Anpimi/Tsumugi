@@ -95,7 +95,10 @@ fn check_target(
     }
     Ok(())
 }
-fn target(input: &FixedInput, item: ExecutionId) -> Result<TeamDiscussionTarget, ExecutionError> {
+pub(super) fn target(
+    input: &FixedInput,
+    item: ExecutionId,
+) -> Result<TeamDiscussionTarget, ExecutionError> {
     let item = crate::ai::item_payload(input, item)?;
     Ok(TeamDiscussionTarget {
         unit_id: item.unit_id,
@@ -104,7 +107,10 @@ fn target(input: &FixedInput, item: ExecutionId) -> Result<TeamDiscussionTarget,
         source_revision_id: item.source_revision_id,
     })
 }
-fn load_role(c: &Connection, version: ExecutionId) -> Result<TeamMemberRole, ExecutionError> {
+pub(super) fn load_role(
+    c: &Connection,
+    version: ExecutionId,
+) -> Result<TeamMemberRole, ExecutionError> {
     let row: (String,i64,Option<String>,Vec<u8>,String) = c.query_row(
         "SELECT member_id,ordinal,predecessor,record,digest FROM application_team_roles WHERE version_id=?1",
         [version.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql)?;
@@ -161,6 +167,7 @@ fn register(
     write: &TeamMemberRoleWrite,
 ) -> Result<TeamMemberRole, ExecutionError> {
     let plan = live_plan(c, scope)?;
+    if plan.options.team_execution.is_some(){return Err(denied());}
     if write.display_name.trim().is_empty()
         || write.display_name.len() > 128
         || write.role.trim().is_empty()
@@ -262,11 +269,14 @@ fn register(
     Ok(role)
 }
 
-fn author_history(
+pub(super) fn author_history(
     c: &Connection,
     author: &TeamMemberAuthor,
 ) -> Result<(WorkPlan, TeamMemberRole, TeamDiscussionTarget), ExecutionError> {
     let input = super::super::ledger::load_input(c, author.attempt_id)?;
+    if input.envelope().operation == crate::ai::team::OPERATION {
+        return super::coordination::author_history(c, author, &input);
+    }
     agents::validate_model_input(c, &input)?;
     if agents::binding(&input)?.as_ref() != Some(&author.binding) {
         return Err(corrupt());
@@ -307,7 +317,7 @@ fn author_history(
     }
     Ok((plan, role, target))
 }
-fn author_live(
+pub(super) fn author_live(
     c: &Connection,
     scope: &WorkPlanAgentScope,
     author: &TeamMemberAuthor,
@@ -359,7 +369,12 @@ fn capture_author(
 ) -> Result<CapturedTeamAuthor, ExecutionError> {
     let plan = live_plan(c, scope)?;
     let input = super::super::ledger::load_input(c, attempt)?;
-    if agents::binding(&input)?.as_ref() != Some(&scope.execution_binding()) {
+    let binding = if input.envelope().operation == crate::ai::team::OPERATION {
+        Some(crate::ai::team::settings(&input)?.binding.scope().clone())
+    } else {
+        agents::binding(&input)?
+    };
+    if binding.as_ref() != Some(&scope.execution_binding()) {
         return Err(denied());
     }
     let assigned: (String, Option<String>) = c
@@ -377,7 +392,7 @@ fn capture_author(
     {
         return Err(denied());
     }
-    if assigned.1.is_none() {
+    if assigned.1.is_none() && input.envelope().operation != crate::ai::team::OPERATION {
         c.execute(
             "UPDATE application_team_members SET task_id=?2 WHERE member_id=?1 AND task_id IS NULL",
             params![member.to_string(), input.envelope().task_id.to_string()],
@@ -426,7 +441,7 @@ fn translation_reference(
     Ok(revision)
 }
 
-fn check_references(
+pub(super) fn check_references(
     c: &Connection,
     plan: &WorkPlan,
     target: &TeamDiscussionTarget,
@@ -466,7 +481,10 @@ fn check_references(
     }
     Ok(())
 }
-fn post(c: &Connection, id: ExecutionId) -> Result<Option<TeamDiscussionPost>, ExecutionError> {
+pub(super) fn post(
+    c: &Connection,
+    id: ExecutionId,
+) -> Result<Option<TeamDiscussionPost>, ExecutionError> {
     let row:Option<(String,i64,Option<String>,Option<String>,Vec<u8>,String)>=c.query_row("SELECT plan_id,sequence,reply_to,supersedes,record,digest FROM application_team_posts WHERE post_id=?1",[id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(sql)?;
     row.map(|row| {
         let value: TeamDiscussionPost = codec::decode(&row.4, MAX_RECORD_BYTES)?;
@@ -1121,14 +1139,23 @@ pub(crate) fn validate_team_provider_view_history_in(
     item_id: ExecutionId,
     view: Option<&TeamDiscussionView>,
 ) -> Result<(), ExecutionError> {
-    if input.envelope().operation != crate::ai::OPERATION {
+    if input.envelope().operation == crate::ai::team::OPERATION && view.is_none() {
+        return Ok(());
+    }
+    if input.envelope().operation != crate::ai::OPERATION
+        && input.envelope().operation != crate::ai::team::OPERATION
+    {
         return if view.is_none() {
             Ok(())
         } else {
             Err(corrupt())
         };
     }
-    let binding = agents::binding(input)?;
+    let binding = if input.envelope().operation == crate::ai::team::OPERATION {
+        Some(crate::ai::team::settings(input)?.binding.scope().clone())
+    } else {
+        agents::binding(input)?
+    };
     let Some(binding) = binding else {
         return if view.is_none() {
             Ok(())
@@ -1232,8 +1259,17 @@ fn history_in(c: &Connection, plan: &WorkPlan) -> Result<TeamHistory, ExecutionE
         if ids.is_empty() || ids.len() > limits.max_role_versions_per_member as usize {
             return Err(corrupt());
         }
-        let config =
-            crate::ai::settings(&FixedInput::capture(plan.execution_input()?.clone())?)?.config;
+        let config = if let Some(policy) = &plan.options.team_execution {
+            policy
+                .members()
+                .iter()
+                .find(|m| m.member_id == member)
+                .ok_or_else(corrupt)?
+                .config
+                .clone()
+        } else {
+            crate::ai::settings(&FixedInput::capture(plan.execution_input()?.clone())?)?.config
+        };
         let mut previous: Option<TeamMemberRole> = None;
         for (i, id) in ids.into_iter().enumerate() {
             let role = load_role(c, ExecutionId::parse(&id)?)?;
@@ -2926,6 +2962,7 @@ mod tests {
         let capture = crate::ai::provider::ProviderRequestCapture {
             body: body.to_string(),
             team_view: Some(captured.view().clone()),
+            team_work_view: None,
         };
         let serialized = codec::encode(&capture, 131072).unwrap();
         let restored: crate::ai::provider::ProviderRequestCapture =

@@ -12,7 +12,7 @@ import { useWorkbenchCommands, type AiTeamDiscussionCommandPayload, type Command
 export function TeamDiscussionHistory({ context, status, open, writable, session }: {
   context: SessionRequest; status: WorkPlanStatusView; open: boolean; writable: boolean; session: TeamDiscussionSession;
 }) {
-  const { t } = useTranslation(), registry = useWorkbenchCommands(), errorRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation(), registry = useWorkbenchCommands(), errorRef = useRef<HTMLDivElement>(null), originalRef = useRef<HTMLHeadingElement>(null);
   const [deadlineTick, setDeadlineTick] = useState(0), bodyHelpId = useId();
   useEffect(() => {
     if (!open) return;
@@ -35,6 +35,7 @@ export function TeamDiscussionHistory({ context, status, open, writable, session
   const page = !history.error ? history.data : null;
   const failure = state.failure ?? (history.error ? commandFailure(history.error) : focused.error ? commandFailure(focused.error) : null);
   useEffect(() => { if (open && failure) errorRef.current?.focus(); }, [open, failure, planId]);
+  useEffect(() => { if (open && state.focusedPost && focused.data && !focused.error && !focused.isFetching) originalRef.current?.focus(); }, [open, state.focusedPost, focused.data, focused.error, focused.isFetching]);
   const active = writable && teamPublicationActive(status), posting = state.creating || pending?.phase === "publishing" || pending?.phase === "checking";
   const targetId = draft.unitId || status.plan.scope[0]?.unitId || "";
   const tooLarge = !!status.plan.teamDiscussionLimits && new TextEncoder().encode(draft.body).length > status.plan.teamDiscussionLimits.maxPostBytes;
@@ -106,7 +107,7 @@ export function TeamDiscussionHistory({ context, status, open, writable, session
       <div className="execution-actions"><button type="button" className="secondary-button" disabled={state.after === null || history.isFetching} onClick={() => session.page(planId, null)}>{t("ai.teamHistory.firstPage")}</button>
         <button type="button" className="secondary-button" disabled={!page.nextAfter || history.isFetching} onClick={() => session.page(planId, page.nextAfter)}>{t("ai.teamHistory.nextPage")}</button></div>
     </> : null}
-    {state.focusedPost ? <section aria-label={t("ai.teamHistory.originalPost")}><h4>{t("ai.teamHistory.originalPost")}</h4><button type="button" className="secondary-button" onClick={() => session.focusPost(planId, null)}>{t("ai.teamHistory.closeOriginal")}</button>
+    {state.focusedPost ? <section aria-label={t("ai.teamHistory.originalPost")}><h4 tabIndex={-1} ref={originalRef}>{t("ai.teamHistory.originalPost")}</h4><button type="button" className="secondary-button" onClick={() => session.focusPost(planId, null)}>{t("ai.teamHistory.closeOriginal")}</button>
       {focused.isFetching ? <p role="status">{t("ai.teamHistory.loading")}</p> : !focused.error && focused.data ? postCard(focused.data.post, focused.data.roles) : null}</section> : null}
     {status.plan.options.teamDiscussions ? <form onSubmit={event => { event.preventDefault(); registry.dispatch("ai.team.publish", scope, draftPayload()); }}>
       <h4>{t("ai.teamHistory.write")}</h4><p>{t("ai.teamHistory.writeHelp")}</p>

@@ -128,7 +128,8 @@ export class MemberKernel {
       finishTurn: async (turn, signal) => {
         const decision = await this.ports.finishTurn(this.identity(), turn, signal);
         if (++this.turns >= maxTurns) {
-          this.turnLimitReached = turn.message.stopReason === "toolUse" || decision?.action === "continue";
+          this.turnLimitReached = decision?.action !== "end"
+            && (turn.message.stopReason === "toolUse" || decision?.action === "continue");
           return { action: "end" };
         }
         return decision ?? undefined;

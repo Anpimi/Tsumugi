@@ -2052,7 +2052,9 @@ impl ProjectStore {
         policy: RecoveryPolicy,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
-        self.enqueue_execution_with_authority(input, policy, parent, None, None, None, None, None)
+        self.enqueue_execution_with_authority(
+            input, policy, parent, None, None, None, None, None, None,
+        )
     }
 
     pub(crate) fn enqueue_work_plan_agent_generation(
@@ -2070,6 +2072,33 @@ impl ProjectStore {
             Some(prepared),
             None,
             None,
+            None,
+        )
+    }
+    pub(crate) fn enqueue_team_work(
+        &mut self,
+        prepared: &crate::application::PreparedTeamWork,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        if let Some(scope) = &prepared.scope {
+            self.check_work_plan_agent_scope(scope)?;
+        }
+        let settings = crate::ai::team::settings(prepared.input())?;
+        let parent = if settings.binding.is_root() {
+            None
+        } else {
+            Some(settings.binding.scope().root_task)
+        };
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            parent,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(prepared),
         )
     }
 
@@ -2091,6 +2120,7 @@ impl ProjectStore {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -2105,6 +2135,7 @@ impl ProjectStore {
             Some(prepared.parent_task()),
             None,
             Some(prepared),
+            None,
             None,
             None,
             None,
@@ -2129,6 +2160,7 @@ impl ProjectStore {
             None,
             None,
             Some(prepared),
+            None,
         )
     }
 
@@ -2151,6 +2183,7 @@ impl ProjectStore {
             None,
             Some((prepared, permit)),
             None,
+            None,
         )
     }
 
@@ -2172,12 +2205,16 @@ impl ProjectStore {
             &crate::application::McpTermQueryPermit,
         )>,
         service_tool: Option<&crate::application::PreparedWorkPlanServiceTool>,
+        team_work: Option<&crate::application::PreparedTeamWork>,
     ) -> Result<(), ExecutionError> {
         if (input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
             || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY)
             && mcp.is_none()
         {
             return Err(error(ErrorCode::Unauthorized, "mcp-query-admission"));
+        }
+        if input.envelope().operation == crate::ai::team::OPERATION && team_work.is_none() {
+            return Err(error(ErrorCode::Unauthorized, "team-work-admission"));
         }
         // Serialized provenance is data. Only the opaque Core preparation may
         // admit a new Agent input through the existing transaction below.
@@ -2211,6 +2248,19 @@ impl ProjectStore {
         }
         let verified_build =
             super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
+        if let Some(prepared) = team_work {
+            if tool.is_some()
+                || service.is_some()
+                || service_tool.is_some()
+                || agent.is_some()
+                || mcp.is_some()
+                || policy != RecoveryPolicy::ExternalUnknown
+                || input.bytes() != prepared.input().bytes()
+            {
+                return Err(error(ErrorCode::Unauthorized, "team-work-admission"));
+            }
+            super::application::coordination::check_prepared(&tx, prepared)?;
+        }
         if let Some(prepared) = agent {
             if service.is_some()
                 || tool.is_some()
@@ -2287,6 +2337,9 @@ impl ProjectStore {
             super::application::validate_tool_input(&tx, input, delegation)?;
         } else {
             super::application::record_input(&tx, input)?;
+        }
+        if let Some(prepared) = team_work {
+            super::application::coordination::record_work(&tx, prepared)?;
         }
         if let Some(prepared) = service {
             super::application::record_service_call(&tx, prepared)?;
@@ -2707,7 +2760,9 @@ impl ProjectStore {
                     .iter()
                     .any(|item| unit.item_ids.contains(&item.status.item_id))
             });
-            if view.operation == crate::ai::OPERATION {
+            if view.operation == crate::ai::OPERATION
+                || view.operation == crate::ai::team::OPERATION
+            {
                 for unit in &mut recovery.units {
                     unit.actions.retain(|a| {
                         !matches!(
@@ -3011,6 +3066,13 @@ impl ProjectStore {
         let output = load_result(&tx, &input, result)?;
         if output.envelope().outcome != ExecutionState::Succeeded {
             return Err(error(ErrorCode::OutputInvalid, "validation"));
+        }
+        if input.envelope().operation == crate::ai::team::OPERATION {
+            if let Err(failure) = super::application::coordination::validate_result(&tx, &input, &output) {
+                tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
         }
         #[cfg(any(test, feature = "execution-test-host"))]
         if input.envelope().operation == crate::content::OPERATION {
@@ -3335,14 +3397,20 @@ impl ProjectStore {
         request: ExecutionId,
     ) -> Result<Option<CancellationReceipt>, ExecutionError> {
         let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
-            let row: Option<(String, i64, Option<String>)> = connection.query_row(
-                "SELECT c.task_id,c.revision,t.project_id FROM execution_cancellations c
+            let row: Option<(String, i64, Option<String>)> = connection
+                .query_row(
+                    "SELECT c.task_id,c.revision,t.project_id FROM execution_cancellations c
                  LEFT JOIN execution_tasks t ON t.task_id=c.task_id WHERE c.request_id=?1",
-                [request.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).optional().map_err(sql_error)?;
-            let Some((saved_task, revision, saved_project)) = row else { return Ok(None); };
-            let saved_project = saved_project.ok_or_else(|| error(ErrorCode::CorruptLedger, "cancellation-task"))?;
+                    [request.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            let Some((saved_task, revision, saved_project)) = row else {
+                return Ok(None);
+            };
+            let saved_project = saved_project
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "cancellation-task"))?;
             let saved_task = parse_id(saved_task)?;
             let saved_project = parse_id(saved_project)?;
             if revision <= 0 {
@@ -3354,7 +3422,10 @@ impl ProjectStore {
             let revision = Revision::new(revision as u64)
                 .map_err(|_| error(ErrorCode::CorruptLedger, "cancellation-revision"))?;
             Ok(Some(CancellationReceipt {
-                project_id: saved_project, task_id: saved_task, request_id: request, revision,
+                project_id: saved_project,
+                task_id: saved_task,
+                request_id: request,
+                revision,
             }))
         })?;
         if self.is_reconciling() {
@@ -3541,11 +3612,16 @@ impl ProjectStore {
                 || original.operation != crate::content::TRANSLATION_OPERATION
                 || original.result_ids != [result]
                 || original.parameters != parameters
-                || !input.envelope().units.iter().any(|value| {
-                    value.unit_id == unit && value.item_ids == [item]
-                })
+                || !input
+                    .envelope()
+                    .units
+                    .iter()
+                    .any(|value| value.unit_id == unit && value.item_ids == [item])
             {
-                return Err(error(ErrorCode::ResultMismatch, "translation-action-request"));
+                return Err(error(
+                    ErrorCode::ResultMismatch,
+                    "translation-action-request",
+                ));
             }
             Ok(Some(read))
         })?;
@@ -3989,10 +4065,14 @@ pub(in crate::persistence) fn read_adoption_action_in(
         if read_receipt(connection, action)?.is_some() {
             return Err(error(ErrorCode::CorruptLedger, "adoption-action-orphan"));
         }
-        if connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM execution_continuations WHERE action_id=?1)",
-            [action.to_string()], |row| row.get::<_, bool>(0),
-        ).map_err(sql_error)? {
+        if connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_continuations WHERE action_id=?1)",
+                [action.to_string()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(sql_error)?
+        {
             return Err(error(ErrorCode::ResultMismatch, "adoption-action-kind"));
         }
         return Ok(None);
@@ -4000,27 +4080,44 @@ pub(in crate::persistence) fn read_adoption_action_in(
     let original: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)
         .map_err(|_| error(ErrorCode::CorruptLedger, "adoption-action-bytes"))?;
     let input = load_input_cached(connection, original.attempt_id)?;
-    let digest = original.request_digest(&input)
+    let digest = original
+        .request_digest(&input)
         .map_err(|_| error(ErrorCode::CorruptLedger, "adoption-action-digest"))?;
     if original.action_id != action
         || saved_attempt != original.attempt_id.to_string()
         || saved_unit != original.unit_id.to_string()
         || original.project_id != input.envelope().project_id
         || original.operation != input.envelope().operation
-        || !input.envelope().units.iter().any(|unit| unit.unit_id == original.unit_id)
-        || original.result_ids.windows(2).any(|pair| pair[0] >= pair[1])
+        || !input
+            .envelope()
+            .units
+            .iter()
+            .any(|unit| unit.unit_id == original.unit_id)
+        || original
+            .result_ids
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
         || saved_digest != digest
     {
-        return Err(error(ErrorCode::CorruptLedger, "adoption-action-association"));
+        return Err(error(
+            ErrorCode::CorruptLedger,
+            "adoption-action-association",
+        ));
     }
     let receipt = read_receipt(connection, action)?;
     if receipt.is_some() {
-        let (receipt_attempt, receipt_unit): (String, String) = connection.query_row(
-            "SELECT attempt_id,unit_id FROM adoption_receipts WHERE action_id=?1",
-            [action.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(sql_error)?;
+        let (receipt_attempt, receipt_unit): (String, String) = connection
+            .query_row(
+                "SELECT attempt_id,unit_id FROM adoption_receipts WHERE action_id=?1",
+                [action.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(sql_error)?;
         if receipt_attempt != saved_attempt || receipt_unit != saved_unit {
-            return Err(error(ErrorCode::CorruptLedger, "adoption-receipt-association"));
+            return Err(error(
+                ErrorCode::CorruptLedger,
+                "adoption-receipt-association",
+            ));
         }
     }
     if receipt.as_ref().is_some_and(|value| {
@@ -4032,7 +4129,13 @@ pub(in crate::persistence) fn read_adoption_action_in(
     }) {
         return Err(error(ErrorCode::CorruptLedger, "adoption-action-receipt"));
     }
-    Ok(Some((AdoptionActionRead { action: original, receipt }, input)))
+    Ok(Some((
+        AdoptionActionRead {
+            action: original,
+            receipt,
+        },
+        input,
+    )))
 }
 
 pub(super) fn read_receipt(

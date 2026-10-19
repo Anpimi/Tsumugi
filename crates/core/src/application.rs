@@ -16,6 +16,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod disclosure;
 pub mod team;
 pub use team::*;
+pub mod team_execution;
+pub use team_execution::*;
 pub mod mcp_retrieval;
 pub use mcp_retrieval::*;
 mod maintenance;
@@ -82,6 +84,8 @@ pub enum AutomationEffect {
     Deliver,
     QueryTools,
     PublishDiscussion,
+    DispatchTeamWork,
+    SendTeamMessage,
 }
 
 /// Captured by the trusted host from an installed package, never model text.
@@ -602,6 +606,8 @@ pub struct PlanOptions {
     /// Explicit consent for bounded, same-plan published discussions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_discussions: Option<TeamDiscussionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_execution: Option<TeamExecutionPolicy>,
 }
 
 impl Default for PlanOptions {
@@ -634,6 +640,7 @@ impl Default for PlanOptions {
             adopt_resources: false,
             deliver: false,
             team_discussions: None,
+            team_execution: None,
         }
     }
 }
@@ -654,6 +661,7 @@ impl PlanOptions {
             || (self.adopt_resources && !self.assisted(WorkStage::Resources))
             || (self.deliver && !self.assisted(WorkStage::Delivery))
             || (self.team_discussions.is_some() && !self.assisted(WorkStage::Generation))
+            || (self.team_execution.is_some() && self.team_discussions.is_none())
         {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
@@ -683,6 +691,9 @@ impl PlanOptions {
             AutomationEffect::Deliver => self.deliver,
             AutomationEffect::QueryTools => false,
             AutomationEffect::PublishDiscussion => self.team_discussions.is_some(),
+            AutomationEffect::DispatchTeamWork | AutomationEffect::SendTeamMessage => {
+                self.team_execution.is_some()
+            }
         }
     }
 
@@ -703,6 +714,8 @@ impl PlanOptions {
             AutomationEffect::SelectMissing,
             AutomationEffect::ReplaceCapturedSelection,
             AutomationEffect::PublishDiscussion,
+            AutomationEffect::DispatchTeamWork,
+            AutomationEffect::SendTeamMessage,
         ]
         .into_iter()
         .filter(|effect| self.requests(*effect))
@@ -781,6 +794,8 @@ pub struct WorkPlan {
     pub tools: Option<WorkPlanTools>,
     #[serde(deserialize_with = "required_maintenance")]
     pub maintenance: Option<MaintenancePlanBasis>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub team_inputs: Vec<TeamMemberInput>,
     pub digest: String,
 }
 
@@ -819,6 +834,7 @@ impl WorkPlan {
             options,
             tools: None,
             maintenance: None,
+            team_inputs: Vec::new(),
             digest: String::new(),
         };
         plan.digest = plan.computed_digest()?;
@@ -838,6 +854,7 @@ impl WorkPlan {
                 &self.options,
                 &self.tools,
                 &self.maintenance,
+                &self.team_inputs,
             ),
             MAX_INPUT_BYTES,
         )?))
@@ -862,6 +879,7 @@ impl WorkPlan {
             options,
             tools: None,
             maintenance: None,
+            team_inputs: Vec::new(),
             digest: String::new(),
         };
         plan.digest = plan.computed_digest()?;
@@ -877,6 +895,46 @@ impl WorkPlan {
         self.digest = self.computed_digest()?;
         self.validate()?;
         Ok(self)
+    }
+    pub(crate) fn with_team(
+        mut self,
+        policy: TeamExecutionPolicy,
+        inputs: Vec<TeamMemberInput>,
+    ) -> Result<Self, ExecutionError> {
+        self.options.team_execution = Some(policy);
+        self.team_inputs = inputs;
+        self.digest = self.computed_digest()?;
+        self.validate()?;
+        Ok(self)
+    }
+    pub fn team_member_previews(&self) -> Result<Vec<TeamMemberPreview>, ExecutionError> {
+        let Some(policy) = &self.options.team_execution else {
+            return Ok(Vec::new());
+        };
+        policy
+            .members()
+            .iter()
+            .map(|member| {
+                let items = self
+                    .team_inputs
+                    .iter()
+                    .find(|input| input.member_id == member.member_id)
+                    .ok_or_else(|| {
+                        ExecutionError::new(ErrorCode::InvalidInput, "team-member-input")
+                    })?
+                    .items
+                    .clone();
+                Ok(TeamMemberPreview {
+                    member_id: member.member_id,
+                    preview: AiPreview {
+                        recipe: ai::RECIPE.into(),
+                        config: member.config.clone(),
+                        digest: ai::preview_digest(&member.config, &items)?,
+                        items,
+                    },
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn with_maintenance(
@@ -1007,6 +1065,7 @@ impl WorkPlan {
             ));
         }
         settings.config.validate()?;
+        self.validate_team(&settings.config)?;
         let mut units = BTreeSet::new();
         let mut snapshot = None;
         let mut locale = None;

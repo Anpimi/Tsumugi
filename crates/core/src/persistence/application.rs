@@ -1,12 +1,13 @@
 //! Work plans use the existing project and execution authorities.
 mod agents;
 mod control;
+pub(crate) mod coordination;
 mod guidance;
 pub(in crate::persistence) mod maintenance;
 mod selection;
 mod services;
-mod tools;
 pub(crate) mod team;
+mod tools;
 use super::ProjectStore;
 use crate::{
     ai::{self, AiConfig},
@@ -17,20 +18,24 @@ pub(in crate::persistence) use agents::{
     binding as agent_binding, check_prepared as check_prepared_agent,
 };
 pub(super) use control::{
-    allows_cancelled_ancestor, check_enqueue, check_input, protect_manual_in,
-    record_input, stop_execution_plan_in,
+    allows_cancelled_ancestor, check_enqueue, check_input, protect_manual_in, record_input,
+    stop_execution_plan_in,
 };
 
 pub(super) fn initialize(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     control::initialize(c)?;
-    team::initialize(c)
+    team::initialize(c)?;
+    coordination::initialize(c)
 }
-pub(super) fn table_names() -> impl Iterator<Item=String> {
-    control::table_names().chain(team::table_names())
+pub(super) fn table_names() -> impl Iterator<Item = String> {
+    control::table_names()
+        .chain(team::table_names())
+        .chain(coordination::table_names())
 }
 pub(super) fn validate(c: &rusqlite::Connection) -> Result<(), ExecutionError> {
     control::validate(c)?;
-    team::validate(c)
+    team::validate(c)?;
+    coordination::validate(c)
 }
 pub use selection::{
     CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
@@ -165,7 +170,26 @@ impl ProjectStore {
                     ExecutionError::new(ErrorCode::InvalidInput, "work-plan-model")
                 })?;
                 let preview = self.preview_ai(config, locale, units)?;
-                WorkPlan::capture(project, preview, selection_basis, options)?.with_tools(tools)
+                let mut options = options;
+                let team = options.team_execution.take();
+                let mut captures = Vec::new();
+                if let Some(team) = &team {
+                    for member in team.members() {
+                        let preview =
+                            self.preview_ai(member.config.clone(), locale, &member.unit_ids)?;
+                        captures.push(crate::application::TeamMemberInput {
+                            member_id: member.member_id,
+                            items: preview.items,
+                        });
+                    }
+                }
+                let plan = WorkPlan::capture(project, preview, selection_basis, options)?
+                    .with_tools(tools)?;
+                if let Some(team) = team {
+                    plan.with_team(team, captures)
+                } else {
+                    Ok(plan)
+                }
             } else {
                 if config.is_some() {
                     return Err(ExecutionError::new(
@@ -183,6 +207,31 @@ impl ProjectStore {
     /// an execution/adoption transaction must still check its durable authority.
     pub fn verify_work_plan(&self, plan: &WorkPlan) -> Result<(), ExecutionError> {
         plan.validate()?;
+        for captured in plan.team_member_previews()? {
+            let mut current = self.preview_ai(
+                captured.preview.config.clone(),
+                &plan.locale,
+                &captured
+                    .preview
+                    .items
+                    .iter()
+                    .map(|i| i.unit_id)
+                    .collect::<Vec<_>>(),
+            )?;
+            current.items.sort_by_key(|i| i.unit_id);
+            let mut prior = captured.preview.items;
+            prior.sort_by_key(|i| i.unit_id);
+            for (actual, prior) in current.items.iter_mut().zip(&prior) {
+                actual.source_snapshot_id = prior.source_snapshot_id;
+                actual.resource_baseline = prior.resource_baseline;
+            }
+            if current.items != prior {
+                return Err(ExecutionError::new(
+                    ErrorCode::DependencyConflict,
+                    "team-member-evidence",
+                ));
+            }
+        }
         let connection = self
             .connection()
             .map_err(|_| ExecutionError::new(ErrorCode::StorageFailed, "work-plan-read"))?;
@@ -743,6 +792,7 @@ mod tests {
             adopt_resources: false,
             deliver: false,
             team_discussions: None,
+            team_execution: None,
         };
         let manual = store
             .prepare_work_plan(None, "zh-CN", &[units[0]], options)
@@ -1565,46 +1615,203 @@ mod tests {
     #[test]
     fn work_plan_action_reads_confirm_original_transitions_without_granting_or_starting() {
         use crate::application::WorkPlanCommand;
-        let (_temp,mut store,units)=fixture();
-        let plan=store.prepare_work_plan(Some(config()),"zh-CN",&units,PlanOptions::default()).unwrap();
-        let project=plan.project_id;let authorization=consent(&plan);
-        assert_eq!(store.work_plan_authorization_action_read(project,plan.plan_id,&authorization).unwrap(),None);
-        let mut absent_control=control(&plan,1,WorkPlanCommand::Pause);
-        assert_eq!(store.work_plan_control_action_read(project,&absent_control).unwrap(),None);
-        let before:i64=store.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts",[],|r|r.get(0)).unwrap();
-        let authorized=store.authorize_work_plan(&plan,&authorization).unwrap();
-        let mut history=Vec::new();
-        for (index,command) in [WorkPlanCommand::Pause,WorkPlanCommand::Continue,WorkPlanCommand::TakeOver,WorkPlanCommand::Continue,WorkPlanCommand::Stop].into_iter().enumerate() {
-            let request=control(&plan,index as u64+1,command);let receipt=store.control_work_plan(&request).unwrap();history.push((request,receipt));
+        let (_temp, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let project = plan.project_id;
+        let authorization = consent(&plan);
+        assert_eq!(
+            store
+                .work_plan_authorization_action_read(project, plan.plan_id, &authorization)
+                .unwrap(),
+            None
+        );
+        let mut absent_control = control(&plan, 1, WorkPlanCommand::Pause);
+        assert_eq!(
+            store
+                .work_plan_control_action_read(project, &absent_control)
+                .unwrap(),
+            None
+        );
+        let before: i64 = store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM execution_attempts", [], |r| r.get(0))
+            .unwrap();
+        let authorized = store.authorize_work_plan(&plan, &authorization).unwrap();
+        let mut history = Vec::new();
+        for (index, command) in [
+            WorkPlanCommand::Pause,
+            WorkPlanCommand::Continue,
+            WorkPlanCommand::TakeOver,
+            WorkPlanCommand::Continue,
+            WorkPlanCommand::Stop,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let request = control(&plan, index as u64 + 1, command);
+            let receipt = store.control_work_plan(&request).unwrap();
+            history.push((request, receipt));
         }
-        let assert_history=|store:&ProjectStore| {
-            assert_eq!(store.work_plan_authorization_action_read(project,plan.plan_id,&authorization).unwrap(),Some(authorized.clone()));
-            for (request,receipt) in &history {assert_eq!(store.work_plan_control_action_read(project,request).unwrap(),Some(receipt.clone()));}
+        let assert_history = |store: &ProjectStore| {
+            assert_eq!(
+                store
+                    .work_plan_authorization_action_read(project, plan.plan_id, &authorization)
+                    .unwrap(),
+                Some(authorized.clone())
+            );
+            for (request, receipt) in &history {
+                assert_eq!(
+                    store
+                        .work_plan_control_action_read(project, request)
+                        .unwrap(),
+                    Some(receipt.clone())
+                );
+            }
         };
-        let sequence=store.execution_sequence().unwrap();assert_history(&store);
-        assert_eq!(store.execution_sequence().unwrap(),sequence);
-        assert_eq!(store.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts",[],|r|r.get::<_,i64>(0)).unwrap(),before);
-        let mut wrong=authorization.clone();wrong.confirmed=false;assert_eq!(store.work_plan_authorization_action_read(project,plan.plan_id,&wrong).unwrap_err().code,ErrorCode::ResultMismatch);
-        wrong=authorization.clone();wrong.expires_at+=1;assert!(store.work_plan_authorization_action_read(project,plan.plan_id,&wrong).is_err());
-        wrong=authorization.clone();wrong.plan_digest="0".repeat(64);assert!(store.work_plan_authorization_action_read(project,plan.plan_id,&wrong).is_err());
-        wrong=authorization.clone();wrong.effects.clear();assert!(store.work_plan_authorization_action_read(project,plan.plan_id,&wrong).is_err());
-        assert_eq!(store.work_plan_authorization_action_read(ExecutionId::new(),plan.plan_id,&authorization).unwrap_err().code,ErrorCode::Unauthorized);
-        assert!(store.work_plan_authorization_action_read(project,ExecutionId::new(),&authorization).is_err());
-        let mut wrong=history[0].0.clone();wrong.expected_generation=crate::execution::Revision::new(2).unwrap();assert_eq!(store.work_plan_control_action_read(project,&wrong).unwrap_err().code,ErrorCode::ResultMismatch);
-        wrong=history[0].0.clone();wrong.command=WorkPlanCommand::Stop;assert!(store.work_plan_control_action_read(project,&wrong).is_err());
-        wrong=history[1].0.clone();wrong.confirmed=false;assert!(store.work_plan_control_action_read(project,&wrong).is_err());
-        absent_control.action_id=authorization.action_id;assert_eq!(store.work_plan_control_action_read(project,&absent_control).unwrap_err().code,ErrorCode::ResultMismatch);
-        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
-        assert_eq!(store.work_plan_receipt(authorization.action_id).unwrap(),Some(authorized.clone()));assert!(store.is_reconciling(),"raw mutation lookup does not clear recovery");
-        let c=store.connection().unwrap();let saved:String=c.query_row("SELECT receipt_digest FROM application_actions WHERE action_id=?1",[authorization.action_id.to_string()],|r|r.get(0)).unwrap();
-        c.execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",rusqlite::params![authorization.action_id.to_string(),"0".repeat(64)]).unwrap();
-        assert_eq!(store.work_plan_authorization_action_read(project,plan.plan_id,&authorization).unwrap_err().code,ErrorCode::CorruptLedger);assert!(store.is_reconciling());
-        c.execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",rusqlite::params![authorization.action_id.to_string(),saved]).unwrap();
-        assert_history(&store);assert!(!store.is_reconciling());
-        super::super::review::tests::adopt_source(&mut store,br#"{"replacement":"Changed source"}"#);
-        let revision=store.metadata().unwrap().metadata_revision();store.set_target_locales(revision,&["ja".into()]).unwrap();
-        let sequence=store.execution_sequence().unwrap();assert_history(&store);assert_eq!(store.execution_sequence().unwrap(),sequence);
-        let directory=store.directory().to_path_buf();store.close().unwrap();let reopened=ProjectStore::open(&directory).unwrap();assert_history(&reopened);
+        let sequence = store.execution_sequence().unwrap();
+        assert_history(&store);
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM execution_attempts", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            before
+        );
+        let mut wrong = authorization.clone();
+        wrong.confirmed = false;
+        assert_eq!(
+            store
+                .work_plan_authorization_action_read(project, plan.plan_id, &wrong)
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        wrong = authorization.clone();
+        wrong.expires_at += 1;
+        assert!(
+            store
+                .work_plan_authorization_action_read(project, plan.plan_id, &wrong)
+                .is_err()
+        );
+        wrong = authorization.clone();
+        wrong.plan_digest = "0".repeat(64);
+        assert!(
+            store
+                .work_plan_authorization_action_read(project, plan.plan_id, &wrong)
+                .is_err()
+        );
+        wrong = authorization.clone();
+        wrong.effects.clear();
+        assert!(
+            store
+                .work_plan_authorization_action_read(project, plan.plan_id, &wrong)
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .work_plan_authorization_action_read(
+                    ExecutionId::new(),
+                    plan.plan_id,
+                    &authorization
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        assert!(
+            store
+                .work_plan_authorization_action_read(project, ExecutionId::new(), &authorization)
+                .is_err()
+        );
+        let mut wrong = history[0].0.clone();
+        wrong.expected_generation = crate::execution::Revision::new(2).unwrap();
+        assert_eq!(
+            store
+                .work_plan_control_action_read(project, &wrong)
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        wrong = history[0].0.clone();
+        wrong.command = WorkPlanCommand::Stop;
+        assert!(
+            store
+                .work_plan_control_action_read(project, &wrong)
+                .is_err()
+        );
+        wrong = history[1].0.clone();
+        wrong.confirmed = false;
+        assert!(
+            store
+                .work_plan_control_action_read(project, &wrong)
+                .is_err()
+        );
+        absent_control.action_id = authorization.action_id;
+        assert_eq!(
+            store
+                .work_plan_control_action_read(project, &absent_control)
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            store.work_plan_receipt(authorization.action_id).unwrap(),
+            Some(authorized.clone())
+        );
+        assert!(
+            store.is_reconciling(),
+            "raw mutation lookup does not clear recovery"
+        );
+        let c = store.connection().unwrap();
+        let saved: String = c
+            .query_row(
+                "SELECT receipt_digest FROM application_actions WHERE action_id=?1",
+                [authorization.action_id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        c.execute(
+            "UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",
+            rusqlite::params![authorization.action_id.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .work_plan_authorization_action_read(project, plan.plan_id, &authorization)
+                .unwrap_err()
+                .code,
+            ErrorCode::CorruptLedger
+        );
+        assert!(store.is_reconciling());
+        c.execute(
+            "UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",
+            rusqlite::params![authorization.action_id.to_string(), saved],
+        )
+        .unwrap();
+        assert_history(&store);
+        assert!(!store.is_reconciling());
+        super::super::review::tests::adopt_source(
+            &mut store,
+            br#"{"replacement":"Changed source"}"#,
+        );
+        let revision = store.metadata().unwrap().metadata_revision();
+        store.set_target_locales(revision, &["ja".into()]).unwrap();
+        let sequence = store.execution_sequence().unwrap();
+        assert_history(&store);
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let reopened = ProjectStore::open(&directory).unwrap();
+        assert_history(&reopened);
     }
 
     #[test]
@@ -1612,48 +1819,185 @@ mod tests {
         use crate::application::{WorkPlanCommand, WorkPlanStartReceipt};
         use crate::execution::{FixedInput, Revision};
         let (_temp, mut store, units) = fixture();
-        let plan = store.prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default()).unwrap();
+        let plan = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
         let project = plan.project_id;
         let authorization = consent(&plan);
         let generation = Revision::new(1).unwrap();
-        assert_eq!(store.work_plan_start_action_read(project, plan.plan_id, authorization.action_id, generation).unwrap(), None);
+        assert_eq!(
+            store
+                .work_plan_start_action_read(
+                    project,
+                    plan.plan_id,
+                    authorization.action_id,
+                    generation
+                )
+                .unwrap(),
+            None
+        );
         let receipt = store.authorize_work_plan(&plan, &authorization).unwrap();
         let input = FixedInput::capture(receipt.input.unwrap()).unwrap();
         // Authorization is durable before the actual start transaction.
         let sequence = store.execution_sequence().unwrap();
-        assert_eq!(store.work_plan_start_action_read(project, plan.plan_id, authorization.action_id, generation).unwrap(), None);
+        assert_eq!(
+            store
+                .work_plan_start_action_read(
+                    project,
+                    plan.plan_id,
+                    authorization.action_id,
+                    generation
+                )
+                .unwrap(),
+            None
+        );
         assert_eq!(store.execution_sequence().unwrap(), sequence);
         store.enqueue_execution(&input).unwrap();
-        let expected = Some(WorkPlanStartReceipt {project_id:project,plan_id:plan.plan_id,
-            action_id:authorization.action_id,expected_generation:generation,
-            attempt_id:input.envelope().attempt_id,task_id:input.envelope().task_id});
-        assert_eq!(store.work_plan_start_action_read(project, plan.plan_id, authorization.action_id, generation).unwrap(), expected);
-        for (p,id,g) in [(ExecutionId::new(),plan.plan_id,generation),(project,ExecutionId::new(),generation),
-            (project,plan.plan_id,Revision::new(2).unwrap())] {
-            assert_eq!(store.work_plan_start_action_read(p,id,authorization.action_id,g).unwrap_err().code, ErrorCode::ResultMismatch);
+        let expected = Some(WorkPlanStartReceipt {
+            project_id: project,
+            plan_id: plan.plan_id,
+            action_id: authorization.action_id,
+            expected_generation: generation,
+            attempt_id: input.envelope().attempt_id,
+            task_id: input.envelope().task_id,
+        });
+        assert_eq!(
+            store
+                .work_plan_start_action_read(
+                    project,
+                    plan.plan_id,
+                    authorization.action_id,
+                    generation
+                )
+                .unwrap(),
+            expected
+        );
+        for (p, id, g) in [
+            (ExecutionId::new(), plan.plan_id, generation),
+            (project, ExecutionId::new(), generation),
+            (project, plan.plan_id, Revision::new(2).unwrap()),
+        ] {
+            assert_eq!(
+                store
+                    .work_plan_start_action_read(p, id, authorization.action_id, g)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::ResultMismatch
+            );
         }
-        assert!(store.work_plan_start_action_read(project,plan.plan_id,authorization.action_id,Revision::new(0).unwrap()).is_err());
-        let paused = store.control_work_plan(&control(&plan,1,WorkPlanCommand::Pause)).unwrap();
-        assert_eq!(store.work_plan_start_action_read(project,plan.plan_id,paused.action_id,paused.lease.generation).unwrap_err().code,ErrorCode::ResultMismatch);
-        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert!(
+            store
+                .work_plan_start_action_read(
+                    project,
+                    plan.plan_id,
+                    authorization.action_id,
+                    Revision::new(0).unwrap()
+                )
+                .is_err()
+        );
+        let paused = store
+            .control_work_plan(&control(&plan, 1, WorkPlanCommand::Pause))
+            .unwrap();
+        assert_eq!(
+            store
+                .work_plan_start_action_read(
+                    project,
+                    plan.plan_id,
+                    paused.action_id,
+                    paused.lease.generation
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
         let sequence = store.execution_sequence().unwrap();
-        let count: i64 = store.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts",[],|row|row.get(0)).unwrap();
-        assert_eq!(store.work_plan_start_action_read(project,plan.plan_id,authorization.action_id,generation).unwrap(),expected);
+        let count: i64 = store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .work_plan_start_action_read(
+                    project,
+                    plan.plan_id,
+                    authorization.action_id,
+                    generation
+                )
+                .unwrap(),
+            expected
+        );
         assert!(!store.is_reconciling());
-        assert_eq!(store.execution_sequence().unwrap(),sequence);
-        assert_eq!(store.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts",[],|row|row.get::<_,i64>(0)).unwrap(),count);
-        let c=store.connection().unwrap();
-        let digest:String=c.query_row("SELECT receipt_digest FROM application_actions WHERE action_id=?1",[authorization.action_id.to_string()],|row|row.get(0)).unwrap();
-        c.execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",rusqlite::params![authorization.action_id.to_string(),"0".repeat(64)]).unwrap();
-        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
-        assert_eq!(store.work_plan_start_action_read(project,plan.plan_id,authorization.action_id,generation).unwrap_err().code,ErrorCode::CorruptLedger);
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            count
+        );
+        let c = store.connection().unwrap();
+        let digest: String = c
+            .query_row(
+                "SELECT receipt_digest FROM application_actions WHERE action_id=?1",
+                [authorization.action_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        c.execute(
+            "UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",
+            rusqlite::params![authorization.action_id.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            store
+                .work_plan_start_action_read(
+                    project,
+                    plan.plan_id,
+                    authorization.action_id,
+                    generation
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::CorruptLedger
+        );
         assert!(store.is_reconciling());
-        c.execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",rusqlite::params![authorization.action_id.to_string(),digest]).unwrap();
-        assert_eq!(store.work_plan_start_action_read(project,plan.plan_id,ExecutionId::new(),generation).unwrap(),None);
+        c.execute(
+            "UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1",
+            rusqlite::params![authorization.action_id.to_string(), digest],
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .work_plan_start_action_read(project, plan.plan_id, ExecutionId::new(), generation)
+                .unwrap(),
+            None
+        );
         assert!(!store.is_reconciling());
-        let directory=store.directory().to_path_buf();store.close().unwrap();
-        let reopened=ProjectStore::open(&directory).unwrap();
-        assert_eq!(reopened.work_plan_start_action_read(project,plan.plan_id,authorization.action_id,generation).unwrap(),expected);
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let reopened = ProjectStore::open(&directory).unwrap();
+        assert_eq!(
+            reopened
+                .work_plan_start_action_read(
+                    project,
+                    plan.plan_id,
+                    authorization.action_id,
+                    generation
+                )
+                .unwrap(),
+            expected
+        );
     }
 
     #[test]

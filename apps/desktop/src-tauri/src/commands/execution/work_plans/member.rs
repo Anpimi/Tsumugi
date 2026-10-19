@@ -1,6 +1,9 @@
 //! Built-in Pi members retain the original project owner, scope, model budget
 //! and independently consented tool boundary. No plugin caller is fabricated.
 use super::*;
+mod coordination;
+mod environment;
+use environment::{EnvironmentAdmission, EnvironmentAttempt};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -20,9 +23,10 @@ use tsumugi_core::{
     },
     application::{
         AgentToolRequest, CapturedTeamAuthor, CapturedTeamDiscussionView,
-        PublishTeamDiscussion, ReadTeamArtifact, ReadTeamDiscussion, TeamDiscussionPolicy,
+        CapturedTeamWorkView, PublishTeamDiscussion, ReadTeamArtifact, ReadTeamDiscussion,
+        RequestTeamWork, SendTeamMessage, TeamDiscussionPolicy,
         WorkPlanAgentExecutionBinding, WorkPlanToolSpec,
-        team_discussion_tools,
+        team_discussion_tools, team_execution_tools,
     },
 };
 use tsumugi_plugin_host::{
@@ -151,6 +155,7 @@ impl Owner {
             tool_revision: revisions.into_iter().next(),
             team_author,
             team_policy,
+            team_work: false,
         })
     }
     fn check_scope(
@@ -160,9 +165,14 @@ impl Owner {
     ) -> Result<(), CommandError> {
         let (host, store) = self.original(sessions)?;
         host.allow_mutation()?;
-        if agent::scope(host, store, captured.scope_id)? != captured.scope
-            || effective_tools(store, &captured.scope)? != captured.tools
-        {
+        if captured.team_work {
+            store.check_team_work_author(captured.team_author.as_ref()
+                .ok_or_else(|| map_recover(fail(ErrorCode::Unauthorized, "member-team-author")))?)
+                .map_err(map_recover)?;
+        } else if agent::scope(host, store, captured.scope_id)? != captured.scope {
+            return Err(map_recover(fail(ErrorCode::Unauthorized, "member-scope")));
+        }
+        if effective_tools(store, &captured.scope)? != captured.tools {
             return Err(map_recover(fail(ErrorCode::Unauthorized, "member-scope")));
         }
         if let Some(consent) = &captured.consent {
@@ -214,13 +224,37 @@ struct CapturedScope {
     tool_revision: Option<UnsignedDecimal>,
     team_author: Option<CapturedTeamAuthor>,
     team_policy: Option<TeamDiscussionPolicy>,
+    team_work: bool,
 }
 
 pub(in crate::commands::execution) struct MemberFactory {
     owner: Owner,
     runtime: OnceLock<tokio::runtime::Runtime>,
 }
+
+struct MemberPrompt<'a> {
+    config: &'a AiConfig,
+    item: &'a ai::AiItem,
+    member_id: ExecutionId,
+    system: &'a str,
+    input: &'a str,
+}
+struct ProcessOutput {
+    messages: Value,
+    usage: Option<Usage>,
+    requests: u32,
+    incomplete: bool,
+}
 impl MemberFactory {
+    fn executor_runtime(&self) -> Result<&tokio::runtime::Runtime, ExecutionError> {
+        if self.runtime.get().is_none() {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2).enable_all().build()
+                .map_err(|_| fail(ErrorCode::DependencyConflict, "member-runtime"))?;
+            let _ = self.runtime.set(runtime);
+        }
+        Ok(self.runtime.get().unwrap())
+    }
     pub(in crate::commands::execution) fn new(
         context: ProjectServiceContext,
         token: String,
@@ -259,58 +293,68 @@ impl MemberFactory {
             .map_err(command_error)?
             .await
             .map_err(command_error)?;
-        let plugins = self.owner.context.plugins.clone();
+        let member_id = captured.team_author.as_ref().map_or(seed.binding().caller_id,
+            |author| author.author().member_id);
+        let output = self.run_process(request, cancellation, service, captured, MemberPrompt {
+            config: seed.config(), item: seed.item(), member_id, system: seed.system(), input: seed.input(),
+        }).await?;
+        seed.validate_output(&assistant_text(&output.messages)?, output.usage, output.requests, output.incomplete)
+    }
+
+    async fn run_process(
+        &self,
+        request: DispatchRequest,
+        cancellation: Cancellation,
+        service: Arc<ProviderService>,
+        captured: CapturedScope,
+        prompt: MemberPrompt<'_>,
+    ) -> Result<ProcessOutput, ExecutionError> {
+        let local_stop = Cancellation::default();
+        let deadline = request.deadline()
+            .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-deadline"))?;
+        let deadline = captured.consent.as_ref()
+            .map_or(deadline, |consent| deadline.min(consent.deadline()));
+        let admission = EnvironmentAdmission::new(deadline, vec![cancellation.clone(), local_stop.clone()]);
         let revision = captured.tool_revision;
-        let environment = self
-            .owner
-            .context
-            .io
-            .run(CommandStage::ExecutionRecover, move || {
-                plugins.capture_member_environment(revision)
-            })
-            .await
-            .map_err(command_error)?;
-        let owner = self.owner.clone();
-        let checking = captured.clone();
+        let environment = admission.wait(|| request.check_service_dispatch(), || {
+            let plugins = self.owner.context.plugins.clone();
+            let io = self.owner.context.io.clone();
+            let selected = request.clone();
+            let admission = admission.clone();
+            async move {
+                io.run(CommandStage::ExecutionRecover, move || {
+                    Ok(EnvironmentAttempt::read_only(plugins.capture_member_environment(revision,
+                        || admission.check().is_ok() && selected.check_service_dispatch().is_ok())))
+                }).await
+            }
+        }).await?;
         let runtime_revision = environment.settings_revision;
-        let settings_stop = self
-            .owner
-            .context
-            .callback
-            .submit(
-                "member.admit",
-                CommandStage::ExecutionRecover,
-                move |sessions| {
-                    owner
-                        .context
-                        .plugins
-                        .with_environment_authority(runtime_revision, |stop| {
+        let settings_stop = admission.wait(|| request.check_service_dispatch(), || {
+            let owner = self.owner.clone();
+            let checking = captured.clone();
+            let selected = request.clone();
+            let admission = admission.clone();
+            async move {
+                let callback = owner.context.callback.clone();
+                callback.submit("member.admit", CommandStage::ExecutionRecover, move |sessions| {
+                    Ok(admission.enter(&owner.context.plugins, runtime_revision,
+                        || selected.check_service_dispatch(), |stop| {
                             owner.check_scope(sessions, &checking)?;
                             Ok(stop)
-                        })
-                },
-            )
-            .map_err(command_error)?
-            .await
-            .map_err(command_error)?;
-        let local_stop = Cancellation::default();
-        let deadline = request
-            .deadline()
-            .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-deadline"))?;
-        let deadline = captured
-            .consent
-            .as_ref()
-            .map_or(deadline, |consent| deadline.min(consent.deadline()));
+                        }))
+                })?.await
+            }
+        }).await?;
         let remaining: u32 = deadline
             .checked_duration_since(Instant::now())
             .and_then(|d| u32::try_from(d.as_millis()).ok())
             .map(|remaining| remaining.min(request.input.envelope().limits.timeout_ms))
             .filter(|n| *n > 0)
             .ok_or_else(|| fail(ErrorCode::Cancelled, "member-deadline"))?;
-        let profile = tsumugi_core::ai::provider::ProviderProfile::compatible(seed.config())?;
+        let profile = tsumugi_core::ai::provider::ProviderProfile::compatible(prompt.config)?;
         let mut roster: Vec<MemberTool> = captured.tools.iter().map(|tool| MemberTool {
             name: tool_name(tool.handle), description: tool.binding.declaration.description.clone(),
-            parameters: json!({"type":"object","properties":{"unitId":{"type":"string","enum":[seed.item().unit_id]}},
+            parameters: json!({"type":"object","properties":{"unitId":{"type":"string","enum":[prompt.item.unit_id]}},
                 "required":["unitId"],"additionalProperties":false}),
         }).collect();
         if let Some(policy) = captured.team_policy {
@@ -320,32 +364,42 @@ impl MemberFactory {
                 parameters: tool.input_schema,
             }));
         }
+        if captured.team_work {
+            roster.extend(team_execution_tools().into_iter().map(|tool| MemberTool {
+                name: tool.name, description: tool.description, parameters: tool.input_schema,
+            }));
+        }
         let start = MemberFrame {
             protocol_version: wire::PROTOCOL,
             session_id: ExecutionId::new(),
             sequence: 0,
             body: MemberBody::Start {
-                member_id: captured.team_author.as_ref().map_or(seed.binding().caller_id, |author| author.author().member_id),
+                member_id: prompt.member_id,
                 work_item_id: request.item_id,
                 context_version: request.input.digest().into(),
                 profile: MemberProfile {
-                    endpoint: seed.config().endpoint.clone(),
-                    model: seed.config().model.clone(),
-                    token_field: if seed.config().token_field == "max_tokens" {
+                    endpoint: prompt.config.endpoint.clone(),
+                    model: prompt.config.model.clone(),
+                    token_field: if prompt.config.token_field == "max_tokens" {
                         TokenField::MaxTokens
                     } else {
                         TokenField::MaxCompletionTokens
                     },
-                    max_output_tokens: seed.config().max_output_tokens,
+                    max_output_tokens: prompt.config.max_output_tokens,
                     context_tokens: profile.context_tokens,
                 },
-                system_prompt: seed.system().into(),
+                system_prompt: prompt.system.into(),
                 context: json!([]),
-                input: seed.input().into(),
+                input: prompt.input.into(),
                 tools: roster,
-                max_turns: seed.config().max_requests.min(128),
+                max_turns: prompt.config.max_requests.min(128),
                 timeout_ms: remaining,
             },
+        };
+        let provider = if captured.team_work {
+            MemberProviderSession::new_team(service, request.clone(), local_stop.clone())?
+        } else {
+            MemberProviderSession::new(service, request.clone(), local_stop.clone())?
         };
         let mut handler = Handler {
             owner: self.owner.clone(),
@@ -355,11 +409,8 @@ impl MemberFactory {
             local_stop: local_stop.clone(),
             settings_stop: settings_stop.clone(),
             runtime_revision,
-            provider: Arc::new(Mutex::new(MemberProviderSession::new(
-                service,
-                request.clone(),
-                local_stop.clone(),
-            )?)),
+            endpoint: prompt.config.endpoint.clone(),
+            provider: Arc::new(Mutex::new(provider)),
             pending: None,
             pending_provider: false,
             provider_failure: None,
@@ -400,18 +451,17 @@ impl MemberFactory {
         if receipt.turn_limit_reached {
             return Err(fail(ErrorCode::LimitExceeded, "member-turn-limit"));
         }
-        let text = assistant_text(&receipt.messages)?;
         let (usage, incomplete) = handler.total_usage()?;
-        seed.validate_output(
-            &text,
+        Ok(ProcessOutput {
+            messages: receipt.messages,
             usage,
-            handler
+            requests: handler
                 .usage
                 .len()
                 .try_into()
                 .map_err(|_| fail(ErrorCode::LimitExceeded, "member-usage"))?,
             incomplete,
-        )
+        })
     }
 }
 
@@ -439,18 +489,7 @@ impl MemberExecutor for MemberFactory {
         cancellation: Cancellation,
         service: Arc<ProviderService>,
     ) -> Result<AiOutput, ExecutionError> {
-        if self.runtime.get().is_none() {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .map_err(|_| fail(ErrorCode::DependencyConflict, "member-runtime"))?;
-            let _ = self.runtime.set(runtime);
-        }
-        self.runtime
-            .get()
-            .unwrap()
-            .block_on(self.run(request, cancellation, service))
+        self.executor_runtime()?.block_on(self.run(request, cancellation, service))
     }
 }
 
@@ -490,10 +529,18 @@ struct ToolRun {
     request: broker::WorkPlanAgentToolStartRequest,
     cancel_id: ExecutionId,
 }
+#[derive(Clone)]
 enum TeamToolRequest {
     Publish(PublishTeamDiscussion),
     Read(ReadTeamDiscussion),
     ReadArtifact(ReadTeamArtifact),
+    RequestWork(RequestTeamWork),
+    SendMessage(SendTeamMessage),
+}
+
+enum RequestView {
+    Discussion(CapturedTeamDiscussionView),
+    Work(CapturedTeamWorkView),
 }
 struct Handler {
     owner: Owner,
@@ -503,6 +550,7 @@ struct Handler {
     local_stop: Cancellation,
     settings_stop: Cancellation,
     runtime_revision: UnsignedDecimal,
+    endpoint: String,
     provider: Arc<Mutex<MemberProviderSession>>,
     pending: Option<tokio::task::JoinHandle<Result<MemberReply, ExecutionError>>>,
     pending_provider: bool,
@@ -515,6 +563,14 @@ struct Handler {
     event_bytes: usize,
 }
 impl Handler {
+    fn environment_admission(&self) -> Result<EnvironmentAdmission, ExecutionError> {
+        let deadline = self.request.deadline()
+            .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-deadline"))?;
+        let deadline = self.captured.consent.as_ref()
+            .map_or(deadline, |consent| deadline.min(consent.deadline()));
+        Ok(EnvironmentAdmission::new(deadline, vec![self.cancellation.clone(),
+            self.local_stop.clone(), self.settings_stop.clone()]))
+    }
     fn live(&self) -> Result<(), ExecutionError> {
         if self.cancellation.is_requested()
             || self.local_stop.is_requested()
@@ -536,9 +592,13 @@ impl Handler {
         } else {
             None
         };
-        let shared_view = view.as_ref().map(|view| wire::MemberSharedView {
-            view_id: view.view().view_id,
-            utf8: view.utf8().into(),
+        let shared_view = view.as_ref().map(|view| match view {
+            RequestView::Discussion(view) => wire::MemberSharedView {
+                view_id: view.view().view_id, utf8: view.utf8().into(),
+            },
+            RequestView::Work(view) => wire::MemberSharedView {
+                view_id: view.view().view_id, utf8: view.utf8().into(),
+            },
         });
         let provider = self.provider.clone();
         self.pending_provider = true;
@@ -548,7 +608,11 @@ impl Handler {
                 .map_err(|_| fail(ErrorCode::StorageFailed, "member-provider"))?;
             match call {
                 MemberCall::Prepare { .. } => Ok(MemberReply::Prepared {
-                    request_id: provider.prepare_with_view(view)?,
+                    request_id: match view {
+                        Some(RequestView::Work(view)) => provider.prepare_with_team_view(view)?,
+                        Some(RequestView::Discussion(view)) => provider.prepare_with_view(Some(view))?,
+                        None => provider.prepare_with_view(None)?,
+                    },
                     shared_view,
                 }),
                 MemberCall::Http {
@@ -580,22 +644,33 @@ impl Handler {
         self.record_provider_failure(&result);
         result
     }
-    async fn capture_view(&self) -> Result<Option<CapturedTeamDiscussionView>, ExecutionError> {
+    async fn capture_view(&self) -> Result<Option<RequestView>, ExecutionError> {
         let Some(author) = self.captured.team_author.clone() else { return Ok(None); };
-        let owner = self.owner.clone();
-        let captured = self.captured.clone();
         let revision = self.runtime_revision;
-        self.owner.context.callback.submit(
-            "member.discussions.capture", CommandStage::ExecutionRecover,
-            move |sessions| {
-                owner.context.plugins.with_environment_revision(revision, || {
-                    owner.check_scope(sessions, &captured)?;
-                    let (_, store) = owner.original(sessions)?;
-                    // Preserve Core's actionable material/permission failure.
-                    Ok(store.capture_team_discussion_view(&author))
-                })
-            },
-        ).map_err(command_error)?.await.map_err(command_error)?.map(Some)
+        let admission = self.environment_admission()?;
+        admission.wait(|| self.request.check_service_dispatch(), || {
+            let owner = self.owner.clone();
+            let captured = self.captured.clone();
+            let author = author.clone();
+            let request = self.request.clone();
+            let admission = admission.clone();
+            async move {
+                let callback = owner.context.callback.clone();
+                callback.submit("member.discussions.capture", CommandStage::ExecutionRecover, move |sessions| {
+                    Ok(admission.enter(&owner.context.plugins, revision,
+                        || request.check_service_dispatch(), |_| {
+                            owner.check_scope(sessions, &captured)?;
+                            let (_, store) = owner.original(sessions)?;
+                            // Preserve Core's actionable material/permission failure.
+                            Ok(if captured.team_work {
+                                store.capture_team_work_view(&author).map(RequestView::Work)
+                            } else {
+                                store.capture_team_discussion_view(&author).map(RequestView::Discussion)
+                            })
+                        }))
+                })?.await
+            }
+        }).await?.map(Some)
     }
     fn record_provider_failure(&mut self, result: &Result<MemberReply, ExecutionError>) {
         if let Err(error) = result {
@@ -630,14 +705,19 @@ impl Handler {
             "publish_team_discussion" => TeamToolRequest::Publish(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
             "read_team_discussion" => TeamToolRequest::Read(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
             "read_team_artifact" => TeamToolRequest::ReadArtifact(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+            "request_team_work" => TeamToolRequest::RequestWork(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+            "send_team_message" => TeamToolRequest::SendMessage(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
             _ => return Ok(None),
         };
         if self.captured.team_author.is_none() {
             return Err(fail(ErrorCode::Unauthorized, "member-discussions-disabled"));
         }
-        if !self.captured.team_policy.is_some_and(|policy| {
+        let discussion = self.captured.team_policy.is_some_and(|policy| {
             team_discussion_tools(policy).iter().any(|tool| tool.name == name)
-        }) {
+        });
+        let coordination = self.captured.team_work
+            && team_execution_tools().iter().any(|tool| tool.name == name);
+        if !discussion && !coordination {
             return Err(fail(ErrorCode::Unauthorized, "member-discussion-tool-policy"));
         }
         Ok(Some(tool))
@@ -648,32 +728,51 @@ impl Handler {
         let author = captured.team_author.clone().ok_or_else(|| fail(ErrorCode::Unauthorized, "member-discussions-disabled"))?;
         let revision = self.runtime_revision;
         let request = self.request.clone();
-        let post_id = match &tool {
-            TeamToolRequest::Publish(publication) => publication.post_id,
-            TeamToolRequest::Read(read) => read.post_id,
-            TeamToolRequest::ReadArtifact(read) => read.post_id,
+        let admission = self.environment_admission()?;
+        let details = match &tool {
+            TeamToolRequest::Publish(publication) => json!({"postId":publication.post_id}),
+            TeamToolRequest::Read(read) => json!({"postId":read.post_id}),
+            TeamToolRequest::ReadArtifact(read) => json!({"postId":read.post_id}),
+            TeamToolRequest::RequestWork(work) => json!({"intentId":work.intent_id}),
+            TeamToolRequest::SendMessage(message) => json!({"messageId":message.message_id}),
         };
         self.pending_provider = false;
         self.pending = Some(tokio::spawn(async move {
-            let submitting = owner.clone();
-            let post = submitting.context.callback.submit(
-                "member.discussions.tool", CommandStage::ExecutionRecover,
-                move |sessions| {
-                    owner.context.plugins.with_environment_revision(revision, || {
+            let post = admission.wait(|| request.check_service_dispatch(), || {
+                let owner = owner.clone();
+                let captured = captured.clone();
+                let author = author.clone();
+                let request = request.clone();
+                let tool = tool.clone();
+                let admission = admission.clone();
+                async move {
+                    let callback = owner.context.callback.clone();
+                    callback.submit("member.discussions.tool", CommandStage::ExecutionRecover, move |sessions| {
+                        Ok(admission.enter(&owner.context.plugins, revision,
+                            || request.check_service_dispatch(), |_| {
                         owner.check_scope(sessions, &captured)?;
                         request.check_service_dispatch().map_err(map_recover)?;
-                        let (_, store) = owner.original(sessions)?;
+                        let (host, store) = owner.original(sessions)?;
                         Ok(match tool {
                             TeamToolRequest::Publish(publication) => store.publish_team_discussion(&author, &publication).map(serde_json::to_value),
                             TeamToolRequest::Read(read) => store.read_team_discussion(&captured.scope, read.post_id).map(serde_json::to_value),
                             TeamToolRequest::ReadArtifact(read) => store.read_team_artifact(&author, &read).map(serde_json::to_value),
+                            TeamToolRequest::RequestWork(work) => {
+                                let plan = store.work_plan(captured.scope.lease().plan_id).map_err(map_recover)?;
+                                let checker = current_checker_consent(host, store, &plan, captured.scope.lease())?;
+                                let prepared = store.prepare_team_work(&author, &work).map_err(map_recover)?;
+                                let accepted = host.runtime.submit_team_work(store, &prepared).map_err(map_recover)?;
+                                host.ai.track(store, prepared.input(), checker).map_err(map_recover)?;
+                                Ok(serde_json::to_value(accepted))
+                            },
+                            TeamToolRequest::SendMessage(message) => store.send_team_message(&author, &message).map(serde_json::to_value),
                         })
-                    })
-                },
-            ).map_err(command_error)?.await.map_err(command_error)?;
+                            }))
+                    })?.await
+                }
+            }).await?;
             let (value, details, is_error) = match post {
                 Ok(value) => {
-                    let details = json!({"postId":post_id});
                     (value, details, false)
                 }
                 Err(error) => (serde_json::to_value(error), json!({}), true),
@@ -695,27 +794,21 @@ impl Handler {
         })?
     }
     async fn check_scope(&self) -> Result<(), ExecutionError> {
-        let owner = self.owner.clone();
-        let captured = self.captured.clone();
         let revision = self.runtime_revision;
-        self.owner
-            .context
-            .callback
-            .submit(
-                "member.scope",
-                CommandStage::ExecutionRecover,
-                move |sessions| {
-                    owner
-                        .context
-                        .plugins
-                        .with_environment_revision(revision, || {
-                            owner.check_scope(sessions, &captured)
-                        })
-                },
-            )
-            .map_err(command_error)?
-            .await
-            .map_err(command_error)
+        let admission = self.environment_admission()?;
+        admission.wait(|| self.request.check_service_dispatch(), || {
+            let owner = self.owner.clone();
+            let captured = self.captured.clone();
+            let request = self.request.clone();
+            let admission = admission.clone();
+            async move {
+                let callback = owner.context.callback.clone();
+                callback.submit("member.scope", CommandStage::ExecutionRecover, move |sessions| {
+                    Ok(admission.enter(&owner.context.plugins, revision,
+                        || request.check_service_dispatch(), |_| owner.check_scope(sessions, &captured)))
+                })?.await
+            }
+        }).await
     }
     async fn execute_tool(
         &mut self,
@@ -929,6 +1022,8 @@ impl ToolOperation {
             .map_err(|_| fail(ErrorCode::StorageFailed, "member-tools"))?
             .insert(call_id, run.clone());
         let initial = request.clone();
+        let owner = self.owner.clone();
+        let captured = self.captured.clone();
         let admitted = self
             .owner
             .context
@@ -936,64 +1031,106 @@ impl ToolOperation {
             .submit(
                 "member.tool.begin",
                 CommandStage::ExecutionRecover,
-                move |sessions| broker::begin_agent_tool(sessions, &initial),
+                move |sessions| {
+                    owner.check_scope(sessions, &captured)?;
+                    if captured.team_work {
+                        broker::begin_captured_agent_tool(sessions, &initial, &captured.scope)
+                    } else {
+                        broker::begin_agent_tool(sessions, &initial)
+                    }
+                },
             )
             .map_err(command_error)?
             .await
             .map_err(command_error)?;
         if let Some((ticket, prepared, consent)) = admitted {
-            let current = self.owner.context.plugins.clone();
-            let captured = prepared.clone();
-            let deadline = self
-                .request
-                .deadline()
+            let deadline = self.request.deadline()
                 .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-deadline"))?
                 .min(consent.deadline());
-            let stop = self.local_stop.clone();
-            let loaded = self
-                .owner
-                .context
-                .io
-                .run(CommandStage::ExecutionRecover, move || {
-                    let loaded = broker::load_runner(&current, &captured)?;
-                    broker::ensure_application_ready(&current, &captured, deadline, &stop)?;
-                    Ok(loaded)
-                })
-                .await;
-            let owner = self.owner.clone();
-            let scope = self.captured.clone();
-            let local = self.local_stop.clone();
-            let settings = self.settings_stop.clone();
-            let cancelled = self.cancellation.clone();
-            self.owner
-                .context
-                .callback
-                .submit(
-                    "member.tool.finish",
-                    CommandStage::ExecutionRecover,
-                    move |sessions| {
-                        let loaded = if local.is_requested()
-                            || settings.is_requested()
-                            || cancelled.is_requested()
-                        {
-                            Err(map_recover(fail(ErrorCode::Cancelled, "member-tool")))
-                        } else {
-                            owner.check_scope(sessions, &scope).and(loaded)
-                        };
-                        broker::finish_agent_tool(
-                            sessions,
-                            &owner.context.plugins,
-                            request,
-                            ticket,
-                            prepared,
-                            consent,
-                            loaded,
-                        )
-                    },
-                )
-                .map_err(command_error)?
-                .await
-                .map_err(command_error)?;
+            let admission = EnvironmentAdmission::new(deadline, vec![self.cancellation.clone(),
+                self.local_stop.clone(), self.settings_stop.clone()]);
+            let loaded = admission.wait(|| self.request.check_service_dispatch(), || {
+                let plugins = self.owner.context.plugins.clone();
+                let io = self.owner.context.io.clone();
+                let prepared = prepared.clone();
+                let selected = self.request.clone();
+                let admission = admission.clone();
+                async move {
+                    io.run(CommandStage::ExecutionRecover, move || {
+                        admission.check().and_then(|()| selected.check_service_dispatch())
+                            .map_err(map_recover)?;
+                        // Loading immutable images and an existing instance's
+                        // proxy does not start the application or invoke a tool.
+                        Ok(EnvironmentAttempt::read_only(broker::load_runner(&plugins, &prepared)))
+                    }).await
+                }
+            }).await.map_err(map_recover);
+            let loaded = match loaded {
+                Ok(loaded) => {
+                    let plugins = self.owner.context.plugins.clone();
+                    let prepared = prepared.clone();
+                    let selected = self.request.clone();
+                    let checking = admission.clone();
+                    let stop = self.local_stop.clone();
+                    self.owner.context.io.run(CommandStage::ExecutionRecover, move || {
+                        checking.check().and_then(|()| selected.check_service_dispatch())
+                            .map_err(map_recover)?;
+                        // Startup can have effects. It runs once, outside the
+                        // local read-only contention wait and under the same ticket.
+                        broker::ensure_application_ready(&plugins, &prepared, deadline, &stop)?;
+                        Ok(loaded)
+                    }).await
+                }
+                Err(error) => Err(error),
+            };
+            let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let outcome = match &loaded {
+                Ok((revision, _, _)) => {
+                    let revision = *revision;
+                    admission.wait(|| self.request.check_service_dispatch(), || {
+                        let owner = self.owner.clone();
+                        let scope = self.captured.clone();
+                        let request = request.clone();
+                        let selected = self.request.clone();
+                        let prepared = prepared.clone();
+                        let consent = consent.clone();
+                        let loaded = loaded.clone();
+                        let admission = admission.clone();
+                        let finished = finished.clone();
+                        async move {
+                            let callback = owner.context.callback.clone();
+                            callback.submit("member.tool.finish", CommandStage::ExecutionRecover, move |sessions| {
+                                Ok(admission.enter(&owner.context.plugins, revision,
+                                    || selected.check_service_dispatch(), |_| {
+                                        owner.check_scope(sessions, &scope)?;
+                                        finished.store(true, std::sync::atomic::Ordering::Release);
+                                        let captured_scope = scope.team_work.then_some(scope.scope);
+                                        broker::finish_captured_agent_tool_current(sessions,
+                                            &owner.context.plugins, request, ticket, prepared, consent,
+                                            loaded, captured_scope)
+                                    }))
+                            })?.await
+                        }
+                    }).await
+                }
+                Err(error) => Err(command_error(error.clone())),
+            };
+            if let Err(error) = outcome {
+                if !finished.load(std::sync::atomic::Ordering::Acquire) {
+                    // The original IO is already joined. Release its ticket once
+                    // without admitting, replaying or fabricating a tool call.
+                    let token = self.owner.token.clone();
+                    let project = self.owner.project;
+                    self.owner.context.callback.submit("member.tool.abandon",
+                        CommandStage::ExecutionCancel, move |sessions| {
+                            let active = authorized(sessions, &token, project, CommandStage::ExecutionCancel)?;
+                            active.execution.as_mut().ok_or_else(|| map_recover(fail(ErrorCode::Unauthorized, "member-session")))?
+                                .tools.abandon(ticket)
+                        }).map_err(command_error)?.await.map_err(command_error)?;
+                }
+                return Err(error);
+            }
+
         }
         loop {
             self.live()?;
@@ -1094,11 +1231,7 @@ impl MemberHandler for Handler {
                     body,
                 } => {
                     self.check_scope().await?;
-                    if endpoint
-                        != tsumugi_core::ai::settings(&self.request.input)?
-                            .config
-                            .endpoint
-                    {
+                    if endpoint != self.endpoint {
                         return Err(fail(ErrorCode::Unauthorized, "member-endpoint"));
                     }
                     let reply = self

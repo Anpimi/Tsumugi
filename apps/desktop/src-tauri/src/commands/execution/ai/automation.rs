@@ -471,6 +471,12 @@ impl Automation {
             });
         };
         validate()?;
+        if input.envelope().operation == tsumugi_core::ai::team::OPERATION
+            && tsumugi_core::ai::team::settings(input)?.kind
+                != tsumugi_core::application::TeamWorkKind::Translation
+        {
+            return Ok(PreparedTracking { automation: self, pending: None });
+        }
         let plan = store.work_plan(lease.plan_id)?;
         let bindings = store.work_plan_review_checkers(&plan)?;
         if !bindings.is_empty() {
@@ -839,6 +845,7 @@ impl Automation {
         }
         // The ordinary runtime owns native execution and its cancellation. Only
         // owned evidence leaves the project thread for Core/domain computation.
+        let mut completed_without_candidate = Vec::new();
         for (attempt_id, attempt) in &mut self.attempts {
             if attempt.service_origin == ServiceOriginState::Released {
                 continue;
@@ -1035,6 +1042,15 @@ impl Automation {
                         .ok_or_else(|| {
                             ExecutionError::new(ErrorCode::CorruptLedger, "work-effect-result")
                         })?;
+                    let team = input.envelope().operation == tsumugi_core::ai::team::OPERATION;
+                    if team {
+                        let result = store.execution_result(*attempt_id, result)?;
+                        let output = tsumugi_core::ai::team::validate_output(input, &result)?;
+                        if matches!(output.outcome, tsumugi_core::application::TeamWorkOutcome::Waiting { .. }) {
+                            completed_without_candidate.push(*attempt_id);
+                            return Ok(None);
+                        }
+                    }
                     item.revision = store.saved_ai_candidate(*attempt_id, *item_id)?;
                     if let Some(revision) = item.revision {
                         let options = store
@@ -1203,11 +1219,12 @@ impl Automation {
                         let thread = std::thread::Builder::new()
                             .name("work-plan-candidate".into())
                             .spawn(move || {
-                                let _ = sender.send(
-                                    capture
-                                        .prepare(&tsumugi_core::AiAdoptionHandler)
-                                        .map(Computed::Candidate),
-                                );
+                                let prepared = if team {
+                                    capture.prepare(&tsumugi_core::TeamTranslationAdoptionHandler)
+                                } else {
+                                    capture.prepare(&tsumugi_core::AiAdoptionHandler)
+                                };
+                                let _ = sender.send(prepared.map(Computed::Candidate));
                             })
                             .map_err(|_| {
                                 ExecutionError::new(ErrorCode::StorageFailed, "work-effect-worker")
@@ -1240,6 +1257,9 @@ impl Automation {
                     Err(error) => command_failure(item, error),
                 }
             }
+        }
+        for attempt in completed_without_candidate {
+            self.attempts.remove(&attempt);
         }
     }
 }

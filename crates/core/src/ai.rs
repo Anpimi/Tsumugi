@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 pub mod member;
+pub mod team;
 pub mod member_wire;
 pub mod provider;
 

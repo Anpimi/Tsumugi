@@ -147,6 +147,20 @@ test("enforces the captured turn limit after tools and does not report a final c
   await kernel.close(); await state.kernel.close();
 });
 
+test("an explicit host end accepts a final tool turn at the captured request limit", async () => {
+  const profile = await fixture(async () => ({ body: sse(true) }));
+  const state = setup(profile, { finishTurn: async () => ({ action: "end" }) });
+  state.options.maxTurns = 1;
+  const kernel = new MemberKernel(state.options);
+  const result = await kernel.prompt(user("finish the captured work through its controlled tool"));
+  assert.equal(profile.bodies.length, 1);
+  assert.equal(state.toolCalls.length, 1);
+  assert.ok(state.order.indexOf("after") > state.order.indexOf("tool"));
+  assert.equal(result.messages.at(-1).role, "toolResult");
+  assert.equal(result.turnLimitReached, false);
+  await kernel.close(); await state.kernel.close();
+});
+
 
 test("a refused request capture never falls back to a direct model request", async () => {
   const profile = await fixture(async () => ({ body: sse(false) }));

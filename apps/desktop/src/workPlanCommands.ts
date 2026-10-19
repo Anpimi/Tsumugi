@@ -10,6 +10,7 @@ import type {
   WorkPlanAgentReconcileRequest,
   MaintenanceAssessmentRequest,
   WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest,
+  WorkPlanTeamExecutionRequest,
 } from "./generated/ai.requests";
 import type { AttemptDetail, ExecutionOutputView, WorkPlanView, TeamDiscussionPost, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
   WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView } from "./generated/ai.responses";
@@ -22,6 +23,7 @@ export type {
   WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkProtection,
   MaintenanceAssessment, MaintenanceAction, MaintenanceChoice, MaintenancePlanBasis,
   TeamHistoryPage, TeamDiscussionPost, TeamMemberRole,
+  TeamExecutionView,
 } from "./generated/ai.responses";
 export type { WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest } from "./generated/ai.requests";
 export type { PlanOptions, WorkPlanCommand, AutomationEffect } from "./generated/ai.requests";
@@ -39,6 +41,28 @@ function validDiscussionDisclosure(plan: WorkPlanView): boolean {
   return policy.profile === "current-plan-1" ? limits.maxArtifactBytes === 0 : limits.maxArtifactBytes > 0;
 }
 
+function validTeamExecutionDisclosure(plan: WorkPlanView): boolean {
+  const policy = plan.options.teamExecution, previews = plan.memberPreviews ?? [];
+  if (!policy) return previews.length === 0;
+  const initial = policy.members.find(member => member.memberId === policy.initialMemberId), limits = policy.limits;
+  if (!plan.preview || !plan.options.teamDiscussions || policy.members.length < 1 || policy.members.length > 8 || previews.length !== policy.members.length
+    || new Set(previews.map(value => value.memberId)).size !== previews.length
+    || new Set(policy.members.map(value => value.memberId)).size !== policy.members.length
+    || new Set(policy.members.map(value => value.roleVersionId)).size !== policy.members.length
+    || !initial?.kinds.includes("translation") || !initial.unitIds.includes(policy.initialUnitId)
+    || limits.maxActivations < 1 || limits.maxActivations > Math.min(300, plan.preview.config.maxRequests)
+    || limits.maxConcurrency < 1 || limits.maxConcurrency > Math.min(8, plan.preview.config.concurrency, limits.maxActivations)
+    || limits.maxNoProgress < 1 || limits.maxNoProgress > limits.maxActivations) return false;
+  return policy.members.every(member => {
+    const preview = previews.find(value => value.memberId === member.memberId)?.preview;
+    return !!preview && sameAiConfig(preview.config, member.config) && preview.recipe === plan.preview!.recipe
+      && preview.items.length === member.unitIds.length && new Set(preview.items.map(item => item.unitId)).size === member.unitIds.length
+      && preview.items.every(item => member.unitIds.includes(item.unitId) && item.targetLocale === plan.locale && plan.scope.some(unit =>
+        unit.unitId === item.unitId && unit.nativeKey === item.nativeKey && unit.sourceRevisionId === item.sourceRevisionId && unit.sourceSnapshotId === item.sourceSnapshotId))
+      && member.toolHandles.every(handle => plan.tools?.entries.some(tool => tool.handle === handle));
+  });
+}
+
 function publicationMatches(post: TeamDiscussionPost, request: WorkPlanTeamPublishRequest): boolean {
   return post.planId === request.lease.planId && post.author.kind === "human" && post.author.actor === "local-user"
     && post.author.binding.delegation === null
@@ -48,6 +72,25 @@ function publicationMatches(post: TeamDiscussionPost, request: WorkPlanTeamPubli
 
 /** Receipts report an action's historical result. Read status for current authority. */
 export const workPlanCommands = {
+  teamExecution: async (request: WorkPlanTeamExecutionRequest) => {
+    if (!validators.validateRequestWorkPlanTeamExecution(request)) throw new Error("Invalid team execution read");
+    const value = await checkedInvoke("read_work_plan_team_execution", request, validators.validateResponseWorkPlanTeamExecution);
+    if (value.planId !== request.planId || value.works.length > request.limit || value.messages.length > request.limit
+      || value.members.some(member => member.planId !== request.planId)
+      || value.works.some((work, index) => work.receipt.planId !== request.planId
+        || work.validation !== "valid" && (work.output !== null || work.candidateRevisionId !== null)
+        || (work.request ? !work.author || work.author.binding.lease.planId !== request.planId
+          || work.request.intentId !== work.receipt.intentId || work.request.recipientMemberId !== work.receipt.memberId
+          || jsonIdentity(work.request.target) !== jsonIdentity(work.target) : work.author !== null)
+        || BigInt(work.sequence) <= BigInt(index ? value.works[index - 1].sequence : request.afterWork ?? "0"))
+      || value.messages.some((message, index) => message.planId !== request.planId || message.sender.binding.lease.planId !== request.planId
+        || BigInt(message.sequence) <= BigInt(index ? value.messages[index - 1].sequence : request.afterMessage ?? "0"))
+      || new Set(value.works.map(work => work.receipt.intentId)).size !== value.works.length
+      || new Set(value.messages.map(message => message.messageId)).size !== value.messages.length
+      || value.nextWorkAfter !== null && value.nextWorkAfter !== value.works.at(-1)?.sequence
+      || value.nextMessageAfter !== null && value.nextMessageAfter !== value.messages.at(-1)?.sequence) invalidAcknowledgement();
+    return value;
+  },
   teamHistory: async (request: WorkPlanTeamHistoryRequest) => {
     if (!validators.validateRequestWorkPlanTeamHistory(request)) throw new Error("Invalid team history request");
     const value = await checkedInvoke("read_work_plan_team_history", request, validators.validateResponseWorkPlanTeamHistory);
@@ -112,7 +155,9 @@ export const workPlanCommands = {
       || value.options.adoptResources !== request.options.adoptResources
       || value.options.deliver !== request.options.deliver
       || jsonIdentity(value.options.teamDiscussions) !== jsonIdentity(request.options.teamDiscussions)
+      || jsonIdentity(value.options.teamExecution) !== jsonIdentity(request.options.teamExecution)
       || !validDiscussionDisclosure(value)
+      || !validTeamExecutionDisclosure(value)
       || value.options.stages.length !== stages.size
       || value.options.stages.some(choice => stages.get(choice.stage) !== choice.mode)
       || value.options.advisoryChecks.length !== request.advisoryChecks.length
@@ -223,6 +268,7 @@ export const workPlanCommands = {
     if (value.plan.planId !== request.planId || value.lease.planId !== request.planId
       || BigInt(value.lease.generation) === 0n
       || !validDiscussionDisclosure(value.plan)
+      || !validTeamExecutionDisclosure(value.plan)
       || Boolean(value.plan.tools) !== Boolean(value.toolInvocations)
       || (value.plan.tools && (!value.toolInvocations || value.toolInvocations.limit !== value.plan.tools.maxInvocations
         || value.toolInvocations.reserved > value.toolInvocations.limit || !validWorkPlanApplicationTools(value.plan.tools.entries)))) invalidAcknowledgement();

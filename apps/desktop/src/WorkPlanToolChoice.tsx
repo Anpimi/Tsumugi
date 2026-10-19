@@ -15,7 +15,7 @@ export interface PlanToolDraft {
   entries: PlanToolEntryDraft[]; maxInvocations: number;
 }
 interface CapturedPlanTool {
-  tool: PluginToolRequest; target: string; selections: string[]; view: PluginToolView; readKey: readonly unknown[];
+  rowId: number; tool: PluginToolRequest; target: string; selections: string[]; view: PluginToolView; readKey: readonly unknown[];
 }
 export interface PlanToolChoiceHandle {
   capture: () => { entries: CapturedPlanTool[]; maxInvocations: number } | null;
@@ -136,7 +136,7 @@ function PlanToolEntry({ entry, number, open, disabled, duplicate, inventory, in
   useImperativeHandle(ref, () => ({ focus() { providerInput.current?.focus(); }, capture() {
     if (!open || disabled || duplicate || !valid || !request || !environment.data || !matchesTool(environment.data, request)
       || inventoryError || inventoryFetching || environment.error || environment.isFetching) return unavailable();
-    return structuredClone({ tool: request, target, selections: entry.selections, view: environment.data,
+    return structuredClone({ rowId: entry.id, tool: request, target, selections: entry.selections, view: environment.data,
       readKey:["tool-query-environment",entry.choice,entry.runtime,refresh,inventoryUpdatedAt] });
   } }));
   return <fieldset disabled={disabled} aria-busy={environment.isFetching}>

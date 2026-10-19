@@ -355,7 +355,9 @@
           "adopt-resources",
           "deliver",
           "query-tools",
-          "publish-discussion"
+          "publish-discussion",
+          "dispatch-team-work",
+          "send-team-message"
         ],
         "type": "string"
       },
@@ -1024,6 +1026,16 @@
               }
             ],
             "description": "Explicit consent for bounded, same-plan published discussions."
+          },
+          "teamExecution": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamExecutionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1570,6 +1582,128 @@
           "sourceRevisionId"
         ],
         "type": "object"
+      },
+      "TeamExecutionLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxActivations": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxConcurrency": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxNoProgress": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxActivations",
+          "maxConcurrency",
+          "maxNoProgress"
+        ],
+        "type": "object"
+      },
+      "TeamExecutionMember": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/AiConfig"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/definitions/TeamWorkKind"
+            },
+            "type": "array"
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "role": {
+            "type": "string"
+          },
+          "roleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "toolHandles": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "memberId",
+          "roleVersionId",
+          "displayName",
+          "role",
+          "config",
+          "unitIds",
+          "toolHandles",
+          "kinds"
+        ],
+        "type": "object"
+      },
+      "TeamExecutionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "initialMemberId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "initialUnitId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "limits": {
+                "$ref": "#/definitions/TeamExecutionLimits"
+              },
+              "members": {
+                "items": {
+                  "$ref": "#/definitions/TeamExecutionMember"
+                },
+                "type": "array"
+              },
+              "profile": {
+                "const": "bounded-team-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile",
+              "initialMemberId",
+              "initialUnitId",
+              "members",
+              "limits"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamWorkKind": {
+        "enum": [
+          "translation",
+          "review",
+          "evidence"
+        ],
+        "type": "string"
       },
       "TextReviewBinding": {
         "additionalProperties": false,
@@ -2526,6 +2660,53 @@
         ],
         "type": "object"
       },
+      "WorkPlanTeamExecutionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "afterMessage": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "afterWork": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 16,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "limit"
+        ],
+        "type": "object"
+      },
       "WorkPlanTeamHistoryRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2896,6 +3077,9 @@
       "workPlanStatus": {
         "$ref": "#/definitions/WorkPlanStatusRequest"
       },
+      "workPlanTeamExecution": {
+        "$ref": "#/definitions/WorkPlanTeamExecutionRequest"
+      },
       "workPlanTeamHistory": {
         "$ref": "#/definitions/WorkPlanTeamHistoryRequest"
       },
@@ -2933,6 +3117,7 @@
       "workPlanGenerationDiscard",
       "workPlanAgentOpen",
       "workPlanTeamHistory",
+      "workPlanTeamExecution",
       "workPlanTeamPost",
       "workPlanTeamPublish",
       "workPlanTeamPublicationAction",
@@ -3652,7 +3837,9 @@
           "adopt-resources",
           "deliver",
           "query-tools",
-          "publish-discussion"
+          "publish-discussion",
+          "dispatch-team-work",
+          "send-team-message"
         ],
         "type": "string"
       },
@@ -5913,6 +6100,16 @@
               }
             ],
             "description": "Explicit consent for bounded, same-plan published discussions."
+          },
+          "teamExecution": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamExecutionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -6626,6 +6823,52 @@
           "actions",
           "blockedReason",
           "receiptId"
+        ],
+        "type": "object"
+      },
+      "RequestTeamWork": {
+        "additionalProperties": false,
+        "properties": {
+          "causeMessageId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "intentId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "kind": {
+            "$ref": "#/definitions/TeamWorkKind"
+          },
+          "postIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "recipientMemberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "intentId",
+          "recipientMemberId",
+          "target",
+          "kind",
+          "instructions",
+          "postIds",
+          "causeMessageId"
         ],
         "type": "object"
       },
@@ -7952,6 +8195,204 @@
         ],
         "type": "object"
       },
+      "TeamExecutionLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxActivations": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxConcurrency": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxNoProgress": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxActivations",
+          "maxConcurrency",
+          "maxNoProgress"
+        ],
+        "type": "object"
+      },
+      "TeamExecutionMember": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/AiConfig"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/definitions/TeamWorkKind"
+            },
+            "type": "array"
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "role": {
+            "type": "string"
+          },
+          "roleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "toolHandles": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "memberId",
+          "roleVersionId",
+          "displayName",
+          "role",
+          "config",
+          "unitIds",
+          "toolHandles",
+          "kinds"
+        ],
+        "type": "object"
+      },
+      "TeamExecutionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "initialMemberId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "initialUnitId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "limits": {
+                "$ref": "#/definitions/TeamExecutionLimits"
+              },
+              "members": {
+                "items": {
+                  "$ref": "#/definitions/TeamExecutionMember"
+                },
+                "type": "array"
+              },
+              "profile": {
+                "const": "bounded-team-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile",
+              "initialMemberId",
+              "initialUnitId",
+              "members",
+              "limits"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamExecutionView": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ProviderBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "consumptions": {
+            "items": {
+              "$ref": "#/definitions/TeamMessageConsumption"
+            },
+            "type": "array"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/TeamMemberRole"
+            },
+            "type": "array"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/definitions/TeamMessage"
+            },
+            "type": "array"
+          },
+          "nextMessageAfter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nextWorkAfter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "stopReason": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamStopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "works": {
+            "items": {
+              "$ref": "#/definitions/TeamWorkView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "planId",
+          "members",
+          "works",
+          "messages",
+          "consumptions",
+          "budget",
+          "stopReason",
+          "nextWorkAfter",
+          "nextMessageAfter"
+        ],
+        "type": "object"
+      },
       "TeamHistoryPage": {
         "additionalProperties": false,
         "properties": {
@@ -8031,6 +8472,22 @@
         ],
         "type": "object"
       },
+      "TeamMemberPreviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "preview": {
+            "$ref": "#/definitions/AiPreviewView"
+          }
+        },
+        "required": [
+          "memberId",
+          "preview"
+        ],
+        "type": "object"
+      },
       "TeamMemberRole": {
         "additionalProperties": false,
         "description": "Descriptive identity and the original model configuration, never a grant.",
@@ -8092,6 +8549,384 @@
           "expectedRoleVersionId",
           "displayName",
           "role"
+        ],
+        "type": "object"
+      },
+      "TeamMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "causeMessageId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "messageId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "postIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "recipientMemberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sender": {
+            "$ref": "#/definitions/TeamMemberAuthor"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "messageId",
+          "sequence",
+          "planId",
+          "sender",
+          "recipientMemberId",
+          "target",
+          "body",
+          "postIds",
+          "causeMessageId"
+        ],
+        "type": "object"
+      },
+      "TeamMessageConsumption": {
+        "additionalProperties": false,
+        "description": "Presentation in an admitted request, not proof of a remote model's understanding.",
+        "properties": {
+          "messageId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "providerRequestId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "messageId",
+          "taskId",
+          "providerRequestId"
+        ],
+        "type": "object"
+      },
+      "TeamReviewBasis": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "post",
+                "type": "string"
+              },
+              "postId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "postId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "artifact",
+                "type": "string"
+              },
+              "reference": {
+                "$ref": "#/definitions/TeamArtifactReference"
+              }
+            },
+            "required": [
+              "kind",
+              "reference"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamReviewVerdict": {
+        "enum": [
+          "accept",
+          "revise",
+          "unresolved"
+        ],
+        "type": "string"
+      },
+      "TeamStopReason": {
+        "enum": [
+          "activation-limit",
+          "no-progress",
+          "expired",
+          "budget-exhausted",
+          "needs-reconciliation"
+        ],
+        "type": "string"
+      },
+      "TeamWorkKind": {
+        "enum": [
+          "translation",
+          "review",
+          "evidence"
+        ],
+        "type": "string"
+      },
+      "TeamWorkOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "translation",
+                "type": "string"
+              },
+              "targetLocale": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "unitId",
+              "targetLocale",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "review",
+                "type": "string"
+              },
+              "postIds": {
+                "items": {
+                  "$ref": "#/definitions/ExecutionId"
+                },
+                "type": "array"
+              },
+              "reviewed": {
+                "$ref": "#/definitions/TeamReviewBasis"
+              },
+              "verdict": {
+                "$ref": "#/definitions/TeamReviewVerdict"
+              }
+            },
+            "required": [
+              "kind",
+              "reviewed",
+              "postIds",
+              "verdict"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "evidence",
+                "type": "string"
+              },
+              "postIds": {
+                "items": {
+                  "$ref": "#/definitions/ExecutionId"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "postIds"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "waiting",
+                "type": "string"
+              },
+              "requestedIntentIds": {
+                "items": {
+                  "$ref": "#/definitions/ExecutionId"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "requestedIntentIds"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamWorkOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/definitions/TeamWorkOutcome"
+          },
+          "requests": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usageIncomplete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "outcome",
+          "usage",
+          "requests",
+          "usageIncomplete"
+        ],
+        "type": "object"
+      },
+      "TeamWorkReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "intentId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "roleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "intentId",
+          "planId",
+          "memberId",
+          "roleVersionId",
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "TeamWorkView": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamMemberAuthor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidateRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "execution": {
+            "$ref": "#/definitions/ExecutionState"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamWorkOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "receipt": {
+            "$ref": "#/definitions/TeamWorkReceipt"
+          },
+          "request": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/RequestTeamWork"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          },
+          "validation": {
+            "$ref": "#/definitions/ValidationState"
+          }
+        },
+        "required": [
+          "sequence",
+          "receipt",
+          "author",
+          "request",
+          "target",
+          "execution",
+          "validation",
+          "output",
+          "candidateRevisionId"
         ],
         "type": "object"
       },
@@ -8618,6 +9453,26 @@
       "UnsignedDecimal": {
         "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
         "type": "string"
+      },
+      "Usage": {
+        "additionalProperties": false,
+        "properties": {
+          "completionTokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "promptTokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "promptTokens",
+          "completionTokens"
+        ],
+        "type": "object"
       },
       "ValidationState": {
         "enum": [
@@ -9475,6 +10330,15 @@
               }
             ]
           },
+          "memberPreviews": {
+            "items": {
+              "$ref": "#/definitions/TeamMemberPreviewView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "options": {
             "$ref": "#/definitions/PlanOptions"
           },
@@ -9678,6 +10542,9 @@
       "workPlanStatus": {
         "$ref": "#/definitions/WorkPlanStatusView"
       },
+      "workPlanTeamExecution": {
+        "$ref": "#/definitions/TeamExecutionView"
+      },
       "workPlanTeamHistory": {
         "$ref": "#/definitions/TeamHistoryPage"
       },
@@ -9709,6 +10576,7 @@
       "workPlanGenerationStartRead",
       "workPlanAgent",
       "workPlanTeamHistory",
+      "workPlanTeamExecution",
       "workPlanTeamPost",
       "workPlanTeamPublicationAction",
       "workPlanAgentReconcile",

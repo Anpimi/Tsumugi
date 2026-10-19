@@ -1,5 +1,30 @@
 # Application versioning and changelog maintenance
 
+Explicitly approved bounded teams capture each member's real model configuration,
+sharing projection, role and permitted item/tool subset. Their typed work and
+message facts link to the original execution, budget, request and translation
+revision owners. Root work executes the initial member directly; each subsequent
+activation is a new original task and attempt. The current-only project format
+advances to schema 56. Schema 55 and earlier development directories are preserved
+and refused without migration or reset; create a new project to reimport sources.
+The first profile requires a new approved plan after pause and explicitly rejects
+the old Continue route, which would otherwise produce an ordinary translation
+input. Ordinary non-team continuation is unchanged. Correct human team
+continuation and membership changes remain separate development work. The first
+profile conservatively counts each validated work completion against its
+unconfirmed-progress limit; model text and new reference identities cannot
+reset it. This is a completion bound, not an automated quality judgment.
+
+The same Pi member artifact supports typed team work through its existing generic
+frames; an explicit host end on the final allowed tool turn now settles normally.
+The internal member protocol remains 2, SDK/Process3 and WorkPlan3 identities are
+unchanged, and there are no dependency or version-source changes. These new
+storage and experimental API contracts remain in the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch. The bilingual Unreleased
+entries describe the behavior and current format without an additional version
+bump, release tag or publication. Earlier source assessments below retain their
+own format baselines.
+
 The local plan discussion view adds bounded member/post history and a trusted
 human publication entry. History and original-publication confirmation remain
 available after pause or reopen without restoring model authority. Publication

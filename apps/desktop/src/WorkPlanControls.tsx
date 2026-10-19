@@ -102,6 +102,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
       ||jsonIdentity(latest.plan.scope)!==jsonIdentity(original.prepared.scope)
       ||jsonIdentity(latest.plan.options)!==jsonIdentity(original.prepared.options)
       ||jsonIdentity(latest.plan.teamDiscussionLimits)!==jsonIdentity(original.prepared.teamDiscussionLimits)
+      ||jsonIdentity(latest.plan.memberPreviews)!==jsonIdentity(original.prepared.memberPreviews)
       ||jsonIdentity(latest.plan.preview)!==jsonIdentity(original.prepared.preview)
       ||jsonIdentity(latest.plan.tools)!==jsonIdentity(original.prepared.tools))throw {outcome:"unknown",reason:"invalid-work-plan-acknowledgement"};
     // A replayed receipt is historical. It must never restore older authority.
@@ -263,6 +264,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
       ...(plan.options.selectionPolicy==="candidates-only"?[]:
         [plan.options.selectionPolicy==="missing-only"?"select-missing":"replace-captured-selection"] as const),
       ...(plan.options.teamDiscussions?["publish-discussion"] as const:[]),
+      ...(plan.options.teamExecution?["dispatch-team-work","send-team-message"] as const:[]),
       ...(toolsRequired?["query-tools"] as const:[])];
   }
   function startPayload():AiStartCommandPayload|undefined {
@@ -293,7 +295,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   function controlAvailability(payload?:AiPlanControlCommandPayload):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;
     if(!payload||!status||!statusCurrent()||jsonIdentity(payload)!==jsonIdentity(controlPayload(payload.command)))return unavailable;
-    if(payload.command==="continue")return !session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent&&checkerConfirmed&&toolsConfirmed
+    if(payload.command==="continue")return !status.plan.options.teamExecution&&!session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent&&checkerConfirmed&&toolsConfirmed
       &&applicationsConfirmed&&applicationTools.current()&&validMinutes?{enabled:true}:unavailable;
     return (payload.command==="pause"?status.state==="active":payload.command==="stop"?status.state!=="stopped":status.state!=="taken-over"&&status.state!=="stopped")?{enabled:true}:unavailable;
   }
@@ -451,7 +453,8 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         {status.state !== "taken-over" ? <button className="secondary-button" disabled={!controlAvailability(controlPayload("take-over")).enabled}
           onClick={() => dispatchControl("take-over")}>{t("ai.plan.takeOver")}</button> : null}
       </> : null}
-      {status.state === "paused" || status.state === "taken-over" ? <>
+      {status.plan.options.teamExecution && (status.state !== "active" || BigInt(status.expiresAt) <= BigInt(Math.floor(Date.now() / 1000))) ? <p>{t("ai.team.reprepare")}</p> : null}
+      {(status.state === "paused" || status.state === "taken-over") && !status.plan.options.teamExecution ? <>
         <p>{t("ai.plan.continueHelp")}</p>{duration}
         <label className="source-check"><input type="checkbox" checked={renewConsent} disabled={blocked || Boolean(ready)}
           onChange={event => setRenewConsent(event.target.checked)} />{t("ai.plan.renewConsent")}</label>

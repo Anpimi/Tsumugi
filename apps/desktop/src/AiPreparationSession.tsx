@@ -17,6 +17,7 @@ import { useWorkPlanAgentSession } from "./WorkPlanAgentControls";
 import { childLifecycleKey, childRunWorking, hasChildUncertainty } from "./WorkPlanChildControls";
 import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
 import { useTeamDiscussionSession } from "./TeamDiscussionSession";
+import { editTeamMemberConfig, teamDraftProblem, type TeamExecutionDraft } from "./TeamExecutionDraft";
 import type { PlanToolDraft, PlanToolChoiceHandle } from "./WorkPlanToolChoice";
 import type { PluginTextReviewSelection } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -38,6 +39,7 @@ interface State {
   maintenance: MaintenancePlanBasis | null;
   presetName: string; config: AiConfig; locale: string; selected: string[]; selectedSnapshotId: string | null; capture: PreparationCapture | null; consent: boolean;
   options: PlanOptions; toolDraft: PlanToolDraft | null; advisoryChecks: PluginTextReviewSelection[]; planId: string | null;
+  teamDraft: TeamExecutionDraft | null;
   startedPlan: { prepared: WorkPlanView; attemptId: string; taskId: string | null; generation: string; unitIds: string[] } | null;
   staleReason: "source" | "preview" | "connection" | null; dirty: boolean; editSeq: number; sourceGeneration: number; busy: boolean;
   checkedTask: { attemptId: string; taskId: string } | null;
@@ -109,7 +111,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   const connections = useConnectionFacts();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state,setState] = useState<PreparationState>(() => preparationState({ maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,
-    options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
+    options:fixed(defaultPlanOptions),toolDraft:null,teamDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
     staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,checkedTask:null,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null,strategyDefault:"loading",strategyDefaultFailure:null }));
   const stateRef = useRef(state), mounted = useSessionAlive(), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
   const candidateReadCleanup = useRef<(() => void) | null>(null);
@@ -177,7 +179,10 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       action.phase !== "not-enqueued" && action.request.taskId === taskId && action.request.attemptId === attemptId));
   }
   function available(locale = current().locale) { return locale !== "" && locales.current.includes(locale); }
-  function connectionCurrent() { return connectionConfigCurrent(connections.current(), current().config); }
+  function connectionCurrent() {
+    const before = current(), view = connections.current();
+    return connectionConfigCurrent(view, before.config) && (!before.teamDraft || before.teamDraft.members.every(member => connectionConfigCurrent(view, member.config)));
+  }
   function selectConnection(view: ConnectionReadView | null, id: string, expectedEditSeq: number) {
     const before = current();
     if (!live() || reserved() || before.editSeq !== expectedEditSeq) return false;
@@ -190,17 +195,34 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   function invalidatePreview(reason: State["staleReason"] = null) {
     basis.current++; update(before => ({ ...before,capture:null,consent:false,staleReason:reason }));
   }
-  function edit<K extends "config" | "presetName" | "locale" | "selected" | "options" | "toolDraft" | "advisoryChecks">(key: K, value: State[K]) {
+  function edit<K extends "config" | "presetName" | "locale" | "selected" | "options" | "toolDraft" | "teamDraft" | "advisoryChecks">(key: K, value: State[K]) {
     basis.current++;
-    update(before => ({ ...before,[key]:fixed(value),...(key==="selected"||key==="locale"?{maintenance:null}:{}),...(key==="locale"&&value!==before.locale?{config:fixed({...before.config,contextStrategy:null})}:{}),capture:null,consent:false,staleReason:null,
+    update(before => ({ ...before,[key]:fixed(value),...(key==="selected"||key==="locale"?{maintenance:null}:{}),...(key==="locale"&&value!==before.locale?{
+      config:fixed({...before.config,contextStrategy:null}),teamDraft:before.teamDraft?fixed({...before.teamDraft,members:before.teamDraft.members.map(member=>({...member,config:{...member.config,contextStrategy:null}}))}):null
+    }:{}),capture:null,consent:false,staleReason:null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
+  }
+  function editTeamConfig(key: number, change: SetStateAction<AiConfig>) {
+    const draft = current().teamDraft;
+    if (!live() || !draft) return;
+    edit("teamDraft", { ...draft, members: draft.members.map(member => member.key === key
+      ? editTeamMemberConfig(member, typeof change === "function" ? change(member.config) : change) : member) });
+  }
+  function selectTeamConnection(key: number, view: ConnectionReadView | null, id: string, expectedEditSeq: number) {
+    const before = current(), member = before.teamDraft?.members.find(member => member.key === key);
+    if (!live() || reserved() || before.editSeq !== expectedEditSeq || !member) return false;
+    if (!id) { editTeamConfig(key, { ...member.config, connectionProfile: null }); return true; }
+    if (!view || connections.current() !== view) return false;
+    const reference = view.references.find(value => value.profileId === id), profile = view.snapshot.profiles.find(value => value.id === id && !value.archived);
+    if (!reference || !profile) return false;
+    editTeamConfig(key, { ...member.config, ...profile.connection, connectionProfile: reference }); return true;
   }
   useLayoutEffect(() => {
     const view = connections.current(), before = current();
     // Pending actions/checked grants keep their original continuation proof.
     // A focus reread which confirms the same reference keeps preview/consent.
-    if (view && !reserved() && (before.prepared || before.preparedPlan?.preview || before.consent) && !connectionConfigCurrent(view, before.config)) invalidatePreview("connection");
-  }, [connections.state, state.busy, state.config, state.capture, state.consent, planControl.state.pending, planControl.state.ready]);
+    if (view && !reserved() && (before.prepared || before.preparedPlan?.preview || before.consent) && !connectionCurrent()) invalidatePreview("connection");
+  }, [connections.state, state.busy, state.config, state.teamDraft, state.capture, state.consent, planControl.state.pending, planControl.state.ready]);
   function receiveContentSelection(selection: ContentSelection, expectedEditSeq: number) {
     if (!canReceiveContentSelection() || current().editSeq !== expectedEditSeq
       || selection.projectId !== session.projectId || selection.sessionToken !== session.sessionToken
@@ -324,6 +346,8 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       candidateReadCleanup.current = dispose;
       try {
       if (capture.config && !validLimits(capture.config)) throw { field: "ai-limits" };
+      if (before.teamDraft && (!assisted || !capture.options.teamDiscussions || teamDraftProblem(before.teamDraft, before.config, before.selected, before.toolDraft?.entries.map(entry => entry.id) ?? [])
+        || before.teamDraft.members.some(member => !validLimits(member.config)))) throw { field: "team-config" };
       if (capture.unitIds.length > (capture.config?.maxItems ?? 1000) || new Set(capture.unitIds).size !== capture.unitIds.length) throw { field: "ai-scope" };
       if (capture.unitIds.some(id => !validateResponseIdentity(id))) throw { field: "ai-source" };
       if (assisted && before.toolDraft && !selectedTools) throw { reason: "work-plan-tool-unavailable", outcome: "rejected" };
@@ -343,9 +367,24 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
         if (!first) throw { reason: "work-plan-tool-unavailable", outcome: "rejected" };
         toolSelection = { maxInvocations: selectedTools.maxInvocations, entries: [first, ...rest] };
       }
-      if (!live() || version !== basis.current || !available(capture.locale) || !sourceCurrent() || !toolsCurrent()) return;
-      const result = await workPlanCommands.prepare({ ...capture, toolSelection }, selectedTools?.entries.map(tool => tool.view) ?? []);
-      if (!live() || version !== basis.current || !available(capture.locale) || !sourceCurrent() || !toolsCurrent()) return;
+      let options = capture.options;
+      if (before.teamDraft) {
+        const members = await Promise.all(before.teamDraft.members.map(async member => {
+          const [memberId, roleVersionId] = await Promise.all([executionCommands.identity(session), executionCommands.identity(session)]);
+          return { memberId, roleVersionId, displayName: member.displayName, role: member.role, config: member.config,
+            unitIds: member.unitIds, kinds: member.kinds, toolHandles: member.toolRowIds.map(rowId => {
+              const index = selectedTools?.entries.findIndex(tool => tool.rowId === rowId) ?? -1;
+              const handle = index >= 0 ? toolSelection?.entries[index]?.handle : null;
+              if (!handle) throw { field: "team-config" }; return handle;
+            }) };
+        }));
+        const initial = members[before.teamDraft.members.findIndex(member => member.key === before.teamDraft!.initialKey)];
+        if (!initial) throw { field: "team-config" };
+        options = { ...options, teamExecution: { profile: "bounded-team-1", initialMemberId: initial.memberId, initialUnitId: before.teamDraft.initialUnitId, members, limits: before.teamDraft.limits } };
+      }
+      if (!live() || version !== basis.current || !available(capture.locale) || !sourceCurrent() || !toolsCurrent() || assisted && !connectionCurrent()) return;
+      const result = await workPlanCommands.prepare({ ...capture, options, toolSelection }, selectedTools?.entries.map(tool => tool.view) ?? []);
+      if (!live() || version !== basis.current || !available(capture.locale) || !sourceCurrent() || !toolsCurrent() || assisted && !connectionCurrent()) return;
       // The plan's basis is canonicalized by Core; its AI preview retains the
       // user's ordered selection. Verify complete coverage without rebinding it.
       const units=new Set(capture.unitIds);
@@ -682,7 +721,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     defaultCaptureSequence.current = current().editSeq + 1;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
     update(before => ({ ...before,maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,strategyDefault:"loading",strategyDefaultFailure:null,
-      dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],failure:null,notice:null })); defaultWait.current = loadStrategyDefault(); return true;
+      dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,teamDraft:null,advisoryChecks:[],failure:null,notice:null })); defaultWait.current = loadStrategyDefault(); return true;
   }
   const contentToolAttempt = agent.current().toolRun?.prepared.attemptId ?? null;
   const subscribeContentAvailability = useCallback((notify: () => void) => reads.client.getQueryCache().subscribe(event => {
@@ -694,6 +733,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     planControl, agent, component, discussions, captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
+    setTeamDraft:(value:TeamExecutionDraft|null) => edit("teamDraft",value), editTeamConfig, selectTeamConnection,
     setAdvisoryChecks:(value:PluginTextReviewSelection[]) => edit("advisoryChecks",value),
     current,reserved,targetAvailable,connectionCurrent,selectConnection,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,receiveContentSelection,canReceiveContentSelection,loadStrategyDefault,
     setPresetName:(value:SetStateAction<string>) => edit("presetName",typeof value === "function" ? value(current().presetName) : value),

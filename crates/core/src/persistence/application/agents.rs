@@ -99,6 +99,9 @@ pub(in crate::persistence) fn validate_model_input(
     c: &Connection,
     input: &FixedInput,
 ) -> Result<(), ExecutionError> {
+    if input.envelope().operation == crate::ai::team::OPERATION {
+        return super::coordination::validate_model_input(c, input);
+    }
     let Some(lease) = input.envelope().automation else {
         return Ok(());
     };
@@ -251,6 +254,14 @@ impl ProjectStore {
             .map_err(|_| fail(ErrorCode::StorageFailed, "work-plan-read"))?;
         super::super::review::read_snapshot(c, |_| {
             self.check_work_plan_agent_scope(parent)?;
+            if control::load(c, parent.lease.plan_id)?
+                .plan
+                .options
+                .team_execution
+                .is_some()
+            {
+                return Err(fail(ErrorCode::Unauthorized, "team-work-admission"));
+            }
             if parent.delegation.is_some() {
                 return Err(fail(ErrorCode::Unauthorized, "work-plan-agent-leaf"));
             }

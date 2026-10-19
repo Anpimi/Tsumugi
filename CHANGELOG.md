@@ -6,6 +6,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Add an explicitly approved, bounded team of members with captured roles,
+  model destinations and item/tool scopes. Members can request work, exchange
+  directed messages and return translation, advisory review, evidence or waiting
+  results through the existing execution and shared request budget. Received
+  messages, request consumption and adopted results remain distinct.
+  This initial profile requires a new explicitly authorized plan after pause;
+  the existing Continue action does not resume its team grant. Each valid work
+  completion counts toward its conservative unconfirmed-progress limit; model
+  text or new reference identities do not reset it.
+
 - View a plan's published discussions, members, original role versions and cited
   versions locally, including after pause or reopen. Publish human notes under
   the original active permission, and confirm an uncertain publication using
@@ -16,7 +26,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   discussions. Members can read the exact referenced translation revision or
   the target's original source text, within a disclosed result limit; other
   units and additional source context remain excluded. Existing discussion-only
-  plans keep their original scope. Current-only project schema 55 requires a
+  plans keep their original scope. Current-only project schema 56 requires a
   new development project and preserves earlier directories without migration
   or reset; internal member protocol 2 and the SDK plugin protocol are unchanged.
 
@@ -26,7 +36,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   with its captured model destination. Each Pi request uses a Core-frozen view
   without changing local input or tool history, and records that view with its
   original physical request. Internal member protocol 2 and current-only project
-  schema 55 require matching application artifacts and a new development project;
+  schema 56 require matching application artifacts and a new development project;
   earlier directories are preserved and refused without migration or reset.
 
 - Run bounded Agent generation through a captured Pi member process with
@@ -43,7 +53,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   reservation before sending HTTP. Unknown usage stays occupied; conflicting
   usage cannot replace an earlier report. Shared model IO now interrupts pending
   JSON/SSE response waits when cancelled. The current-only project format is
-  schema 55; keep earlier development directories and create a new project to
+  schema 56; keep earlier development directories and create a new project to
   reimport sources, as they are preserved and refused without migration or reset.
 
 - Confirm uncertain translation match previews from their original saved projection

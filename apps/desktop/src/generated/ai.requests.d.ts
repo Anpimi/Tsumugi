@@ -14,7 +14,9 @@ export type AutomationEffect =
   | "adopt-resources"
   | "deliver"
   | "query-tools"
-  | "publish-discussion";
+  | "publish-discussion"
+  | "dispatch-team-work"
+  | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
 export type MaintenanceAction = "keep" | "recheck" | "repair" | "unresolved";
 /**
@@ -90,6 +92,14 @@ export type TeamDiscussionPolicy =
   | {
       profile: "current-plan-2";
     };
+export type TeamExecutionPolicy = {
+  initialMemberId: ExecutionId;
+  initialUnitId: ExecutionId;
+  limits: TeamExecutionLimits;
+  members: TeamExecutionMember[];
+  profile: "bounded-team-1";
+};
+export type TeamWorkKind = "translation" | "review" | "evidence";
 export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
 export type TeamArtifactReference =
   | {
@@ -136,6 +146,7 @@ export interface Requests {
   workPlanStart: WorkPlanStartRequest;
   workPlanStartAction: WorkPlanStartRequest;
   workPlanStatus: WorkPlanStatusRequest;
+  workPlanTeamExecution: WorkPlanTeamExecutionRequest;
   workPlanTeamHistory: WorkPlanTeamHistoryRequest;
   workPlanTeamPost: WorkPlanTeamPostRequest;
   workPlanTeamPublicationAction: WorkPlanTeamPublicationActionRequest;
@@ -691,6 +702,7 @@ export interface PlanOptions {
    * Explicit consent for bounded, same-plan published discussions.
    */
   teamDiscussions?: TeamDiscussionPolicy | null;
+  teamExecution?: TeamExecutionPolicy | null;
 }
 /**
  * Captured by the trusted package adapter. Selecting these rules neither
@@ -830,6 +842,21 @@ export interface StageChoice {
   mode: StageMode;
   stage: WorkStage;
 }
+export interface TeamExecutionLimits {
+  maxActivations: number;
+  maxConcurrency: number;
+  maxNoProgress: number;
+}
+export interface TeamExecutionMember {
+  config: AiConfig;
+  displayName: string;
+  kinds: TeamWorkKind[];
+  memberId: ExecutionId;
+  role: string;
+  roleVersionId: ExecutionId;
+  toolHandles: ExecutionId[];
+  unitIds: ExecutionId[];
+}
 export interface WorkPlanToolSelection {
   /**
    * @minItems 1
@@ -857,6 +884,14 @@ export interface WorkPlanStartRequest {
   sessionToken: string;
 }
 export interface WorkPlanStatusRequest {
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface WorkPlanTeamExecutionRequest {
+  afterMessage?: Revision | null;
+  afterWork?: Revision | null;
+  limit: number;
   planId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;

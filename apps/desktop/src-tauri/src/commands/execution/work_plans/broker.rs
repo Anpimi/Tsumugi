@@ -791,6 +791,27 @@ pub(super) fn begin_agent_tool(
     let (host, store) = active.execution_parts()?;
     host.allow_mutation()?;
     let scope = agent::scope(host, store, initial.scope_id)?;
+    begin_tool_in_scope(host, store, initial, &scope)
+}
+
+pub(super) fn begin_captured_agent_tool(
+    sessions: &mut SessionManager,
+    initial: &WorkPlanAgentToolStartRequest,
+    scope: &WorkPlanAgentScope,
+) -> Result<Option<AgentToolAdmission>, CommandError> {
+    let active = authorized(sessions, &initial.session_token, initial.project_id,
+        CommandStage::ExecutionRecover)?;
+    let (host, store) = active.execution_parts()?;
+    host.allow_mutation()?;
+    begin_tool_in_scope(host, store, initial, scope)
+}
+
+fn begin_tool_in_scope(
+    host: &mut ExecutionHost,
+    store: &mut ProjectStore,
+    initial: &WorkPlanAgentToolStartRequest,
+    scope: &WorkPlanAgentScope,
+) -> Result<Option<AgentToolAdmission>, CommandError> {
     let consent = current_consent(host, store, &scope)?;
     let prepared = store
         .prepare_work_plan_agent_tool(&scope, &initial.tool)
@@ -833,6 +854,50 @@ pub(super) fn finish_agent_tool(
     consent: Arc<WorkPlanToolConsent>,
     loaded: Result<AgentToolRunner, CommandError>,
 ) -> Result<ExecutionId, CommandError> {
+    finish_captured_agent_tool(sessions, plugins, request, ticket, prepared, consent, loaded, None)
+}
+
+pub(super) fn finish_captured_agent_tool(
+    sessions: &mut SessionManager,
+    plugins: &ApplicationPlugins,
+    request: WorkPlanAgentToolStartRequest,
+    ticket: ExecutionId,
+    prepared: Arc<PreparedWorkPlanTool>,
+    consent: Arc<WorkPlanToolConsent>,
+    loaded: Result<AgentToolRunner, CommandError>,
+    captured_scope: Option<WorkPlanAgentScope>,
+) -> Result<ExecutionId, CommandError> {
+    finish_captured_agent_tool_impl(sessions, plugins, request, ticket, prepared, consent,
+        loaded, captured_scope, false)
+}
+
+/// Called only inside the member's already acquired settings guard. The IO
+/// ticket stays untouched while admission waits outside the project owner.
+pub(super) fn finish_captured_agent_tool_current(
+    sessions: &mut SessionManager,
+    plugins: &ApplicationPlugins,
+    request: WorkPlanAgentToolStartRequest,
+    ticket: ExecutionId,
+    prepared: Arc<PreparedWorkPlanTool>,
+    consent: Arc<WorkPlanToolConsent>,
+    loaded: Result<AgentToolRunner, CommandError>,
+    captured_scope: Option<WorkPlanAgentScope>,
+) -> Result<ExecutionId, CommandError> {
+    finish_captured_agent_tool_impl(sessions, plugins, request, ticket, prepared, consent,
+        loaded, captured_scope, true)
+}
+
+fn finish_captured_agent_tool_impl(
+    sessions: &mut SessionManager,
+    plugins: &ApplicationPlugins,
+    request: WorkPlanAgentToolStartRequest,
+    ticket: ExecutionId,
+    prepared: Arc<PreparedWorkPlanTool>,
+    consent: Arc<WorkPlanToolConsent>,
+    loaded: Result<AgentToolRunner, CommandError>,
+    captured_scope: Option<WorkPlanAgentScope>,
+    current_environment: bool,
+) -> Result<ExecutionId, CommandError> {
     let active = super::super::tools::finish_job(
         sessions,
         &request.session_token,
@@ -840,7 +905,10 @@ pub(super) fn finish_agent_tool(
         ticket,
     )?;
     let (host, store) = active.execution_parts()?;
-    let scope = agent::scope(host, store, request.scope_id)?;
+    let scope = match captured_scope {
+        Some(scope) => scope,
+        None => agent::scope(host, store, request.scope_id)?,
+    };
     let actual_consent = current_consent(host, store, &scope)?;
     if !Arc::ptr_eq(&consent, &actual_consent) {
         return Err(stale());
@@ -852,7 +920,7 @@ pub(super) fn finish_agent_tool(
         return Err(stale());
     }
     let (revision, proxy, binding) = loaded?;
-    plugins.with_environment_revision(revision, || {
+    let submit = || {
         host.register_plugin(proxy, binding).map_err(map_recover)?;
         let start = ToolStart {
             request: request.clone(),
@@ -873,7 +941,12 @@ pub(super) fn finish_agent_tool(
             return Err(map_recover(error));
         }
         Ok(request.tool.attempt_id)
-    })
+    };
+    if current_environment {
+        submit()
+    } else {
+        plugins.with_environment_revision(revision, submit)
+    }
 }
 
 #[tauri::command]

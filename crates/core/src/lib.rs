@@ -59,7 +59,7 @@ pub use persistence::{
     TranslationSourceContext, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use persistence::{
-    AiAdoptionHandler, ArenaAdoptionHandler, ArenaRevealTarget, ArenaRevealTargetKind, ComparisonEntry, ComparisonRequest, ComparisonSummary,
+    AiAdoptionHandler, ArenaAdoptionHandler, TeamTranslationAdoptionHandler, ArenaRevealTarget, ArenaRevealTargetKind, ComparisonEntry, ComparisonRequest, ComparisonSummary,
     ComparisonView, MergeBasis,
 };
 pub use persistence::{

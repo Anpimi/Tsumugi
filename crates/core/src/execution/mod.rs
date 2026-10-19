@@ -474,6 +474,7 @@ impl InputEnvelope {
             if matches!(
                 self.operation.as_str(),
                 crate::ai::OPERATION
+                    | crate::ai::team::OPERATION
                     | crate::ai::arena::OPERATION
                     | crate::ai::semantic_review::OPERATION
                     | crate::application::MCP_TERM_QUERY_OPERATION

@@ -46,7 +46,14 @@ impl ApplicationPlugins {
     pub(in crate::commands) fn capture_member_environment(
         &self,
         expected_revision: Option<UnsignedDecimal>,
+        authorized: impl Fn() -> bool,
     ) -> Result<MemberEnvironment, CommandError> {
+        if !authorized() {
+            return Err(CommandError::simple(
+                CommandErrorCode::Cancelled,
+                CommandStage::ExecutionRecover,
+            ));
+        }
         // Application assembly chooses one exact default identity. An arbitrary
         // installed approval or a selected domain tool cannot choose Node.
         let runtime_digest = self
@@ -62,12 +69,17 @@ impl ApplicationPlugins {
             .clone()
             .ok_or_else(unavailable)?;
         self.read_installed_snapshot(|store, settings, staging_parent, allowed| {
+            let capture_allowed = || allowed() && authorized();
             let revision: UnsignedDecimal = settings.revision().into();
             if expected_revision.is_some_and(|expected| expected != revision) {
                 return Err(unavailable());
             }
-            let (runtime, _) =
-                runtimes::load_approved_runtime(store, settings, &runtime_digest, allowed)?;
+            let (runtime, _) = runtimes::load_approved_runtime(
+                store,
+                settings,
+                &runtime_digest,
+                &capture_allowed,
+            )?;
             let artifact = CapturedMemberArtifact::capture_directory(
                 &root,
                 &MemberArtifactManifest {
@@ -76,7 +88,7 @@ impl ApplicationPlugins {
                     protocol_version: tsumugi_core::ai::member_wire::PROTOCOL,
                     entrypoint: "worker.mjs".into(),
                 },
-                allowed,
+                &capture_allowed,
             )
             .map_err(|_| unavailable())?;
             Ok(MemberEnvironment {

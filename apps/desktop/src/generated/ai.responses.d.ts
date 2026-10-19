@@ -384,6 +384,14 @@ export type TeamDiscussionPolicy =
   | {
       profile: "current-plan-2";
     };
+export type TeamExecutionPolicy = {
+  initialMemberId: ExecutionId;
+  initialUnitId: ExecutionId;
+  limits: TeamExecutionLimits;
+  members: TeamExecutionMember[];
+  profile: "bounded-team-1";
+};
+export type TeamWorkKind = "translation" | "review" | "evidence";
 export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
 export type InvocationOutcome =
@@ -450,19 +458,42 @@ export type AutomationEffect =
   | "adopt-resources"
   | "deliver"
   | "query-tools"
-  | "publish-discussion";
+  | "publish-discussion"
+  | "dispatch-team-work"
+  | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
-export type TeamDiscussionAuthor =
+export type TeamStopReason =
+  "activation-limit" | "no-progress" | "expired" | "budget-exhausted" | "needs-reconciliation";
+export type TeamWorkOutcome =
   | {
-      author: TeamMemberAuthor;
-      kind: "member";
+      kind: "translation";
+      targetLocale: string;
+      text: string;
+      unitId: ExecutionId;
     }
   | {
-      actor: string;
-      binding: WorkPlanAgentExecutionBinding;
-      kind: "human";
+      kind: "review";
+      postIds: ExecutionId[];
+      reviewed: TeamReviewBasis;
+      verdict: TeamReviewVerdict;
+    }
+  | {
+      kind: "evidence";
+      postIds: ExecutionId[];
+    }
+  | {
+      kind: "waiting";
+      requestedIntentIds: ExecutionId[];
     };
-export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
+export type TeamReviewBasis =
+  | {
+      kind: "post";
+      postId: ExecutionId;
+    }
+  | {
+      kind: "artifact";
+      reference: TeamArtifactReference;
+    };
 export type TeamArtifactReference =
   | {
       kind: "translation-revision";
@@ -474,6 +505,18 @@ export type TeamArtifactReference =
       resultId: ExecutionId;
       snapshotId: ExecutionId;
     };
+export type TeamReviewVerdict = "accept" | "revise" | "unresolved";
+export type TeamDiscussionAuthor =
+  | {
+      author: TeamMemberAuthor;
+      kind: "member";
+    }
+  | {
+      actor: string;
+      binding: WorkPlanAgentExecutionBinding;
+      kind: "human";
+    };
+export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
 
 export interface Responses {
   effectRetry: boolean;
@@ -501,6 +544,7 @@ export interface Responses {
   workPlanReceipt: WorkPlanReceiptView;
   workPlanStartAction: WorkPlanStartReceipt | null;
   workPlanStatus: WorkPlanStatusView;
+  workPlanTeamExecution: TeamExecutionView;
   workPlanTeamHistory: TeamHistoryPage;
   workPlanTeamPost: TeamDiscussionPost;
   workPlanTeamPublicationAction: TeamDiscussionPost | null;
@@ -1221,6 +1265,7 @@ export interface WorkPlanView {
   digest: string;
   locale: string;
   maintenance: MaintenancePlanBasis | null;
+  memberPreviews?: TeamMemberPreviewView[] | null;
   options: PlanOptions;
   planId: ExecutionId;
   preview: AiPreviewView | null;
@@ -1261,6 +1306,10 @@ export interface MaintenanceChoice {
   excluded: boolean;
   unitId: ExecutionId;
 }
+export interface TeamMemberPreviewView {
+  memberId: ExecutionId;
+  preview: AiPreviewView;
+}
 export interface PlanOptions {
   adoptResources: boolean;
   advisoryChecks: AdvisoryReviewCheck[];
@@ -1271,10 +1320,26 @@ export interface PlanOptions {
    * Explicit consent for bounded, same-plan published discussions.
    */
   teamDiscussions?: TeamDiscussionPolicy | null;
+  teamExecution?: TeamExecutionPolicy | null;
 }
 export interface StageChoice {
   mode: StageMode;
   stage: WorkStage;
+}
+export interface TeamExecutionLimits {
+  maxActivations: number;
+  maxConcurrency: number;
+  maxNoProgress: number;
+}
+export interface TeamExecutionMember {
+  config: AiConfig;
+  displayName: string;
+  kinds: TeamWorkKind[];
+  memberId: ExecutionId;
+  role: string;
+  roleVersionId: ExecutionId;
+  toolHandles: ExecutionId[];
+  unitIds: ExecutionId[];
 }
 export interface PlanSelectionBasis {
   nativeKey: string;
@@ -1646,6 +1711,115 @@ export interface WorkPlanToolUsage {
   limit: number;
   reserved: number;
 }
+export interface TeamExecutionView {
+  budget: ProviderBudget | null;
+  consumptions: TeamMessageConsumption[];
+  members: TeamMemberRole[];
+  messages: TeamMessage[];
+  nextMessageAfter: Revision | null;
+  nextWorkAfter: Revision | null;
+  planId: ExecutionId;
+  stopReason: TeamStopReason | null;
+  works: TeamWorkView[];
+}
+/**
+ * Presentation in an admitted request, not proof of a remote model's understanding.
+ */
+export interface TeamMessageConsumption {
+  messageId: ExecutionId;
+  providerRequestId: ExecutionId;
+  taskId: ExecutionId;
+}
+/**
+ * Descriptive identity and the original model configuration, never a grant.
+ */
+export interface TeamMemberRole {
+  config: AiConfig;
+  generation: Revision;
+  planId: ExecutionId;
+  request: TeamMemberRoleWrite;
+  version: Revision;
+}
+export interface TeamMemberRoleWrite {
+  displayName: string;
+  expectedRoleVersionId: ExecutionId | null;
+  memberId: ExecutionId;
+  role: string;
+  roleVersionId: ExecutionId;
+}
+export interface TeamMessage {
+  body: string;
+  causeMessageId: ExecutionId | null;
+  messageId: ExecutionId;
+  planId: ExecutionId;
+  postIds: ExecutionId[];
+  recipientMemberId: ExecutionId;
+  sender: TeamMemberAuthor;
+  sequence: Revision;
+  target: TeamDiscussionTarget;
+}
+export interface TeamMemberAuthor {
+  attemptId: ExecutionId;
+  binding: WorkPlanAgentExecutionBinding;
+  dispatchToken: ExecutionId;
+  itemId: ExecutionId;
+  memberId: ExecutionId;
+  roleVersionId: ExecutionId;
+}
+/**
+ * Immutable provenance, never a substitute for a live opaque scope.
+ */
+export interface WorkPlanAgentExecutionBinding {
+  callerId: ExecutionId;
+  delegation: WorkPlanAgentSubset | null;
+  lease: AutomationLease;
+  rootTask: ExecutionId;
+}
+export interface TeamDiscussionTarget {
+  locale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface TeamWorkView {
+  author: TeamMemberAuthor | null;
+  candidateRevisionId: ExecutionId | null;
+  execution: ExecutionState;
+  output: TeamWorkOutput | null;
+  receipt: TeamWorkReceipt;
+  request: RequestTeamWork | null;
+  sequence: Revision;
+  target: TeamDiscussionTarget;
+  validation: ValidationState;
+}
+export interface TeamWorkOutput {
+  outcome: TeamWorkOutcome;
+  requests: number;
+  usage: Usage | null;
+  usageIncomplete: boolean;
+}
+export interface Usage {
+  completionTokens: number;
+  promptTokens: number;
+}
+export interface TeamWorkReceipt {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  intentId: ExecutionId;
+  memberId: ExecutionId;
+  planId: ExecutionId;
+  roleVersionId: ExecutionId;
+  taskId: ExecutionId;
+}
+export interface RequestTeamWork {
+  causeMessageId: ExecutionId | null;
+  instructions: string;
+  intentId: ExecutionId;
+  kind: TeamWorkKind;
+  postIds: ExecutionId[];
+  recipientMemberId: ExecutionId;
+  target: TeamDiscussionTarget;
+}
 export interface TeamHistoryPage {
   /**
    * @maxItems 16
@@ -1963,45 +2137,11 @@ export interface TeamHistoryPage {
         TeamDiscussionPost
       ];
 }
-/**
- * Descriptive identity and the original model configuration, never a grant.
- */
-export interface TeamMemberRole {
-  config: AiConfig;
-  generation: Revision;
-  planId: ExecutionId;
-  request: TeamMemberRoleWrite;
-  version: Revision;
-}
-export interface TeamMemberRoleWrite {
-  displayName: string;
-  expectedRoleVersionId: ExecutionId | null;
-  memberId: ExecutionId;
-  role: string;
-  roleVersionId: ExecutionId;
-}
 export interface TeamDiscussionPost {
   author: TeamDiscussionAuthor;
   planId: ExecutionId;
   publication: PublishTeamDiscussion;
   sequence: Revision;
-}
-export interface TeamMemberAuthor {
-  attemptId: ExecutionId;
-  binding: WorkPlanAgentExecutionBinding;
-  dispatchToken: ExecutionId;
-  itemId: ExecutionId;
-  memberId: ExecutionId;
-  roleVersionId: ExecutionId;
-}
-/**
- * Immutable provenance, never a substitute for a live opaque scope.
- */
-export interface WorkPlanAgentExecutionBinding {
-  callerId: ExecutionId;
-  delegation: WorkPlanAgentSubset | null;
-  lease: AutomationLease;
-  rootTask: ExecutionId;
 }
 /**
  * Model arguments contain content and relationships, never an author override.
@@ -2014,10 +2154,4 @@ export interface PublishTeamDiscussion {
   replyTo: ExecutionId | null;
   supersedes: ExecutionId | null;
   target: TeamDiscussionTarget;
-}
-export interface TeamDiscussionTarget {
-  locale: string;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  unitId: ExecutionId;
 }

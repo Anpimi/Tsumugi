@@ -37,6 +37,15 @@ impl ToolSession {
     pub(super) fn stop(&mut self) {
         *self = Self::default();
     }
+    /// Release only the preparation whose IO has already joined. This never
+    /// admits a query, and a stopped session may already have cleared the slot.
+    pub(super) fn abandon(&mut self, ticket: ExecutionId) -> Result<(), CommandError> {
+        if self.pending.is_some_and(|(current, _)| current != ticket) {
+            return Err(stale());
+        }
+        self.pending = None;
+        Ok(())
+    }
     pub(super) fn begin(&mut self, attempt: ExecutionId) -> Result<ExecutionId, CommandError> {
         if self.active() {
             return Err(map_recover(ExecutionError::new(

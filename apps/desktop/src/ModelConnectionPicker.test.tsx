@@ -50,6 +50,13 @@ it.each(["en-US","zh-CN"])("keeps the sharing summary within its explicit discus
  rerender(<PreparationBudgetSummary config={config} policy={{profile:"current-plan-2"}}/>);
  expect(screen.getByText(i18n.t("ai.discussions.artifactCostUnknown"))).toBeInTheDocument();
  expect(screen.queryByText(i18n.t("ai.costUnknown"))).not.toBeInTheDocument();
+ rerender(<PreparationBudgetSummary config={config} policy={{profile:"current-plan-1"}} team/>);
+ expect(screen.getByText(i18n.t("ai.team.costUnknown"))).toBeInTheDocument();
+ expect(screen.queryByText(i18n.t("ai.team.artifactCostUnknown"))).not.toBeInTheDocument();
+ expect(screen.queryByText(i18n.t("connections.sharingNone"))).not.toBeInTheDocument();
+ rerender(<PreparationBudgetSummary config={config} policy={{profile:"current-plan-2"}} team/>);
+ expect(screen.getByText(i18n.t("ai.team.artifactCostUnknown"))).toBeInTheDocument();
+ expect(screen.getByText(i18n.t("ai.team.templateHelp"))).toBeInTheDocument();
  rerender(<PreparationBudgetSummary config={config}/>);
  expect(screen.getByText(i18n.t("ai.costUnknown"))).toBeInTheDocument();
  expect(invoke).not.toHaveBeenCalled();

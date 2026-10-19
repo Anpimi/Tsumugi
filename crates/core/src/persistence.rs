@@ -34,7 +34,7 @@ mod release;
 mod resources;
 mod review;
 mod translation;
-pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler};
+pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler, TeamTranslationAdoptionHandler};
 pub use application::{
     CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
     PreparedWorkPlanServiceGeneration, PreparedWorkPlanServiceTool, WorkPlanServiceCall,
@@ -114,7 +114,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 55;
+pub(crate) const SCHEMA_VERSION: i64 = 56;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,

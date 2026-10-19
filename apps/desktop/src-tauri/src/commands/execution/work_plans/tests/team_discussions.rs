@@ -7,6 +7,9 @@ use std::{
 };
 use tsumugi_core::application::TeamDiscussionPolicy;
 
+#[path = "team_coordination.rs"]
+mod coordination;
+
 struct Peer {
     listener: TcpListener,
     config: AiConfig,
@@ -279,8 +282,11 @@ fn tool_result(body: &Value, call: &str) -> Value {
     serde_json::from_str(result["content"].as_str().unwrap()).unwrap()
 }
 fn captures(fixture: &Fixture, generation: &Value) -> Vec<Value> {
+    capture_rows(&fixture.project_path, generation["attemptId"].as_str().unwrap())
+}
+fn capture_rows(project_path: &std::path::Path, attempt: &str) -> Vec<Value> {
     let connection = rusqlite::Connection::open_with_flags(
-        fixture.project_path.join("project.sqlite3"),
+        project_path.join("project.sqlite3"),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
     .unwrap();
@@ -290,12 +296,14 @@ fn captures(fixture: &Fixture, generation: &Value) -> Vec<Value> {
         )
         .unwrap();
     let captured = query
-        .query_map([generation["attemptId"].as_str().unwrap()], |row| {
+        .query_map([attempt], |row| {
             row.get::<_, Vec<u8>>(0)
         })
         .unwrap()
         .map(|row| serde_json::from_slice(&row.unwrap()).unwrap())
         .collect();
+    drop(query);
+    drop(connection);
     captured
 }
 fn assert_capture(

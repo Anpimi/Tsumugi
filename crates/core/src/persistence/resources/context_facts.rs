@@ -625,7 +625,8 @@ pub(in crate::persistence) fn verify_input_records(
 ) -> Result<(), ExecutionError> {
     let arena = input.envelope().operation == crate::ai::arena::OPERATION;
     let semantic = input.envelope().operation == crate::ai::semantic_review::OPERATION;
-    if !arena && !semantic && input.envelope().operation != crate::ai::OPERATION {
+    if !arena && !semantic && !matches!(input.envelope().operation.as_str(),
+        crate::ai::OPERATION | crate::ai::team::OPERATION) {
         return Ok(());
     }
     for slot in &input.envelope().items {

@@ -318,6 +318,9 @@ pub(in crate::persistence) fn check_enqueue(
     input: &FixedInput,
     parent: Option<ExecutionId>,
 ) -> Result<(), ExecutionError> {
+    if input.envelope().operation == crate::ai::team::OPERATION {
+        return super::coordination::check_enqueue(c, input, parent);
+    }
     let stored = active(c, input)?;
     if let Some(parent) = parent {
         let parent_input = latest_input(c, parent)?;
@@ -391,9 +394,13 @@ pub(in crate::persistence) fn record_input(
                     .execution_input()?
                     .task_id
                     .to_string(),
-                super::agents::binding(input)?
-                    .map(|binding| codec::encode(&binding, MAX_AGENT_DELEGATION_BYTES))
-                    .transpose()?
+                (if input.envelope().operation == crate::ai::team::OPERATION {
+                    Some(crate::ai::team::settings(input)?.binding.scope().clone())
+                } else {
+                    super::agents::binding(input)?
+                })
+                .map(|binding| codec::encode(&binding, MAX_AGENT_DELEGATION_BYTES))
+                .transpose()?
             ],
         )
         .map_err(sql)?;
@@ -404,6 +411,9 @@ pub(in crate::persistence) fn check_input(
     c: &Connection,
     input: &FixedInput,
 ) -> Result<(), ExecutionError> {
+    if input.envelope().operation == crate::ai::team::OPERATION {
+        return super::coordination::check_input(c, input);
+    }
     if let Some(lease) = input.envelope().automation {
         super::maintenance::check_protection(c, &load(c, lease.plan_id)?.plan)?;
     }
@@ -672,21 +682,38 @@ pub(super) fn check_scope_in(
 }
 
 fn recorded_action_read(
-    c: &Connection, project: ExecutionId, request: &Request,
+    c: &Connection,
+    project: ExecutionId,
+    request: &Request,
 ) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
-    if super::super::read_metadata_from(c).map_err(|_|err(ErrorCode::CorruptLedger,"work-plan-project"))?
-        .project_id().to_string()!=project.to_string() {
-        return Err(err(ErrorCode::Unauthorized,"work-plan-project"));
+    if super::super::read_metadata_from(c)
+        .map_err(|_| err(ErrorCode::CorruptLedger, "work-plan-project"))?
+        .project_id()
+        .to_string()
+        != project.to_string()
+    {
+        return Err(err(ErrorCode::Unauthorized, "work-plan-project"));
     }
-    let Some(receipt)=existing(c,request)? else {return Ok(None);};
-    let row_plan:String=c.query_row("SELECT plan_id FROM application_actions WHERE action_id=?1",
-        [request.action().to_string()],|row|row.get(0)).map_err(sql)?;
-    if row_plan!=request.plan().to_string() {return Err(err(ErrorCode::CorruptLedger,"work-plan-action"));}
-    let stored=load(c,request.plan())?;
-    if stored.plan.project_id!=project {return Err(err(ErrorCode::Unauthorized,"work-plan-project"));}
-    validate_receipt(request,&receipt,&stored)?;
-    if receipt.lease.generation.get()==0 || receipt.lease.generation>stored.lease.generation {
-        return Err(err(ErrorCode::CorruptLedger,"work-plan-action-generation"));
+    let Some(receipt) = existing(c, request)? else {
+        return Ok(None);
+    };
+    let row_plan: String = c
+        .query_row(
+            "SELECT plan_id FROM application_actions WHERE action_id=?1",
+            [request.action().to_string()],
+            |row| row.get(0),
+        )
+        .map_err(sql)?;
+    if row_plan != request.plan().to_string() {
+        return Err(err(ErrorCode::CorruptLedger, "work-plan-action"));
+    }
+    let stored = load(c, request.plan())?;
+    if stored.plan.project_id != project {
+        return Err(err(ErrorCode::Unauthorized, "work-plan-project"));
+    }
+    validate_receipt(request, &receipt, &stored)?;
+    if receipt.lease.generation.get() == 0 || receipt.lease.generation > stored.lease.generation {
+        return Err(err(ErrorCode::CorruptLedger, "work-plan-action-generation"));
     }
     // The durable transition does not attest to Host-local checker or tool grants.
     Ok(Some(receipt))
@@ -694,21 +721,41 @@ fn recorded_action_read(
 
 impl ProjectStore {
     pub fn work_plan_authorization_action_read(
-        &self, project: ExecutionId, plan: ExecutionId, request: &AuthorizeWorkPlan,
+        &self,
+        project: ExecutionId,
+        plan: ExecutionId,
+        request: &AuthorizeWorkPlan,
     ) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
-        let request=Request::Authorize {plan_id:plan,request:request.clone()};
-        let value=super::super::review::read_snapshot(self.connection().map_err(|_|err(ErrorCode::StorageFailed,"work-plan-read"))?,
-            |c|recorded_action_read(c,project,&request))?;
-        if self.is_reconciling() {self.reconcile_execution()?;}
+        let request = Request::Authorize {
+            plan_id: plan,
+            request: request.clone(),
+        };
+        let value = super::super::review::read_snapshot(
+            self.connection()
+                .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?,
+            |c| recorded_action_read(c, project, &request),
+        )?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
         Ok(value)
     }
     pub fn work_plan_control_action_read(
-        &self, project: ExecutionId, request: &ControlWorkPlan,
+        &self,
+        project: ExecutionId,
+        request: &ControlWorkPlan,
     ) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
-        let request=Request::Control {request:request.clone()};
-        let value=super::super::review::read_snapshot(self.connection().map_err(|_|err(ErrorCode::StorageFailed,"work-plan-read"))?,
-            |c|recorded_action_read(c,project,&request))?;
-        if self.is_reconciling() {self.reconcile_execution()?;}
+        let request = Request::Control {
+            request: request.clone(),
+        };
+        let value = super::super::review::read_snapshot(
+            self.connection()
+                .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?,
+            |c| recorded_action_read(c, project, &request),
+        )?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
         Ok(value)
     }
     /// Confirm a historical start without renewing authority or submitting work.
@@ -722,53 +769,89 @@ impl ProjectStore {
         if generation.get() == 0 {
             return Err(err(ErrorCode::InvalidInput, "work-plan-start-generation"));
         }
-        let found = super::super::review::read_snapshot(self.connection().map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?, |c| {
-            let row: Option<(String, Vec<u8>, String, Vec<u8>, String)> = c.query_row(
+        let found = super::super::review::read_snapshot(
+            self.connection()
+                .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?,
+            |c| {
+                let row: Option<(String, Vec<u8>, String, Vec<u8>, String)> = c.query_row(
                 "SELECT plan_id,request,request_digest,receipt,receipt_digest FROM application_actions WHERE action_id=?1",
                 [action.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
             ).optional().map_err(sql)?;
-            let Some((stored_plan, bytes, digest, receipt_bytes, receipt_digest)) = row else { return Ok(None); };
-            let request: Request = codec::decode(&bytes, MAX_INPUT_BYTES)?;
-            let receipt: WorkPlanReceipt = codec::decode(&receipt_bytes, MAX_INPUT_BYTES)?;
-            if request.action() != action || request.plan().to_string() != stored_plan
-                || digest != codec::digest(&codec::encode(&request, MAX_INPUT_BYTES)?)
-                || receipt_digest != codec::digest(&receipt_bytes)
-                || receipt.action_id != action || receipt.lease.plan_id != request.plan()
-            {
-                return Err(err(ErrorCode::CorruptLedger, "work-plan-start-action"));
-            }
-            let stored = load(c, request.plan())?;
-            validate_receipt(&request, &receipt, &stored)?;
-            if receipt.lease.generation.get() == 0 || receipt.lease.generation > stored.lease.generation {
-                return Err(err(ErrorCode::CorruptLedger, "work-plan-start-generation"));
-            }
-            if receipt.lease.plan_id != plan || receipt.lease.generation != generation
-                || stored.plan.project_id != project || receipt.state != WorkPlanState::Active
-            {
-                return Err(err(ErrorCode::ResultMismatch, "work-plan-start-request"));
-            }
-            let input = FixedInput::capture(receipt.input.ok_or_else(|| err(ErrorCode::CorruptLedger, "work-plan-start-input"))?)?;
-            let envelope = input.envelope();
-            let exists: bool = c.query_row(
-                "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
-                [envelope.attempt_id.to_string()], |row| row.get(0),
-            ).map_err(sql)?;
-            if !exists { return Ok(None); }
-            let saved = ledger::load_input(c, envelope.attempt_id)?;
-            if saved.bytes() != input.bytes() {
-                return Err(err(ErrorCode::ResultMismatch, "work-plan-start-input"));
-            }
-            let association: Option<(String, i64, String, String)> = c.query_row(
+                let Some((stored_plan, bytes, digest, receipt_bytes, receipt_digest)) = row else {
+                    return Ok(None);
+                };
+                let request: Request = codec::decode(&bytes, MAX_INPUT_BYTES)?;
+                let receipt: WorkPlanReceipt = codec::decode(&receipt_bytes, MAX_INPUT_BYTES)?;
+                if request.action() != action
+                    || request.plan().to_string() != stored_plan
+                    || digest != codec::digest(&codec::encode(&request, MAX_INPUT_BYTES)?)
+                    || receipt_digest != codec::digest(&receipt_bytes)
+                    || receipt.action_id != action
+                    || receipt.lease.plan_id != request.plan()
+                {
+                    return Err(err(ErrorCode::CorruptLedger, "work-plan-start-action"));
+                }
+                let stored = load(c, request.plan())?;
+                validate_receipt(&request, &receipt, &stored)?;
+                if receipt.lease.generation.get() == 0
+                    || receipt.lease.generation > stored.lease.generation
+                {
+                    return Err(err(ErrorCode::CorruptLedger, "work-plan-start-generation"));
+                }
+                if receipt.lease.plan_id != plan
+                    || receipt.lease.generation != generation
+                    || stored.plan.project_id != project
+                    || receipt.state != WorkPlanState::Active
+                {
+                    return Err(err(ErrorCode::ResultMismatch, "work-plan-start-request"));
+                }
+                let input = FixedInput::capture(
+                    receipt
+                        .input
+                        .ok_or_else(|| err(ErrorCode::CorruptLedger, "work-plan-start-input"))?,
+                )?;
+                let envelope = input.envelope();
+                let exists: bool = c
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                        [envelope.attempt_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql)?;
+                if !exists {
+                    return Ok(None);
+                }
+                let saved = ledger::load_input(c, envelope.attempt_id)?;
+                if saved.bytes() != input.bytes() {
+                    return Err(err(ErrorCode::ResultMismatch, "work-plan-start-input"));
+                }
+                let association: Option<(String, i64, String, String)> = c.query_row(
                 "SELECT plan_id,generation,kind,root_task FROM application_executions WHERE attempt_id=?1",
                 [envelope.attempt_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
             ).optional().map_err(sql)?;
-            if association != Some((plan.to_string(), generation.get() as i64, "model".to_string(), stored.plan.execution_input()?.task_id.to_string())) {
-                return Err(err(ErrorCode::CorruptLedger, "work-plan-start-association"));
-            }
-            Ok(Some(WorkPlanStartReceipt {project_id:project,plan_id:plan,action_id:action,
-                expected_generation:generation,attempt_id:envelope.attempt_id,task_id:envelope.task_id}))
-        })?;
-        if self.is_reconciling() { self.reconcile_execution()?; }
+                if association
+                    != Some((
+                        plan.to_string(),
+                        generation.get() as i64,
+                        "model".to_string(),
+                        stored.plan.execution_input()?.task_id.to_string(),
+                    ))
+                {
+                    return Err(err(ErrorCode::CorruptLedger, "work-plan-start-association"));
+                }
+                Ok(Some(WorkPlanStartReceipt {
+                    project_id: project,
+                    plan_id: plan,
+                    action_id: action,
+                    expected_generation: generation,
+                    attempt_id: envelope.attempt_id,
+                    task_id: envelope.task_id,
+                }))
+            },
+        )?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
         Ok(found)
     }
     pub fn work_plan_receipt(
@@ -893,6 +976,11 @@ impl ProjectStore {
         };
         let mut input = plan.execution_input()?.clone();
         input.automation = Some(lease);
+        if plan.options.team_execution.is_some() {
+            input = super::coordination::root_input(plan, lease)?
+                .envelope()
+                .clone();
+        }
         let receipt = WorkPlanReceipt {
             cancellation_revision: Revision::new(0)?,
             action_id: authorization.action_id,
@@ -919,6 +1007,14 @@ impl ProjectStore {
             return Ok(receipt);
         }
         let stored = load(&tx, control.plan_id)?;
+        if stored.plan.options.team_execution.is_some()
+            && control.command == WorkPlanCommand::Continue
+        {
+            return Err(err(
+                ErrorCode::Unauthorized,
+                "team-continue-requires-new-plan",
+            ));
+        }
         if stored.lease.generation != control.expected_generation {
             return Err(err(ErrorCode::DependencyConflict, "work-plan-generation"));
         }
@@ -1040,6 +1136,12 @@ fn validate_receipt(
     }
     if let Some(input) = &receipt.input {
         let fixed = FixedInput::capture(input.clone())?;
+        if stored.plan.options.team_execution.is_some() {
+            if receipt.parent_task.is_some() {
+                return Err(err(ErrorCode::CorruptLedger, "team-root-parent"));
+            }
+            return super::coordination::validate_root_receipt(&stored.plan, receipt.lease, &fixed);
+        }
         if fixed.envelope() != input
             || input.automation != Some(receipt.lease)
             || !matches_scope(input, stored.plan.execution_input()?)
@@ -1240,7 +1342,8 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
                         super::agents::validate_model_input(c, &input)?;
                     }
                     kind == "model"
-                        && matches_scope(input.envelope(), stored.plan.execution_input()?)
+                        && (input.envelope().operation == crate::ai::team::OPERATION
+                            || matches_scope(input.envelope(), stored.plan.execution_input()?))
                 };
                 if generation == 0
                     || generation as u64 > stored.lease.generation.get()
@@ -1357,6 +1460,9 @@ pub(super) fn derive_agent_generation(
     scope: &WorkPlanAgentScope,
     request: &AgentGenerationRequest,
 ) -> Result<FixedInput, ExecutionError> {
+    if plan.options.team_execution.is_some() {
+        return Err(err(ErrorCode::Unauthorized, "team-work-admission"));
+    }
     super::agents::validate_scope_basis(plan, scope)?;
     derive_generation(plan, scope, request, Some(scope.execution_binding()))
 }
@@ -1366,6 +1472,9 @@ pub(super) fn derive_service_generation(
     scope: &WorkPlanAgentScope,
     request: &AgentGenerationRequest,
 ) -> Result<FixedInput, ExecutionError> {
+    if plan.options.team_execution.is_some() {
+        return Err(err(ErrorCode::Unauthorized, "team-work-admission"));
+    }
     if scope.delegation.is_some() {
         return Err(err(ErrorCode::Unauthorized, "service-agent-subset"));
     }
