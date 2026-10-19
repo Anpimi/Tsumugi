@@ -33,22 +33,27 @@ without the Cordis Host or ambient credentials. Model capacity and prices remain
 unknown unless supplied by their actual owner; normalized SDK zero values are
 not authoritative billing records.
 
-The desktop adapter currently selects Node from a nonempty captured read-only
-tool scope and retains that scope's independent process consent. Empty-tool and
-native-only scopes still need the application's independent default Node
-selection. They are not covered by this intermediate adapter. This limitation
-does not change the target scope or grant new tool permissions.
+The desktop adapter selects the exact application-default Node identity from
+build metadata and loads its independently installed, approved bytes. This also
+supports scopes without tools and scopes containing only native tools. Empty
+scopes retain their original model authorization, sharing, budget and dispatch
+deadline; they do not require a fabricated tool consent. Actual domain tools
+keep their independent captured permissions and original broker. Settings
+revocation also stops the member's pending controlled IO.
 
-The synthetic checks cover the real Pi packages, standalone bundle and owned
-process boundary. Desktop/domain-Worker acceptance and real-provider quality,
-cache and billing evidence must be established separately. A missing member
-runtime is an explicit failure for Agent input; it does not select the fixed
-single-completion path.
+The synthetic checks cover the real Pi packages, standalone bundle, owned
+process boundary and a desktop/Core/domain-Worker tool loop with original
+budget and cancellation assertions. Full native application acceptance and
+real-provider quality, cache and billing evidence remain separate. A missing
+member runtime is an explicit failure for Agent input; it does not select the
+fixed single-completion path.
 
-Use the workspace's pinned Node version and pnpm:
+Use Node `>=26.10.0 <27`, pnpm 12 and the repository lockfile. Provision the
+dependencies and platform esbuild binary from an existing offline cache before
+preparation; missing inputs fail rather than trigger installation or a download:
 
 ```sh
-pnpm install --frozen-lockfile
+pnpm install --offline --frozen-lockfile --ignore-scripts
 pnpm --dir runtimes/agent-service build
 pnpm --dir runtimes/agent-service test
 ```
@@ -63,10 +68,17 @@ Generate the member channel after editing its Core authority:
 pnpm --dir runtimes/agent-service generate:contracts
 ```
 
-Create a new standalone artifact directory before using the optional desktop
-runtime bundle profile:
+The same generation emits `profile.json` and the TypeScript profile. The
+packager and desktop build read that generated protocol identity; they do not
+choose a separate version. Check the captured contract before packaging.
+
+From the repository root, create a new standalone artifact directory before
+using the optional desktop runtime bundle profile. Its parent must already
+exist. Packaging compiles the member source directly and does not require a
+previous `dist` build:
 
 ```sh
+pnpm --dir runtimes/agent-service check:contracts
 pnpm --dir runtimes/agent-service package:runtime --output "$PWD/apps/desktop/src-tauri/resources/member-runtime"
 ```
 
@@ -76,7 +88,20 @@ resolution. The build uses ESM package entry points so UMD relative imports are
 not left unresolved. Existing output directories are refused. Runtime packaging
 does not install or approve Node or any domain tool; those keep their original
 installation, selection and consent requirements. The runtime profile maps this
-artifact to `member-runtime/` beside the application resources.
+artifact to `member-runtime/` beside the application resources. With
+`bundled-runtime` enabled, the desktop build captures this complete bounded
+tree through the same Host owner used at runtime. A missing entrypoint or a
+protocol different from Core's generated profile fails the build. Preparation
+does not run as part of the frontend build or Cargo build script. Review any
+previous output explicitly or use a fresh checkout; a build never removes it.
+
+The separately prepared Node tool retains the exact distribution pin in
+[`node-distribution.macos-aarch64.json`](../javascript-host/scripts/node-distribution.macos-aarch64.json).
+The optional desktop bundle currently supports only that macOS arm64 profile
+and macOS 13.5 or later. The builder's Node version is not approval of a
+redistributed or installed runtime. Follow the complete
+[offline desktop preparation](../../docs/plugin-distribution.md#prepare-and-build)
+before invoking the Tauri runtime bundle profile.
 
 The pinned Pi npm artifacts omit their monorepo license. The retained
 [Pi 1.3.0 notice](licenses/pi-1.3.0.txt) comes from the corresponding

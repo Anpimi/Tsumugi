@@ -50,25 +50,34 @@ and execution grants retain their respective owners.
 First prepare the current compiled Host, production dependencies and fixed Node
 distribution using the [runtime preparation instructions](../runtimes/javascript-host/README.md#prepare-the-fixed-macos-tool-and-host-artifact).
 Use a trusted builder; only the fixed tool files and clean Host runtime are
-application resources. Preparation reports and local package-manager caches do
+included from that preparation. Preparation reports and local package-manager caches do
 not grant authority or supply runtime dependencies.
 
 Place the two complete, approved archives in one existing directory. Their
 filenames must match `archiveName` in the catalog. Build and explicitly review
 the `tsumugi-plugin-package` inspector and its SHA-256, then run with Python 3.11
-or newer:
+or newer. Also prepare the application's standalone
+[Pi member artifact](../runtimes/agent-service/README.md) from the same checkout.
+Its frozen dependencies and platform esbuild binary must already be available
+offline. Run these commands from the repository root; neither preparer invokes
+an installer or fetches runtime dependencies:
 
 ```sh
-cargo build --locked -p tsumugi-plugin-host --bin tsumugi-plugin-package
+cargo build --locked --offline -p tsumugi-plugin-host --bin tsumugi-plugin-package
 python3 runtimes/javascript-host/scripts/prepare-desktop-plugins.py \
   --artifacts /absolute/approved/plugin-candidates \
   --inspector /absolute/project/target/debug/tsumugi-plugin-package \
   --inspector-sha256 <reviewed-inspector-sha256> \
   --output /absolute/project/apps/desktop/src-tauri/resources/bundled-plugins
-pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
+pnpm --dir runtimes/agent-service check:contracts
+pnpm --dir runtimes/agent-service package:runtime --output "$PWD/apps/desktop/src-tauri/resources/member-runtime"
+CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
 ```
 
-The resource parent must exist and the output must be new. All supplied paths
+The resource parent must exist and both output directories must be new. Member
+packaging compiles source directly; the frontend build and Cargo build script
+do not create or refresh that artifact. Explicitly review previous output or
+use a fresh checkout rather than overwriting it. All supplied paths
 are absolute and may not traverse symlink ancestors, apart from the fixed macOS
 `/tmp` and `/var` OS aliases. Archive files must be ordinary, bounded single-link
 files. The preparer captures the actual archive bytes before interpreting them;
@@ -97,7 +106,12 @@ flags remain identical to the inspected artifact, independent of builder umask.
 hash and package observations without local source paths. The desktop build
 captures the actual package/runtime resources again and embeds source-owned
 metadata; it never trusts this report as approval. Tauri places complete package,
-tool and Host trees at their logical resource paths. The current build supports
+tool and Host trees at their logical resource paths. The separate member tree
+is captured through the same Host artifact owner used at execution; a missing
+entrypoint or a protocol different from Core's generated profile fails the
+build. It uses only the independently approved Node tool and does not become a
+plugin Process channel. The exact Node distribution pin remains owned by the
+existing runtime preparation. The current build supports
 the selected macOS arm64 builder and target only.
 
 ## Failures and existing installations

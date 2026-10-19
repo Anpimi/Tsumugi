@@ -103,12 +103,19 @@ impl Owner {
         store
             .check_work_plan_agent_scope(&scope)
             .map_err(map_recover)?;
-        let consent = broker::current_consent(host, store, &scope)?;
-        let guidance = store
-            .capture_work_plan_agent_guidance(&scope)
-            .map_err(map_recover)?;
-        let tools = guidance.tools().to_vec();
-        let mut runtimes = BTreeSet::new();
+        let tools = effective_tools(store, &scope)?;
+        let consent = if tools.is_empty() {
+            None
+        } else {
+            let consent = broker::current_consent(host, store, &scope)?;
+            let guidance = store
+                .capture_work_plan_agent_guidance(&scope)
+                .map_err(map_recover)?;
+            if guidance.tools() != tools {
+                return Err(map_recover(fail(ErrorCode::Unauthorized, "member-tools")));
+            }
+            Some(consent)
+        };
         let mut revisions = BTreeSet::new();
         for tool in &tools {
             if tool.binding.capability.declaration.effect != sdk::EffectKind::ReadOnly
@@ -117,22 +124,11 @@ impl Owner {
                 return Err(map_recover(fail(ErrorCode::Unauthorized, "member-tool")));
             }
             revisions.insert(tool.settings_revision);
-            if let sdk::ExecutionEnvironmentDescriptor::Captured(environment) =
-                &tool.execution.environment
-            {
-                runtimes.insert(
-                    environment.digest().map_err(|_| {
-                        map_recover(fail(ErrorCode::InvalidInput, "member-runtime"))
-                    })?,
-                );
-            }
         }
-        // The original selected tool environment supplies the exact approved
-        // Node identity. Ambiguity, native-only and absent selections are explicit.
-        if runtimes.len() != 1 || revisions.len() != 1 {
+        if revisions.len() > 1 {
             return Err(map_recover(fail(
                 ErrorCode::DependencyConflict,
-                "member-runtime-selection",
+                "member-tool-revision",
             )));
         }
         Ok(CapturedScope {
@@ -140,8 +136,7 @@ impl Owner {
             scope,
             consent,
             tools,
-            runtime_digest: runtimes.into_iter().next().unwrap(),
-            revision: revisions.into_iter().next().unwrap(),
+            tool_revision: revisions.into_iter().next(),
         })
     }
     fn check_scope(
@@ -152,20 +147,43 @@ impl Owner {
         let (host, store) = self.original(sessions)?;
         host.allow_mutation()?;
         if agent::scope(host, store, captured.scope_id)? != captured.scope
-            || !Arc::ptr_eq(
+            || effective_tools(store, &captured.scope)? != captured.tools
+        {
+            return Err(map_recover(fail(ErrorCode::Unauthorized, "member-scope")));
+        }
+        if let Some(consent) = &captured.consent {
+            if !Arc::ptr_eq(
                 &broker::current_consent(host, store, &captured.scope)?,
-                &captured.consent,
-            )
-            || store
+                consent,
+            ) || store
                 .capture_work_plan_agent_guidance(&captured.scope)
                 .map_err(map_recover)?
                 .tools()
                 != captured.tools
-        {
-            return Err(map_recover(fail(ErrorCode::Unauthorized, "member-scope")));
+            {
+                return Err(map_recover(fail(ErrorCode::Unauthorized, "member-scope")));
+            }
         }
         Ok(())
     }
+}
+fn effective_tools(
+    store: &ProjectStore,
+    scope: &WorkPlanAgentScope,
+) -> Result<Vec<WorkPlanToolSpec>, CommandError> {
+    let plan = store
+        .work_plan(scope.lease().plan_id)
+        .map_err(map_recover)?;
+    Ok(plan
+        .tools
+        .into_iter()
+        .flat_map(|tools| tools.entries)
+        .filter(|tool| {
+            scope
+                .delegation()
+                .is_none_or(|subset| subset.tool_handles.contains(&tool.handle))
+        })
+        .collect())
 }
 fn matches_scope(scope: &WorkPlanAgentScope, binding: &WorkPlanAgentExecutionBinding) -> bool {
     scope.lease() == binding.lease
@@ -177,10 +195,9 @@ fn matches_scope(scope: &WorkPlanAgentScope, binding: &WorkPlanAgentExecutionBin
 struct CapturedScope {
     scope_id: ExecutionId,
     scope: WorkPlanAgentScope,
-    consent: Arc<WorkPlanToolConsent>,
+    consent: Option<Arc<WorkPlanToolConsent>>,
     tools: Vec<WorkPlanToolSpec>,
-    runtime_digest: String,
-    revision: UnsignedDecimal,
+    tool_revision: Option<UnsignedDecimal>,
 }
 
 pub(in crate::commands::execution) struct MemberFactory {
@@ -227,19 +244,19 @@ impl MemberFactory {
             .await
             .map_err(command_error)?;
         let plugins = self.owner.context.plugins.clone();
-        let digest = captured.runtime_digest.clone();
-        let revision = captured.revision;
+        let revision = captured.tool_revision;
         let environment = self
             .owner
             .context
             .io
             .run(CommandStage::ExecutionRecover, move || {
-                plugins.capture_member_environment(&digest, revision)
+                plugins.capture_member_environment(revision)
             })
             .await
             .map_err(command_error)?;
         let owner = self.owner.clone();
         let checking = captured.clone();
+        let runtime_revision = environment.settings_revision;
         let settings_stop = self
             .owner
             .context
@@ -251,7 +268,7 @@ impl MemberFactory {
                     owner
                         .context
                         .plugins
-                        .with_environment_authority(checking.revision, |stop| {
+                        .with_environment_authority(runtime_revision, |stop| {
                             owner.check_scope(sessions, &checking)?;
                             Ok(stop)
                         })
@@ -263,9 +280,11 @@ impl MemberFactory {
         let local_stop = Cancellation::default();
         let deadline = request
             .deadline()
-            .map_or(captured.consent.deadline(), |deadline| {
-                deadline.min(captured.consent.deadline())
-            });
+            .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-deadline"))?;
+        let deadline = captured
+            .consent
+            .as_ref()
+            .map_or(deadline, |consent| deadline.min(consent.deadline()));
         let remaining: u32 = deadline
             .checked_duration_since(Instant::now())
             .and_then(|d| u32::try_from(d.as_millis()).ok())
@@ -312,12 +331,16 @@ impl MemberFactory {
             cancellation: cancellation.clone(),
             local_stop: local_stop.clone(),
             settings_stop: settings_stop.clone(),
+            runtime_revision,
             provider: Arc::new(Mutex::new(MemberProviderSession::new(
                 service,
                 request.clone(),
                 local_stop.clone(),
             )?)),
             pending: None,
+            pending_provider: false,
+            provider_failure: None,
+            join_failure: None,
             usage: BTreeMap::new(),
             tool_results: BTreeMap::new(),
             tools: Arc::new(Mutex::new(BTreeMap::new())),
@@ -346,7 +369,11 @@ impl MemberFactory {
         )
         .await;
         let cleanup = handler.drain().await;
-        let receipt = finish_run(result, cleanup)?;
+        let failure = handler
+            .join_failure
+            .take()
+            .or_else(|| handler.provider_failure.take());
+        let receipt = finish_run(result, cleanup, failure)?;
         if receipt.turn_limit_reached {
             return Err(fail(ErrorCode::LimitExceeded, "member-turn-limit"));
         }
@@ -368,6 +395,7 @@ impl MemberFactory {
 fn finish_run(
     process: Result<host_member::MemberRunReceipt, HostError>,
     cleanup: Result<(), ExecutionError>,
+    failure: Option<ExecutionError>,
 ) -> Result<host_member::MemberRunReceipt, ExecutionError> {
     cleanup.map_err(|mut error| {
         // A process cancellation does not establish its nested producers'
@@ -376,6 +404,9 @@ fn finish_run(
         error.stage = "member-cleanup".into();
         error
     })?;
+    if let Some(error) = failure {
+        return Err(error);
+    }
     process.map_err(host_error)
 }
 impl MemberExecutor for MemberFactory {
@@ -443,8 +474,12 @@ struct Handler {
     cancellation: Cancellation,
     local_stop: Cancellation,
     settings_stop: Cancellation,
+    runtime_revision: UnsignedDecimal,
     provider: Arc<Mutex<MemberProviderSession>>,
     pending: Option<tokio::task::JoinHandle<Result<MemberReply, ExecutionError>>>,
+    pending_provider: bool,
+    provider_failure: Option<ExecutionError>,
+    join_failure: Option<ExecutionError>,
     usage: BTreeMap<ExecutionId, Option<Usage>>,
     tool_results: BTreeMap<String, (Value, bool)>,
     tools: Arc<Mutex<BTreeMap<String, ToolRun>>>,
@@ -463,6 +498,7 @@ impl Handler {
     }
     async fn provider_call(&mut self, call: MemberCall) -> Result<MemberReply, ExecutionError> {
         let provider = self.provider.clone();
+        self.pending_provider = true;
         self.pending = Some(tokio::task::spawn_blocking(move || {
             let mut provider = provider
                 .lock()
@@ -492,7 +528,20 @@ impl Handler {
         }));
         let result = self.pending.as_mut().unwrap().await;
         self.pending.take();
-        result.map_err(|_| fail(ErrorCode::OutcomeUnknown, "member-provider"))?
+        let result = result.map_err(|_| {
+            let error = fail(ErrorCode::OutcomeUnknown, "member-provider");
+            self.join_failure.get_or_insert_with(|| error.clone());
+            error
+        })?;
+        self.record_provider_failure(&result);
+        result
+    }
+    fn record_provider_failure(&mut self, result: &Result<MemberReply, ExecutionError>) {
+        if let Err(error) = result {
+            // Only this trusted Core boundary supplies authoritative failures.
+            // A child error string or an ordinary domain tool error cannot.
+            self.provider_failure.get_or_insert_with(|| error.clone());
+        }
     }
     fn selected_tool(
         &self,
@@ -517,13 +566,21 @@ impl Handler {
     async fn check_scope(&self) -> Result<(), ExecutionError> {
         let owner = self.owner.clone();
         let captured = self.captured.clone();
+        let revision = self.runtime_revision;
         self.owner
             .context
             .callback
             .submit(
                 "member.scope",
                 CommandStage::ExecutionRecover,
-                move |sessions| owner.check_scope(sessions, &captured),
+                move |sessions| {
+                    owner
+                        .context
+                        .plugins
+                        .with_environment_revision(revision, || {
+                            owner.check_scope(sessions, &captured)
+                        })
+                },
             )
             .map_err(command_error)?
             .await
@@ -546,19 +603,27 @@ impl Handler {
             settings_stop: self.settings_stop.clone(),
             tools: self.tools.clone(),
         };
+        self.pending_provider = false;
         self.pending = Some(tokio::spawn(
             async move { operation.run(call_id, handle).await },
         ));
         let result = self.pending.as_mut().unwrap().await;
         self.pending.take();
-        result.map_err(|_| fail(ErrorCode::OutcomeUnknown, "member-tool-operation"))?
+        result.map_err(|_| {
+            let error = fail(ErrorCode::OutcomeUnknown, "member-tool-operation");
+            self.join_failure.get_or_insert_with(|| error.clone());
+            error
+        })?
     }
     async fn drain(&mut self) -> Result<(), ExecutionError> {
         self.local_stop.request();
         if let Some(pending) = self.pending.take() {
-            let _ = pending
+            let result = pending
                 .await
                 .map_err(|_| fail(ErrorCode::OutcomeUnknown, "member-provider-drain"))?;
+            if self.pending_provider {
+                self.record_provider_failure(&result);
+            }
         }
         let tools = self
             .tools
@@ -748,9 +813,8 @@ impl ToolOperation {
             let deadline = self
                 .request
                 .deadline()
-                .map_or(consent.deadline(), |deadline| {
-                    deadline.min(consent.deadline())
-                });
+                .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-deadline"))?
+                .min(consent.deadline());
             let stop = self.local_stop.clone();
             let loaded = self
                 .owner
@@ -1005,6 +1069,7 @@ mod tests {
         let error = finish_run(
             Err(HostError::Cancelled),
             Err(fail(ErrorCode::Unauthorized, "owner-unavailable")),
+            Some(fail(ErrorCode::LimitExceeded, "ai-budget")),
         )
         .err()
         .unwrap();
@@ -1014,8 +1079,23 @@ mod tests {
 
     #[test]
     fn member_cleanup_confirmed_producers_preserve_process_cancellation() {
-        let error = finish_run(Err(HostError::Cancelled), Ok(())).err().unwrap();
+        let error = finish_run(Err(HostError::Cancelled), Ok(()), None)
+            .err()
+            .unwrap();
         assert_eq!(error.code, ErrorCode::Cancelled);
         assert_eq!(error.stage, "member-process");
+
+        let mut provider = fail(ErrorCode::LimitExceeded, "ai-budget");
+        provider.item_ids.push(ExecutionId::new());
+        assert_eq!(
+            finish_run(
+                Err(HostError::ResultMismatch),
+                Ok(()),
+                Some(provider.clone()),
+            )
+            .err()
+            .unwrap(),
+            provider,
+        );
     }
 }

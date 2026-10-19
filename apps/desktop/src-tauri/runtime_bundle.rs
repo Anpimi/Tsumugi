@@ -6,6 +6,34 @@ use tsumugi_plugin_sdk as sdk;
 pub const BUNDLE_ID: &str = "bundled-javascript";
 pub const RESOURCE_DIRECTORY: &str = "runtimes/javascript";
 
+/// Validate prepared application code through the same capture owner used by
+/// member execution. This performs no build, installation or code execution.
+pub fn capture_member_artifact(
+    resources: &std::path::Path,
+) -> Result<tsumugi_plugin_host::CapturedMemberArtifact, &'static str> {
+    let profile: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../runtimes/agent-service/src/generated/profile.json"
+    ))
+    .map_err(|_| "invalid generated member protocol profile")?;
+    let protocol_version = profile
+        .get("protocolVersion")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value != 0)
+        .ok_or("invalid generated member protocol profile")?;
+    tsumugi_plugin_host::CapturedMemberArtifact::capture_directory(
+        &resources.join("member-runtime"),
+        &tsumugi_plugin_host::MemberArtifactManifest {
+            format: "tsumugi-member-runtime".into(),
+            version: 1,
+            protocol_version,
+            entrypoint: "worker.mjs".into(),
+        },
+        || true,
+    )
+    .map_err(|_| "prepared member artifact is missing, changed or incompatible")
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeDistributionPin {

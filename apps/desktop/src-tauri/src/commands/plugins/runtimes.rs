@@ -145,6 +145,12 @@ pub(super) struct Bundle {
     root: Option<PathBuf>,
 }
 impl Bundle {
+    pub(super) fn environment_digest(&self) -> Result<String, CommandError> {
+        self.metadata
+            .environment
+            .digest()
+            .map_err(|_| unavailable())
+    }
     fn resources_present(&self) -> bool {
         let Some(root) = &self.root else {
             return false;
@@ -182,6 +188,69 @@ impl Bundle {
                 )
             },
         })
+    }
+}
+
+#[cfg(test)]
+impl ApplicationPlugins {
+    /// Explicit application assembly for an independently prepared fixture.
+    /// Installation and approval are still required by the production loader.
+    pub(in crate::commands) fn configure_member_default_runtime_for_test(
+        &self,
+        metadata: BundledRuntimeMetadata,
+    ) -> Result<(), CommandError> {
+        metadata.validate().map_err(|_| unavailable())?;
+        let mut manager = self.try_manager()?;
+        if manager.bundle.is_some() {
+            return Err(map_store_error(InstallError::StoreChanged));
+        }
+        manager.bundle = Some(Bundle {
+            metadata,
+            root: None,
+        });
+        Ok(())
+    }
+
+    /// A synthetic installed-Store change before member admission. In-flight
+    /// revocation tests must use the real application mutation coordinator.
+    pub(in crate::commands) fn remove_member_runtime_decision_for_test(
+        &self,
+    ) -> Result<(), CommandError> {
+        let mut manager = self.try_manager()?;
+        let digest = manager
+            .bundle
+            .as_ref()
+            .ok_or_else(unavailable)?
+            .environment_digest()?;
+        self.provision(&mut manager)?;
+        let allowed = || self.open.load(Ordering::Acquire);
+        let store = manager.store.as_mut().expect("store provisioned");
+        let settings = store.settings(allowed).map_err(map_store_error)?;
+        let mut runtimes = Vec::new();
+        let mut removed = false;
+        for approval in settings.runtimes() {
+            let actual = approval.environment.digest().map_err(|_| unavailable())?;
+            if actual == digest {
+                removed = true;
+            } else {
+                runtimes.push(approval.clone());
+            }
+        }
+        if !removed {
+            return Err(map_store_error(InstallError::ApprovalMismatch));
+        }
+        store
+            .update_settings(
+                settings.revision(),
+                &ExecutionId::new().to_string(),
+                &tsumugi_plugin_host::PluginSettingsUpdate {
+                    packages: settings.packages().to_vec(),
+                    runtimes,
+                },
+                allowed,
+            )
+            .map_err(map_store_error)?;
+        Ok(())
     }
 }
 

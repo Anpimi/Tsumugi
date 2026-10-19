@@ -13,6 +13,12 @@ if (args.length !== 2 || args[0] !== '--output' || !isAbsolute(args[1])) {
 const output = resolve(args[1]);
 try { await lstat(output); throw new Error('Output already exists'); }
 catch (error) { if (error.code !== 'ENOENT') throw error; }
+// This is emitted from the same Core authority as the member's TypeScript
+// profile. Packaging never chooses a second protocol version or runs generation.
+const profile = JSON.parse(await readFile(new URL('../src/generated/profile.json', import.meta.url), 'utf8'));
+if (!Number.isSafeInteger(profile.protocolVersion) || profile.protocolVersion < 1 || profile.protocolVersion > 0xffffffff) {
+  throw new Error('Invalid generated member protocol profile');
+}
 const bundled = await build({
   absWorkingDir: root,
   entryPoints: [join(source, 'src/worker.ts')],
@@ -34,7 +40,7 @@ if (bundled.warnings.length || bundled.outputFiles.length !== 1
 }
 const files = new Map([['worker.mjs', bundled.outputFiles[0].contents],
   ['manifest.json', JSON.stringify({ format: 'tsumugi-member-runtime', version: 1,
-    protocolVersion: 1, entrypoint: 'worker.mjs' }, null, 2) + '\n'],
+    protocolVersion: profile.protocolVersion, entrypoint: 'worker.mjs' }, null, 2) + '\n'],
   ['LICENSE', await readFile(join(root, 'crates/plugin-sdk/LICENSE'))]]);
 const packages = new Map();
 for (const meta of Object.values(bundled.metafile.outputs)) {

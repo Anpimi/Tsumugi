@@ -4,7 +4,7 @@ use super::*;
 #[path = "../../../../../../../../../crates/plugin-host/tests/support/native.rs"]
 mod native_fixture;
 
-fn setup(native: bool, pending: bool, no_ready: bool) -> Setup {
+pub(super) fn setup(native: bool, pending: bool, no_ready: bool) -> Setup {
     setup_in_scope(native, pending, no_ready, sdk::ComponentScope::Project)
 }
 fn setup_in_scope(
@@ -122,7 +122,7 @@ fn instance_state(setup: &Setup, application: &Value) -> Value {
     .unwrap()
 }
 
-fn stop_instance(setup: &Setup, application: &Value) {
+pub(super) fn stop_instance(setup: &Setup, application: &Value) {
     let stop = json!({"actionId":ExecutionId::new(),"basis":application});
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {

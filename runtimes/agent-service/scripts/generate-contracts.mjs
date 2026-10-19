@@ -18,6 +18,7 @@ const attribution = `// Standalone generator: ${manifest.name} ${manifest.versio
 const output = new URL('../src/generated/', import.meta.url);
 await mkdir(output, { recursive: true });
 const sources = {
+  'profile.json': JSON.stringify(profile, null, 2) + '\n',
   'frame.schema.json': JSON.stringify(schema, null, 2) + '\n',
   'frame.d.ts': await contractTypes(schema, 'MemberFrame', banner),
   'validate-frame.mjs': banner + attribution + standaloneValidator(new Ajv({ strict: true, code: { source: true, esm: true, lines: true } }), schema),

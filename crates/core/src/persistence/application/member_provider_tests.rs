@@ -127,6 +127,44 @@ fn request(socket: &mut std::net::TcpStream) -> Vec<u8> {
 }
 
 #[test]
+fn member_provider_dispatch_deadline_is_original_and_history_cannot_renew_it() {
+    let (_temp, store, _plan, dispatch) =
+        member_fixture("http://127.0.0.1:9/v1/chat/completions".into());
+    assert!(
+        crate::ai::settings(&dispatch.input)
+            .unwrap()
+            .agent
+            .is_some()
+    );
+    assert!(dispatch.plugin_permit().is_none());
+    let original = dispatch
+        .deadline()
+        .expect("actual Agent dispatch owns its original deadline");
+    let remaining = original.saturating_duration_since(Instant::now());
+    assert!(!remaining.is_zero());
+    assert!(remaining <= Duration::from_millis(dispatch.input.envelope().limits.timeout_ms.into()));
+
+    // Application capture consumes the existing window; it cannot reopen it.
+    std::thread::sleep(Duration::from_millis(5));
+    let captured = dispatch.clone();
+    crate::ai::member::MemberSeed::capture(&captured).unwrap();
+    assert_eq!(captured.deadline(), Some(original));
+    assert_eq!(dispatch.deadline(), Some(original));
+    assert!(original.saturating_duration_since(Instant::now()) < remaining);
+
+    let historical = store
+        .execution_dispatch(dispatch.input.envelope().attempt_id, dispatch.item_id)
+        .unwrap();
+    assert_eq!(historical.dispatch_token, dispatch.dispatch_token);
+    assert_eq!(historical.input.bytes(), dispatch.input.bytes());
+    assert!(
+        historical.deadline().is_none(),
+        "a read-only reconstruction cannot issue a fresh live deadline"
+    );
+    assert_eq!(dispatch.deadline(), Some(original));
+}
+
+#[test]
 fn member_provider_persists_exact_sse_requests_and_shares_original_budget_on_reopen() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!(

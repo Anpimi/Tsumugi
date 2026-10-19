@@ -34,24 +34,30 @@ alpha 版本选择旧归档，可能丢失这些能力。
 ## 准备与构建
 
 先按[运行环境准备说明](../runtimes/javascript-host/README.md#prepare-the-fixed-macos-tool-and-host-artifact)
-准备当前已编译 Host、生产依赖与固定 Node 分发包。使用可信构建环境；应用资源只携带
+准备当前已编译 Host、生产依赖与固定 Node 分发包。使用可信构建环境；该准备仅提供
 固定工具文件与清洁 Host 树。准备报告和本机包管理器缓存不授予权限，也不替代运行依赖。
 
 将两个完整、已批准的归档置于同一已有目录，文件名须与清单的 `archiveName` 一致。
 构建并明确审阅 `tsumugi-plugin-package` 检查程序及其 SHA-256，再使用 Python 3.11
-或以上执行：
+或以上执行。同时从同一 checkout 准备应用的独立
+[Pi 成员产物](../runtimes/agent-service/README.md)，其冻结依赖与当前平台的 esbuild
+二进制须已离线备妥。以下命令从仓库根执行；准备器不调用安装器或下载运行依赖：
 
 ```sh
-cargo build --locked -p tsumugi-plugin-host --bin tsumugi-plugin-package
+cargo build --locked --offline -p tsumugi-plugin-host --bin tsumugi-plugin-package
 python3 runtimes/javascript-host/scripts/prepare-desktop-plugins.py \
   --artifacts /absolute/approved/plugin-candidates \
   --inspector /absolute/project/target/debug/tsumugi-plugin-package \
   --inspector-sha256 <reviewed-inspector-sha256> \
   --output /absolute/project/apps/desktop/src-tauri/resources/bundled-plugins
-pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
+pnpm --dir runtimes/agent-service check:contracts
+pnpm --dir runtimes/agent-service package:runtime --output "$PWD/apps/desktop/src-tauri/resources/member-runtime"
+CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
 ```
 
-资源父目录必须已存在，输出必须是新目录。所有输入路径使用绝对路径，不经过符号链接
+资源父目录必须已存在，两处输出都必须是新目录。成员打包直接编译源码，前端构建和
+Cargo build script 不生成或刷新该产物；应明确审阅旧输出或使用新 checkout，不覆盖
+既有产物。所有输入路径使用绝对路径，不经过符号链接
 祖先；仅允许 macOS 固定的 `/tmp`、`/var` 系统别名。归档必须是有界、单硬链接的普通
 文件。准备器先捕获实际归档字节，仅物化这些字节，不转而读取后来替换的路径。
 
@@ -70,7 +76,10 @@ pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
 
 输出内的 `preparation.json` 仅记录公开选择固定值、检查程序摘要和包观察，不包含本机
 输入路径。桌面构建再次通过原 Host 捕获实际包与运行环境，并嵌入构建拥有的元数据，
-不会将该报告当作批准。Tauri 按逻辑资源路径携带完整包、工具和 Host 树。当前入口仅
+不会将该报告当作批准。Tauri 按逻辑资源路径携带完整包、工具和 Host 树。独立成员树
+通过实际执行时相同的 Host 产物 owner 捕获；入口缺失或协议与 Core 生成 profile
+不符都会阻止构建。它只使用独立批准的 Node 工具，不成为插件 Process 通道；准确
+Node 分发固定值仍归既有运行环境准备入口。当前入口仅
 支持清单选择的 macOS arm64 构建者与目标。
 
 ## 失败与既有安装

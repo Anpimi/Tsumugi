@@ -2025,11 +2025,29 @@ mod tests {
                     last = item;
                     continue;
                 };
-                let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string();
+                let (content_type, response) = match request["stream"].as_bool() {
+                    Some(true) => {
+                        let chunks = [
+                            json!({"id":"synthetic-work-plan","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":output.to_string()},"finish_reason":null}]}),
+                            json!({"id":"synthetic-work-plan","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
+                            json!({"id":"synthetic-work-plan","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}),
+                        ];
+                        let response = chunks.into_iter()
+                            .map(|chunk| format!("data: {chunk}\n\n"))
+                            .collect::<String>() + "data: [DONE]\n\n";
+                        ("text/event-stream", response)
+                    }
+                    Some(false) => (
+                        "application/json",
+                        json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string(),
+                    ),
+                    None => panic!("synthetic provider requires the actual stream profile"),
+                };
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: {}\r\nConnection: close\r\n\r\n{}",
                     response.len(),
+                    content_type,
                     response
                 );
                 last = item;
@@ -2070,7 +2088,10 @@ mod tests {
             plan
         }
         fn wait_effect(&self, plan: &Value) -> Value {
-            let deadline = Instant::now() + Duration::from_secs(5);
+            self.wait_effect_for(plan, Duration::from_secs(5))
+        }
+        fn wait_effect_for(&self, plan: &Value, timeout: Duration) -> Value {
+            let deadline = Instant::now() + timeout;
             loop {
                 let view = self
                     .call(
@@ -2131,7 +2152,10 @@ mod tests {
         }
 
         fn wait_saved(&self, attempt: &Value) -> Value {
-            let deadline = Instant::now() + Duration::from_secs(5);
+            self.wait_saved_for(attempt, Duration::from_secs(5))
+        }
+        fn wait_saved_for(&self, attempt: &Value, timeout: Duration) -> Value {
+            let deadline = Instant::now() + timeout;
             loop {
                 let view = self
                     .call("read_ai_translation", json!({"attemptId":attempt}))
@@ -2148,9 +2172,20 @@ mod tests {
     }
 
     #[test]
+    // Actual Pi execution uses the currently packaged macOS arm64 Node profile.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn agent_generation_uses_original_runtime_candidates_and_cumulative_budget() {
+        // The installed runtime outlives the application fixture's teardown.
+        let _member_runtime;
         let fixture = Fixture::create();
-        let (config, provider) = local_provider_sequence(vec!["根候选", "子候选"], None);
+        _member_runtime = crate::commands::execution::test_fixtures::provision_member_runtime(
+            &fixture.app.state::<AppState>().plugins,
+            &fixture.directory.path().join("member-resources"),
+        );
+        let (mut config, provider) = local_provider_sequence_with_accept_timeout(
+            vec!["根候选", "子候选"], None, None, Duration::from_secs(30),
+        );
+        config.timeout_seconds = 30;
         let (plan, grant) = fixture.start_candidates(config);
         let first = fixture.wait_saved(&plan["attemptId"]);
         assert_eq!(first["rows"][0]["output"]["text"], "根候选");
@@ -2235,7 +2270,7 @@ mod tests {
                 .unwrap(),
             generation["attemptId"]
         );
-        let second = fixture.wait_saved(&generation["attemptId"]);
+        let second = fixture.wait_saved_for(&generation["attemptId"], Duration::from_secs(30));
         assert_eq!(second["rows"][0]["output"]["text"], "子候选");
         assert_ne!(
             second["rows"][0]["savedRevisionId"],
@@ -2271,8 +2306,10 @@ mod tests {
         fixture
             .call("start_work_plan_agent_generation", exhausted_start)
             .unwrap();
-        let exhausted =
-            fixture.wait_effect(&json!({"attemptId":exhausted_request["generation"]["attemptId"]}));
+        let exhausted = fixture.wait_effect_for(
+            &json!({"attemptId":exhausted_request["generation"]["attemptId"]}),
+            Duration::from_secs(30),
+        );
         assert_eq!(
             exhausted["detail"]["items"][0]["status"]["diagnostic"],
             "ai-budget"
@@ -2290,6 +2327,12 @@ mod tests {
         );
         let parent: ExecutionId = serde_json::from_value(agent["parentTask"].clone()).unwrap();
         let attempt: ExecutionId = serde_json::from_value(generation["attemptId"].clone()).unwrap();
+        let expected_binding = tsumugi_core::application::WorkPlanAgentExecutionBinding {
+            lease: serde_json::from_value(agent["lease"].clone()).unwrap(),
+            root_task: parent,
+            caller_id: serde_json::from_value(agent["scopeId"].clone()).unwrap(),
+            delegation: None,
+        };
         fixture
             .app
             .state::<AppState>()
@@ -2309,7 +2352,10 @@ mod tests {
                 .unwrap();
                 let child = store.execution_input(attempt).unwrap();
                 assert_eq!(child.envelope().items, root.envelope().items);
-                assert_eq!(child.envelope().settings, root.envelope().settings);
+                assert!(root.envelope().settings["agent"].is_null());
+                let mut expected_settings = root.envelope().settings.clone();
+                expected_settings["agent"] = serde_json::to_value(expected_binding).unwrap();
+                assert_eq!(child.envelope().settings, expected_settings);
                 assert_eq!(child.envelope().limits, root.envelope().limits);
                 assert_eq!(
                     store.provider_budget(parent).unwrap().unwrap().dispatched,
@@ -2437,9 +2483,19 @@ mod tests {
     }
 
     #[test]
+    // Actual Pi execution uses the currently packaged macOS arm64 Node profile.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn agent_generation_reuses_independent_checks_and_original_selection_service() {
+        let _member_runtime;
         let fixture = Fixture::create();
-        let (config, provider) = local_provider_sequence(vec!["第一稿", "第二稿"], None);
+        _member_runtime = crate::commands::execution::test_fixtures::provision_member_runtime(
+            &fixture.app.state::<AppState>().plugins,
+            &fixture.directory.path().join("member-resources"),
+        );
+        let (mut config, provider) = local_provider_sequence_with_accept_timeout(
+            vec!["第一稿", "第二稿"], None, None, Duration::from_secs(30),
+        );
+        config.timeout_seconds = 30;
         let plan = fixture.start_checked(
             config,
             tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection,
@@ -2468,7 +2524,10 @@ mod tests {
         fixture
             .call("start_work_plan_agent_generation", request.clone())
             .unwrap();
-        let second = fixture.wait_effect(&json!({"attemptId":request["generation"]["attemptId"]}));
+        let second = fixture.wait_effect_for(
+            &json!({"attemptId":request["generation"]["attemptId"]}),
+            Duration::from_secs(30),
+        );
         assert_eq!(
             second["rows"][0]["automation"]["phase"], "selected",
             "{second}"

@@ -463,6 +463,42 @@ async fn revoked_authority_refuses_capture_and_launch_without_a_child_or_handler
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn unsupported_member_artifact_protocol_is_rejected_before_launch() {
+    let runtime = runtime_fixture::approved_runtime();
+    let _ = artifact();
+    let source = PathBuf::from(std::env::var_os("TSUMUGI_TEST_MEMBER_ARTIFACT").unwrap());
+    let fixture = tempfile::tempdir().unwrap();
+    let mut expected = manifest();
+    expected.protocol_version = PROTOCOL.checked_add(1).unwrap();
+    std::fs::write(
+        fixture.path().join("manifest.json"),
+        serde_json::to_vec(&expected).unwrap(),
+    )
+    .unwrap();
+    // Keep the real, self-contained worker bytes. Only the independently
+    // expected manifest protocol changes; no replacement application is run.
+    std::fs::copy(source.join("worker.mjs"), fixture.path().join("worker.mjs")).unwrap();
+    let captured =
+        CapturedMemberArtifact::capture_directory(fixture.path(), &expected, || true).unwrap();
+    let stage = tempfile::tempdir().unwrap();
+    let mut handler = SyntheticHandler::new();
+    let result = run_member(
+        &captured,
+        &runtime,
+        stage.path(),
+        start(),
+        options(Cancellation::default()),
+        &mut handler,
+        Arc::new(|| true),
+    )
+    .await;
+    assert!(matches!(result, Err(HostError::InvalidContract)));
+    empty_stage(stage.path());
+    assert!(handler.trace.lock().unwrap().prepares.is_empty());
+    assert!(handler.trace.lock().unwrap().events.is_empty());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn changed_session_or_sequence_is_rejected_and_the_original_child_is_reaped() {
     let runtime = runtime_fixture::approved_runtime();
     // Require the production bundle fixture even though these two negative

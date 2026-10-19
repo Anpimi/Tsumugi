@@ -9,6 +9,15 @@ build dependency and generated member channel remain in the same undistributed
 application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; bilingual Unreleased
 entries are synchronized without another application version bump.
 
+The application's exact bundled Node identity also supplies members with no
+domain tools or only native tools. Its existing installed approval and settings
+revocation remain separate from tool consent. Build-time and execution-time
+member capture share the Host artifact owner, with the protocol profile emitted
+by the existing Core generator. This adds no version source, stored field,
+dependency, IPC or SDK contract; the same undistributed versions and schema 53
+remain unchanged, with synchronized bilingual Unreleased entries and no extra
+version bump.
+
 Delivery recovery performs one bounded read of the original saved export action
 following a lost or uncertain acknowledgement. Explicit folder selection, previews,
 exports and reconciliation retain their existing authority; the original receipt

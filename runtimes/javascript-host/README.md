@@ -275,10 +275,17 @@ These are explicit build inputs. The desktop build neither fetches a latest
 package nor falls back to embedded domain code. Before bundling, it captures
 actual package files through the Host and checks the complete package digest,
 plugin identity and SDK version against the source-owned catalog. Missing or
-changed inputs fail the build. Build the desktop with:
+changed inputs fail the build. Also prepare the application's standalone Pi
+member artifact from this checkout using its
+[offline build instructions](../agent-service/README.md). Dependencies and the
+platform esbuild binary must already be supplied from the frozen lockfile;
+these commands do not install packages, download Node or approve execution.
+Run from the repository root with a new member output directory:
 
 ```sh
-pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
+pnpm --dir runtimes/agent-service check:contracts
+pnpm --dir runtimes/agent-service package:runtime --output "$PWD/apps/desktop/src-tauri/resources/member-runtime"
+CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
 ```
 
 This profile explicitly enables macOS `.app` bundling and its macOS icon; the
@@ -295,7 +302,11 @@ silicon macOS builder and target. The build captures both runtime trees through
 the Host, compares the complete tool digest with the independent source pin,
 and embeds the actual complete SDK descriptor, package metadata, public
 application-build origin and limits. Tauri preserves the package, tool and Host
-trees at logical resource paths. Runtime preparation JSON stays outside those
+trees at logical resource paths. It separately captures `member-runtime/`
+through the same bounded Host artifact owner used for execution and rejects a
+missing entrypoint or a protocol different from Core's generated profile. Pi
+uses only the approved Node tool; its artifact is not the Cordis Host or the SDK
+Process protocol. Runtime preparation JSON stays outside those
 mapped trees. The plugin preparation report accompanies its mapped directory;
 neither report is used as approval. This opt-in bundle requires macOS 13.5;
 ordinary builds retain their base minimum and offer no implicit development

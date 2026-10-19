@@ -31,7 +31,10 @@ pub use package::installation::{
     RuntimeInstallReceipt, UninstallReceipt, UninstallRecord, repository_source_id,
 };
 pub use package::{PackageCompatibilityInspection, PackageFile, PackageImage, PackageInspection};
-pub use runtime::{CapturedRuntime, RuntimeInspection, RuntimeInspectionRequest};
+pub use runtime::{
+    CapturedMemberArtifact, CapturedRuntime, MemberArtifactManifest, RuntimeInspection,
+    RuntimeInspectionRequest,
+};
 pub use service::*;
 pub use session::*;
 

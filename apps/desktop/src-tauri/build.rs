@@ -11,6 +11,7 @@ fn prepare_metadata() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "cargo:rerun-if-changed=../../../runtimes/javascript-host/scripts/node-distribution.macos-aarch64.json"
     );
+    println!("cargo:rerun-if-changed=../../../runtimes/agent-service/src/generated/profile.json");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_BUNDLED_RUNTIME");
     let metadata = if env::var_os("CARGO_FEATURE_BUNDLED_RUNTIME").is_some() {
         if env::var("TARGET")? != "aarch64-apple-darwin"
@@ -20,9 +21,10 @@ fn prepare_metadata() -> Result<(), Box<dyn std::error::Error>> {
                 "bundled runtime requires an aarch64-apple-darwin target and builder".into(),
             );
         }
-        let root =
+        let resources =
             PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("manifest directory missing")?)
-                .join("resources/javascript-runtime");
+                .join("resources");
+        let root = resources.join("javascript-runtime");
         println!("cargo:rerun-if-changed=resources/javascript-runtime");
         let pin = runtime_bundle::node_pin()?;
         let observed = CapturedRuntime::inspect_directories(
@@ -41,6 +43,11 @@ fn prepare_metadata() -> Result<(), Box<dyn std::error::Error>> {
         if !runtime_bundle::supported_tool(&observed.environment, &pin) {
             return Err("prepared tool differs from source-owned Node artifact pin".into());
         }
+        // Core generation owns this protocol; the resource manifest cannot
+        // approve its own version. Capture reuses the runtime filesystem owner
+        // without importing the Core executor into this build script.
+        println!("cargo:rerun-if-changed=resources/member-runtime");
+        runtime_bundle::capture_member_artifact(&resources)?;
         let metadata = runtime_bundle::BundledRuntimeMetadata {
             format_version: 1,
             id: runtime_bundle::BUNDLE_ID.into(),

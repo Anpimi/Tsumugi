@@ -1,4 +1,7 @@
 //! Immutable runtime bytes approved independently of any plugin or worker.
+mod member_artifact;
+pub use member_artifact::{CapturedMemberArtifact, MemberArtifactManifest};
+
 use std::{collections::BTreeMap, fmt, path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};

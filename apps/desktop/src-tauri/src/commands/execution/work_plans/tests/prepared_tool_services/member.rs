@@ -4,49 +4,29 @@ use super::*;
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    path::PathBuf,
     sync::mpsc,
 };
 
 #[derive(Clone, Copy)]
 enum Mode {
     Complete,
+    NoTools,
+    RootOnly,
     HttpStall,
     ToolStall,
 }
 
 fn configure_member(setup: &Setup) {
-    let source = PathBuf::from(
-        std::env::var_os("TSUMUGI_TEST_MEMBER_ARTIFACT")
-            .expect("explicit built member artifact required"),
+    crate::commands::execution::test_fixtures::configure_member_resources(
+        &setup.fixture.app.state::<AppState>().plugins,
+        &setup.fixture.directory.path().join("resources"),
     );
-    let resources = setup.fixture.directory.path().join("resources");
-    let target = resources.join("member-runtime");
-    fn copy(source: &Path, target: &Path) {
-        let metadata = fs::symlink_metadata(source).unwrap();
-        assert!(
-            !metadata.file_type().is_symlink(),
-            "artifact fixture must be link-free"
-        );
-        if metadata.is_dir() {
-            fs::create_dir_all(target).unwrap();
-            for entry in fs::read_dir(source).unwrap() {
-                let entry = entry.unwrap();
-                copy(&entry.path(), &target.join(entry.file_name()));
-            }
-        } else {
-            assert!(metadata.is_file());
-            fs::copy(source, target).unwrap();
-        }
-    }
-    copy(&source, &target);
-    setup
-        .fixture
-        .app
-        .state::<AppState>()
-        .plugins
-        .configure_member_bundle(Some(resources))
-        .unwrap();
+}
+fn configure_member_artifact(setup: &Setup) {
+    crate::commands::execution::test_fixtures::configure_member_artifact(
+        &setup.fixture.app.state::<AppState>().plugins,
+        &setup.fixture.directory.path().join("resources"),
+    );
 }
 fn request(socket: &mut TcpStream) -> (String, Value) {
     socket
@@ -180,6 +160,9 @@ fn provider(
         respond(&mut root,"application/json",&json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":root_output}}],
             "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string());
         drop(root);
+        if matches!(mode, Mode::RootOnly) {
+            return (calls, false);
+        }
         let mut first = accept(&listener);
         let (raw, body) = request(&mut first);
         calls.push(raw);
@@ -195,6 +178,14 @@ fn provider(
             return (calls, closed);
         }
         started.send(pid).unwrap();
+        if matches!(mode, Mode::NoTools) {
+            assert!(
+                body.get("tools")
+                    .is_none_or(|tools| tools.as_array().is_some_and(Vec::is_empty))
+            );
+            final_response(&mut first, &item, "Pi without domain tools");
+            return (calls, false);
+        }
         let name = body["tools"][0]["function"]["name"].as_str().unwrap();
         let arguments = json!({"unitId":item["unitId"]}).to_string();
         let tool = json!({"id":"synthetic-tool-turn","object":"chat.completion.chunk","created":1,"model":"synthetic-member",
@@ -222,20 +213,25 @@ fn provider(
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["tool_call_id"], "lookup-source");
         assert!(tools[0]["content"].as_str().unwrap().contains("Hello"));
-        let output=json!({"unitId":item["unitId"],"targetLocale":item["targetLocale"],"text":"Pi used the controlled query"}).to_string();
-        let text = json!({"id":"synthetic-final-turn","object":"chat.completion.chunk","created":1,"model":"synthetic-member",
-            "choices":[{"index":0,"delta":{"role":"assistant","content":output},"finish_reason":null}]});
-        let finish = json!({"id":"synthetic-final-turn","object":"chat.completion.chunk","created":1,"model":"synthetic-member",
-            "choices":[{"index":0,"delta":{},"finish_reason":"stop"}]});
-        // Missing usage stays unknown rather than using normalized Pi zeros.
-        respond(
-            &mut second,
-            "text/event-stream",
-            &format!("data: {text}\n\ndata: {finish}\n\ndata: [DONE]\n\n"),
-        );
+        final_response(&mut second, &item, "Pi used the controlled query");
         (calls, false)
     });
     (config, observed, thread)
+}
+fn final_response(second: &mut TcpStream, item: &Value, candidate: &str) {
+    let output =
+        json!({"unitId":item["unitId"],"targetLocale":item["targetLocale"],"text":candidate})
+            .to_string();
+    let text = json!({"id":"synthetic-final-turn","object":"chat.completion.chunk","created":1,"model":"synthetic-member",
+            "choices":[{"index":0,"delta":{"role":"assistant","content":output},"finish_reason":null}]});
+    let finish = json!({"id":"synthetic-final-turn","object":"chat.completion.chunk","created":1,"model":"synthetic-member",
+            "choices":[{"index":0,"delta":{},"finish_reason":"stop"}]});
+    // Missing usage stays unknown rather than using normalized Pi zeros.
+    respond(
+        second,
+        "text/event-stream",
+        &format!("data: {text}\n\ndata: {finish}\n\ndata: [DONE]\n\n"),
+    );
 }
 fn start(setup: &Setup, grant: &Value) -> (Value, Value) {
     let scope = setup
@@ -245,6 +241,10 @@ fn start(setup: &Setup, grant: &Value) -> (Value, Value) {
             json!({"lease":grant["lease"]}),
         )
         .unwrap();
+    let generation = start_in_scope(setup, &scope);
+    (scope, generation)
+}
+fn start_in_scope(setup: &Setup, scope: &Value) -> Value {
     let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[setup.fixture.unit]});
     let preflight = setup
         .fixture
@@ -254,7 +254,7 @@ fn start(setup: &Setup, grant: &Value) -> (Value, Value) {
         )
         .unwrap();
     setup.fixture.call("start_work_plan_agent_generation",json!({"scopeId":scope["scopeId"],"generation":generation,"inputDigest":preflight["inputDigest"]})).unwrap();
-    (scope, generation)
+    generation
 }
 fn absent(pid: u32) {
     assert!(
@@ -500,4 +500,228 @@ fn pi_member_cancel_during_actual_query_reaps_both_owned_processes() {
     absent(node);
     absent(query);
     assert_eq!(provider.join().unwrap().0.len(), 2);
+}
+
+fn empty_plan(setup: &Setup, config: AiConfig) -> (Value, Value) {
+    let plan = setup.fixture.call("prepare_work_plan", json!({"config":config,"locale":"zh-CN",
+        "unitIds":[setup.fixture.unit],"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null})).unwrap();
+    assert!(plan["tools"].is_null());
+    let grant = setup
+        .fixture
+        .call(
+            "authorize_work_plan",
+            json!({"planId":plan["planId"],"digest":plan["digest"],
+        "actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":[],"toolExecution":false,
+        "applicationToolExecutions":[],"effects":["save-candidate"],"expiresAt":expiry()}),
+        )
+        .unwrap();
+    setup
+        .fixture
+        .call(
+            "start_work_plan",
+            json!({"planId":plan["planId"],"actionId":grant["actionId"],
+        "expectedGeneration":grant["lease"]["generation"]}),
+        )
+        .unwrap();
+    setup.fixture.wait_saved(&plan["attemptId"]);
+    (plan, grant)
+}
+
+#[test]
+fn pi_member_application_default_node_supports_empty_plan_and_empty_delegated_roster() {
+    for delegated in [false, true] {
+        let setup = Setup::new(false);
+        configure_member(&setup);
+        let (config, node, provider) = provider(&setup, Mode::NoTools);
+        let (_plan, grant) = if delegated {
+            setup.start_plan(config)
+        } else {
+            empty_plan(&setup, config)
+        };
+        let scope = setup
+            .fixture
+            .call(
+                "open_work_plan_agent_scope",
+                json!({"lease":grant["lease"]}),
+            )
+            .unwrap();
+        let scope = if delegated {
+            setup.fixture.call("delegate_work_plan_agent_scope",json!({"scopeId":scope["scopeId"],
+                "delegation":{"delegationId":ExecutionId::new(),"unitIds":[setup.fixture.unit],"toolHandles":[]}})).unwrap()
+        } else {
+            scope
+        };
+        let generation = start_in_scope(&setup, &scope);
+        let pid = node.recv_timeout(Duration::from_secs(60)).unwrap();
+        let terminal = setup.wait_terminal(&generation["attemptId"]);
+        assert_eq!(
+            terminal["items"][0]["status"]["execution"], "succeeded",
+            "{terminal}"
+        );
+        absent(pid);
+        assert!(tool_attempts(&setup).is_empty());
+        let output = setup
+            .fixture
+            .call(
+                "read_execution_output",
+                json!({"attemptId":generation["attemptId"],
+            "resultId":terminal["items"][0]["resultId"]}),
+            )
+            .unwrap();
+        assert_eq!(output["output"]["text"], "Pi without domain tools");
+        assert_eq!(output["output"]["requests"], 1);
+        assert_eq!(provider.join().unwrap().0.len(), 2);
+    }
+}
+
+#[test]
+fn pi_member_application_default_node_calls_independently_approved_native_tool() {
+    let setup = super::application::setup(true, false, false);
+    configure_member(&setup);
+    let (config, node, provider) = provider(&setup, Mode::Complete);
+    let (plan, grant) = setup.start_plan(config);
+    let environment: sdk::ExecutionEnvironmentDescriptor =
+        serde_json::from_value(plan["tools"]["entries"][0]["execution"]["environment"].clone())
+            .unwrap();
+    assert!(matches!(
+        environment,
+        sdk::ExecutionEnvironmentDescriptor::Native(_)
+    ));
+    let (_, generation) = start(&setup, &grant);
+    let node = node.recv_timeout(Duration::from_secs(60)).unwrap();
+    let terminal = setup.wait_terminal(&generation["attemptId"]);
+    assert_eq!(
+        terminal["items"][0]["status"]["execution"], "succeeded",
+        "{terminal}"
+    );
+    absent(node);
+    let attempts = tool_attempts(&setup);
+    assert_eq!(attempts.len(), 1);
+    let tool = setup.wait_terminal(&json!(attempts[0]));
+    let result = setup
+        .fixture
+        .call(
+            "read_execution_output",
+            json!({"attemptId":attempts[0],"resultId":tool["items"][0]["resultId"]}),
+        )
+        .unwrap();
+    let output: Value = serde_json::from_str(
+        result["plugin"]["result"]["outcome"]["output"]["utf8"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let native: u32 = output["workerPid"].as_u64().unwrap().try_into().unwrap();
+    assert_ne!(node, native);
+    assert_ne!(native, std::process::id());
+    assert_eq!(provider.join().unwrap().0.len(), 3);
+    // Native application lifetime is independent of this member's completion.
+    assert_eq!(output["rows"][0]["text"], "Hello");
+    super::application::stop_instance(
+        &setup,
+        &plan["tools"]["entries"][0]["execution"]["applicationScope"],
+    );
+    absent(native);
+}
+
+#[test]
+fn pi_member_application_default_node_missing_or_unapproved_rejects_before_member_http() {
+    for remove_approval in [false, true] {
+        let setup = Setup::new(false);
+        configure_member_artifact(&setup);
+        if remove_approval {
+            setup
+                .fixture
+                .app
+                .state::<AppState>()
+                .plugins
+                .configure_member_default_runtime_for_test(
+                    crate::commands::execution::test_fixtures::member_runtime_metadata(),
+                )
+                .unwrap();
+            setup
+                .fixture
+                .app
+                .state::<AppState>()
+                .plugins
+                .remove_member_runtime_decision_for_test()
+                .unwrap();
+        }
+        let (config, _node, provider) = provider(&setup, Mode::RootOnly);
+        let (_plan, grant) = empty_plan(&setup, config);
+        let (scope, generation) = start(&setup, &grant);
+        let terminal = setup.wait_terminal(&generation["attemptId"]);
+        assert_eq!(
+            terminal["items"][0]["status"]["execution"], "failed",
+            "{terminal}"
+        );
+        assert_eq!(terminal["items"][0]["status"]["diagnostic"], "member-owner");
+        assert!(tool_attempts(&setup).is_empty());
+        assert_eq!(provider.join().unwrap().0.len(), 1);
+        let task: ExecutionId = serde_json::from_value(scope["parentTask"].clone()).unwrap();
+        let budget = setup
+            .fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                sessions
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .store
+                    .provider_budget(task)
+                    .unwrap()
+                    .unwrap()
+            });
+        assert_eq!((budget.dispatched, budget.unresolved), (1, 0));
+    }
+}
+
+#[test]
+fn pi_member_application_default_node_original_settings_revocation_cancels_empty_roster_http() {
+    let setup = Setup::new(false);
+    configure_member(&setup);
+    let (config, node, provider) = provider(&setup, Mode::HttpStall);
+    let (_plan, grant) = empty_plan(&setup, config);
+    let (scope, generation) = start(&setup, &grant);
+    let node = node.recv_timeout(Duration::from_secs(60)).unwrap();
+    let inventory = call(&setup.fixture.webview, "read_plugin_inventory", json!({})).unwrap();
+    // Use the real application mutation coordinator. It withdraws the original
+    // settings epoch before committing changed installation decisions.
+    call(
+        &setup.fixture.webview,
+        "set_plugin_enabled",
+        json!({"package":{"plugin":setup.query.capability.provider.plugin,
+        "packageDigest":setup.query.capability.provider.package_digest},"enabled":false,
+        "expectedRevision":inventory["settingsRevision"],"actionId":ExecutionId::new()}),
+    )
+    .unwrap();
+    let terminal = setup.wait_terminal(&generation["attemptId"]);
+    assert_ne!(terminal["items"][0]["status"]["execution"], "succeeded");
+    absent(node);
+    let (calls, closed) = provider.join().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert!(closed);
+    assert!(tool_attempts(&setup).is_empty());
+    let task: ExecutionId = serde_json::from_value(scope["parentTask"].clone()).unwrap();
+    let budget = setup
+        .fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            sessions
+                .active
+                .as_ref()
+                .unwrap()
+                .store
+                .provider_budget(task)
+                .unwrap()
+                .unwrap()
+        });
+    assert_eq!(
+        (budget.dispatched, budget.unresolved, budget.usage_unknown),
+        (2, 1, 1)
+    );
 }

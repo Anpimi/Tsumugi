@@ -8,9 +8,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 - Run bounded Agent generation through a captured Pi member process with
   controlled model transport and the original read-only tool permissions.
-  Missing or ambiguous approved runtime selections fail explicitly. Internal
+  Its Node environment comes from the application's exact approved default,
+  including scopes without tools and scopes with native tools. Missing approval
+  fails explicitly. Internal
   process frames and cleanup keep the original request and child identities;
-  the SDK plugin protocol remains unchanged.
+  the SDK plugin protocol remains unchanged. Offline application builds require
+  the complete member artifact with the generated protocol identity. Provider
+  failures retain their original cause after member execution settles.
 
 - Store each controlled member model request beside its original provider budget
   reservation before sending HTTP. Unknown usage stays occupied; conflicting
