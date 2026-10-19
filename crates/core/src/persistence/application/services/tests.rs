@@ -1556,7 +1556,7 @@ fn revoke_after_reservation(settings_changed: bool) {
         let event = events
             .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap();
-        let crate::ai::provider::BudgetEvent::Reserve { id, limit, reply } = event else {
+        let crate::ai::provider::BudgetEvent::Reserve { id, limit, reply, .. } = event else {
             panic!("expected real reservation")
         };
         fixture
@@ -1662,7 +1662,7 @@ fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
                 &item,
             )
         });
-        let crate::ai::provider::BudgetEvent::Reserve { id, limit, reply } = events
+        let crate::ai::provider::BudgetEvent::Reserve { id, limit, reply, .. } = events
             .recv_timeout(std::time::Duration::from_secs(2))
             .unwrap()
         else {

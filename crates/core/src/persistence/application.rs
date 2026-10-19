@@ -269,6 +269,10 @@ impl ProjectStore {
 }
 
 #[cfg(test)]
+#[path = "application/member_provider_tests.rs"]
+mod member_provider_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
@@ -277,7 +281,7 @@ mod tests {
     };
     use std::fs;
 
-    fn config() -> AiConfig {
+    pub(super) fn config() -> AiConfig {
         AiConfig {
             endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
             model: "synthetic-model".into(),
@@ -287,7 +291,7 @@ mod tests {
         }
     }
 
-    fn fixture() -> (tempfile::TempDir, ProjectStore, Vec<ExecutionId>) {
+    pub(super) fn fixture() -> (tempfile::TempDir, ProjectStore, Vec<ExecutionId>) {
         let (temp, store, _) = super::super::review::tests::current_release_fixture(false);
         let source = store
             .source_content(
@@ -741,7 +745,7 @@ mod tests {
                 .is_err()
         );
     }
-    fn consent(plan: &WorkPlan) -> crate::application::AuthorizeWorkPlan {
+    pub(super) fn consent(plan: &WorkPlan) -> crate::application::AuthorizeWorkPlan {
         crate::application::AuthorizeWorkPlan {
             action_id: ExecutionId::new(),
             plan_digest: plan.digest.clone(),

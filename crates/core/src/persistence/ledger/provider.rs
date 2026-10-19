@@ -1,6 +1,6 @@
 //! Durable dispatch evidence lives beside the existing execution ledger.
 use super::*;
-use crate::ai::Usage;
+use crate::ai::{Usage, provider::ProviderRequestCapture};
 
 const TABLES: &[(&str, &str)] = &[
     (
@@ -17,7 +17,7 @@ const TABLES: &[(&str, &str)] = &[
     ),
     (
         "execution_provider_requests",
-        "CREATE TABLE execution_provider_requests (request_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL REFERENCES execution_budgets(task_id), attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('unknown','response')), usage BLOB CHECK(usage IS NULL OR length(usage) BETWEEN 1 AND 1024), FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))",
+        "CREATE TABLE execution_provider_requests (request_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL REFERENCES execution_budgets(task_id), attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('unknown','response')), usage BLOB CHECK(usage IS NULL OR length(usage) BETWEEN 1 AND 1024), capture BLOB CHECK(capture IS NULL OR length(capture) BETWEEN 1 AND 131072), capture_digest TEXT CHECK(capture_digest IS NULL OR length(capture_digest)=64), CHECK((capture IS NULL)=(capture_digest IS NULL)), FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))",
     ),
 ];
 pub(crate) fn table_names() -> impl Iterator<Item = String> {
@@ -94,18 +94,30 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         }
     }
     let mut statement = c
-        .prepare("SELECT request_id,usage FROM execution_provider_requests")
+        .prepare("SELECT request_id,usage,capture,capture_digest,attempt_id FROM execution_provider_requests")
         .map_err(sql_error)?;
     for row in statement
         .query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<Vec<u8>>>(1)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<Vec<u8>>>(1)?, r.get::<_, Option<Vec<u8>>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?))
         })
         .map_err(sql_error)?
     {
-        let (id, bytes) = row.map_err(sql_error)?;
+        let (id, bytes, capture, digest, attempt) = row.map_err(sql_error)?;
         parse_id(id)?;
         if let Some(bytes) = bytes {
             let _: Usage = codec::decode(&bytes, 1024)?;
+        }
+        match (capture, digest) {
+            (Some(bytes), Some(digest)) => {
+                if codec::digest(&bytes) != digest { return Err(error(ErrorCode::CorruptLedger, "provider-request-capture")); }
+                let capture: ProviderRequestCapture = codec::decode(&bytes, 131072).map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
+                let input = load_input(c, parse_id(attempt)?)?;
+                let settings = crate::ai::settings(&input)?;
+                if settings.agent.is_none() { return Err(error(ErrorCode::CorruptLedger, "provider-member-association")); }
+                capture.validate(&settings.config).map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
+            }
+            (None, None) => {}
+            _ => return Err(error(ErrorCode::CorruptLedger, "provider-request-capture")),
         }
     }
     Ok(())
@@ -369,6 +381,19 @@ impl ProjectStore {
         id: ExecutionId,
         limit: u32,
     ) -> Result<(), ExecutionError> {
+        self.reserve_provider_request_capture(request, id, limit, None)
+    }
+    pub(crate) fn reserve_provider_request_capture(
+        &mut self, request: &DispatchRequest, id: ExecutionId, limit: u32,
+        capture: Option<&ProviderRequestCapture>,
+    ) -> Result<(), ExecutionError> {
+        let captured = if let Some(capture) = capture {
+            let settings = crate::ai::settings(&request.input)?;
+            if settings.agent.is_none() { return Err(error(ErrorCode::Unauthorized, "member-dispatch")); }
+            capture.validate(&settings.config)?;
+            Some(codec::encode(capture, 131072)?)
+        } else { None };
+        let digest = captured.as_ref().map(|bytes| codec::digest(bytes));
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         super::super::application::check_input(&tx, &request.input)?;
@@ -410,13 +435,14 @@ impl ProjectStore {
             return Err(error(ErrorCode::LimitExceeded, "ai-budget"));
         }
         tx.execute(
-            "INSERT INTO execution_provider_requests VALUES (?1,?2,?3,?4,?5,'unknown',NULL)",
+            "INSERT INTO execution_provider_requests VALUES (?1,?2,?3,?4,?5,'unknown',NULL,?6,?7)",
             params![
                 id.to_string(),
                 e.task_id.to_string(),
                 e.attempt_id.to_string(),
                 request.item_id.to_string(),
-                request.dispatch_token.to_string()
+                request.dispatch_token.to_string(),
+                captured, digest
             ],
         )
         .map_err(sql_error)?;
@@ -430,6 +456,13 @@ impl ProjectStore {
     ) -> Result<(), ExecutionError> {
         let tx = self.execution_write()?;
         let bytes = usage.map(|u| codec::encode(&u, 1024)).transpose()?;
+        let previous: Option<Vec<u8>> = tx.query_row(
+            "SELECT usage FROM execution_provider_requests WHERE request_id=?1 AND attempt_id=?2 AND dispatch_token=?3",
+            params![id.to_string(), request.input.envelope().attempt_id.to_string(), request.dispatch_token.to_string()], |row| row.get(0)
+        ).optional().map_err(sql_error)?.flatten();
+        if previous.as_ref().zip(bytes.as_ref()).is_some_and(|(old, new)| old != new) {
+            return Err(error(ErrorCode::ResultMismatch, "provider-usage-conflict"));
+        }
         let changed=tx.execute("UPDATE execution_provider_requests SET state='response',usage=COALESCE(?4,usage) WHERE request_id=?1 AND attempt_id=?2 AND dispatch_token=?3",params![id.to_string(),request.input.envelope().attempt_id.to_string(),request.dispatch_token.to_string(),bytes]).map_err(sql_error)?;
         if changed != 1 {
             return Err(error(ErrorCode::ResultMismatch, "provider-reservation"));

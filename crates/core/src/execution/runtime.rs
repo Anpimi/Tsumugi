@@ -911,9 +911,9 @@ impl ExecutionRuntime {
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
                 };
                 match event {
-                    crate::ai::provider::BudgetEvent::Reserve { id, limit, reply } => {
+                    crate::ai::provider::BudgetEvent::Reserve { id, limit, capture, reply } => {
                         let outcome = if self.accepting && !worker.cancellation.is_requested() {
-                            store.reserve_provider_request(&worker.request, id, limit)
+                            store.reserve_provider_request_capture(&worker.request, id, limit, capture.as_ref())
                         } else {
                             Err(ExecutionError::new(ErrorCode::Cancelled, "ai-cancelled"))
                         };

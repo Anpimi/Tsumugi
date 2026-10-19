@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Store each controlled member model request beside its original provider budget
+  reservation before sending HTTP. Unknown usage stays occupied; conflicting
+  usage cannot replace an earlier report. Shared model IO now interrupts pending
+  JSON/SSE response waits when cancelled. The current-only project format is
+  schema 53; keep earlier development directories and create a new project to
+  reimport sources, as they are preserved and refused without migration or reset.
+
 - Confirm uncertain translation match previews from their original saved projection
   and independent check evidence. Recovery does not rerun extraction or checks;
   explicit retries retain the same prepared preview and newer input.

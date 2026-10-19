@@ -5,7 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{io::Read, sync::Arc};
+use std::sync::Arc;
 pub mod provider;
 
 pub mod arena;
@@ -477,7 +477,6 @@ pub(super) fn execute_completion(
 ) -> Result<ProviderCompletion, ExecutionError> {
         request.check_service_dispatch()?;
         let profile = provider::ProviderProfile::compatible(config)?;
-        let client = service.client(config)?;
         let budget = request
             .provider
             .as_ref()
@@ -486,16 +485,7 @@ pub(super) fn execute_completion(
             if cancel.is_requested() {
                 return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
             }
-            let key = if config.credential_env.is_empty() {
-                None
-            } else {
-                Some(
-                    std::env::var(&config.credential_env)
-                        .ok()
-                        .filter(|v| !v.is_empty())
-                        .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-credential"))?,
-                )
-            };
+            let key = provider::ProviderService::credential(config)?;
             service.wait_rate(config, cancel)?;
             let reservation = budget.reserve(config.max_requests, cancel)?;
             if cancel.is_requested() {
@@ -504,40 +494,14 @@ pub(super) fn execute_completion(
                     "ai-cancelled-after-reservation",
                 ));
             }
-            let mut call = client.post(&config.endpoint).json(&body);
-            if let Some(key) = &key {
-                call = call.bearer_auth(key);
-            }
-            if let Some(origin) = &request.service_origin {
-                let remaining = origin
-                    .deadline
-                    .checked_duration_since(std::time::Instant::now())
-                    .filter(|value| !value.is_zero())
-                    .ok_or_else(|| error(ErrorCode::Unauthorized, "service-origin-expired"))?;
-                // Narrow this request's IO wait, not the captured model settings.
-                call = call.timeout(remaining.min(std::time::Duration::from_secs(
-                    config.timeout_seconds.into(),
-                )));
-            }
-            request.check_service_dispatch()?;
-            let response = call
-                .send()
-                .map_err(|_| error(ErrorCode::OutcomeUnknown, "ai-network-unknown"))?;
-            if cancel.is_requested() {
-                return Err(error(
-                    ErrorCode::OutcomeUnknown,
-                    "ai-cancelled-after-dispatch",
-                ));
-            }
-            let status = response.status();
+            let response = service.exchange(request, cancel, config, key.as_deref(),
+                codec::encode(&body, MAX_INPUT_BYTES)?, profile.max_response_bytes)?;
+            let status = response.status;
             if (status.as_u16() == 429 || status.as_u16() == 503) && retry < config.max_retries {
                 budget.settle(reservation, None, cancel)?;
                 provider::wait_backoff(
                     retry,
-                    response
-                        .headers()
-                        .get("retry-after")
-                        .and_then(|v| v.to_str().ok()),
+                    response.retry_after.as_deref(),
                     cancel,
                 )?;
                 continue;
@@ -554,13 +518,8 @@ pub(super) fn execute_completion(
                     },
                 ));
             }
-            let mut bytes = Vec::new();
-            response
-                .take(profile.max_response_bytes as u64 + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|_| error(ErrorCode::OutcomeUnknown, "ai-network-unknown"))?;
             budget.settle(reservation, None, cancel)?;
-            let value: Value = codec::decode(&bytes, profile.max_response_bytes)
+            let value: Value = codec::decode(&response.body, profile.max_response_bytes)
                 .map_err(|_| error(ErrorCode::OutputInvalid, "ai-response"))?;
             let usage = match (
                 value["usage"]["prompt_tokens"].as_u64(),

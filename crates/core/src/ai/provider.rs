@@ -1,10 +1,12 @@
 //! Shared transport and dispatch services. Credentials are attached per request.
+mod member;
+pub use member::{MemberHttpResponse, MemberProviderSession, ProviderRequestCapture};
 use super::{AiConfig, Usage, error};
 use crate::execution::*;
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
-        Mutex,
+        Mutex, OnceLock,
         mpsc::{self, Receiver, SyncSender},
     },
     time::{Duration, Instant},
@@ -57,6 +59,7 @@ pub(crate) enum BudgetEvent {
     Reserve {
         id: ExecutionId,
         limit: u32,
+        capture: Option<ProviderRequestCapture>,
         reply: SyncSender<Result<(), ExecutionError>>,
     },
     Settle {
@@ -102,8 +105,12 @@ impl BudgetPort {
     ) -> Result<ExecutionId, ExecutionError> {
         let id = ExecutionId::new();
         let (reply, rx) = mpsc::sync_channel(1);
-        self.exchange(BudgetEvent::Reserve { id, limit, reply }, rx, cancel)?;
+        self.exchange(BudgetEvent::Reserve { id, limit, capture: None, reply }, rx, cancel)?;
         Ok(id)
+    }
+    pub(crate) fn reserve_captured(&self, id: ExecutionId, limit: u32, capture: ProviderRequestCapture, cancel: &Cancellation) -> Result<(), ExecutionError> {
+        let (reply, rx) = mpsc::sync_channel(1);
+        self.exchange(BudgetEvent::Reserve { id, limit, capture: Some(capture), reply }, rx, cancel)
     }
     pub(crate) fn settle(
         &self,
@@ -125,14 +132,21 @@ struct ConnectionKey {
 }
 #[derive(Default)]
 pub struct ProviderService {
-    clients: Mutex<BTreeMap<ConnectionKey, reqwest::blocking::Client>>,
+    clients: Mutex<BTreeMap<ConnectionKey, reqwest::Client>>,
     windows: Mutex<BTreeMap<String, VecDeque<Instant>>>,
+    io: OnceLock<tokio::runtime::Runtime>,
+}
+pub(crate) struct HttpResponse {
+    pub status: reqwest::StatusCode,
+    pub content_type: Option<String>,
+    pub retry_after: Option<String>,
+    pub body: Vec<u8>,
 }
 impl ProviderService {
     pub(crate) fn client(
         &self,
         config: &AiConfig,
-    ) -> Result<reqwest::blocking::Client, ExecutionError> {
+    ) -> Result<reqwest::Client, ExecutionError> {
         let key = ConnectionKey {
             endpoint: config.endpoint.clone(),
             timeout: config.timeout_seconds,
@@ -163,13 +177,95 @@ impl ProviderService {
                 clients.remove(&key);
             }
         }
-        let client = reqwest::blocking::Client::builder()
+        let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(config.timeout_seconds as u64))
             .build()
             .map_err(|_| error(ErrorCode::InvalidInput, "ai-client"))?;
         clients.insert(key, client.clone());
         Ok(client)
+    }
+    pub(crate) fn credential(config: &AiConfig) -> Result<Option<String>, ExecutionError> {
+        if config.credential_env.is_empty() {
+            return Ok(None);
+        }
+        std::env::var(&config.credential_env)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .map(Some)
+            .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-credential"))
+    }
+
+    /// Shared physical HTTP path for fixed JSON tasks and Pi SSE requests.
+    /// Called by blocking execution workers; reservations are acknowledged first.
+    pub(crate) fn exchange(
+        &self,
+        request: &DispatchRequest,
+        cancel: &Cancellation,
+        config: &AiConfig,
+        key: Option<&str>,
+        body: Vec<u8>,
+        max_response_bytes: usize,
+    ) -> Result<HttpResponse, ExecutionError> {
+        request.check_service_dispatch()?;
+        ProviderProfile::compatible(config)?;
+        let client = self.client(config)?;
+        if self.io.get().is_none() {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .map_err(|_| error(ErrorCode::Busy, "ai-transport-runtime"))?;
+            // A racing first request can publish the shared runtime first.
+            let _ = self.io.set(runtime);
+        }
+        let runtime = self.io.get().ok_or_else(|| error(ErrorCode::Busy, "ai-transport-runtime"))?;
+        let timeout = Duration::from_secs(config.timeout_seconds.into());
+        let timeout = if let Some(deadline) = request.deadline() {
+            deadline.checked_duration_since(Instant::now())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or_else(|| error(ErrorCode::Unauthorized, "service-origin-expired"))?
+                .min(timeout)
+        } else { timeout };
+        runtime.block_on(async {
+            let mut call = client.post(&config.endpoint)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .timeout(timeout).body(body);
+            if let Some(key) = key { call = call.bearer_auth(key); }
+            let io = async {
+                let mut response = call.send().await
+                    .map_err(|_| error(ErrorCode::OutcomeUnknown, "ai-network-unknown"))?;
+                let status = response.status();
+                let header = |name| response.headers().get(name).and_then(|value| value.to_str().ok()).map(str::to_owned);
+                let content_type = header(reqwest::header::CONTENT_TYPE);
+                let retry_after = header(reqwest::header::RETRY_AFTER);
+                let mut bytes = Vec::new();
+                while let Some(chunk) = response.chunk().await
+                    .map_err(|_| error(ErrorCode::OutcomeUnknown, "ai-network-unknown"))? {
+                    let remaining = (max_response_bytes + 1).saturating_sub(bytes.len());
+                    bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+                    if bytes.len() > max_response_bytes { break; }
+                }
+                Ok(HttpResponse { status, content_type, retry_after, body: bytes })
+            };
+            tokio::pin!(io);
+            loop {
+                if cancel.is_requested() {
+                    return Err(error(ErrorCode::OutcomeUnknown, "ai-cancelled-after-dispatch"));
+                }
+                request.check_service_dispatch()?;
+                tokio::select! {
+                    response = &mut io => {
+                        if cancel.is_requested() {
+                            return Err(error(ErrorCode::OutcomeUnknown, "ai-cancelled-after-dispatch"));
+                        }
+                        request.check_service_dispatch()?;
+                        return response;
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+                }
+            }
+        })
     }
     pub(crate) fn wait_rate(
         &self,
