@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Keep approved reference tools able to run while concurrent team members await
+  their results, with bounded execution capacity and unchanged tool permissions.
+
+- Team history labels a recorded dispatch as having unconfirmed completion,
+  including after reopening, rather than promising its worker is still running.
+
 - Prepare teams with their explicitly selected reference tools.
   Rechecking an accepted team start returns its original task during tool
   execution and after reopening, without starting it again.

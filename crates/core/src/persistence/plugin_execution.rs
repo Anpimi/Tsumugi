@@ -558,6 +558,27 @@ impl ProjectStore {
         Ok(())
     }
 
+    /// Classify an original delegated Query for bounded scheduler resources.
+    /// This historical association grants no execution permission; dispatch
+    /// still requires the original live epoch, grant and delegation checks.
+    pub(crate) fn is_work_plan_tool_dependency(
+        &self,
+        input: &FixedInput,
+    ) -> Result<bool, ExecutionError> {
+        if input.envelope().plugin.is_none() {
+            return Ok(false);
+        }
+        let connection = self.connection().map_err(|_| denied())?;
+        let Some(record) = for_attempt(connection, input.envelope().attempt_id)? else {
+            return Ok(false);
+        };
+        let Some(delegation) = &record.delegation else {
+            return Ok(false);
+        };
+        validate_tool_read_in(connection, input, delegation)?;
+        Ok(true)
+    }
+
     pub(crate) fn plugin_permit(&self, input: &FixedInput) -> Result<PluginPermit, ExecutionError> {
         if self.is_reconciling() {
             return Err(failure(ErrorCode::OutcomeUnknown, "plugin-session"));

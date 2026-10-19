@@ -72,6 +72,7 @@ fn input_key(input: &FixedInput) -> Result<RunnerKey, ExecutionError> {
     )
 }
 const CONCURRENCY: usize = 2;
+const TOOL_DEPENDENCY_RESERVE: usize = 1;
 // Preserve one maximum legal fixed-input batch while bounding concurrent tasks.
 const MAX_QUEUED_ITEMS: usize = MAX_ITEMS;
 const MAX_QUEUED_ATTEMPTS: usize = 128;
@@ -109,7 +110,14 @@ fn persist_result(store: &mut ProjectStore, result: &FixedResult) -> Result<(), 
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProducerSlot {
+    Shared,
+    ToolReserve,
+}
+
 struct Worker {
+    slot: ProducerSlot,
     request: DispatchRequest,
     budget_events: Receiver<crate::ai::provider::BudgetEvent>,
     cancellation: Cancellation,
@@ -132,7 +140,8 @@ pub struct ExecutionRuntime {
     validators: BTreeMap<String, Arc<dyn ResultValidator>>,
     plugin_epoch: Arc<plugin_authority::PluginEpoch>,
     policies: BTreeMap<RunnerKey, RecoveryPolicy>,
-    scheduling_cursor: Option<ExecutionId>,
+    scheduling_cursor: Option<Revision>,
+    dependency_scan_cursor: Option<Revision>,
     workers: Vec<Worker>,
     retired: Vec<RetiredWorker>,
     team_deadlines: BTreeMap<ExecutionId, Instant>,
@@ -152,6 +161,7 @@ impl ExecutionRuntime {
             runners: BTreeMap::new(),
             policies: BTreeMap::new(),
             scheduling_cursor: None,
+            dependency_scan_cursor: None,
             workers: Vec::new(),
             retired: Vec::new(),
             team_deadlines: BTreeMap::new(),
@@ -917,6 +927,32 @@ impl ExecutionRuntime {
     pub fn tick(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
         self.tick_at(store, Instant::now())
     }
+    fn producer_slot(&self, tool_dependency: bool) -> Option<ProducerSlot> {
+        let slots = self
+            .workers
+            .iter()
+            .map(|worker| worker.slot)
+            .chain(self.retired.iter().map(|worker| worker.slot));
+        let shared = slots
+            .clone()
+            .filter(|slot| *slot == ProducerSlot::Shared)
+            .count();
+        if shared < CONCURRENCY {
+            return Some(ProducerSlot::Shared);
+        }
+        // Delegated Queries cannot call the project execution services. A
+        // finite leaf reserve lets occupied model workers await their tools
+        // without admitting another ordinary producer or recursive borrowing.
+        if tool_dependency
+            && slots
+                .filter(|slot| *slot == ProducerSlot::ToolReserve)
+                .count()
+                < TOOL_DEPENDENCY_RESERVE
+        {
+            return Some(ProducerSlot::ToolReserve);
+        }
+        None
+    }
     fn tick_at(&mut self, store: &mut ProjectStore, now: Instant) -> Result<(), ExecutionError> {
         let mut remaining = Vec::new();
         let mut completed = Vec::new();
@@ -1082,18 +1118,48 @@ impl ExecutionRuntime {
         if !self.accepting {
             return Ok(());
         }
-        let mut queued = store.queued_execution_attempts(self.initial_sequence)?;
+        let dependency_scan = self.producer_slot(false).is_none();
+        let cursor = if dependency_scan {
+            self.dependency_scan_cursor.or(self.scheduling_cursor)
+        } else {
+            self.scheduling_cursor
+        };
+        let mut queued = store.queued_execution_attempt_page(
+            cursor.unwrap_or(self.initial_sequence),
+            MAX_QUEUED_ATTEMPTS,
+        )?;
         self.prune_team_anchors(store)?;
-        if let Some(cursor) = self.scheduling_cursor {
-            if let Some(index) = queued.iter().position(|id| *id == cursor) {
-                let len = queued.len();
-                queued.rotate_left((index + 1) % len);
+        if let Some(cursor) = cursor {
+            if queued.len() < MAX_QUEUED_ATTEMPTS {
+                // Tail and wrap share one inspection budget. Keeping the
+                // original sequence cursor also reaches dependencies beyond
+                // a full page of currently blocked ordinary attempts.
+                let prefix = store.queued_execution_attempt_page(
+                    self.initial_sequence,
+                    MAX_QUEUED_ATTEMPTS - queued.len(),
+                )?;
+                queued.extend(
+                    prefix
+                        .into_iter()
+                        .filter(|(_, sequence)| *sequence <= cursor),
+                );
             }
         }
-        for attempt in queued {
-            // Retired uncooperative producers still consume a concurrency slot.
-            if self.workers.len() + self.retired.len() >= CONCURRENCY {
+        for (attempt, sequence) in queued {
+            // Every retired producer retains the slot actually assigned to it
+            // until its original thread has finished and has been joined.
+            if self.workers.len() + self.retired.len() >= CONCURRENCY + TOOL_DEPENDENCY_RESERVE {
                 break;
+            }
+            if dependency_scan {
+                self.dependency_scan_cursor = Some(sequence);
+            }
+            // Looking for a dependency while Shared is full must not consume
+            // the next ordinary task's turn when a Shared slot later drains.
+            // With Shared available, examined blocked tasks still advance its
+            // own cursor so a full blocked page cannot hide later work.
+            if self.producer_slot(false).is_some() {
+                self.scheduling_cursor = Some(sequence);
             }
             if self.retired.iter().any(|worker| worker.attempt == attempt) {
                 continue;
@@ -1102,6 +1168,9 @@ impl ExecutionRuntime {
             if store.next_queued_execution_item(attempt)?.is_none() {
                 continue;
             }
+            let Some(slot) = self.producer_slot(store.is_work_plan_tool_dependency(&input)?) else {
+                continue;
+            };
             let mut team_deadline = None;
             if input.envelope().operation == crate::ai::team::OPERATION {
                 let (plan, member, limit, expires) = store.team_runtime_identity(&input)?;
@@ -1185,7 +1254,6 @@ impl ExecutionRuntime {
             }
             let (budget, budget_events) = crate::ai::provider::budget_channel();
             request.provider = Some(budget);
-            self.scheduling_cursor = Some(attempt);
             let cancellation = Cancellation::default();
             let signal = cancellation.clone();
             let task = request.clone();
@@ -1209,6 +1277,7 @@ impl ExecutionRuntime {
                 });
             match thread {
                 Ok(thread) => self.workers.push(Worker {
+                    slot,
                     request,
                     budget_events,
                     cancellation,

@@ -176,6 +176,34 @@ it.each(["invalid", "pending", "absent"] as const)("keeps a succeeded execution 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it.each([
+  { locale: "en-US", message: "Original dispatch recorded; completion unconfirmed." },
+  { locale: "zh-CN", message: "已记录原派发，完成结果尚未确认。" },
+])("shows a recorded dispatch without a live-running claim in $locale historical team reads", async ({ locale, message }) => {
+  await i18n.changeLanguage(locale);
+  const original = invoke.getMockImplementation()!, history = teamExecutionViewFixture("absent"), work = history.works[0];
+  if (!work) throw new Error("Expected an original team work item");
+  work.execution = "dispatched";
+  invoke.mockImplementation((command, payload) => command === "read_work_plan_team_execution" ? structuredClone(history) : original(command, payload));
+  const pane = (state: "paused" | "stopped") => <TeamExecutionHistory context={teamContext} status={{ ...status, state }} open onReadPost={() => {}}/>;
+  const assertHistoricalDispatch = async () => {
+    expect(await screen.findByText(message, { exact: false })).toBeVisible();
+    expect(screen.queryByText(i18n.t("ai.states.dispatched"), { exact: false })).not.toBeInTheDocument();
+    expect(screen.getByText(i18n.t("ai.team.validation.absent"))).toBeVisible();
+    expect(screen.queryByText(i18n.t("ai.team.candidateSaved"))).not.toBeInTheDocument();
+    expect(screen.queryByText(i18n.t("ai.team.translationSuggestion"))).not.toBeInTheDocument();
+    expect(work.execution).toBe("dispatched"); expect(work.validation).toBe("absent");
+    expect(work.output).toBeNull(); expect(work.candidateRevisionId).toBeNull();
+  };
+  const rendered = render(pane("paused"), project);
+  await assertHistoricalDispatch();
+  rendered.rerender(pane("stopped")); await assertHistoricalDispatch();
+  rendered.unmount();
+  // A fresh synthetic read retains the recorded dispatch; it proves no Host liveness.
+  render(pane("paused"), project); await assertHistoricalDispatch();
+  expect(calls("authorize_work_plan")).toHaveLength(0); expect(calls("start_work_plan")).toHaveLength(0);
+});
+
 it("routes a started team to original team facts and allows explicit preparation after pause without offering legacy Continue", async () => {
   const user = await openTeam();
   await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.discussions.enable") }));

@@ -2,7 +2,7 @@
 use super::*;
 use std::collections::BTreeSet;
 
-fn physical_requests(fixture: &Fixture, work: &Value) -> Vec<Value> {
+pub(super) fn physical_requests(fixture: &Fixture, work: &Value) -> Vec<Value> {
     let project_path = fixture.project_path.clone();
     let attempt = work["attemptId"].as_str().unwrap().to_owned();
     fixture.app.state::<AppState>().sessions.with(move |_| {

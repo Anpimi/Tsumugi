@@ -196,6 +196,7 @@ impl RunnerEntry {
     }
 }
 pub(super) struct RetiredWorker {
+    pub(super) slot: ProducerSlot,
     pub(super) attempt: ExecutionId,
     pub(super) package: Option<PackageKey>,
     origin_package: Option<PackageKey>,
@@ -204,6 +205,7 @@ pub(super) struct RetiredWorker {
 impl RetiredWorker {
     pub(super) fn new(worker: Worker) -> Self {
         Self {
+            slot: worker.slot,
             attempt: worker.request.input.envelope().attempt_id,
             package: PackageKey::from_request(&worker.request),
             origin_package: worker

@@ -1920,11 +1920,33 @@ impl ProjectStore {
         &self,
         after: Revision,
     ) -> Result<Vec<ExecutionId>, ExecutionError> {
-        let mut statement=self.execution_connection()?.prepare("SELECT a.attempt_id FROM execution_attempts a WHERE a.sequence>?1 AND EXISTS(SELECT 1 FROM execution_items i WHERE i.attempt_id=a.attempt_id AND i.execution='queued') ORDER BY a.sequence LIMIT 128").map_err(sql_error)?;
+        self.queued_execution_attempt_page(after, 128)
+            .map(|rows| rows.into_iter().map(|(attempt, _)| attempt).collect())
+    }
+    pub(crate) fn queued_execution_attempt_page(
+        &self,
+        after: Revision,
+        limit: usize,
+    ) -> Result<Vec<(ExecutionId, Revision)>, ExecutionError> {
+        if !(1..=128).contains(&limit) {
+            return Err(error(ErrorCode::LimitExceeded, "execution-queue-page"));
+        }
+        let mut statement=self.execution_connection()?.prepare("SELECT a.attempt_id,a.sequence FROM execution_attempts a WHERE a.sequence>?1 AND EXISTS(SELECT 1 FROM execution_items i WHERE i.attempt_id=a.attempt_id AND i.execution='queued') ORDER BY a.sequence LIMIT ?2").map_err(sql_error)?;
         statement
-            .query_map([after.get() as i64], |r| r.get::<_, String>(0))
+            .query_map(params![after.get() as i64, limit as i64], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
             .map_err(sql_error)?
-            .map(|row| parse_id(row.map_err(sql_error)?))
+            .map(|row| {
+                let (attempt, sequence) = row.map_err(sql_error)?;
+                Ok((
+                    parse_id(attempt)?,
+                    Revision::new(
+                        u64::try_from(sequence)
+                            .map_err(|_| error(ErrorCode::CorruptLedger, "execution-sequence"))?,
+                    )?,
+                ))
+            })
             .collect()
     }
     pub(crate) fn queued_execution_item_count(

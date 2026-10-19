@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Team history distinguishes a recorded dispatch from confirmed completion or
+observed worker liveness. Bounded runtime admission reserves capacity for
+verified leaf tool dependencies when ordinary producers are occupied, preserving
+actual retired-worker ownership and bounded queue progress. These internal
+admission and display corrections, with their Host-crash regressions, leave
+storage format 57, existing IPC contracts, member protocol 2, SDK/Process3,
+WorkPlan3 and dependencies unchanged. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs synchronized bilingual
+Unreleased entries for these corrections and no additional package bump.
+
 Original team-work tool history adds a bounded read-only query and task
 navigation using the existing execution, delegation and result records. It does
 not add a persisted ledger, revive a stopped scope or replay an unresolved tool.

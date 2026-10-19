@@ -4,6 +4,7 @@ use serde_json::json;
 use std::sync::mpsc;
 use tsumugi_plugin_sdk as sdk;
 mod application_lifecycle;
+mod dependency_slots;
 mod package_quiesce;
 
 struct Call {

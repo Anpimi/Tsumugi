@@ -7,6 +7,9 @@ mod concurrency;
 #[path = "team_tool_history.rs"]
 #[cfg(feature = "execution-test-host")]
 mod tool_history;
+#[path = "team_host_crash.rs"]
+#[cfg(feature = "execution-test-host")]
+mod host_crash;
 
 struct TeamFixture(
     Option<Fixture>,
@@ -227,13 +230,23 @@ fn team_plan_with_tools(
     kinds: [&[&str]; 3],
     tool_selection: Option<&Value>,
 ) -> (Value, Value) {
+    team_plan_with_configs(fixture, &[&peers[0].config, &peers[1].config, &peers[2].config], ids, kinds, tool_selection)
+}
+
+fn team_plan_with_configs(
+    fixture: &Fixture,
+    configs: &[&AiConfig; 3],
+    ids: &[ExecutionId; 3],
+    kinds: [&[&str]; 3],
+    tool_selection: Option<&Value>,
+) -> (Value, Value) {
     let handles: Vec<_> = tool_selection.into_iter().flat_map(|selection| {
         selection["entries"].as_array().unwrap().iter().map(|entry| entry["handle"].clone())
     }).collect();
-    let members: Vec<_> = peers.iter().enumerate().map(|(index, peer)| json!({
+    let members: Vec<_> = configs.iter().enumerate().map(|(index, config)| json!({
         "memberId":ids[index],"roleVersionId":ExecutionId::new(),
         "displayName":format!("Member {}", index + 1),"role":format!("Captured role {}", index + 1),
-        "config":peer.config,"unitIds":[fixture.unit],"toolHandles":if index==0 { handles.clone() } else { Vec::new() },
+        "config":config,"unitIds":[fixture.unit],"toolHandles":if index==0 { handles.clone() } else { Vec::new() },
         "kinds":kinds[index]
     })).collect();
     let mut options = serde_json::to_value(PlanOptions::default()).unwrap();
@@ -241,7 +254,7 @@ fn team_plan_with_tools(
     options["teamExecution"] = json!({"profile":"bounded-team-1","initialMemberId":ids[0],
         "initialUnitId":fixture.unit,"members":members,
         "limits":{"maxActivations":12,"maxConcurrency":2,"maxNoProgress":8}});
-    let mut root = peers[0].config.clone();
+    let mut root = (*configs[0]).clone();
     root.max_requests = 40;
     let plan = fixture
         .call(
@@ -254,7 +267,7 @@ fn team_plan_with_tools(
     assert_eq!(previews.len(), 3);
     for (index, preview) in previews.iter().enumerate() {
         assert_eq!(preview["memberId"], json!(ids[index]));
-        assert_eq!(preview["preview"]["config"], json!(peers[index].config));
+        assert_eq!(preview["preview"]["config"], json!(configs[index]));
         assert_eq!(preview["preview"]["items"][0]["sourceText"], "Hello");
     }
     let mut effects = vec!["save-candidate", "publish-discussion", "dispatch-team-work", "send-team-message"];

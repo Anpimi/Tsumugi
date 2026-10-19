@@ -1,12 +1,12 @@
 //! An abnormally exited Pi member does not erase or replay its real tool work.
 use super::*;
 
-fn work_reference(receipt: &Value) -> Value {
+pub(super) fn work_reference(receipt: &Value) -> Value {
     json!({"taskId":receipt["taskId"],"attemptId":receipt["attemptId"],
         "inputDigest":receipt["inputDigest"]})
 }
 
-fn tool_history(fixture: &Fixture, plan: &Value, work: &Value) -> Value {
+pub(super) fn tool_history(fixture: &Fixture, plan: &Value, work: &Value) -> Value {
     let page = fixture
         .call(
             "read_work_plan_team_work_tools",
@@ -22,7 +22,7 @@ fn tool_history(fixture: &Fixture, plan: &Value, work: &Value) -> Value {
     page
 }
 
-fn query_events(fixture: &Fixture) -> Vec<Value> {
+pub(super) fn query_events(fixture: &Fixture) -> Vec<Value> {
     match std::fs::read_to_string(fixture.directory.path().join("query-observer.jsonl")) {
         Ok(text) => text
             .rsplit_once('\n')
@@ -35,7 +35,7 @@ fn query_events(fixture: &Fixture) -> Vec<Value> {
     }
 }
 
-fn query_entered(fixture: &Fixture) -> u32 {
+pub(super) fn query_entered(fixture: &Fixture) -> u32 {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let events = query_events(fixture);
@@ -58,7 +58,7 @@ fn query_entered(fixture: &Fixture) -> u32 {
     }
 }
 
-fn attempt(fixture: &Fixture, reference: &Value) -> Value {
+pub(super) fn attempt(fixture: &Fixture, reference: &Value) -> Value {
     fixture
         .call(
             "read_execution_attempt",

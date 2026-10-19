@@ -40,7 +40,7 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpen
         const target = work.target, outcome = work.validation === "valid" ? work.output?.outcome : null, human = work.origin.kind === "human-continuation" ? work.origin.work : null;
         return <article key={work.receipt.intentId}>
           <h5>{memberName(work.receipt.memberId, work.receipt.roleVersionId)} · {entryName(target.unitId)} · {target.locale}</h5>
-          <p>{t(`ai.team.workKinds.${work.request?.kind ?? human?.kind ?? "translation"}`)} · {t(`ai.states.${work.execution}`)}</p>
+          <p>{t(`ai.team.workKinds.${work.request?.kind ?? human?.kind ?? "translation"}`)} · {work.execution === "dispatched" ? t("ai.team.dispatchUnconfirmed") : t(`ai.states.${work.execution}`)}</p>
           <p>{t(`ai.team.validation.${work.validation}`)}</p>
           {work.author ? <p>{t("ai.team.requestedBy", { member: memberName(work.author.memberId, work.author.roleVersionId) })}</p> : null}
           {human ? <><p>{t("ai.recovery.humanRequester")}</p><pre className="ai-text">{human.instructions}</pre>{postButtons(human.postIds)}
