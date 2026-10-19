@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- View a plan's published discussions, members, original role versions and cited
+  versions locally, including after pause or reopen. Publish human notes under
+  the original active permission, and confirm an uncertain publication using
+  its original identity while keeping newer input. Recording a post does not
+  start a model request, select a translation or approve a review.
+
 - Add a separate opt-in for reading text linked by same-plan published
   discussions. Members can read the exact referenced translation revision or
   the target's original source text, within a disclosed result limit; other

@@ -228,6 +228,32 @@ pub struct ReadTeamDiscussion {
     pub post_id: ExecutionId,
 }
 
+/// Local project history is separate from permission to share with a model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReadTeamHistory {
+    pub project_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub after: Option<Revision>,
+    #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 16)))]
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TeamHistoryPage {
+    pub plan_id: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 8)))]
+    pub members: Vec<TeamMemberRole>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 16)))]
+    pub author_roles: Vec<TeamMemberRole>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 16)))]
+    pub posts: Vec<TeamDiscussionPost>,
+    pub next_after: Option<Revision>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

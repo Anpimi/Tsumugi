@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+The local plan discussion view adds bounded member/post history and a trusted
+human publication entry. History and original-publication confirmation remain
+available after pause or reopen without restoring model authority. Publication
+uses the existing plan lease, effect and immutable post owner. The additional
+experimental Desktop commands and generated projections do not add persisted
+fields or change schema 55, member protocol 2, SDK/Process3 or WorkPlan3. There
+are no dependency or package version source changes. This remains in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+synchronized bilingual Unreleased entries and no additional package version bump.
+
 An additional, separately selected same-plan sharing profile permits reading
 the exact saved translation revision or the target's original adopted source
 text referenced by a published discussion. Existing discussion-only plans keep

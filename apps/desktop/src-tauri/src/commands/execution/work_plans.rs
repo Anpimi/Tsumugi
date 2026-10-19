@@ -4,6 +4,7 @@ pub(crate) mod broker;
 pub(crate) mod generation;
 pub(crate) mod guidance;
 pub(crate) mod member;
+pub(crate) mod team;
 use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
@@ -1508,6 +1509,7 @@ mod tests {
     mod semantic_review;
     mod settings;
     mod tool_result_reads;
+    mod team_history;
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     mod team_discussions;
     use super::*;

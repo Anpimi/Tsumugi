@@ -13,6 +13,7 @@ import {sourceReads} from "./sourceQueries";
 import {aiTarget,type AiView} from "./aiCommands";
 import { AiConnectionFields } from "./AiConnectionFields";
 import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
+import { TeamDiscussionHistory } from "./TeamDiscussionHistory";
 import {useAiPreparation,type WorkPlanContinuation} from "./AiPreparationSession";
 import { WorkPlanControls } from "./WorkPlanControls";
 import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnectionPicker";
@@ -86,8 +87,12 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
   function allowLeave(current: () => boolean = () => true):Promise<boolean> {
     leaveProof.current = current;
     if(cancelUnresolved||translationDraft.candidates.blocked()||translationDraft.candidates.hasDraft()){setOpen(true);return Promise.resolve(false);}
+    if(preparation.discussions.blocked()){
+      const originalPlan=preparation.discussions.firstBlockedPlan();if(originalPlan)preparation.recordPlan(originalPlan);
+      setOpen(true);return Promise.resolve(false);
+    }
     if(preparation.reserved() || strategy?.reserved()){setOpen(true);return Promise.resolve(false);}
-    if(!dirty && !strategy?.dirty())return Promise.resolve(true);
+    if(!dirty && !preparation.discussions.hasDraft() && !strategy?.dirty())return Promise.resolve(true);
     setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});
   }
   function allowNavigate(destination?:WorkspaceDestination):Promise<boolean> {
@@ -364,6 +369,9 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}
       onStarted={(id,idPlan,taskId)=>{const original=preparation.planControl.current().pending;if(original?.kind==="start")preparation.recordPlanStart(id,idPlan,original.prepared,original.request.expectedGeneration,original.editSeq,taskId??null);}}
       onBlockedChange={()=>{}} onOpenExtensions={onOpenExtensions} onOpenTranslation={onOpenTranslation}/>
+    {status?<TeamDiscussionHistory context={context} status={status} open={open} session={preparation.discussions}
+      writable={!disabled&&!scopeRead.error&&!!scopeRead.data?.currentSnapshot&&project.metadata.targetLocales.includes(status.plan.locale)
+        &&status.plan.scope.every(unit=>unit.sourceSnapshotId===scopeRead.data?.currentSnapshot)}/>:null}
     {status?.plan.preview?<WorkPlanAgentControls context={context} status={status} open={open} disabled={disabled||planBlocked||!!pendingAdopt||active} busy={busy}
       session={preparation.agent} component={preparation.component} ownerBusy={()=>preparation.current().busy} run={perform} onBlockedChange={()=>{}} onGenerated={preparation.recordGenerated}
       childControls={onOpenTask?{disabled:disabled||planBlocked||!!pendingAdopt||cancelUnresolved||!sourceReady()||!project.metadata.targetLocales.includes(status.plan.locale),canRun:preparation.canRunChild,

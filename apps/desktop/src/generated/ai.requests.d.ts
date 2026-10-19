@@ -90,6 +90,18 @@ export type TeamDiscussionPolicy =
   | {
       profile: "current-plan-2";
     };
+export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
+export type TeamArtifactReference =
+  | {
+      kind: "translation-revision";
+      revisionId: ExecutionId;
+    }
+  | {
+      attemptId: ExecutionId;
+      kind: "source-result";
+      resultId: ExecutionId;
+      snapshotId: ExecutionId;
+    };
 
 export interface Requests {
   effectRetry: AiEffectRetryRequest;
@@ -124,6 +136,10 @@ export interface Requests {
   workPlanStart: WorkPlanStartRequest;
   workPlanStartAction: WorkPlanStartRequest;
   workPlanStatus: WorkPlanStatusRequest;
+  workPlanTeamHistory: WorkPlanTeamHistoryRequest;
+  workPlanTeamPost: WorkPlanTeamPostRequest;
+  workPlanTeamPublicationAction: WorkPlanTeamPublicationActionRequest;
+  workPlanTeamPublish: WorkPlanTeamPublishRequest;
   workProtectionRead: WorkProtectionReadRequest;
   workProtectionSet: WorkProtectionSetRequest;
 }
@@ -843,6 +859,49 @@ export interface WorkPlanStartRequest {
 export interface WorkPlanStatusRequest {
   planId: ExecutionId;
   projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface WorkPlanTeamHistoryRequest {
+  after?: Revision | null;
+  limit: number;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface WorkPlanTeamPostRequest {
+  planId: ExecutionId;
+  postId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface WorkPlanTeamPublicationActionRequest {
+  lease: AutomationLease;
+  projectId: ExecutionId;
+  publication: PublishTeamDiscussion;
+  sessionToken: string;
+}
+/**
+ * Model arguments contain content and relationships, never an author override.
+ */
+export interface PublishTeamDiscussion {
+  body: string;
+  kind: TeamDiscussionKind;
+  postId: ExecutionId;
+  references: TeamArtifactReference[];
+  replyTo?: ExecutionId | null;
+  supersedes?: ExecutionId | null;
+  target: TeamDiscussionTarget;
+}
+export interface TeamDiscussionTarget {
+  locale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface WorkPlanTeamPublishRequest {
+  lease: AutomationLease;
+  projectId: ExecutionId;
+  publication: PublishTeamDiscussion;
   sessionToken: string;
 }
 export interface WorkProtectionReadRequest {

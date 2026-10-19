@@ -8,7 +8,9 @@ import type { WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView } from "./wo
 import {AiWorkbench} from "./AiWorkbench";
 import {defaultAiConfig,type AiPrepared, type AiItem} from "./aiCommands";
 import {useEffect,type Ref} from "react";
-import {AiPreparationSession} from "./AiPreparationSession";
+import {AiPreparationSession,useAiPreparation} from "./AiPreparationSession";
+import { workPlanCommands } from "./workPlanCommands";
+import { teamStatusFixture } from "./testSupport/teamDiscussionFixture";
 import {useSessionReads} from "./SessionReadProvider";
 import type {SessionReads} from "./sessionReads";
 import type {AiConfig} from "./aiCommands";
@@ -32,7 +34,8 @@ function formatCheckerFixture(): WorkPlanView["checkers"][number] {
 const invoke=vi.hoisted(()=>vi.fn());vi.mock("@tauri-apps/api/core",()=>({invoke}));
 const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:fixtureIdentity(500),displayName:"AI test",sourceLocale:"en",targetLocales:["zh-CN"],metadataRevision:"1"}};
 let currentReads:SessionReads|null=null;
-function CaptureReads(){const reads=useSessionReads();useEffect(()=>{currentReads=reads;return()=>{if(currentReads===reads)currentReads=null;};},[reads]);return null;}
+let discussionPreparation:ReturnType<typeof useAiPreparation>;
+function CaptureReads(){const reads=useSessionReads(),preparation=useAiPreparation();useEffect(()=>{discussionPreparation=preparation;});useEffect(()=>{currentReads=reads;return()=>{if(currentReads===reads)currentReads=null;};},[reads]);return null;}
 function TestAiWorkbench({project:current,ref,disabled=false,onOpenTranslation=async()=>true}:{project:ProjectView;ref?:Ref<AiHandle>;disabled?:boolean;onOpenTranslation?:ComponentProps<typeof AiWorkbench>["onOpenTranslation"]}) {
  return <AiPreparationSession initialLocale={current.metadata.targetLocales[0]??""} targetLocales={current.metadata.targetLocales}>
   <CaptureReads/>
@@ -69,6 +72,7 @@ beforeEach(async()=>{
  invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
   if(command==="read_context_strategy_default")return null;
   const request=args.request;
+  if(command==="read_work_plan_team_history")return{planId:request.planId,members:[],authorRoles:[],posts:[],nextAfter:null};
   if(command==="read_plugin_text_reviews")return{settingsRevision:"1",entries:[]};
   if(command==="read_content_scope")return{revision:"2",currentSnapshot:fixtureIdentity(300)};
   if(command==="read_source_content")return sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)},rows:[sourceRowFixture({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId},{key:"first",text:item.sourceText})]});
@@ -105,7 +109,7 @@ beforeEach(async()=>{
   throw new Error(command);
  });
 });
-afterEach(cleanup);
+afterEach(()=>{cleanup();vi.restoreAllMocks();});
 it("retains AI cancellation through consumer remount and confirms only an exact original retry",async()=>{
  const user=userEvent.setup(),ref=createRef<AiHandle>();const original=invoke.getMockImplementation()!;
  let cancellations=0;
@@ -1038,4 +1042,50 @@ it("offers the manual editor for queued results without dispatching another requ
  const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Compare and select in editor"}));
  expect(openEditor).toHaveBeenCalledWith(expect.objectContaining({unitId:item.unitId}),"zh-CN");
  expect(invoke.mock.calls.some(([command])=>["start_work_plan","authorize_work_plan","start_ai_translation"].includes(command))).toBe(false);
+});
+
+it("protects unpublished discussion B at exit and only discards it after a current explicit decision",async()=>{
+ const ref=createRef<AiHandle>(),user=userEvent.setup();render(<TestAiWorkbench project={project} ref={ref}/>);
+ await waitFor(()=>expect(ref.current).not.toBeNull());
+ act(()=>{discussionPreparation.discussions.edit(planId,{body:"Discussion B"});});
+ expect(discussionPreparation.discussions.hasDraft()).toBe(true);
+ const originalRevision=discussionPreparation.discussions.revision();
+ let decision!:Promise<boolean>;
+ act(()=>{decision=ref.current!.allowLeave(()=>discussionPreparation.discussions.revision()===originalRevision);});
+ await screen.findByRole("dialog");
+ expect(screen.getByText(i18n.t("ai.unsavedDescription"))).toBeInTheDocument();
+ act(()=>{discussionPreparation.discussions.edit(planId,{body:"Newer discussion C"});});
+ await user.click(screen.getByRole("button",{name:i18n.t("ai.discard")}));
+ expect(await decision).toBe(false);
+ expect(discussionPreparation.discussions.current(planId).draft.body).toBe("Newer discussion C");
+ act(()=>{decision=ref.current!.allowLeave();});
+ await screen.findByRole("dialog");
+ await user.click(screen.getByRole("button",{name:i18n.t("ai.stay")}));
+ expect(await decision).toBe(false);expect(discussionPreparation.discussions.hasDraft()).toBe(true);
+ act(()=>{decision=ref.current!.allowLeave();});
+ await user.click(await screen.findByRole("button",{name:i18n.t("ai.discard")}));
+ expect(await decision).toBe(true);expect(discussionPreparation.discussions.hasDraft()).toBe(false);
+});
+
+it("routes an exit-blocking publication back to its original plan without blocking ordinary pane navigation",async()=>{
+ const ref=createRef<AiHandle>();render(<TestAiWorkbench project={project} ref={ref}/>);
+ await waitFor(()=>expect(ref.current).not.toBeNull());
+ const original=teamStatusFixture();vi.spyOn(workPlanCommands,"status").mockResolvedValue(original);
+ let reject!: (error:unknown)=>void;
+ vi.spyOn(workPlanCommands,"publishTeam").mockImplementation(()=>new Promise((_resolve,no)=>{reject=no;}));
+ act(()=>{discussionPreparation.discussions.edit(original.plan.planId,{body:"Original publication A"});});
+ let writing!:Promise<void>;
+ act(()=>{writing=discussionPreparation.discussions.publish(original,true,discussionPreparation.discussions.current(original.plan.planId).draft.editSeq);});
+ await waitFor(()=>expect(workPlanCommands.publishTeam).toHaveBeenCalledOnce());
+ act(()=>{discussionPreparation.recordPlan(fixtureIdentity(8600));discussionPreparation.discussions.edit(original.plan.planId,{body:"Preserved B"});});
+ expect(discussionPreparation.discussions.blocked()).toBe(true);
+ expect(discussionPreparation.reset()).toBe(false);
+ expect(await ref.current!.allowNavigate()).toBe(true);
+ let canExit=true;
+ await act(async()=>{canExit=await ref.current!.allowLeave();});
+ expect(canExit).toBe(false);expect(discussionPreparation.current().planId).toBe(original.plan.planId);
+ expect(discussionPreparation.discussions.current(original.plan.planId).draft.body).toBe("Preserved B");
+ expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+ await act(async()=>{reject(new Error("Synthetic acknowledgement lost"));await writing;});
+ expect(discussionPreparation.discussions.blocked()).toBe(true);
 });

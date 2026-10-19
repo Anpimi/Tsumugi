@@ -8,6 +8,8 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, params};
 
 const MAX_RECORD_BYTES: usize = 32 * 1024;
+const MAX_HISTORY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_HISTORY_POSTS: u32 = 16;
 const TABLES: &[(&str, &str)] = &[
     (
         "application_team_members",
@@ -736,6 +738,113 @@ impl ProjectStore {
         super::super::ledger::commit(tx)?;
         Ok(value)
     }
+    /// Local human history never provides an Agent scope or a sharing permit.
+    pub fn read_team_history(
+        &self,
+        request: &ReadTeamHistory,
+    ) -> Result<TeamHistoryPage, ExecutionError> {
+        if !(1..=MAX_HISTORY_POSTS).contains(&request.limit) {
+            return Err(fail(ErrorCode::InvalidInput, "team-history-page"));
+        }
+        let c = self
+            .connection()
+            .map_err(|_| sql(rusqlite::Error::InvalidQuery))?;
+        super::super::review::read_snapshot(c, |c| {
+            let plan = historical_plan(c, request.project_id, request.plan_id)?;
+            let history = history_in(c, &plan)?;
+            let after = request.after.map_or(0, |after| after.get());
+            let mut visible = history
+                .posts
+                .into_iter()
+                .filter(|post| post.sequence.get() > after);
+            let posts = visible
+                .by_ref()
+                .take(request.limit as usize)
+                .collect::<Vec<_>>();
+            let next_after = visible
+                .next()
+                .and_then(|_| posts.last().map(|post| post.sequence));
+            let mut author_roles = std::collections::BTreeMap::new();
+            for post in &posts {
+                if let TeamDiscussionAuthor::Member { author } = &post.author {
+                    author_roles.entry(author.role_version_id).or_insert(
+                        history
+                            .roles
+                            .get(&author.role_version_id)
+                            .ok_or_else(corrupt)?
+                            .clone(),
+                    );
+                }
+            }
+            let page = TeamHistoryPage {
+                plan_id: plan.plan_id,
+                members: history.members,
+                author_roles: author_roles.into_values().collect(),
+                posts,
+                next_after,
+            };
+            codec::encode(&page, MAX_HISTORY_BYTES)?;
+            Ok(page)
+        })
+    }
+    pub fn read_team_history_post(
+        &self,
+        project: ExecutionId,
+        plan: ExecutionId,
+        id: ExecutionId,
+    ) -> Result<TeamDiscussionPost, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| sql(rusqlite::Error::InvalidQuery))?;
+        super::super::review::read_snapshot(c, |c| {
+            let plan = historical_plan(c, project, plan)?;
+            history_in(c, &plan)?
+                .posts
+                .into_iter()
+                .find(|post| post.publication.post_id == id)
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "team-post"))
+        })
+    }
+    /// Confirm an original human action after a lost acknowledgement without replaying it.
+    pub fn read_human_team_publication_action(
+        &self,
+        project: ExecutionId,
+        lease: &AutomationLease,
+        actor: &str,
+        publication: &PublishTeamDiscussion,
+    ) -> Result<Option<TeamDiscussionPost>, ExecutionError> {
+        if actor.trim().is_empty() || actor.len() > 128 || lease.generation.get() == 0 {
+            return Err(fail(ErrorCode::InvalidInput, "team-human-action"));
+        }
+        let c = self
+            .connection()
+            .map_err(|_| sql(rusqlite::Error::InvalidQuery))?;
+        let found = super::super::review::read_snapshot(c, |c| {
+            let plan = historical_plan(c, project, lease.plan_id)?;
+            let history = history_in(c, &plan)?;
+            let Some(post) = post(c, publication.post_id)? else {
+                return Ok(None);
+            };
+            let matches = match &post.author {
+                TeamDiscussionAuthor::Human {
+                    actor: saved,
+                    binding,
+                } => saved == actor && binding.lease == *lease && binding.delegation.is_none(),
+                TeamDiscussionAuthor::Member { .. } => false,
+            };
+            if post.plan_id != plan.plan_id || post.publication != *publication || !matches {
+                return Err(fail(ErrorCode::ResultMismatch, "team-human-action"));
+            }
+            if !history.posts.contains(&post) {
+                return Err(corrupt());
+            }
+            Ok(Some(post))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
     pub fn read_team_discussion(
         &self,
         scope: &WorkPlanAgentScope,
@@ -1059,6 +1168,159 @@ pub(crate) fn validate_team_provider_view_in(
     Ok(())
 }
 
+struct TeamHistory {
+    members: Vec<TeamMemberRole>,
+    roles: std::collections::BTreeMap<ExecutionId, TeamMemberRole>,
+    posts: Vec<TeamDiscussionPost>,
+}
+
+fn historical_plan(
+    c: &Connection,
+    project: ExecutionId,
+    plan: ExecutionId,
+) -> Result<WorkPlan, ExecutionError> {
+    let metadata = super::super::read_metadata_from(c).map_err(|_| corrupt())?;
+    if metadata.project_id().to_string() != project.to_string() {
+        return Err(denied());
+    }
+    let stored = control::load(c, plan)?;
+    if stored.plan.project_id != project {
+        return Err(denied());
+    }
+    Ok(stored.plan)
+}
+
+/// Reopening and trusted history reads use the same bounded historical checks.
+fn history_in(c: &Connection, plan: &WorkPlan) -> Result<TeamHistory, ExecutionError> {
+    let mut query=c.prepare("SELECT member_id,task_id FROM application_team_members WHERE plan_id=?1 ORDER BY member_id LIMIT 9").map_err(sql)?;
+    let members = query
+        .query_map([plan.plan_id.to_string()], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })
+        .map_err(sql)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(sql)?;
+    let posts = all_posts(c, plan.plan_id)?;
+    let limits = TeamDiscussionLimits::current_plan();
+    if members.len() > limits.max_members as usize || posts.len() > limits.max_posts as usize {
+        return Err(corrupt());
+    }
+    if plan.options.team_discussions.is_none() && (!members.is_empty() || !posts.is_empty()) {
+        return Err(corrupt());
+    }
+    let generation = control::load(c, plan.plan_id)?.lease.generation;
+    let mut latest = Vec::new();
+    let mut roles = std::collections::BTreeMap::new();
+    for (member, task) in members {
+        let member = ExecutionId::parse(&member)?;
+        if let Some(task) = task {
+            let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM application_executions x JOIN execution_attempts a USING(attempt_id) WHERE a.task_id=?1 AND x.plan_id=?2 AND x.kind='model')",params![task,plan.plan_id.to_string()],|r|r.get(0)).map_err(sql)?;
+            if !valid {
+                return Err(corrupt());
+            }
+        }
+        let mut query = c
+            .prepare(
+                "SELECT version_id FROM application_team_roles WHERE member_id=?1 ORDER BY ordinal",
+            )
+            .map_err(sql)?;
+        let ids = query
+            .query_map([member.to_string()], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sql)?;
+        if ids.is_empty() || ids.len() > limits.max_role_versions_per_member as usize {
+            return Err(corrupt());
+        }
+        let config =
+            crate::ai::settings(&FixedInput::capture(plan.execution_input()?.clone())?)?.config;
+        let mut previous: Option<TeamMemberRole> = None;
+        for (i, id) in ids.into_iter().enumerate() {
+            let role = load_role(c, ExecutionId::parse(&id)?)?;
+            if role.plan_id != plan.plan_id
+                || role.request.member_id != member
+                || role.version.get() != i as u64 + 1
+                || role.generation.get() == 0
+                || role.generation > generation
+                || role.request.expected_role_version_id
+                    != previous.as_ref().map(|p| p.request.role_version_id)
+                || previous
+                    .as_ref()
+                    .is_some_and(|p| p.generation >= role.generation)
+                || role.config != config
+            {
+                return Err(corrupt());
+            }
+            roles.insert(role.request.role_version_id, role.clone());
+            previous = Some(role);
+        }
+        latest.push(previous.ok_or_else(corrupt)?);
+    }
+    for (i, p) in posts.iter().enumerate() {
+        if p.sequence.get() != i as u64 + 1 {
+            return Err(corrupt());
+        }
+        check_content(&p.publication)?;
+        let binding = match &p.author {
+            TeamDiscussionAuthor::Member { author } => {
+                let (_, role, target) = author_history(c, author)?;
+                if target != p.publication.target
+                    || roles.get(&author.role_version_id) != Some(&role)
+                {
+                    return Err(corrupt());
+                }
+                &author.binding
+            }
+            TeamDiscussionAuthor::Human { actor, binding } => {
+                if actor.trim().is_empty() || actor.len() > 128 || binding.delegation.is_some() {
+                    return Err(corrupt());
+                }
+                let registered: bool = c
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1)",
+                        [binding.root_task.to_string()],
+                        |r| r.get(0),
+                    )
+                    .map_err(sql)?;
+                if !registered {
+                    return Err(corrupt());
+                }
+                binding
+            }
+        };
+        if binding.lease.plan_id != plan.plan_id
+            || binding.lease.generation.get() == 0
+            || binding.lease.generation > generation
+        {
+            return Err(corrupt());
+        }
+        let scope = agents::scope_from_binding(plan.project_id, binding);
+        agents::validate_scope_basis(plan, &scope)?;
+        check_target(plan, &scope, &p.publication.target)?;
+        check_references(c, plan, &p.publication.target, &p.publication.references)?;
+        for id in [p.publication.reply_to, p.publication.supersedes]
+            .into_iter()
+            .flatten()
+        {
+            let predecessor = posts
+                .iter()
+                .find(|prior| prior.publication.post_id == id && prior.sequence < p.sequence)
+                .ok_or_else(corrupt)?;
+            if predecessor.publication.target != p.publication.target
+                || p.publication.supersedes == Some(id)
+                    && !same_author(&p.author, &predecessor.author)
+            {
+                return Err(corrupt());
+            }
+        }
+    }
+    Ok(TeamHistory {
+        members: latest,
+        roles,
+        posts,
+    })
+}
+
 pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
     for (name, expected) in TABLES {
         let actual: String = c
@@ -1074,124 +1336,13 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
     if orphan {
         return Err(corrupt());
     }
-    let mut members = c
-        .prepare("SELECT member_id,plan_id FROM application_team_members")
-        .map_err(sql)?;
-    for row in members
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-        .map_err(sql)?
-    {
-        let (member, plan) = row.map_err(sql)?;
-        let member = ExecutionId::parse(&member)?;
-        let plan = control::load(c, ExecutionId::parse(&plan)?)?.plan;
-        policy(&plan)?;
-        let mut roles = c
-            .prepare(
-                "SELECT version_id FROM application_team_roles WHERE member_id=?1 ORDER BY ordinal",
-            )
-            .map_err(sql)?;
-        let roles = roles
-            .query_map([member.to_string()], |r| r.get::<_, String>(0))
-            .map_err(sql)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(sql)?;
-        if roles.is_empty()
-            || roles.len()
-                > TeamDiscussionLimits::current_plan().max_role_versions_per_member as usize
-        {
-            return Err(corrupt());
-        }
-        let mut previous: Option<TeamMemberRole> = None;
-        for (i, id) in roles.into_iter().enumerate() {
-            let role = load_role(c, ExecutionId::parse(&id)?)?;
-            if role.plan_id != plan.plan_id
-                || role.version.get() != i as u64 + 1
-                || role.generation.get() == 0
-                || role.generation > control::load(c, plan.plan_id)?.lease.generation
-                || role.request.expected_role_version_id
-                    != previous.as_ref().map(|p| p.request.role_version_id)
-                || previous
-                    .as_ref()
-                    .is_some_and(|p| p.generation >= role.generation)
-                || role.config
-                    != crate::ai::settings(&FixedInput::capture(plan.execution_input()?.clone())?)?
-                        .config
-            {
-                return Err(corrupt());
-            }
-            previous = Some(role);
-        }
-        let count: i64 = c
-            .query_row(
-                "SELECT COUNT(*) FROM application_team_members WHERE plan_id=?1",
-                [plan.plan_id.to_string()],
-                |r| r.get(0),
-            )
-            .map_err(sql)?;
-        if count > TeamDiscussionLimits::current_plan().max_members as i64 {
-            return Err(corrupt());
-        }
-    }
-    let mut plans = c
-        .prepare("SELECT DISTINCT plan_id FROM application_team_posts")
-        .map_err(sql)?;
-    for plan in plans
+    let mut query=c.prepare("SELECT plan_id FROM application_team_members UNION SELECT plan_id FROM application_team_posts ORDER BY plan_id").map_err(sql)?;
+    for plan in query
         .query_map([], |r| r.get::<_, String>(0))
         .map_err(sql)?
     {
         let plan = control::load(c, ExecutionId::parse(&plan.map_err(sql)?)?)?.plan;
-        policy(&plan)?;
-        let posts = all_posts(c, plan.plan_id)?;
-        if posts.len() > TeamDiscussionLimits::current_plan().max_posts as usize {
-            return Err(corrupt());
-        }
-        for (i, p) in posts.iter().enumerate() {
-            if p.sequence.get() != i as u64 + 1 {
-                return Err(corrupt());
-            }
-            check_content(&p.publication)?;
-            let binding = match &p.author {
-                TeamDiscussionAuthor::Member { author } => {
-                    let (_, _, target) = author_history(c, author)?;
-                    if target != p.publication.target {
-                        return Err(corrupt());
-                    }
-                    &author.binding
-                }
-                TeamDiscussionAuthor::Human { actor, binding } => {
-                    if actor.trim().is_empty() || actor.len() > 128 || binding.delegation.is_some()
-                    {
-                        return Err(corrupt());
-                    }
-                    binding
-                }
-            };
-            if binding.lease.plan_id != plan.plan_id
-                || binding.lease.generation.get() == 0
-                || binding.lease.generation > control::load(c, plan.plan_id)?.lease.generation
-            {
-                return Err(corrupt());
-            }
-            let scope = agents::scope_from_binding(plan.project_id, binding);
-            agents::validate_scope_basis(&plan, &scope)?;
-            check_target(&plan, &scope, &p.publication.target)?;
-            check_references(c, &plan, &p.publication.target, &p.publication.references)?;
-            for id in [p.publication.reply_to, p.publication.supersedes]
-                .into_iter()
-                .flatten()
-            {
-                let predecessor = posts
-                    .iter()
-                    .find(|prior| prior.publication.post_id == id && prior.sequence < p.sequence)
-                    .ok_or_else(corrupt)?;
-                if predecessor.publication.target != p.publication.target
-                    || p.publication.supersedes == Some(id)
-                        && !same_author(&p.author, &predecessor.author)
-                {
-                    return Err(corrupt());
-                }
-            }
-        }
+        history_in(c, &plan)?;
     }
     Ok(())
 }
@@ -1303,6 +1454,490 @@ mod tests {
                 text: text.into(),
             })
             .unwrap()
+    }
+
+    #[test]
+    fn team_human_history_keeps_exact_author_roles_pages_and_read_only_action_identity() {
+        let (_temp, mut store, plan, scope, units) = setup();
+        let first_request = dispatch(&mut store, &scope, vec![units[0]]);
+        let first = store
+            .capture_team_execution_author(&scope, &first_request)
+            .unwrap();
+        let second_request = dispatch(&mut store, &scope, vec![units[0]]);
+        let second = store
+            .capture_team_execution_author(&scope, &second_request)
+            .unwrap();
+        let mut question = publication(
+            &first,
+            &"Retain this complete original reason 👩🏽‍💻. ".repeat(100),
+        );
+        question.kind = TeamDiscussionKind::Challenge;
+        let question = store.publish_team_discussion(&first, &question).unwrap();
+        let mut answer = publication(
+            &second,
+            "A second member explicitly replies to the original reason.",
+        );
+        answer.reply_to = Some(question.publication.post_id);
+        let answer = store.publish_team_discussion(&second, &answer).unwrap();
+        let mut human = publication(
+            &first,
+            "A local human explanation is still only a published suggestion.",
+        );
+        human.reply_to = Some(answer.publication.post_id);
+        let selection = store
+            .translation_history(
+                plan.project_id,
+                first.target.unit_id,
+                &first.target.locale,
+                0,
+                1,
+            )
+            .unwrap()
+            .current;
+        let protection = store
+            .work_protection(first.target.unit_id, &first.target.locale)
+            .unwrap();
+        let review = serde_json::to_value(
+            store
+                .review_target(plan.project_id, first.target.unit_id, &first.target.locale)
+                .unwrap(),
+        )
+        .unwrap();
+        let budget = store.provider_budget(scope.parent_task()).unwrap();
+        let sequence = store.execution_sequence().unwrap();
+        let published = store
+            .publish_human_team_discussion(&scope, "local-user", &human)
+            .unwrap();
+        assert_eq!(
+            store
+                .publish_human_team_discussion(&scope, "local-user", &human)
+                .unwrap(),
+            published
+        );
+        let view = store.capture_team_discussion_view(&first).unwrap();
+        assert!(view.view().posts.contains(&published));
+        assert!(required_posts(&view.view().posts).contains(&question.publication.post_id));
+        assert_eq!(
+            store
+                .translation_history(
+                    plan.project_id,
+                    first.target.unit_id,
+                    &first.target.locale,
+                    0,
+                    1
+                )
+                .unwrap()
+                .current,
+            selection
+        );
+        assert_eq!(
+            store
+                .work_protection(first.target.unit_id, &first.target.locale)
+                .unwrap(),
+            protection
+        );
+        assert_eq!(
+            serde_json::to_value(
+                store
+                    .review_target(plan.project_id, first.target.unit_id, &first.target.locale)
+                    .unwrap()
+            )
+            .unwrap(),
+            review
+        );
+        assert_eq!(store.provider_budget(scope.parent_task()).unwrap(), budget);
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        let child = store
+            .delegate_work_plan_agent_scope(
+                &scope,
+                &AgentDelegationRequest {
+                    delegation_id: ExecutionId::new(),
+                    unit_ids: vec![first.target.unit_id],
+                    tool_handles: vec![],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .publish_human_team_discussion(
+                    &child,
+                    "local-user",
+                    &publication(&first, "A delegated member cannot use the human writer.")
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        let mut outside = publication(&first, "Wrong target basis");
+        outside.target.unit_id = units[1];
+        assert_eq!(
+            store
+                .publish_human_team_discussion(&scope, "local-user", &outside)
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        let paused = store
+            .control_work_plan(&control(
+                &plan,
+                scope.lease.generation.get(),
+                WorkPlanCommand::Pause,
+            ))
+            .unwrap();
+        let resumed = store
+            .control_work_plan(&control(
+                &plan,
+                paused.lease.generation.get(),
+                WorkPlanCommand::Continue,
+            ))
+            .unwrap();
+        let fresh = store.work_plan_agent_scope(resumed.lease).unwrap();
+        let new_role = store
+            .register_team_member(
+                &fresh,
+                &TeamMemberRoleWrite {
+                    member_id: first.author.member_id,
+                    role_version_id: ExecutionId::new(),
+                    expected_role_version_id: Some(first.author.role_version_id),
+                    display_name: "Updated role".into(),
+                    role: "A later role must not relabel an earlier publication.".into(),
+                },
+            )
+            .unwrap();
+        let ordinary = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        store
+            .authorize_work_plan(&ordinary, &consent(&ordinary))
+            .unwrap();
+        let before = std::fs::read(
+            store
+                .directory()
+                .join(super::super::super::DATABASE_FILENAME),
+        )
+        .unwrap();
+        let read = ReadTeamHistory {
+            project_id: plan.project_id,
+            plan_id: plan.plan_id,
+            after: None,
+            limit: 1,
+        };
+        let page = store.read_team_history(&read).unwrap();
+        assert_eq!(page.posts, vec![question.clone()]);
+        assert_eq!(page.next_after, Some(question.sequence));
+        assert_eq!(page.members.len(), 2);
+        assert!(page.members.contains(&new_role));
+        assert_eq!(page.author_roles, vec![first.role.clone()]);
+        let second_page = store
+            .read_team_history(&ReadTeamHistory {
+                after: page.next_after,
+                ..read.clone()
+            })
+            .unwrap();
+        assert_eq!(second_page.posts, vec![answer.clone()]);
+        assert_eq!(second_page.author_roles, vec![second.role.clone()]);
+        let last = store
+            .read_team_history(&ReadTeamHistory {
+                after: second_page.next_after,
+                ..read.clone()
+            })
+            .unwrap();
+        assert_eq!(last.posts, vec![published.clone()]);
+        assert!(last.author_roles.is_empty());
+        assert_eq!(last.next_after, None);
+        assert_eq!(
+            store
+                .read_team_history_post(plan.project_id, plan.plan_id, question.publication.post_id)
+                .unwrap(),
+            question
+        );
+        assert_eq!(
+            store
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &scope.lease,
+                    "local-user",
+                    &human
+                )
+                .unwrap(),
+            Some(published)
+        );
+        let mut changed = human.clone();
+        changed.body.push('!');
+        assert_eq!(
+            store
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &scope.lease,
+                    "local-user",
+                    &changed
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        assert_eq!(
+            store
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &scope.lease,
+                    "other-user",
+                    &human
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        assert_eq!(
+            store
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &fresh.lease,
+                    "local-user",
+                    &human
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        assert_eq!(
+            store
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &scope.lease,
+                    "local-user",
+                    &question.publication
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        let empty = store
+            .read_team_history(&ReadTeamHistory {
+                plan_id: ordinary.plan_id,
+                ..read.clone()
+            })
+            .unwrap();
+        assert!(
+            empty.members.is_empty() && empty.posts.is_empty() && empty.author_roles.is_empty()
+        );
+        assert!(
+            store
+                .read_team_history(&ReadTeamHistory {
+                    project_id: ExecutionId::new(),
+                    ..read.clone()
+                })
+                .is_err()
+        );
+        assert!(
+            store
+                .read_team_history_post(plan.project_id, ordinary.plan_id, human.post_id)
+                .is_err()
+        );
+        let wrong = AutomationLease {
+            plan_id: ordinary.plan_id,
+            generation: scope.lease.generation,
+        };
+        assert_eq!(
+            store
+                .read_human_team_publication_action(plan.project_id, &wrong, "local-user", &human)
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        for limit in [0, 17] {
+            assert!(
+                store
+                    .read_team_history(&ReadTeamHistory {
+                        limit,
+                        ..read.clone()
+                    })
+                    .is_err()
+            );
+        }
+        let json = codec::encode(&page, MAX_HISTORY_BYTES).unwrap();
+        assert_eq!(
+            codec::decode::<TeamHistoryPage>(&json, MAX_HISTORY_BYTES).unwrap(),
+            page
+        );
+        assert_eq!(
+            std::fs::read(
+                store
+                    .directory()
+                    .join(super::super::super::DATABASE_FILENAME)
+            )
+            .unwrap(),
+            before
+        );
+        assert_eq!(store.provider_budget(scope.parent_task()).unwrap(), budget);
+    }
+
+    #[test]
+    fn team_human_action_confirmation_survives_source_replacement_pause_and_reopen_without_grants()
+    {
+        let (_temp, mut store, plan, scope, units) =
+            setup_for(TeamDiscussionPolicy::CurrentPlanV2 {});
+        let request = dispatch(&mut store, &scope, vec![units[0]]);
+        let author = store
+            .capture_team_execution_author(&scope, &request)
+            .unwrap();
+        let source = store
+            .source_content(author.target.source_snapshot_id, 0, 100)
+            .unwrap();
+        let mut prior = publication(
+            &author,
+            "The original adopted source is the evidence for this discussion.",
+        );
+        prior.references = vec![TeamArtifactReference::SourceResult {
+            snapshot_id: author.target.source_snapshot_id,
+            attempt_id: source.attempt_id,
+            result_id: source.result_id,
+        }];
+        store.publish_team_discussion(&author, &prior).unwrap();
+        let mut human = publication(
+            &author,
+            "Keep this exact original publication when its acknowledgement is lost.",
+        );
+        human.reply_to = Some(prior.post_id);
+        human.references = prior.references.clone();
+        let expected = store
+            .publish_human_team_discussion(&scope, "local-user", &human)
+            .unwrap();
+        let captured = store.capture_team_discussion_view(&author).unwrap();
+        let budget = store.provider_budget(scope.parent_task()).unwrap();
+        store
+            .control_work_plan(&control(
+                &plan,
+                scope.lease.generation.get(),
+                WorkPlanCommand::Pause,
+            ))
+            .unwrap();
+        crate::persistence::review::tests::adopt_source(
+            &mut store,
+            br#"{"replacement":"Changed source after the original plan was paused"}"#,
+        );
+        assert_ne!(
+            store.content_scope().unwrap().current_snapshot,
+            Some(author.target.source_snapshot_id)
+        );
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        let before = std::fs::read(
+            store
+                .directory()
+                .join(super::super::super::DATABASE_FILENAME),
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &scope.lease,
+                    "local-user",
+                    &human
+                )
+                .unwrap(),
+            Some(expected.clone())
+        );
+        assert!(!store.is_reconciling());
+        assert_eq!(
+            store
+                .read_team_history_post(plan.project_id, plan.plan_id, human.post_id)
+                .unwrap(),
+            expected
+        );
+        let page = store
+            .read_team_history(&ReadTeamHistory {
+                project_id: plan.project_id,
+                plan_id: plan.plan_id,
+                after: None,
+                limit: 16,
+            })
+            .unwrap();
+        assert_eq!(page.posts.len(), 2);
+        assert_eq!(page.next_after, None);
+        assert!(
+            store
+                .publish_human_team_discussion(&scope, "local-user", &human)
+                .is_err()
+        );
+        assert!(store.read_team_discussion(&scope, human.post_id).is_err());
+        assert!(
+            store
+                .validate_team_discussion_view_current(&captured)
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(
+                store
+                    .directory()
+                    .join(super::super::super::DATABASE_FILENAME)
+            )
+            .unwrap(),
+            before
+        );
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let reopened = ProjectStore::open(&directory).unwrap();
+        let before = std::fs::read(directory.join(super::super::super::DATABASE_FILENAME)).unwrap();
+        assert!(reopened.check_work_plan_agent_scope(&scope).is_err());
+        assert_eq!(
+            reopened
+                .read_team_history_post(plan.project_id, plan.plan_id, human.post_id)
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            reopened
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &scope.lease,
+                    "local-user",
+                    &human
+                )
+                .unwrap(),
+            Some(expected)
+        );
+        let mut absent = human.clone();
+        absent.post_id = ExecutionId::new();
+        assert_eq!(
+            reopened
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &scope.lease,
+                    "local-user",
+                    &absent
+                )
+                .unwrap(),
+            None
+        );
+        let mut conflict = human;
+        conflict.target.unit_id = units[1];
+        assert_eq!(
+            reopened
+                .read_human_team_publication_action(
+                    plan.project_id,
+                    &scope.lease,
+                    "local-user",
+                    &conflict
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        assert_eq!(
+            reopened.provider_budget(scope.parent_task()).unwrap(),
+            budget
+        );
+        assert_eq!(
+            reopened.work_plan_status(plan.plan_id).unwrap().state,
+            WorkPlanState::Paused
+        );
+        assert_eq!(
+            std::fs::read(directory.join(super::super::super::DATABASE_FILENAME)).unwrap(),
+            before
+        );
     }
 
     #[test]

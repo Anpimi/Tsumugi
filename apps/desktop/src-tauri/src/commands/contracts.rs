@@ -487,6 +487,10 @@ struct AiRequests {
     work_plan_generation_discard:
         execution::work_plans::generation::WorkPlanGenerationDiscardRequest,
     work_plan_agent_open: execution::work_plans::agent::WorkPlanAgentOpenRequest,
+    work_plan_team_history: execution::work_plans::team::WorkPlanTeamHistoryRequest,
+    work_plan_team_post: execution::work_plans::team::WorkPlanTeamPostRequest,
+    work_plan_team_publish: execution::work_plans::team::WorkPlanTeamPublishRequest,
+    work_plan_team_publication_action: execution::work_plans::team::WorkPlanTeamPublicationActionRequest,
     work_plan_agent_delegate: execution::work_plans::agent::WorkPlanAgentDelegateRequest,
     work_plan_agent_reconcile: execution::work_plans::agent::WorkPlanAgentReconcileRequest,
     work_plan_agent_generation_attempt:
@@ -521,6 +525,9 @@ struct AiResponses {
     work_plan_generation_preflight: execution::work_plans::generation::WorkPlanGenerationPreflight,
     work_plan_generation_start_read: Option<tsumugi_core::execution::PluginStartActionRead>,
     work_plan_agent: execution::work_plans::agent::WorkPlanAgentView,
+    work_plan_team_history: tsumugi_core::application::TeamHistoryPage,
+    work_plan_team_post: tsumugi_core::application::TeamDiscussionPost,
+    work_plan_team_publication_action: Option<tsumugi_core::application::TeamDiscussionPost>,
     work_plan_agent_reconcile: tsumugi_core::application::WorkPlanAgentReconciliation,
     work_plan_agent_generation: execution::work_plans::agent::WorkPlanAgentGenerationView,
     work_plan_agent_generation_attempt: execution::AttemptDetail,

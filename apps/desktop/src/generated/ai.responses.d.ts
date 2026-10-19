@@ -452,6 +452,28 @@ export type AutomationEffect =
   | "query-tools"
   | "publish-discussion";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
+export type TeamDiscussionAuthor =
+  | {
+      author: TeamMemberAuthor;
+      kind: "member";
+    }
+  | {
+      actor: string;
+      binding: WorkPlanAgentExecutionBinding;
+      kind: "human";
+    };
+export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
+export type TeamArtifactReference =
+  | {
+      kind: "translation-revision";
+      revisionId: ExecutionId;
+    }
+  | {
+      attemptId: ExecutionId;
+      kind: "source-result";
+      resultId: ExecutionId;
+      snapshotId: ExecutionId;
+    };
 
 export interface Responses {
   effectRetry: boolean;
@@ -479,6 +501,9 @@ export interface Responses {
   workPlanReceipt: WorkPlanReceiptView;
   workPlanStartAction: WorkPlanStartReceipt | null;
   workPlanStatus: WorkPlanStatusView;
+  workPlanTeamHistory: TeamHistoryPage;
+  workPlanTeamPost: TeamDiscussionPost;
+  workPlanTeamPublicationAction: TeamDiscussionPost | null;
   workProtection: WorkProtection;
 }
 export interface MaintenanceAssessment {
@@ -1620,4 +1645,379 @@ export interface WorkPlanStatusView {
 export interface WorkPlanToolUsage {
   limit: number;
   reserved: number;
+}
+export interface TeamHistoryPage {
+  /**
+   * @maxItems 16
+   */
+  authorRoles:
+    | []
+    | [TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ];
+  /**
+   * @maxItems 8
+   */
+  members:
+    | []
+    | [TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole, TeamMemberRole]
+    | [
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole,
+        TeamMemberRole
+      ];
+  nextAfter: Revision | null;
+  planId: ExecutionId;
+  /**
+   * @maxItems 16
+   */
+  posts:
+    | []
+    | [TeamDiscussionPost]
+    | [TeamDiscussionPost, TeamDiscussionPost]
+    | [TeamDiscussionPost, TeamDiscussionPost, TeamDiscussionPost]
+    | [TeamDiscussionPost, TeamDiscussionPost, TeamDiscussionPost, TeamDiscussionPost]
+    | [TeamDiscussionPost, TeamDiscussionPost, TeamDiscussionPost, TeamDiscussionPost, TeamDiscussionPost]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ]
+    | [
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost,
+        TeamDiscussionPost
+      ];
+}
+/**
+ * Descriptive identity and the original model configuration, never a grant.
+ */
+export interface TeamMemberRole {
+  config: AiConfig;
+  generation: Revision;
+  planId: ExecutionId;
+  request: TeamMemberRoleWrite;
+  version: Revision;
+}
+export interface TeamMemberRoleWrite {
+  displayName: string;
+  expectedRoleVersionId: ExecutionId | null;
+  memberId: ExecutionId;
+  role: string;
+  roleVersionId: ExecutionId;
+}
+export interface TeamDiscussionPost {
+  author: TeamDiscussionAuthor;
+  planId: ExecutionId;
+  publication: PublishTeamDiscussion;
+  sequence: Revision;
+}
+export interface TeamMemberAuthor {
+  attemptId: ExecutionId;
+  binding: WorkPlanAgentExecutionBinding;
+  dispatchToken: ExecutionId;
+  itemId: ExecutionId;
+  memberId: ExecutionId;
+  roleVersionId: ExecutionId;
+}
+/**
+ * Immutable provenance, never a substitute for a live opaque scope.
+ */
+export interface WorkPlanAgentExecutionBinding {
+  callerId: ExecutionId;
+  delegation: WorkPlanAgentSubset | null;
+  lease: AutomationLease;
+  rootTask: ExecutionId;
+}
+/**
+ * Model arguments contain content and relationships, never an author override.
+ */
+export interface PublishTeamDiscussion {
+  body: string;
+  kind: TeamDiscussionKind;
+  postId: ExecutionId;
+  references: TeamArtifactReference[];
+  replyTo: ExecutionId | null;
+  supersedes: ExecutionId | null;
+  target: TeamDiscussionTarget;
+}
+export interface TeamDiscussionTarget {
+  locale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
 }

@@ -143,6 +143,44 @@ fn budget(
         })
 }
 
+/// Reuse the original session's root caller for a live lease. Human publication
+/// and bounded member dispatch must resolve the same original authority.
+pub(super) fn root_scope(
+    host: &mut ExecutionHost,
+    store: &ProjectStore,
+    lease: AutomationLease,
+) -> Result<(ExecutionId, WorkPlanAgentScope), CommandError> {
+    host.allow_mutation()?;
+    let opened = store.work_plan_agent_scope(lease).map_err(map_recover)?;
+    let mut stale = Vec::new();
+    for (id, scope) in &host.work_plans.agent_scopes {
+        match store.check_work_plan_agent_scope(scope) {
+            Ok(()) => {}
+            Err(error) if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) => {
+                stale.push(*id)
+            }
+            Err(error) => return Err(map_recover(error)),
+        }
+    }
+    for id in stale {
+        host.work_plans.agent_scopes.remove(&id);
+    }
+    if let Some((id, scope)) = host.work_plans.agent_scopes.iter().find(|(_, scope)| {
+        scope.lease() == opened.lease() && scope.delegation().is_none()
+    }) {
+        return Ok((*id, scope.clone()));
+    }
+    if host.work_plans.agent_scopes.len() >= MAX_AGENT_SCOPES {
+        return Err(map_recover(ExecutionError::new(
+            ErrorCode::LimitExceeded,
+            "work-plan-agent-session",
+        )));
+    }
+    let id = opened.caller_id();
+    host.work_plans.agent_scopes.insert(id, opened.clone());
+    Ok((id, opened))
+}
+
 /// Trusted host entry point. This is absent from the bounded Agent adapter.
 /// Opening a session observes an existing grant; it does not renew authority.
 #[tauri::command]
@@ -169,44 +207,7 @@ pub async fn open_work_plan_agent_scope(
                     ))
                 })?;
                 let store = &active.store;
-                host.allow_mutation()?;
-                let opened = store
-                    .work_plan_agent_scope(request.lease)
-                    .map_err(map_recover)?;
-                let mut stale = Vec::new();
-                for (id, scope) in &host.work_plans.agent_scopes {
-                    match store.check_work_plan_agent_scope(scope) {
-                        Ok(()) => {}
-                        Err(error)
-                            if matches!(
-                                error.code,
-                                ErrorCode::Cancelled | ErrorCode::Unauthorized
-                            ) =>
-                        {
-                            stale.push(*id)
-                        }
-                        Err(error) => return Err(map_recover(error)),
-                    }
-                }
-                for id in stale {
-                    host.work_plans.agent_scopes.remove(&id);
-                }
-                let id = if let Some((id, _)) =
-                    host.work_plans.agent_scopes.iter().find(|(_, scope)| {
-                        scope.lease() == opened.lease() && scope.delegation().is_none()
-                    }) {
-                    *id
-                } else {
-                    if host.work_plans.agent_scopes.len() >= MAX_AGENT_SCOPES {
-                        return Err(map_recover(ExecutionError::new(
-                            ErrorCode::LimitExceeded,
-                            "work-plan-agent-session",
-                        )));
-                    }
-                    let id = opened.caller_id();
-                    host.work_plans.agent_scopes.insert(id, opened.clone());
-                    id
-                };
+                let (id, opened) = root_scope(host, store, request.lease)?;
                 let plan = store
                     .work_plan(request.lease.plan_id)
                     .map_err(map_recover)?;

@@ -111,6 +111,7 @@ beforeEach(async () => {
   view = aiViewFixture(item, prepared.preview.config);view.planId=plan.planId;view.planGeneration="1";
   let nextIdentity = 910;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
+    if(command==="read_work_plan_team_history")return{planId:payload.request.planId,members:[],authorRoles:[],posts:[],nextAfter:null};
     if (command === "read_context_strategy_default") return null;
     if (command === "read_model_connections") return connectionFixture([]);
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: item.sourceSnapshotId };
@@ -188,13 +189,14 @@ async function startThroughRegistry() {
 
 it("registers the complete scoped AI command families and routes preview, confirmed start, and exact editor navigation through them", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry, "dispatch");
-  expect(registry.list(scope).filter(command => command.category === "ai").map(command => command.id).sort()).toEqual([
+  const initialCommands = [
     "ai.adopt-result", "ai.cancel-task", "ai.check-cancellation", "ai.open-translation", "ai.open-review", "ai.preview", "ai.reconcile-adoption", "ai.reconcile-start",
     "ai.retry-adoption", "ai.retry-cancellation", "ai.retry-start", "ai.start", "ai.effect.retry",
     "ai.plan.pause", "ai.plan.stop", "ai.plan.take-over", "ai.plan.continue", "ai.plan.start-authorized",
     "ai.plan.reconcile-action", "ai.plan.retry-action", "ai.plan.open-translation", "ai.rewrite-translation",
     "ai.inspect-candidate", "ai.open-comparison", "ai.decide-candidate", "ai.check-candidate-decision", "ai.retry-candidate-decision",
-  ].sort());
+  ];
+  expect(registry.list(scope).filter(command => command.category === "ai").map(command => command.id).sort()).toEqual([...initialCommands].sort());
   expect(registry.list(scope).filter(command => command.category === "ai").every(command => command.binding === null)).toBe(true);
   await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
   await waitFor(() => expect(owner.current().preparedPlan).not.toBeNull());
@@ -212,9 +214,12 @@ it("registers the complete scoped AI command families and routes preview, confir
   const authorized=payloads("authorize_work_plan")[0];
   expect(authorized).toMatchObject({...reads.context,planId:plan.planId,digest:plan.digest,confirmed:true,checkerExecutions:[],toolExecution:false,applicationToolExecutions:[],effects:["save-candidate"]});
   expect(payloads("start_work_plan")).toEqual([{...reads.context,planId:plan.planId,actionId:authorized.actionId,expectedGeneration:"1"}]);
-  expect(registry.list(scope).filter(command=>command.category==="ai").map(command=>command.id)).toEqual(expect.arrayContaining([
-    "ai.agent.generate","ai.agent.query-tool","ai.agent.reconcile","ai.component.prepare","ai.component.start","ai.component.discard","ai.open-comparison"]));
-  expect(registry.list(scope).filter(command=>command.category==="ai")).toHaveLength(33);
+  expect(registry.list(scope).filter(command=>command.category==="ai").map(command=>command.id).sort()).toEqual([
+    ...initialCommands,
+    "ai.agent.generate", "ai.agent.query-tool", "ai.agent.reconcile", "ai.agent.retry", "ai.agent.end-unqueued",
+    "ai.component.prepare", "ai.component.start", "ai.component.check-start", "ai.component.retry-start", "ai.component.discard",
+    "ai.team.publish", "ai.team.check", "ai.team.retry", "ai.team.end-retry",
+  ].sort());
 });
 
 it("rejects stale preparation and start captures without hiding the owner's configuration validation feedback", async () => {

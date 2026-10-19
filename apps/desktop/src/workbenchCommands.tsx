@@ -120,6 +120,7 @@ export interface AiPlanTranslationCommandPayload { kind: "ai-plan-translation"; 
   unitId: string; locale: string; sourceRevisionId: string; sourceSnapshotId: string }
 export interface AiEffectCommandPayload { kind: "ai-effect"; planId: string; expectedGeneration: string; attemptId: string; itemId: string; actionId: string | null }
 export interface AiAgentCommandPayload { kind: "ai-agent"; planId: string; expectedGeneration: string; unitIds: string[]; toolHandle: string | null }
+export interface AiTeamDiscussionCommandPayload { kind: "ai-team-discussion"; planId: string; generation: string; editSeq: number; postId: string | null }
 export interface AiAgentPendingCommandPayload { kind: "ai-agent-pending"; operation: "tool" | "generation"; scopeId: string; taskId: string;
   attemptId: string; inputDigest: string; unitIds: string[]; toolHandle: string | null }
 export interface AiComponentPrepareCommandPayload { kind: "ai-component-prepare"; planId: string; expectedGeneration: string;
@@ -285,6 +286,10 @@ interface WorkbenchCommandPayloads {
   "ai.plan.open-translation": AiPlanTranslationCommandPayload;
   "ai.effect.retry": AiEffectCommandPayload;
   "ai.agent.generate": AiAgentCommandPayload;
+  "ai.team.publish": AiTeamDiscussionCommandPayload;
+  "ai.team.check": AiTeamDiscussionCommandPayload;
+  "ai.team.retry": AiTeamDiscussionCommandPayload;
+  "ai.team.end-retry": AiTeamDiscussionCommandPayload;
   "ai.agent.query-tool": AiAgentCommandPayload;
   "ai.agent.reconcile": AiAgentPendingCommandPayload;
   "ai.agent.retry": AiAgentPendingCommandPayload;
@@ -515,6 +520,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"ai-plan-translation", "ai.plan.open-translation">
   | ResourceCommand<"ai-effect", "ai.effect.retry">
   | ResourceCommand<"ai-agent", "ai.agent.generate" | "ai.agent.query-tool">
+  | ResourceCommand<"ai-team-discussion", "ai.team.publish" | "ai.team.check" | "ai.team.retry" | "ai.team.end-retry">
   | ResourceCommand<"ai-agent-pending", "ai.agent.reconcile" | "ai.agent.retry" | "ai.agent.end-unqueued" | "ai.children.check-start" | "ai.children.retry-start" | "ai.children.end-unqueued">
   | ResourceCommand<"ai-component-prepare", "ai.component.prepare">
   | ResourceCommand<"ai-component", "ai.component.start" | "ai.component.discard" | "ai.component.check-start" | "ai.component.retry-start">
@@ -710,6 +716,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "ai-plan-translation": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "ai-effect": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "ai-agent": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "ai-team-discussion": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "ai-agent-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "ai-component-prepare": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "ai-component": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
@@ -994,6 +1001,7 @@ function validAiPayload(payload: CommandPayload | undefined): payload is AiComma
       && (payload.expectedGeneration === null || taskRevision(payload.expectedGeneration));
     case "ai-effect": return [payload.planId,payload.attemptId,payload.itemId].every(validIdentity) && taskRevision(payload.expectedGeneration) && nullableIdentity(payload.actionId);
     case "ai-agent": return validIdentity(payload.planId) && taskRevision(payload.expectedGeneration) && identities(payload.unitIds,true) && nullableIdentity(payload.toolHandle);
+    case "ai-team-discussion": return validIdentity(payload.planId) && taskRevision(payload.generation) && editSequence(payload.editSeq) && nullableIdentity(payload.postId);
     case "ai-agent-pending": return ["tool","generation"].includes(payload.operation) && [payload.scopeId,payload.taskId,payload.attemptId,payload.inputDigest].every(validIdentity)
       && identities(payload.unitIds,true) && (payload.operation === "tool" ? validIdentity(payload.toolHandle) : payload.toolHandle === null);
     case "ai-component-prepare": return validIdentity(payload.planId) && taskRevision(payload.expectedGeneration) && identities(payload.unitIds,true)
@@ -1126,6 +1134,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "ai-plan-translation" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-effect" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-agent" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "ai-team-discussion" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-agent-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-component-prepare" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-component" && payload?.kind === command.payloadKind) command.handler(payload);

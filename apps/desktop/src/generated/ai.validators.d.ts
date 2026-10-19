@@ -33,6 +33,10 @@ export declare function validateRequestWorkPlanPrepare(value: unknown): value is
 export declare function validateRequestWorkPlanStart(value: unknown): value is Requests["workPlanStart"];
 export declare function validateRequestWorkPlanStartAction(value: unknown): value is Requests["workPlanStartAction"];
 export declare function validateRequestWorkPlanStatus(value: unknown): value is Requests["workPlanStatus"];
+export declare function validateRequestWorkPlanTeamHistory(value: unknown): value is Requests["workPlanTeamHistory"];
+export declare function validateRequestWorkPlanTeamPost(value: unknown): value is Requests["workPlanTeamPost"];
+export declare function validateRequestWorkPlanTeamPublicationAction(value: unknown): value is Requests["workPlanTeamPublicationAction"];
+export declare function validateRequestWorkPlanTeamPublish(value: unknown): value is Requests["workPlanTeamPublish"];
 export declare function validateRequestWorkProtectionRead(value: unknown): value is Requests["workProtectionRead"];
 export declare function validateRequestWorkProtectionSet(value: unknown): value is Requests["workProtectionSet"];
 export declare function validateResponseEffectRetry(value: unknown): value is Responses["effectRetry"];
@@ -60,4 +64,7 @@ export declare function validateResponseWorkPlanGenerationStartRead(value: unkno
 export declare function validateResponseWorkPlanReceipt(value: unknown): value is Responses["workPlanReceipt"];
 export declare function validateResponseWorkPlanStartAction(value: unknown): value is Responses["workPlanStartAction"];
 export declare function validateResponseWorkPlanStatus(value: unknown): value is Responses["workPlanStatus"];
+export declare function validateResponseWorkPlanTeamHistory(value: unknown): value is Responses["workPlanTeamHistory"];
+export declare function validateResponseWorkPlanTeamPost(value: unknown): value is Responses["workPlanTeamPost"];
+export declare function validateResponseWorkPlanTeamPublicationAction(value: unknown): value is Responses["workPlanTeamPublicationAction"];
 export declare function validateResponseWorkProtection(value: unknown): value is Responses["workProtection"];

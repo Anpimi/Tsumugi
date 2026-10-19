@@ -1,0 +1,373 @@
+{
+  "requests": {
+    "history": {
+      "sessionToken": "isolated-ai-arena-session",
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "after": null,
+      "limit": 16
+    },
+    "post": {
+      "sessionToken": "isolated-ai-arena-session",
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "postId": "71000000-0000-4000-8000-000000000028"
+    },
+    "publish": {
+      "sessionToken": "isolated-ai-arena-session",
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "3"
+      },
+      "publication": {
+        "postId": "71000000-0000-4000-8000-00000000002a",
+        "target": {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "locale": "zh-CN"
+        },
+        "kind": "note",
+        "body": "Original note A",
+        "references": [],
+        "replyTo": null,
+        "supersedes": null
+      }
+    },
+    "publicationAction": {
+      "sessionToken": "isolated-ai-arena-session",
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "3"
+      },
+      "publication": {
+        "postId": "71000000-0000-4000-8000-00000000002a",
+        "target": {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "locale": "zh-CN"
+        },
+        "kind": "note",
+        "body": "Original note A",
+        "references": [],
+        "replyTo": null,
+        "supersedes": null
+      }
+    }
+  },
+  "responses": {
+    "history": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "members": [
+        {
+          "planId": "60000000-0000-4000-8000-000000000007",
+          "version": "2",
+          "generation": "3",
+          "request": {
+            "memberId": "71000000-0000-4000-8000-000000000014",
+            "roleVersionId": "71000000-0000-4000-8000-000000000016",
+            "expectedRoleVersionId": "71000000-0000-4000-8000-000000000015",
+            "displayName": "Reviewer <literal>",
+            "role": "Current role: later duties."
+          },
+          "config": {
+            "maxItems": 20,
+            "tokenField": "max_tokens",
+            "shareTerms": true,
+            "concurrency": 1,
+            "timeoutSeconds": 60,
+            "model": "synthetic-model",
+            "shareContext": true,
+            "maxRequests": 20,
+            "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+            "maxOutputTokens": 2000,
+            "credentialEnv": "",
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            },
+            "contextStrategy": null
+          }
+        }
+      ],
+      "authorRoles": [
+        {
+          "planId": "60000000-0000-4000-8000-000000000007",
+          "version": "1",
+          "generation": "1",
+          "request": {
+            "memberId": "71000000-0000-4000-8000-000000000014",
+            "roleVersionId": "71000000-0000-4000-8000-000000000015",
+            "expectedRoleVersionId": null,
+            "displayName": "Reviewer <literal>",
+            "role": "Original role: preserve the missing reason."
+          },
+          "config": {
+            "maxItems": 20,
+            "tokenField": "max_tokens",
+            "shareTerms": true,
+            "concurrency": 1,
+            "timeoutSeconds": 60,
+            "model": "synthetic-model",
+            "shareContext": true,
+            "maxRequests": 20,
+            "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+            "maxOutputTokens": 2000,
+            "credentialEnv": "",
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            },
+            "contextStrategy": null
+          }
+        }
+      ],
+      "posts": [
+        {
+          "planId": "60000000-0000-4000-8000-000000000007",
+          "sequence": "1",
+          "author": {
+            "kind": "member",
+            "author": {
+              "memberId": "71000000-0000-4000-8000-000000000014",
+              "roleVersionId": "71000000-0000-4000-8000-000000000015",
+              "attemptId": "71000000-0000-4000-8000-00000000001e",
+              "itemId": "71000000-0000-4000-8000-00000000001f",
+              "dispatchToken": "71000000-0000-4000-8000-000000000020",
+              "binding": {
+                "lease": {
+                  "planId": "60000000-0000-4000-8000-000000000007",
+                  "generation": "1"
+                },
+                "rootTask": "71000000-0000-4000-8000-00000000000a",
+                "callerId": "71000000-0000-4000-8000-00000000000b",
+                "delegation": null
+              }
+            }
+          },
+          "publication": {
+            "postId": "71000000-0000-4000-8000-000000000028",
+            "target": {
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+              "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+              "locale": "zh-CN"
+            },
+            "kind": "challenge",
+            "body": "<script>untrusted text</script>\nKeep the complete original reason.",
+            "references": [
+              {
+                "kind": "translation-revision",
+                "revisionId": "71000000-0000-4000-8000-000000000032"
+              },
+              {
+                "kind": "source-result",
+                "snapshotId": "60000000-0000-4000-8000-000000000005",
+                "attemptId": "71000000-0000-4000-8000-000000000033",
+                "resultId": "71000000-0000-4000-8000-000000000034"
+              }
+            ],
+            "replyTo": null,
+            "supersedes": null
+          }
+        }
+      ],
+      "nextAfter": "1"
+    },
+    "historyNext": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "members": [
+        {
+          "planId": "60000000-0000-4000-8000-000000000007",
+          "version": "2",
+          "generation": "3",
+          "request": {
+            "memberId": "71000000-0000-4000-8000-000000000014",
+            "roleVersionId": "71000000-0000-4000-8000-000000000016",
+            "expectedRoleVersionId": "71000000-0000-4000-8000-000000000015",
+            "displayName": "Reviewer <literal>",
+            "role": "Current role: later duties."
+          },
+          "config": {
+            "maxItems": 20,
+            "tokenField": "max_tokens",
+            "shareTerms": true,
+            "concurrency": 1,
+            "timeoutSeconds": 60,
+            "model": "synthetic-model",
+            "shareContext": true,
+            "maxRequests": 20,
+            "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+            "maxOutputTokens": 2000,
+            "credentialEnv": "",
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            },
+            "contextStrategy": null
+          }
+        }
+      ],
+      "authorRoles": [],
+      "posts": [
+        {
+          "planId": "60000000-0000-4000-8000-000000000007",
+          "sequence": "2",
+          "author": {
+            "kind": "human",
+            "actor": "local-user",
+            "binding": {
+              "lease": {
+                "planId": "60000000-0000-4000-8000-000000000007",
+                "generation": "3"
+              },
+              "rootTask": "71000000-0000-4000-8000-00000000000a",
+              "callerId": "71000000-0000-4000-8000-00000000000b",
+              "delegation": null
+            }
+          },
+          "publication": {
+            "postId": "71000000-0000-4000-8000-000000000029",
+            "target": {
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+              "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+              "locale": "zh-CN"
+            },
+            "kind": "note",
+            "body": "A human reply remains a suggestion.",
+            "references": [],
+            "replyTo": "71000000-0000-4000-8000-000000000028",
+            "supersedes": null
+          }
+        }
+      ],
+      "nextAfter": null
+    },
+    "post": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "sequence": "1",
+      "author": {
+        "kind": "member",
+        "author": {
+          "memberId": "71000000-0000-4000-8000-000000000014",
+          "roleVersionId": "71000000-0000-4000-8000-000000000015",
+          "attemptId": "71000000-0000-4000-8000-00000000001e",
+          "itemId": "71000000-0000-4000-8000-00000000001f",
+          "dispatchToken": "71000000-0000-4000-8000-000000000020",
+          "binding": {
+            "lease": {
+              "planId": "60000000-0000-4000-8000-000000000007",
+              "generation": "1"
+            },
+            "rootTask": "71000000-0000-4000-8000-00000000000a",
+            "callerId": "71000000-0000-4000-8000-00000000000b",
+            "delegation": null
+          }
+        }
+      },
+      "publication": {
+        "postId": "71000000-0000-4000-8000-000000000028",
+        "target": {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "locale": "zh-CN"
+        },
+        "kind": "challenge",
+        "body": "<script>untrusted text</script>\nKeep the complete original reason.",
+        "references": [
+          {
+            "kind": "translation-revision",
+            "revisionId": "71000000-0000-4000-8000-000000000032"
+          },
+          {
+            "kind": "source-result",
+            "snapshotId": "60000000-0000-4000-8000-000000000005",
+            "attemptId": "71000000-0000-4000-8000-000000000033",
+            "resultId": "71000000-0000-4000-8000-000000000034"
+          }
+        ],
+        "replyTo": null,
+        "supersedes": null
+      }
+    },
+    "published": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "sequence": "3",
+      "author": {
+        "kind": "human",
+        "actor": "local-user",
+        "binding": {
+          "lease": {
+            "planId": "60000000-0000-4000-8000-000000000007",
+            "generation": "3"
+          },
+          "rootTask": "71000000-0000-4000-8000-00000000000a",
+          "callerId": "71000000-0000-4000-8000-00000000000b",
+          "delegation": null
+        }
+      },
+      "publication": {
+        "postId": "71000000-0000-4000-8000-00000000002a",
+        "target": {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "locale": "zh-CN"
+        },
+        "kind": "note",
+        "body": "Original note A",
+        "references": [],
+        "replyTo": null,
+        "supersedes": null
+      }
+    },
+    "publicationAction": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "sequence": "3",
+      "author": {
+        "kind": "human",
+        "actor": "local-user",
+        "binding": {
+          "lease": {
+            "planId": "60000000-0000-4000-8000-000000000007",
+            "generation": "3"
+          },
+          "rootTask": "71000000-0000-4000-8000-00000000000a",
+          "callerId": "71000000-0000-4000-8000-00000000000b",
+          "delegation": null
+        }
+      },
+      "publication": {
+        "postId": "71000000-0000-4000-8000-00000000002a",
+        "target": {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "locale": "zh-CN"
+        },
+        "kind": "note",
+        "body": "Original note A",
+        "references": [],
+        "replyTo": null,
+        "supersedes": null
+      }
+    }
+  }
+}

@@ -1223,6 +1223,58 @@
         ],
         "type": "object"
       },
+      "PublishTeamDiscussion": {
+        "additionalProperties": false,
+        "description": "Model arguments contain content and relationships, never an author override.",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TeamDiscussionKind"
+          },
+          "postId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/definitions/TeamArtifactReference"
+            },
+            "type": "array"
+          },
+          "replyTo": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "postId",
+          "target",
+          "kind",
+          "body",
+          "references"
+        ],
+        "type": "object"
+      },
       "ReviewCheckerKey": {
         "additionalProperties": false,
         "properties": {
@@ -1410,6 +1462,61 @@
         ],
         "type": "string"
       },
+      "TeamArtifactReference": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "translation-revision",
+                "type": "string"
+              },
+              "revisionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-result",
+                "type": "string"
+              },
+              "resultId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "snapshotId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "snapshotId",
+              "attemptId",
+              "resultId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamDiscussionKind": {
+        "enum": [
+          "note",
+          "challenge",
+          "rejection",
+          "resolution"
+        ],
+        "type": "string"
+      },
       "TeamDiscussionPolicy": {
         "oneOf": [
           {
@@ -1439,6 +1546,30 @@
             "type": "object"
           }
         ]
+      },
+      "TeamDiscussionTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
       },
       "TextReviewBinding": {
         "additionalProperties": false,
@@ -2395,6 +2526,115 @@
         ],
         "type": "object"
       },
+      "WorkPlanTeamHistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 16,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamPostRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "postId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "postId"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamPublicationActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "publication": {
+            "$ref": "#/definitions/PublishTeamDiscussion"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "lease",
+          "publication"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamPublishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "publication": {
+            "$ref": "#/definitions/PublishTeamDiscussion"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "lease",
+          "publication"
+        ],
+        "type": "object"
+      },
       "WorkPlanToolSelection": {
         "additionalProperties": false,
         "properties": {
@@ -2656,6 +2896,18 @@
       "workPlanStatus": {
         "$ref": "#/definitions/WorkPlanStatusRequest"
       },
+      "workPlanTeamHistory": {
+        "$ref": "#/definitions/WorkPlanTeamHistoryRequest"
+      },
+      "workPlanTeamPost": {
+        "$ref": "#/definitions/WorkPlanTeamPostRequest"
+      },
+      "workPlanTeamPublicationAction": {
+        "$ref": "#/definitions/WorkPlanTeamPublicationActionRequest"
+      },
+      "workPlanTeamPublish": {
+        "$ref": "#/definitions/WorkPlanTeamPublishRequest"
+      },
       "workProtectionRead": {
         "$ref": "#/definitions/WorkProtectionReadRequest"
       },
@@ -2680,6 +2932,10 @@
       "workPlanGenerationStartRead",
       "workPlanGenerationDiscard",
       "workPlanAgentOpen",
+      "workPlanTeamHistory",
+      "workPlanTeamPost",
+      "workPlanTeamPublish",
+      "workPlanTeamPublicationAction",
       "workPlanAgentDelegate",
       "workPlanAgentReconcile",
       "workPlanAgentGenerationAttempt",
@@ -6215,6 +6471,60 @@
         ],
         "type": "object"
       },
+      "PublishTeamDiscussion": {
+        "additionalProperties": false,
+        "description": "Model arguments contain content and relationships, never an author override.",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TeamDiscussionKind"
+          },
+          "postId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/definitions/TeamArtifactReference"
+            },
+            "type": "array"
+          },
+          "replyTo": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "postId",
+          "target",
+          "kind",
+          "body",
+          "references",
+          "replyTo",
+          "supersedes"
+        ],
+        "type": "object"
+      },
       "RecoveryAction": {
         "enum": [
           "resume-undispatched",
@@ -7410,6 +7720,103 @@
         ],
         "type": "string"
       },
+      "TeamArtifactReference": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "translation-revision",
+                "type": "string"
+              },
+              "revisionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-result",
+                "type": "string"
+              },
+              "resultId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "snapshotId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "snapshotId",
+              "attemptId",
+              "resultId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamDiscussionAuthor": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "author": {
+                "$ref": "#/definitions/TeamMemberAuthor"
+              },
+              "kind": {
+                "const": "member",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "author"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "binding": {
+                "$ref": "#/definitions/WorkPlanAgentExecutionBinding"
+              },
+              "kind": {
+                "const": "human",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "actor",
+              "binding"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamDiscussionKind": {
+        "enum": [
+          "note",
+          "challenge",
+          "rejection",
+          "resolution"
+        ],
+        "type": "string"
+      },
       "TeamDiscussionLimits": {
         "additionalProperties": false,
         "properties": {
@@ -7496,6 +7903,197 @@
             "type": "object"
           }
         ]
+      },
+      "TeamDiscussionPost": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "$ref": "#/definitions/TeamDiscussionAuthor"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "publication": {
+            "$ref": "#/definitions/PublishTeamDiscussion"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "planId",
+          "sequence",
+          "author",
+          "publication"
+        ],
+        "type": "object"
+      },
+      "TeamDiscussionTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
+      },
+      "TeamHistoryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "authorRoles": {
+            "items": {
+              "$ref": "#/definitions/TeamMemberRole"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/TeamMemberRole"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "nextAfter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "posts": {
+            "items": {
+              "$ref": "#/definitions/TeamDiscussionPost"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "planId",
+          "members",
+          "authorRoles",
+          "posts",
+          "nextAfter"
+        ],
+        "type": "object"
+      },
+      "TeamMemberAuthor": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "binding": {
+            "$ref": "#/definitions/WorkPlanAgentExecutionBinding"
+          },
+          "dispatchToken": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "roleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "memberId",
+          "roleVersionId",
+          "attemptId",
+          "itemId",
+          "dispatchToken",
+          "binding"
+        ],
+        "type": "object"
+      },
+      "TeamMemberRole": {
+        "additionalProperties": false,
+        "description": "Descriptive identity and the original model configuration, never a grant.",
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/AiConfig"
+          },
+          "generation": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "request": {
+            "$ref": "#/definitions/TeamMemberRoleWrite"
+          },
+          "version": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "planId",
+          "version",
+          "generation",
+          "request",
+          "config"
+        ],
+        "type": "object"
+      },
+      "TeamMemberRoleWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "expectedRoleVersionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "role": {
+            "type": "string"
+          },
+          "roleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "memberId",
+          "roleVersionId",
+          "expectedRoleVersionId",
+          "displayName",
+          "role"
+        ],
+        "type": "object"
       },
       "TextEncoding": {
         "enum": [
@@ -8047,6 +8645,38 @@
           "projectId",
           "request",
           "receipt"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentExecutionBinding": {
+        "additionalProperties": false,
+        "description": "Immutable provenance, never a substitute for a live opaque scope.",
+        "properties": {
+          "callerId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanAgentSubset"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "rootTask": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "lease",
+          "rootTask",
+          "callerId",
+          "delegation"
         ],
         "type": "object"
       },
@@ -9048,6 +9678,22 @@
       "workPlanStatus": {
         "$ref": "#/definitions/WorkPlanStatusView"
       },
+      "workPlanTeamHistory": {
+        "$ref": "#/definitions/TeamHistoryPage"
+      },
+      "workPlanTeamPost": {
+        "$ref": "#/definitions/TeamDiscussionPost"
+      },
+      "workPlanTeamPublicationAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TeamDiscussionPost"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "workProtection": {
         "$ref": "#/definitions/WorkProtection"
       }
@@ -9062,6 +9708,9 @@
       "workPlanGenerationPreflight",
       "workPlanGenerationStartRead",
       "workPlanAgent",
+      "workPlanTeamHistory",
+      "workPlanTeamPost",
+      "workPlanTeamPublicationAction",
       "workPlanAgentReconcile",
       "workPlanAgentGeneration",
       "workPlanAgentGenerationAttempt",

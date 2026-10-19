@@ -16,6 +16,7 @@ import { useWorkPlanControlSession } from "./WorkPlanControls";
 import { useWorkPlanAgentSession } from "./WorkPlanAgentControls";
 import { childLifecycleKey, childRunWorking, hasChildUncertainty } from "./WorkPlanChildControls";
 import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
+import { useTeamDiscussionSession } from "./TeamDiscussionSession";
 import type { PlanToolDraft, PlanToolChoiceHandle } from "./WorkPlanToolChoice";
 import type { PluginTextReviewSelection } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -156,6 +157,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }
   useEffect(() => { defaultWait.current = loadStrategyDefault(); return () => { defaultGeneration.current++; }; }, []);
   const planControl = useWorkPlanControlSession(live), agent = useWorkPlanAgentSession(live), component = useWorkPlanGenerationSession(live);
+  const discussions = useTeamDiscussionSession(live, session, () => reads.invalidate(["execution"]));
   function parentReserved() {
     const toolRun = agent.current().toolRun;
     const toolView = toolRun && reads.client.getQueryData<AttemptDetail | null>(reads.key(["agent-tool-attempt",toolRun.prepared.attemptId]));
@@ -675,7 +677,8 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       started:before.started?.prepared.attemptId === attempt ? before.started : null,failure:null,notice:null })); return true;
   }
   function reset() {
-    if (!live() || reserved()) return false;
+    if (!live() || reserved() || discussions.blocked()) return false;
+    if (!discussions.discard()) return false;
     defaultCaptureSequence.current = current().editSeq + 1;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
     update(before => ({ ...before,maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,strategyDefault:"loading",strategyDefaultFailure:null,
@@ -688,7 +691,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }), [reads,state.attempt,contentToolAttempt]);
   const contentRangeAvailable = useSyncExternalStore(subscribeContentAvailability, canReceiveContentSelection, canReceiveContentSelection);
   return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan, contentRangeAvailable,
-    planControl, agent, component, captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
+    planControl, agent, component, discussions, captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
     setAdvisoryChecks:(value:PluginTextReviewSelection[]) => edit("advisoryChecks",value),

@@ -9,8 +9,9 @@ import type {
   WorkPlanAgentDelegateRequest, WorkPlanAgentGenerationAttemptRequest,
   WorkPlanAgentReconcileRequest,
   MaintenanceAssessmentRequest,
+  WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest,
 } from "./generated/ai.requests";
-import type { AttemptDetail, ExecutionOutputView, WorkPlanView, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
+import type { AttemptDetail, ExecutionOutputView, WorkPlanView, TeamDiscussionPost, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
   WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
@@ -20,7 +21,9 @@ import { validWorkPlanApplicationTools } from "./workPlanApplicationTools";
 export type {
   WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkProtection,
   MaintenanceAssessment, MaintenanceAction, MaintenanceChoice, MaintenancePlanBasis,
+  TeamHistoryPage, TeamDiscussionPost, TeamMemberRole,
 } from "./generated/ai.responses";
+export type { WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest } from "./generated/ai.requests";
 export type { PlanOptions, WorkPlanCommand, AutomationEffect } from "./generated/ai.requests";
 
 function invalidAcknowledgement(): never {
@@ -36,8 +39,54 @@ function validDiscussionDisclosure(plan: WorkPlanView): boolean {
   return policy.profile === "current-plan-1" ? limits.maxArtifactBytes === 0 : limits.maxArtifactBytes > 0;
 }
 
+function publicationMatches(post: TeamDiscussionPost, request: WorkPlanTeamPublishRequest): boolean {
+  return post.planId === request.lease.planId && post.author.kind === "human" && post.author.actor === "local-user"
+    && post.author.binding.delegation === null
+    && jsonIdentity(post.author.binding.lease) === jsonIdentity(request.lease)
+    && jsonIdentity(post.publication) === jsonIdentity(request.publication);
+}
+
 /** Receipts report an action's historical result. Read status for current authority. */
 export const workPlanCommands = {
+  teamHistory: async (request: WorkPlanTeamHistoryRequest) => {
+    if (!validators.validateRequestWorkPlanTeamHistory(request)) throw new Error("Invalid team history request");
+    const value = await checkedInvoke("read_work_plan_team_history", request, validators.validateResponseWorkPlanTeamHistory);
+    const roles = value.authorRoles;
+    if (value.planId !== request.planId || value.posts.length > request.limit
+      || value.posts.some((post, index) => post.planId !== request.planId
+        || (post.author.kind === "human" ? post.author.binding : post.author.author.binding).lease.planId !== request.planId
+        || BigInt(post.sequence) <= BigInt(index ? value.posts[index - 1].sequence : request.after ?? "0"))
+      || new Set(value.posts.map(post => post.publication.postId)).size !== value.posts.length
+      || value.members.some(role => role.planId !== request.planId)
+      || roles.some(role => role.planId !== request.planId)
+      || new Set(value.members.map(role => role.request.memberId)).size !== value.members.length
+      || new Set(roles.map(role => role.request.roleVersionId)).size !== roles.length
+      || value.posts.some(post => { const author = post.author; return author.kind === "member" && !roles.some(role =>
+        role.request.memberId === author.author.memberId && role.request.roleVersionId === author.author.roleVersionId); })
+      || value.nextAfter !== null && value.nextAfter !== value.posts.at(-1)?.sequence) invalidAcknowledgement();
+    return value;
+  },
+  teamPost: async (request: WorkPlanTeamPostRequest) => {
+    if (!validators.validateRequestWorkPlanTeamPost(request)) throw new Error("Invalid team post request");
+    const value = await checkedInvoke("read_work_plan_team_post", request, validators.validateResponseWorkPlanTeamPost);
+    const binding = value.author.kind === "human" ? value.author.binding : value.author.author.binding;
+    if (value.planId !== request.planId || value.publication.postId !== request.postId || binding.lease.planId !== request.planId) invalidAcknowledgement();
+    return value;
+  },
+  publishTeam: async (input: WorkPlanTeamPublishRequest) => {
+    const request = structuredClone(input);
+    if (!validators.validateRequestWorkPlanTeamPublish(request)) throw new Error("Invalid team publication request");
+    const value = await checkedInvoke("publish_work_plan_team_discussion", request, validators.validateResponseWorkPlanTeamPost);
+    if (!publicationMatches(value, request)) invalidAcknowledgement();
+    return value;
+  },
+  teamPublicationAction: async (input: WorkPlanTeamPublicationActionRequest) => {
+    const request = structuredClone(input);
+    if (!validators.validateRequestWorkPlanTeamPublicationAction(request)) throw new Error("Invalid team publication lookup");
+    const value = await checkedInvoke("read_work_plan_team_publication_action", request, validators.validateResponseWorkPlanTeamPublicationAction);
+    if (value && !publicationMatches(value, request)) invalidAcknowledgement();
+    return value;
+  },
   reconcileAgent: async (input: WorkPlanAgentReconcileRequest) => {
     const request = structuredClone(input);
     if (!validators.validateRequestWorkPlanAgentReconcile(request)) throw new Error("Invalid Agent reconciliation request");
