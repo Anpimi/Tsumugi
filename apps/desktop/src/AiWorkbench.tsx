@@ -117,8 +117,12 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       const originalPlan=preparation.discussions.firstBlockedPlan();if(originalPlan)preparation.recordPlan(originalPlan);
       setOpen(true);return Promise.resolve(false);
     }
+    if(preparation.guidance.blocked()){
+      const originalPlan=preparation.guidance.firstBlockedPlan();if(originalPlan)preparation.recordPlan(originalPlan);
+      setOpen(true);return Promise.resolve(false);
+    }
     if(preparation.reserved() || strategy?.reserved()){setOpen(true);return Promise.resolve(false);}
-    if(!dirty && !preparation.discussions.hasDraft() && !preparation.recovery.hasDraft() && !strategy?.dirty())return Promise.resolve(true);
+    if(!dirty && !preparation.discussions.hasDraft() && !preparation.recovery.hasDraft() && !preparation.guidance.hasDraft() && !strategy?.dirty())return Promise.resolve(true);
     setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});
   }
   function allowNavigate(destination?:WorkspaceDestination):Promise<boolean> {
@@ -126,7 +130,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     if(history && destination?.kind === "task" && destination.taskId === history.taskId && destination.attemptId === history.attemptId
       && !cancelUnresolved && !translationDraft.candidates.blocked() && history.current()) return Promise.resolve(true);
     if(destination?.kind === "task" && !cancelUnresolved && !translationDraft.candidates.blocked() && preparation.canOpenRecoveryTask(destination.taskId,destination.attemptId)) return Promise.resolve(true);
-    if(preparation.reserved()||translationDraft.candidates.blocked()){setOpen(true);return Promise.resolve(false);}
+    if(preparation.reserved(true)||translationDraft.candidates.blocked()){setOpen(true);return Promise.resolve(false);}
     return Promise.resolve(true);
   }
   async function openChildHistory(taskId:string,attemptId:string) {
@@ -418,17 +422,21 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       {sharingPlan?.options.teamExecution?<TeamExecutionDisclosure plan={sharingPlan}/>:<><AiPreviewItems items={sharing.items}/>{sharingPlan?<TeamDiscussionDisclosure plan={sharingPlan}/>:null}</>}
       {prepared?.preview&&!status?<label className="source-check"><input type="checkbox" checked={consent} disabled={locked||!preparation.connectionCurrent()} onChange={e=>setConsent(e.target.checked)}/>{t(prepared.options.teamExecution?prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.team.artifactConsent":"ai.team.consent":prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactConsent":prepared.options.teamDiscussions?"ai.discussions.consent":"ai.consent")}</label>:null}
     </section>:null}
-    <WorkPlanControls context={context} prepared={prepared} status={status} busy={busy} disabled={disabled||!!pendingAdopt} consent={consent}
+    <WorkPlanControls context={context} prepared={prepared} status={status} busy={busy} disabled={disabled||!!pendingAdopt||preparation.guidance.blocked()} consent={consent}
+      revocationDisabled={disabled||!!pendingAdopt} runRevocation={work=>preparation.runWorkPlan(work,planId,contentOptions.key,true)}
       session={preparation.planControl} editSeq={preparation.editSeq} run={perform} refresh={refreshPlan} onPlan={preparation.recordPlan}
       open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}
       onStarted={(id,idPlan,taskId)=>{const original=preparation.planControl.current().pending;if(original?.kind==="start")preparation.recordPlanStart(id,idPlan,original.prepared,original.request.expectedGeneration,original.editSeq,taskId??null);}}
       onBlockedChange={()=>{}} onOpenExtensions={onOpenExtensions} onOpenTranslation={onOpenTranslation}/>
     {status?.plan.options.teamExecution?<TeamRecoveryControls key={`team-recovery:${status.plan.planId}`} context={context} status={status} open={open}
-      disabled={disabled||busy||!!pendingAdopt||cancelUnresolved||planBlocked} session={preparation.recovery} onPlan={preparation.recordPlan} onOpenSettings={onOpenConnections} onOpenTask={onOpenTask}/>:null}
+      disabled={disabled||busy||!!pendingAdopt||cancelUnresolved||planBlocked||preparation.guidance.blocked()} session={preparation.recovery} onPlan={preparation.recordPlan} onOpenSettings={onOpenConnections} onOpenTask={onOpenTask}/>:null}
     {status?<TeamDiscussionHistory context={context} status={status} open={open} session={preparation.discussions}
-      writable={!disabled&&!scopeRead.error&&!!scopeRead.data?.currentSnapshot&&project.metadata.targetLocales.includes(status.plan.locale)
+      writable={!disabled&&!preparation.guidance.blocked()&&!scopeRead.error&&!!scopeRead.data?.currentSnapshot&&project.metadata.targetLocales.includes(status.plan.locale)
         &&status.plan.scope.every(unit=>unit.sourceSnapshotId===scopeRead.data?.currentSnapshot)}/>:null}
     {status?.plan.options.teamExecution?<TeamExecutionHistory key={`team-execution:${status.plan.planId}`} context={context} status={status} open={open} onOpenTask={onOpenTask}
+      guidance={preparation.guidance} guidanceWritable={!disabled&&!busy&&!cancelUnresolved&&!planRead.isFetching&&!planRead.isStale&&!planRead.error
+        &&!scopeRead.isFetching&&!scopeRead.isStale&&!scopeRead.error&&!!scopeRead.data?.currentSnapshot&&project.metadata.targetLocales.includes(status.plan.locale)
+        &&status.plan.scope.every(unit=>unit.sourceSnapshotId===scopeRead.data?.currentSnapshot)}
       onOpenToolTask={onOpenTask?openTeamToolHistory:undefined}
       onReadPost={postId=>preparation.discussions.focusPost(status.plan.planId,postId)}/>:null}
     {status?.plan.preview&&!status.plan.options.teamExecution?<WorkPlanAgentControls context={context} status={status} open={open} disabled={disabled||planBlocked||!!pendingAdopt||active} busy={busy}

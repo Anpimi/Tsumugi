@@ -279,6 +279,18 @@ fn team_recovery_new_human_evidence_retires_initial_member_and_keeps_original_fa
             },
         )
         .unwrap();
+    let root_scope = f.store.work_plan_agent_scope(f.receipt.lease).unwrap();
+    let guidance = SendHumanTeamMessage {
+        message_id: ExecutionId::new(),
+        recipient_member_id: f.members[1].member_id,
+        expected_recipient_role_version_id: f.members[1].role_version_id,
+        target: author.target().clone(),
+        body: "Keep this guidance bound to the original recipient role and grant.".into(),
+    };
+    let old_human_message = f
+        .store
+        .send_human_team_message(&root_scope, "local-user", &guidance)
+        .unwrap();
     finish(
         &mut f,
         &request,
@@ -423,6 +435,19 @@ fn team_recovery_new_human_evidence_retires_initial_member_and_keeps_original_fa
     );
     let page = read(&f);
     assert_eq!(page.roster, vec![newcomer, reviewer]);
+    assert!(page.messages.contains(&old_human_message));
+    assert_eq!(
+        f.store
+            .read_human_team_message_action(
+                f.plan.project_id,
+                &root_scope.lease,
+                "local-user",
+                &guidance
+            )
+            .unwrap(),
+        Some(old_human_message.clone())
+    );
+    assert!(page.role_versions.iter().any(|role| role.request.role_version_id == old_human_message.recipient_role_version_id));
     assert!(
         page.role_versions
             .iter()
@@ -451,6 +476,17 @@ fn team_recovery_new_human_evidence_retires_initial_member_and_keeps_original_fa
     drop(f.runtime);
     drop(f.store);
     let reopened = ProjectStore::open(directory).unwrap();
+    assert_eq!(
+        reopened
+            .read_human_team_message_action(
+                change.project_id,
+                &root_scope.lease,
+                "local-user",
+                &guidance
+            )
+            .unwrap(),
+        Some(old_human_message)
+    );
     assert_eq!(
         reopened
             .read_team_recovery_action(change.project_id, &permission)

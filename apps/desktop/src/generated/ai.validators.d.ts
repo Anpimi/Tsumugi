@@ -35,6 +35,8 @@ export declare function validateRequestWorkPlanStartAction(value: unknown): valu
 export declare function validateRequestWorkPlanStatus(value: unknown): value is Requests["workPlanStatus"];
 export declare function validateRequestWorkPlanTeamExecution(value: unknown): value is Requests["workPlanTeamExecution"];
 export declare function validateRequestWorkPlanTeamHistory(value: unknown): value is Requests["workPlanTeamHistory"];
+export declare function validateRequestWorkPlanTeamMessage(value: unknown): value is Requests["workPlanTeamMessage"];
+export declare function validateRequestWorkPlanTeamMessageAction(value: unknown): value is Requests["workPlanTeamMessageAction"];
 export declare function validateRequestWorkPlanTeamPost(value: unknown): value is Requests["workPlanTeamPost"];
 export declare function validateRequestWorkPlanTeamPublicationAction(value: unknown): value is Requests["workPlanTeamPublicationAction"];
 export declare function validateRequestWorkPlanTeamPublish(value: unknown): value is Requests["workPlanTeamPublish"];
@@ -73,6 +75,8 @@ export declare function validateResponseWorkPlanStartAction(value: unknown): val
 export declare function validateResponseWorkPlanStatus(value: unknown): value is Responses["workPlanStatus"];
 export declare function validateResponseWorkPlanTeamExecution(value: unknown): value is Responses["workPlanTeamExecution"];
 export declare function validateResponseWorkPlanTeamHistory(value: unknown): value is Responses["workPlanTeamHistory"];
+export declare function validateResponseWorkPlanTeamMessage(value: unknown): value is Responses["workPlanTeamMessage"];
+export declare function validateResponseWorkPlanTeamMessageAction(value: unknown): value is Responses["workPlanTeamMessageAction"];
 export declare function validateResponseWorkPlanTeamPost(value: unknown): value is Responses["workPlanTeamPost"];
 export declare function validateResponseWorkPlanTeamPublicationAction(value: unknown): value is Responses["workPlanTeamPublicationAction"];
 export declare function validateResponseWorkPlanTeamRecoveryAction(value: unknown): value is Responses["workPlanTeamRecoveryAction"];

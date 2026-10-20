@@ -12,10 +12,11 @@ import type {
   WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest,
   WorkPlanTeamExecutionRequest, WorkPlanTeamRecoveryPrepareRequest, WorkPlanTeamRecoveryAuthorizeRequest, WorkPlanTeamRecoveryStateRequest,
   WorkPlanTeamWorkToolsRequest,
+  WorkPlanTeamMessageRequest,
 } from "./generated/ai.requests";
 import type { AttemptDetail, ExecutionOutputView, WorkPlanView, TeamDiscussionPost, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
   WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView, WorkPlanTeamRecoveryPreviewView, TeamRecoveryReceipt, WorkPlanTeamRecoveryStateView, WorkPlanTeamRecoveryActionView,
-  TeamWorkReference, TeamWorkToolHistory } from "./generated/ai.responses";
+  TeamWorkReference, TeamWorkToolHistory, TeamMessage } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -30,6 +31,7 @@ export type {
 export type { WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest } from "./generated/ai.requests";
 export type { PlanOptions, WorkPlanCommand, AutomationEffect } from "./generated/ai.requests";
 export type { TeamWorkReference, TeamWorkToolHistory } from "./generated/ai.responses";
+export type { WorkPlanTeamMessageRequest } from "./generated/ai.requests";
 export type TeamToolHistoryAttempt = TeamWorkToolHistory["attempts"][number];
 
 const teamToolHistoryRows = new WeakMap<TeamToolHistoryAttempt, { request: WorkPlanTeamWorkToolsRequest; identity: string | undefined }>();
@@ -82,6 +84,15 @@ function publicationMatches(post: TeamDiscussionPost, request: WorkPlanTeamPubli
     && jsonIdentity(post.publication) === jsonIdentity(request.publication);
 }
 
+function humanMessageMatches(value: TeamMessage, request: WorkPlanTeamMessageRequest): boolean {
+  const { message } = request, author = value.sender;
+  return value.planId === request.lease.planId && author.kind === "human" && author.actor === "local-user"
+    && author.binding.delegation === null && jsonIdentity(author.binding.lease) === jsonIdentity(request.lease)
+    && value.messageId === message.messageId && value.recipientMemberId === message.recipientMemberId
+    && value.recipientRoleVersionId === message.expectedRecipientRoleVersionId && value.body === message.body
+    && jsonIdentity(value.target) === jsonIdentity(message.target) && value.postIds.length === 0 && value.causeMessageId === null;
+}
+
 function validRecoveryReceipt(receipt: TeamRecoveryReceipt, request: WorkPlanTeamRecoveryAuthorizeRequest, capture: WorkPlanTeamRecoveryPreviewView): boolean {
   const preview = capture.preview, version = receipt.effectiveVersion;
   return receipt.actionId === request.recovery.actionId && version.actionId === request.recovery.actionId
@@ -100,6 +111,20 @@ function recoveryActionMatches(value: WorkPlanTeamRecoveryActionView, request: W
 
 /** Receipts report an action's historical result. Read status for current authority. */
 export const workPlanCommands = {
+  sendTeamMessage: async (input: WorkPlanTeamMessageRequest) => {
+    const request = structuredClone(input);
+    if (!validators.validateRequestWorkPlanTeamMessage(request)) throw new Error("Invalid human team message request");
+    const value = await checkedInvoke("send_work_plan_team_message", request, validators.validateResponseWorkPlanTeamMessage);
+    if (!humanMessageMatches(value, request)) invalidAcknowledgement();
+    return value;
+  },
+  teamMessageAction: async (input: WorkPlanTeamMessageRequest) => {
+    const request = structuredClone(input);
+    if (!validators.validateRequestWorkPlanTeamMessageAction(request)) throw new Error("Invalid human team message lookup");
+    const value = await checkedInvoke("read_work_plan_team_message_action", request, validators.validateResponseWorkPlanTeamMessageAction);
+    if (value && !humanMessageMatches(value, request)) invalidAcknowledgement();
+    return value;
+  },
   teamWorkTools: async (input: WorkPlanTeamWorkToolsRequest) => {
     const request = structuredClone(input);
     if (!validators.validateRequestWorkPlanTeamWorkTools(request)) throw new Error("Invalid team tool history read");
@@ -203,8 +228,9 @@ export const workPlanCommands = {
             : work.origin.work.workId !== work.receipt.intentId || work.origin.work.memberId !== work.receipt.memberId
               || jsonIdentity(work.origin.work.target) !== jsonIdentity(work.target)))
         || BigInt(work.sequence) <= BigInt(index ? value.works[index - 1].sequence : request.afterWork ?? "0"))
-      || value.messages.some((message, index) => message.planId !== request.planId || message.sender.binding.lease.planId !== request.planId
-        || !value.roleVersions.some(role => role.request.memberId === message.sender.memberId && role.request.roleVersionId === message.sender.roleVersionId)
+      || value.messages.some((message, index) => message.planId !== request.planId
+        || (message.sender.kind === "human" ? message.sender.actor !== "local-user" || message.sender.binding.lease.planId !== request.planId || message.sender.binding.delegation !== null
+          : message.sender.author.binding.lease.planId !== request.planId || !value.roleVersions.some(role => message.sender.kind === "member" && role.request.memberId === message.sender.author.memberId && role.request.roleVersionId === message.sender.author.roleVersionId))
         || !value.roleVersions.some(role => role.request.memberId === message.recipientMemberId && role.request.roleVersionId === message.recipientRoleVersionId)
         || BigInt(message.sequence) <= BigInt(index ? value.messages[index - 1].sequence : request.afterMessage ?? "0"))
       || new Set(value.works.map(work => work.receipt.intentId)).size !== value.works.length

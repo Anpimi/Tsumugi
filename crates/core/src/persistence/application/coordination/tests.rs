@@ -1,6 +1,8 @@
 use super::*;
 use crate::persistence::application::tests::{config, consent, fixture};
 
+mod human_guidance;
+
 fn setup(
     no_progress: u32,
 ) -> (

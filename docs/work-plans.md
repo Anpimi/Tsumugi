@@ -475,3 +475,28 @@ the original results after reopening. Its only model response comes from a
 credential-free loopback fixture. The Tauri window is a mock; this establishes
 backend/process conformance, not rendered editor navigation, native GUI behavior,
 model quality or release readiness.
+
+## Directed human guidance
+
+New team plans explicitly disclose human-submitted guidance in their original
+preparation, destination-specific sharing and message authorization. A local
+user selects a currently approved member and source entry, reviews the member's
+role, model destination and complete text, then explicitly sends that text.
+The first human-message profile accepts a body and exact recipient/role/target;
+it does not add references, wake idle members or start another work item.
+
+The message uses the existing team record and stable identity. Its sender is a
+tagged member or trusted human author. A receipt confirms local reception. A
+subsequent authorized provider request includes the message through Core's
+frozen view and records consumption against that exact request identity. An
+already captured request is unchanged. Shared request budgets, item scopes,
+expiry and control generations still apply.
+
+The trusted Desktop sender and exact action lookup compare the original lease,
+recipient role, target, body and message identity. Exact accepted receipts remain
+readable after stopping or reopening without restoring permission. An empty
+lookup does not prove an uncertain submission can never arrive; preserve its
+identity and reconcile or explicitly retry the same request. Pause, stop and
+takeover remain available. New guidance is refused when no future authorized
+request budget remains, while the last lawful in-flight result keeps its
+original finalization rules.

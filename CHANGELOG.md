@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Send explicitly shared human guidance to an approved team member and entry.
+  Track local reception separately from inclusion in the next authorized model
+  request; the current request stays frozen and idle members are not awakened.
+  Preserve the original message identity and newer input when a reply is
+  uncertain. Team message authors now distinguish members from humans.
+  Current-only project format 58 preserves and refuses earlier development
+  projects; create a new project to reimport sources.
+
 - Keep approved reference tools able to run while concurrent team members await
   their results, with bounded execution capacity and unchanged tool permissions.
 

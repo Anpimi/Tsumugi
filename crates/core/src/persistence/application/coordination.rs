@@ -4,6 +4,7 @@ use crate::{ai, application::*, execution::*};
 use rusqlite::{Connection, OptionalExtension, params};
 
 const MAX_RECORD: usize = 65536;
+const MAX_MESSAGE_RECORD: usize = 32768;
 const TABLES: &[(&str, &str)] = &[
     (
         "application_team_work",
@@ -686,7 +687,7 @@ fn validate_request(
         let message = message(c, id)?.ok_or_else(denied)?;
         if message.plan_id != plan.plan_id
             || message.recipient_member_id != author.author.member_id
-            || message.sender.binding.lease != author.author.binding.lease
+            || message.sender.binding().lease != author.author.binding.lease
             || message.target != request.target
         {
             return Err(denied());
@@ -865,7 +866,7 @@ pub(crate) fn record_work(
 fn message(c: &Connection, id: ExecutionId) -> Result<Option<TeamMessage>, ExecutionError> {
     let row:Option<(Vec<u8>,String,String,i64,String)>=c.query_row("SELECT record,digest,plan_id,sequence,recipient FROM application_team_messages WHERE message_id=?1",[id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(sql)?;
     row.map(|r| {
-        let value: TeamMessage = codec::decode(&r.0, 32768)?;
+        let value: TeamMessage = codec::decode(&r.0, MAX_MESSAGE_RECORD)?;
         if codec::digest(&r.0) != r.1
             || value.message_id != id
             || value.plan_id.to_string() != r.2
@@ -878,7 +879,262 @@ fn message(c: &Connection, id: ExecutionId) -> Result<Option<TeamMessage>, Execu
     })
     .transpose()
 }
+
+fn check_message_content(
+    c: &Connection,
+    plan: &WorkPlan,
+    target: &TeamDiscussionTarget,
+    body: &str,
+    post_ids: &[ExecutionId],
+) -> Result<(), ExecutionError> {
+    if body.trim().is_empty()
+        || body.len() > TeamMessageLimits::current_team().max_body_bytes as usize
+        || post_ids.len() > MAX_TEAM_REFERENCES
+    {
+        return Err(denied());
+    }
+    for id in post_ids {
+        let post = team::post(c, *id)?.ok_or_else(denied)?;
+        if post.plan_id != plan.plan_id || post.publication.target != *target {
+            return Err(denied());
+        }
+    }
+    Ok(())
+}
+
+fn check_message_cause(
+    c: &Connection,
+    author: &TeamMemberAuthor,
+    target: &TeamDiscussionTarget,
+    cause: Option<ExecutionId>,
+    before: Option<Revision>,
+) -> Result<(), ExecutionError> {
+    if let Some(id) = cause {
+        let prior = message(c, id)?.ok_or_else(denied)?;
+        if prior.plan_id != author.binding.lease.plan_id
+            || prior.target != *target
+            || prior.recipient_member_id != author.member_id
+            || prior.sender.binding().lease != author.binding.lease
+            || before.is_some_and(|sequence| prior.sequence >= sequence)
+        {
+            return Err(denied());
+        }
+    }
+    Ok(())
+}
+
+/// Validate immutable provenance without asking whether the old grant is live.
+fn message_history(c: &Connection, value: &TeamMessage) -> Result<(), ExecutionError> {
+    let binding = value.sender.binding();
+    let plan = recovery::plan_in(c, value.plan_id, binding.lease.generation)?;
+    if binding.lease.plan_id != plan.plan_id
+        || plan.options.team_discussions.is_none()
+        || !control::load(c, plan.plan_id)?
+            .effects
+            .contains(&AutomationEffect::SendTeamMessage)
+    {
+        return Err(corrupt());
+    }
+    let recipient = member(&plan, value.recipient_member_id)?;
+    if recipient.role_version_id != value.recipient_role_version_id {
+        return Err(corrupt());
+    }
+    match &value.sender {
+        TeamDiscussionAuthor::Member { author } => {
+            let input = super::super::ledger::load_input(c, author.attempt_id)?;
+            author_history(c, author, &input)?;
+            routing_target(
+                &plan,
+                author,
+                &team::target(&input, author.item_id)?,
+                value.recipient_member_id,
+                &value.target,
+            )?;
+            check_message_cause(
+                c,
+                author,
+                &value.target,
+                value.cause_message_id,
+                Some(value.sequence),
+            )?;
+        }
+        TeamDiscussionAuthor::Human { actor, binding } => {
+            team::human_author_history(c, &plan, actor, binding)?;
+            team::check_target(
+                &plan,
+                &agents::scope_from_binding(plan.project_id, binding),
+                &value.target,
+            )?;
+            if !recipient.unit_ids.contains(&value.target.unit_id)
+                || !value.post_ids.is_empty()
+                || value.cause_message_id.is_some()
+            {
+                return Err(corrupt());
+            }
+        }
+    }
+    check_message_content(c, &plan, &value.target, &value.body, &value.post_ids)
+}
+
+fn human_message_action_in(
+    c: &Connection,
+    project: ExecutionId,
+    lease: &AutomationLease,
+    actor: &str,
+    write: &SendHumanTeamMessage,
+) -> Result<Option<TeamMessage>, ExecutionError> {
+    if actor.trim().is_empty() || actor.len() > 128 || lease.generation.get() == 0 {
+        return Err(fail(ErrorCode::InvalidInput, "team-human-message"));
+    }
+    team::historical_plan(c, project, lease.plan_id)?;
+    let Some(prior) = message(c, write.message_id)? else {
+        return Ok(None);
+    };
+    if prior.plan_id != lease.plan_id
+        || !matches!(&prior.sender, TeamDiscussionAuthor::Human { actor: saved, binding }
+            if saved == actor && binding.lease == *lease && binding.delegation.is_none())
+        || prior.recipient_member_id != write.recipient_member_id
+        || prior.recipient_role_version_id != write.expected_recipient_role_version_id
+        || prior.target != write.target
+        || prior.body != write.body
+        || !prior.post_ids.is_empty()
+        || prior.cause_message_id.is_some()
+    {
+        return Err(mismatch());
+    }
+    message_history(c, &prior)?;
+    Ok(Some(prior))
+}
+
+fn record_message(
+    c: &Connection,
+    plan: &WorkPlan,
+    sender: TeamDiscussionAuthor,
+    write: &SendTeamMessage,
+) -> Result<TeamMessage, ExecutionError> {
+    let count: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM application_team_messages WHERE plan_id=?1",
+            [plan.plan_id.to_string()],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    let count = u64::try_from(count).map_err(|_| corrupt())?;
+    if count >= u64::from(TeamMessageLimits::current_team().max_messages) {
+        return Err(fail(ErrorCode::LimitExceeded, "team-messages"));
+    }
+    let value = TeamMessage {
+        message_id: write.message_id,
+        sequence: Revision::new(count + 1)?,
+        plan_id: plan.plan_id,
+        sender,
+        recipient_member_id: write.recipient_member_id,
+        recipient_role_version_id: member(plan, write.recipient_member_id)?.role_version_id,
+        target: write.target.clone(),
+        body: write.body.clone(),
+        post_ids: write.post_ids.clone(),
+        cause_message_id: write.cause_message_id,
+    };
+    let bytes = codec::encode(&value, MAX_MESSAGE_RECORD)?;
+    c.execute(
+        "INSERT INTO application_team_messages VALUES(?1,?2,?3,?4,?5,?6)",
+        params![
+            value.message_id.to_string(),
+            plan.plan_id.to_string(),
+            value.sequence.get() as i64,
+            value.recipient_member_id.to_string(),
+            bytes,
+            codec::digest(&bytes)
+        ],
+    )
+    .map_err(sql)?;
+    Ok(value)
+}
 impl ProjectStore {
+    /// Confirm the exact original human message without reopening execution authority.
+    pub fn read_human_team_message_action(
+        &self,
+        project: ExecutionId,
+        lease: &AutomationLease,
+        actor: &str,
+        write: &SendHumanTeamMessage,
+    ) -> Result<Option<TeamMessage>, ExecutionError> {
+        let c = self.connection().map_err(|_| denied())?;
+        super::super::review::read_snapshot(c, |c| {
+            human_message_action_in(c, project, lease, actor, write)
+        })
+    }
+
+    /// Trusted human entry point; member tool arguments cannot select this author.
+    pub fn send_human_team_message(
+        &mut self,
+        scope: &WorkPlanAgentScope,
+        actor: &str,
+        write: &SendHumanTeamMessage,
+    ) -> Result<TeamMessage, ExecutionError> {
+        if scope.delegation.is_some() {
+            return Err(denied());
+        }
+        if let Some(prior) =
+            self.read_human_team_message_action(scope.project_id, &scope.lease, actor, write)?
+        {
+            return Ok(prior);
+        }
+        let tx = self.execution_write()?;
+        // Another connection may have accepted the original identity before this transaction.
+        if let Some(prior) =
+            human_message_action_in(&tx, scope.project_id, &scope.lease, actor, write)?
+        {
+            super::super::ledger::commit(tx)?;
+            return Ok(prior);
+        }
+        self.check_work_plan_agent_scope(scope)?;
+        let plan = team::live_plan(&tx, scope)?;
+        let stored = control::load(&tx, plan.plan_id)?;
+        let recipient = member(&plan, write.recipient_member_id)?;
+        if !stored.effects.contains(&AutomationEffect::SendTeamMessage)
+            || recipient.role_version_id != write.expected_recipient_role_version_id
+            || !recipient.unit_ids.contains(&write.target.unit_id)
+        {
+            return Err(denied());
+        }
+        if let Some(
+            reason @ (TeamStopReason::NoProgress
+            | TeamStopReason::Expired
+            | TeamStopReason::NeedsReconciliation
+            | TeamStopReason::BudgetExhausted),
+        ) = stop_reason(&tx, &plan)?
+        {
+            return Err(fail(
+                ErrorCode::Cancelled,
+                match reason {
+                    TeamStopReason::BudgetExhausted => "team-guidance-budget-exhausted",
+                    _ => "team-stopped",
+                },
+            ));
+        }
+        team::check_target(&plan, scope, &write.target)?;
+        check_message_content(&tx, &plan, &write.target, &write.body, &[])?;
+        let value = record_message(
+            &tx,
+            &plan,
+            TeamDiscussionAuthor::Human {
+                actor: actor.into(),
+                binding: scope.execution_binding(),
+            },
+            &SendTeamMessage {
+                message_id: write.message_id,
+                recipient_member_id: write.recipient_member_id,
+                target: write.target.clone(),
+                body: write.body.clone(),
+                post_ids: vec![],
+                cause_message_id: None,
+            },
+        )?;
+        super::super::ledger::commit(tx)?;
+        Ok(value)
+    }
+
     pub fn send_team_message(
         &mut self,
         author: &CapturedTeamAuthor,
@@ -898,30 +1154,19 @@ impl ProjectStore {
             write.recipient_member_id,
             &write.target,
         )?;
-        if write.body.trim().is_empty()
-            || write.body.len() > 8192
-            || write.post_ids.len() > MAX_TEAM_REFERENCES
-        {
-            return Err(denied());
-        }
-        for id in &write.post_ids {
-            let p = team::post(&tx, *id)?.ok_or_else(denied)?;
-            if p.plan_id != plan.plan_id || p.publication.target != write.target {
-                return Err(denied());
-            }
-        }
-        if let Some(id) = write.cause_message_id {
-            let m = message(&tx, id)?.ok_or_else(denied)?;
-            if m.plan_id != plan.plan_id
-                || m.target != write.target
-                || m.recipient_member_id != author.author.member_id
-                || m.sender.binding.lease != author.author.binding.lease
-            {
-                return Err(denied());
-            }
-        }
+        check_message_content(&tx, &plan, &write.target, &write.body, &write.post_ids)?;
+        check_message_cause(
+            &tx,
+            &author.author,
+            &write.target,
+            write.cause_message_id,
+            None,
+        )?;
         if let Some(prior) = message(&tx, write.message_id)? {
-            if prior.sender == author.author
+            if prior.sender
+                == (TeamDiscussionAuthor::Member {
+                    author: author.author.clone(),
+                })
                 && prior.recipient_member_id == write.recipient_member_id
                 && prior.target == write.target
                 && prior.body == write.body
@@ -933,42 +1178,14 @@ impl ProjectStore {
             }
             return Err(mismatch());
         }
-        let n: i64 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM application_team_messages WHERE plan_id=?1",
-                [plan.plan_id.to_string()],
-                |r| r.get(0),
-            )
-            .map_err(sql)?;
-        let n = u64::try_from(n).map_err(|_| corrupt())?;
-        if n >= MAX_TEAM_MESSAGES.into() {
-            return Err(fail(ErrorCode::LimitExceeded, "team-messages"));
-        }
-        let value = TeamMessage {
-            message_id: write.message_id,
-            sequence: Revision::new(n + 1)?,
-            plan_id: plan.plan_id,
-            sender: author.author.clone(),
-            recipient_member_id: write.recipient_member_id,
-            recipient_role_version_id: member(&plan, write.recipient_member_id)?.role_version_id,
-            target: write.target.clone(),
-            body: write.body.clone(),
-            post_ids: write.post_ids.clone(),
-            cause_message_id: write.cause_message_id,
-        };
-        let bytes = codec::encode(&value, 32768)?;
-        tx.execute(
-            "INSERT INTO application_team_messages VALUES(?1,?2,?3,?4,?5,?6)",
-            params![
-                value.message_id.to_string(),
-                plan.plan_id.to_string(),
-                value.sequence.get() as i64,
-                value.recipient_member_id.to_string(),
-                bytes,
-                codec::digest(&bytes)
-            ],
-        )
-        .map_err(sql)?;
+        let value = record_message(
+            &tx,
+            &plan,
+            TeamDiscussionAuthor::Member {
+                author: author.author.clone(),
+            },
+            write,
+        )?;
         super::super::ledger::commit(tx)?;
         Ok(value)
     }
@@ -996,12 +1213,13 @@ impl ProjectStore {
                 let value =
                     message(c, ExecutionId::parse(&id.map_err(sql)?)?)?.ok_or_else(corrupt)?;
                 if value.target == author.target
-                    && value.sender.binding.lease == author.author.binding.lease
+                    && value.sender.binding().lease == author.author.binding.lease
                 {
+                    message_history(c, &value)?;
                     messages.push(value);
                 }
             }
-            if messages.len() > 16 {
+            if messages.len() > TeamMessageLimits::current_team().max_request_messages as usize {
                 return Err(fail(ErrorCode::LimitExceeded, "team-request-material"));
             }
             let view = TeamWorkRequestView {
@@ -1017,7 +1235,10 @@ impl ProjectStore {
                     author.author.binding.lease.generation,
                 )?)?,
             };
-            let bytes = codec::encode(&view, 32768)?;
+            let bytes = codec::encode(
+                &view,
+                TeamMessageLimits::current_team().max_request_bytes as usize,
+            )?;
             let utf8 = String::from_utf8(bytes).map_err(|_| corrupt())?;
             Ok(CapturedTeamWorkView { view, utf8 })
         })
@@ -1063,11 +1284,13 @@ pub(crate) fn validate_provider_view_history_in(
         if message(c, value.message_id)?.as_ref() != Some(value)
             || value.plan_id != record.receipt.plan_id
             || value.recipient_member_id != view.author.member_id
-            || value.sender.binding.lease != view.author.binding.lease
+            || value.recipient_role_version_id != view.author.role_version_id
+            || value.sender.binding().lease != view.author.binding.lease
             || value.target != view.discussion.target
         {
             return Err(corrupt());
         }
+        message_history(c, value)?;
     }
     Ok(())
 }
@@ -1390,6 +1613,7 @@ impl ProjectStore {
             let mut consumptions = Vec::new();
             for id in ids.into_iter().take(request.limit as usize) {
                 let value = message(c, ExecutionId::parse(&id)?)?.ok_or_else(corrupt)?;
+                message_history(c, &value)?;
                 let row:Option<(String,String)>=c.query_row("SELECT task_id,request_id FROM application_team_consumptions WHERE message_id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(sql)?;
                 if let Some((task, request)) = row {
                     consumptions.push(TeamMessageConsumption {
@@ -1409,7 +1633,9 @@ impl ProjectStore {
                 }
             }
             for message in &messages {
-                role_ids.insert(message.sender.role_version_id);
+                if let TeamDiscussionAuthor::Member { author } = &message.sender {
+                    role_ids.insert(author.role_version_id);
+                }
                 role_ids.insert(message.recipient_role_version_id);
             }
             let role_versions = role_ids
@@ -1417,6 +1643,7 @@ impl ProjectStore {
                 .map(|id| team::load_role(c, id))
                 .collect::<Result<Vec<_>, _>>()?;
             let value = TeamExecutionView {
+                message_limits: TeamMessageLimits::current_team(),
                 effective_version: recovery::effective_version(
                     c,
                     plan.plan_id,
@@ -1554,33 +1781,7 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         .map_err(sql)?;
     for id in q.query_map([], |r| r.get::<_, String>(0)).map_err(sql)? {
         let value = message(c, ExecutionId::parse(&id.map_err(sql)?)?)?.ok_or_else(corrupt)?;
-        let input = super::super::ledger::load_input(c, value.sender.attempt_id)?;
-        author_history(c, &value.sender, &input)?;
-        let plan = recovery::plan_in(c, value.plan_id, value.sender.binding.lease.generation)?;
-        if member(&plan, value.recipient_member_id)?.role_version_id
-            != value.recipient_role_version_id
-        {
-            return Err(corrupt());
-        }
-        routing_target(
-            &plan,
-            &value.sender,
-            &team::target(&input, value.sender.item_id)?,
-            value.recipient_member_id,
-            &value.target,
-        )?;
-        if value.body.trim().is_empty()
-            || value.body.len() > 8192
-            || value.post_ids.len() > MAX_TEAM_REFERENCES
-        {
-            return Err(corrupt());
-        }
-        for id in value.post_ids {
-            let p = team::post(c, id)?.ok_or_else(corrupt)?;
-            if p.plan_id != plan.plan_id || p.publication.target != value.target {
-                return Err(corrupt());
-            }
-        }
+        message_history(c, &value)?;
     }
     let mut q=c.prepare("SELECT x.message_id,x.task_id,x.request_id,p.capture FROM application_team_consumptions x JOIN execution_provider_requests p ON p.request_id=x.request_id").map_err(sql)?;
     for row in q

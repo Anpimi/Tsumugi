@@ -18,6 +18,7 @@ import { childLifecycleKey, childRunWorking, hasChildUncertainty } from "./WorkP
 import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
 import { useTeamRecoverySession } from "./TeamRecoverySession";
 import { useTeamDiscussionSession } from "./TeamDiscussionSession";
+import { useTeamGuidanceSession } from "./TeamGuidanceSession";
 import { editTeamMemberConfig, teamDraftProblem, type TeamExecutionDraft } from "./TeamExecutionDraft";
 import type { PlanToolDraft, PlanToolChoiceHandle } from "./WorkPlanToolChoice";
 import type { PluginTextReviewSelection } from "./pluginCommands";
@@ -160,22 +161,23 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }
   useEffect(() => { defaultWait.current = loadStrategyDefault(); return () => { defaultGeneration.current++; }; }, []);
   const planControl = useWorkPlanControlSession(live), agent = useWorkPlanAgentSession(live), component = useWorkPlanGenerationSession(live);
-  const discussions = useTeamDiscussionSession(live, session, () => reads.invalidate(["execution"]));
+  const discussions = useTeamDiscussionSession(live, session, () => reads.invalidate(["execution"]), () => !guidance.blocked());
   const recovery = useTeamRecoverySession(live, session, () => !flight.current && !current().busy && !current().pendingStart && !current().pendingAdopt
-    && !planControl.current().pending && !planControl.current().ready && !agent.current().pending && !component.current().operation,
+    && !planControl.current().pending && !planControl.current().ready && !agent.current().pending && !component.current().operation && !guidance.blocked(),
     () => reads.invalidate(["execution", "translation", "review"]), (prepared, receipt, unitId) => {
       update(before => before.planId !== null && before.planId !== prepared.planId ? before : ({ ...before, planId: prepared.planId, attempt: receipt.attemptId, checkedTask: null, started: null,
         startedPlan: { prepared, attemptId: receipt.attemptId, taskId: receipt.taskId, generation: receipt.effectiveVersion.lease.generation, unitIds: [unitId] } }));
     });
-  function parentReserved(excludeRecovery = false) {
+  const guidance = useTeamGuidanceSession(live, session, () => !reserved(true) && !discussions.blocked(), () => reads.invalidate(["execution"]));
+  function parentReserved(excludeRecovery = false, excludeGuidance = false) {
     const toolRun = agent.current().toolRun;
     const toolView = toolRun && reads.client.getQueryData<AttemptDetail | null>(reads.key(["agent-tool-attempt",toolRun.prepared.attemptId]));
     const toolWorking = !!toolRun && (!toolView || toolView.items.some(item => item.status.execution === "queued" || item.status.execution === "dispatched"));
-    return (!excludeRecovery && recovery.blocked()) || !!flight.current || !!current().pendingStart || !!current().pendingAdopt
+    return (!excludeRecovery && recovery.blocked()) || (!excludeGuidance && guidance.blocked()) || !!flight.current || !!current().pendingStart || !!current().pendingAdopt
       || !!planControl.current().pending || !!planControl.current().ready || !!agent.current().pending || toolWorking || !!component.current().operation;
   }
-  function reserved() {
-    return parentReserved() || !!agent.current().child.pending || agent.current().child.children.some(child => child.runs.some(action => childRunWorking(action,
+  function reserved(excludeGuidance = false) {
+    return parentReserved(false, excludeGuidance) || !!agent.current().child.pending || agent.current().child.children.some(child => child.runs.some(action => childRunWorking(action,
       reads.client.getQueryData<AttemptDetail | null>(reads.key(childLifecycleKey(child.consumer.scope.scopeId, action.prepared.attemptId))))));
   }
   function canRunChild(recovery = false) {
@@ -186,7 +188,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       action.phase !== "not-enqueued" && action.request.taskId === taskId && action.request.attemptId === attemptId));
   }
   function canOpenTeamToolHistory(planId: string, work: TeamWorkReference, row: TeamToolHistoryAttempt) {
-    return live() && !parentReserved(true) && !agent.current().child.pending && current().planId === planId
+    return live() && !parentReserved(true, true) && !agent.current().child.pending && current().planId === planId
       && checkedTeamToolHistoryTask(session, planId, work, row);
   }
   function available(locale = current().locale) { return locale !== "" && locales.current.includes(locale); }
@@ -285,8 +287,8 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     if (!live()||reserved()||!current().maintenance) return false;
     edit("selected",[]); update(value=>({...value,selectedSnapshotId:null})); return true;
   }
-  async function run(work: () => Promise<void>, recovery = false) {
-    if (!live() || flight.current || (!recovery && reserved())) return;
+  async function run(work: () => Promise<void>, recovery = false, guidanceRevocation = false) {
+    if (!live() || flight.current || guidance.blocked() && !guidanceRevocation || (!recovery && reserved())) return;
     // Reserve before any identity/IPC await, across every consumer of this owner.
     const ticket = {}; flight.current = ticket;
     update(before => ({ ...before,busy:true,failure:null,notice:null }));
@@ -430,7 +432,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   function recordPlan(planId: string) {
     if (live() && validateResponseIdentity(planId)) update(before => ({ ...before,planId }));
   }
-  async function runWorkPlan(work: (current: WorkPlanContinuation) => Promise<void>, planId: string | null, sourceContentKey: readonly unknown[]) {
+  async function runWorkPlan(work: (current: WorkPlanContinuation) => Promise<void>, planId: string | null, sourceContentKey: readonly unknown[], guidanceRevocation = false) {
     await run(async () => {
       const version = basis.current;
       let witness = planId ? reads.watchExactQuery(["workPlan",planId]) : null;
@@ -477,7 +479,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       candidateReadCleanup.current = dispose;
       try { await work(continuation); }
       finally { dispose(); if (candidateReadCleanup.current === dispose) candidateReadCleanup.current = null; }
-    }, true);
+    }, true, guidanceRevocation);
   }
   async function runChildWorkPlan(work: (current: WorkPlanContinuation) => Promise<void>, planId: string | null, sourceContentKey: readonly unknown[], recovery = false) {
     // Known queued children share Core's original concurrency budget. Only a
@@ -728,8 +730,8 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       started:before.started?.prepared.attemptId === attempt ? before.started : null,failure:null,notice:null })); return true;
   }
   function reset() {
-    if (!live() || reserved() || discussions.blocked() || recovery.blocked()) return false;
-    if (!discussions.discard() || !recovery.discard()) return false;
+    if (!live() || reserved() || discussions.blocked() || recovery.blocked() || guidance.blocked()) return false;
+    if (!discussions.discard() || !recovery.discard() || !guidance.discard()) return false;
     defaultCaptureSequence.current = current().editSeq + 1;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
     update(before => ({ ...before,maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,strategyDefault:"loading",strategyDefaultFailure:null,
@@ -742,7 +744,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }), [reads,state.attempt,contentToolAttempt]);
   const contentRangeAvailable = useSyncExternalStore(subscribeContentAvailability, canReceiveContentSelection, canReceiveContentSelection);
   return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan, contentRangeAvailable,
-    planControl, agent, component, discussions, recovery, canOpenTeamToolHistory,
+    planControl, agent, component, discussions, recovery, guidance, canOpenTeamToolHistory,
     canOpenRecoveryTask: (taskId: string, attemptId: string) => live() && !parentReserved(true) && recovery.taskReferences().some(reference => reference.taskId === taskId && reference.attemptId === attemptId), captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),

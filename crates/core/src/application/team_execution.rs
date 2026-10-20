@@ -1,7 +1,7 @@
 //! Bounded, explicitly authorized collaboration within one work plan.
 use super::{
-    TeamArtifactReference, TeamDiscussionTarget, TeamDiscussionView, TeamMemberAuthor,
-    TeamMemberRole, WorkPlanAgentExecutionBinding,
+    TeamArtifactReference, TeamDiscussionAuthor, TeamDiscussionTarget, TeamDiscussionView,
+    TeamMemberAuthor, TeamMemberRole, WorkPlanAgentExecutionBinding,
 };
 use crate::{
     ai::{AiConfig, AiItem, Usage},
@@ -12,6 +12,27 @@ use serde::{Deserialize, Serialize};
 pub const MAX_TEAM_MESSAGES: u32 = 256;
 pub const MAX_TEAM_PAGE: u32 = 16;
 pub const MAX_TEAM_PAGE_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TeamMessageLimits {
+    pub max_messages: u32,
+    pub max_body_bytes: u32,
+    pub max_request_messages: u32,
+    /// The complete encoded TeamWorkRequestView, including its other context.
+    pub max_request_bytes: u32,
+}
+impl TeamMessageLimits {
+    pub const fn current_team() -> Self {
+        Self {
+            max_messages: MAX_TEAM_MESSAGES,
+            max_body_bytes: 8192,
+            max_request_messages: 16,
+            max_request_bytes: 32768,
+        }
+    }
+}
 
 impl super::WorkPlan {
     pub(crate) fn validate_team(
@@ -369,6 +390,24 @@ pub struct SendTeamMessage {
     pub cause_message_id: Option<ExecutionId>,
 }
 
+/// A trusted human action. The original command captures its lease separately.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct SendHumanTeamMessage {
+    pub message_id: ExecutionId,
+    pub recipient_member_id: ExecutionId,
+    pub expected_recipient_role_version_id: ExecutionId,
+    pub target: TeamDiscussionTarget,
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "message_body_schema"))]
+    pub body: String,
+}
+
+#[cfg(feature = "wire-schema")]
+fn message_body_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"string","minLength":1,"maxLength":TeamMessageLimits::current_team().max_body_bytes})
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -389,7 +428,7 @@ pub struct TeamMessage {
     pub message_id: ExecutionId,
     pub sequence: Revision,
     pub plan_id: ExecutionId,
-    pub sender: TeamMemberAuthor,
+    pub sender: TeamDiscussionAuthor,
     pub recipient_member_id: ExecutionId,
     pub recipient_role_version_id: ExecutionId,
     pub target: TeamDiscussionTarget,
@@ -507,6 +546,7 @@ pub struct ReadTeamExecution {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct TeamExecutionView {
     pub plan_id: ExecutionId,
+    pub message_limits: TeamMessageLimits,
     pub effective_version: super::TeamEffectiveVersion,
     pub roster: Vec<TeamExecutionMember>,
     pub retired_member_ids: Vec<ExecutionId>,
@@ -551,7 +591,7 @@ pub fn team_execution_tools() -> Vec<super::TeamDiscussionToolSpec> {
     properties["instructions"] =
         serde_json::json!({"type":"string","minLength":1,"maxLength":8192});
     let work=super::TeamDiscussionToolSpec{name:"request_team_work".into(),description:"Request one bounded work activation for a preauthorized member. Returns a durable queue receipt immediately; never waits for another member. Later work may return to this member after its producer drains.".into(),input_schema:serde_json::json!({"type":"object","properties":properties,"required":["intentId","recipientMemberId","target","kind","instructions","postIds","causeMessageId"],"additionalProperties":false})};
-    let mut properties = serde_json::json!({"messageId":id,"recipientMemberId":id,"target":target,"body":{"type":"string","minLength":1,"maxLength":8192},"postIds":ids,"causeMessageId":{"anyOf":[id,{"type":"null"}]}});
+    let mut properties = serde_json::json!({"messageId":id,"recipientMemberId":id,"target":target,"body":{"type":"string","minLength":1,"maxLength":TeamMessageLimits::current_team().max_body_bytes},"postIds":ids,"causeMessageId":{"anyOf":[id,{"type":"null"}]}});
     // Sending records the message only; a work request explicitly starts an activation.
     properties["messageId"] = id;
     let message=super::TeamDiscussionToolSpec{name:"send_team_message".into(),description:"Record a directed message. This receipt confirms local reception only; sending does not wake a member or prove model consumption.".into(),input_schema:serde_json::json!({"type":"object","properties":properties,"required":["messageId","recipientMemberId","target","body","postIds","causeMessageId"],"additionalProperties":false})};

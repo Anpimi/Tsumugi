@@ -498,6 +498,8 @@ struct AiRequests {
     work_plan_team_post: execution::work_plans::team::WorkPlanTeamPostRequest,
     work_plan_team_publish: execution::work_plans::team::WorkPlanTeamPublishRequest,
     work_plan_team_publication_action: execution::work_plans::team::WorkPlanTeamPublicationActionRequest,
+    work_plan_team_message: execution::work_plans::team::WorkPlanTeamMessageRequest,
+    work_plan_team_message_action: execution::work_plans::team::WorkPlanTeamMessageRequest,
     work_plan_agent_delegate: execution::work_plans::agent::WorkPlanAgentDelegateRequest,
     work_plan_agent_reconcile: execution::work_plans::agent::WorkPlanAgentReconcileRequest,
     work_plan_agent_generation_attempt:
@@ -542,6 +544,8 @@ struct AiResponses {
     work_plan_team_recovery_end: execution::work_plans::recovery::WorkPlanTeamRecoveryEndView,
     work_plan_team_post: tsumugi_core::application::TeamDiscussionPost,
     work_plan_team_publication_action: Option<tsumugi_core::application::TeamDiscussionPost>,
+    work_plan_team_message: tsumugi_core::application::TeamMessage,
+    work_plan_team_message_action: Option<tsumugi_core::application::TeamMessage>,
     work_plan_agent_reconcile: tsumugi_core::application::WorkPlanAgentReconciliation,
     work_plan_agent_generation: execution::work_plans::agent::WorkPlanAgentGenerationView,
     work_plan_agent_generation_attempt: execution::AttemptDetail,

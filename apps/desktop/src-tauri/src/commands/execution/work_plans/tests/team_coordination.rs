@@ -1,5 +1,7 @@
 //! Synthetic providers choose the work graph through actual Pi tool calls.
 use super::*;
+#[path = "team_guidance.rs"]
+mod human_guidance;
 #[path = "team_recovery.rs"]
 mod recovery;
 #[path = "team_concurrency.rs"]
@@ -445,8 +447,9 @@ fn pi_team_dynamically_reviews_requests_evidence_and_revises_real_candidates() {
         message(m1, ids[0], &target, &[p1]),
     );
     let b3 = admitted(&fixture, &b, ids[1]);
+    assert_eq!(tool_result(&b3.body, "b-message")["sender"]["kind"], "member");
     assert_eq!(
-        tool_result(&b3.body, "b-message")["sender"]["memberId"],
+        tool_result(&b3.body, "b-message")["sender"]["author"]["memberId"],
         json!(ids[1])
     );
     let iba = ExecutionId::new();

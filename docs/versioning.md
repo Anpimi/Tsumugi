@@ -1,5 +1,21 @@
 # Application versioning and changelog maintenance
 
+Directed human guidance reuses the original team message, author, request capture
+and consumption owners. New plan preparation and destination-specific sharing
+approval explicitly include each human-submitted message; recording one does
+not wake a member, rewrite a frozen request or expand execution permissions.
+Messages retain either their original member author or a trusted human author.
+The changed stored sender and captured view advance the current-only project
+format to schema 58. Schema 57 and earlier development directories are preserved
+and refused; create a new project to reimport sources.
+
+The experimental team message projection and additional Desktop commands require
+regenerated AI contracts. Member protocol 2 continues carrying opaque views;
+SDK/Process3, WorkPlan3 and dependencies remain unchanged. This stays in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with aligned
+English and Chinese Unreleased entries and no additional package version bump.
+Earlier assessments below retain their own format and feature baselines.
+
 Team history distinguishes a recorded dispatch from confirmed completion or
 observed worker liveness. Bounded runtime admission reserves capacity for
 verified leaf tool dependencies when ordinary producers are occupied, preserving

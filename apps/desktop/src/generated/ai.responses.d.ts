@@ -462,6 +462,16 @@ export type AutomationEffect =
   | "dispatch-team-work"
   | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
+export type TeamDiscussionAuthor =
+  | {
+      author: TeamMemberAuthor;
+      kind: "member";
+    }
+  | {
+      actor: string;
+      binding: WorkPlanAgentExecutionBinding;
+      kind: "human";
+    };
 export type TeamStopReason =
   "activation-limit" | "no-progress" | "expired" | "budget-exhausted" | "needs-reconciliation";
 export type TeamWorkOrigin =
@@ -519,16 +529,6 @@ export type TeamArtifactReference =
       snapshotId: ExecutionId;
     };
 export type TeamReviewVerdict = "accept" | "revise" | "unresolved";
-export type TeamDiscussionAuthor =
-  | {
-      author: TeamMemberAuthor;
-      kind: "member";
-    }
-  | {
-      actor: string;
-      binding: WorkPlanAgentExecutionBinding;
-      kind: "human";
-    };
 export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
 export type WorkPlanTeamRecoveryEndView =
   | {
@@ -586,6 +586,8 @@ export interface Responses {
   workPlanStatus: WorkPlanStatusView;
   workPlanTeamExecution: TeamExecutionView;
   workPlanTeamHistory: TeamHistoryPage;
+  workPlanTeamMessage: TeamMessage;
+  workPlanTeamMessageAction: TeamMessage | null;
   workPlanTeamPost: TeamDiscussionPost;
   workPlanTeamPublicationAction: TeamDiscussionPost | null;
   workPlanTeamRecoveryAction: WorkPlanTeamRecoveryActionView | null;
@@ -1762,6 +1764,7 @@ export interface TeamExecutionView {
   consumptions: TeamMessageConsumption[];
   effectiveVersion: TeamEffectiveVersion;
   members: TeamMemberRole[];
+  messageLimits: TeamMessageLimits;
   messages: TeamMessage[];
   nextMessageAfter: Revision | null;
   nextWorkAfter: Revision | null;
@@ -1802,6 +1805,15 @@ export interface TeamMemberRoleWrite {
   role: string;
   roleVersionId: ExecutionId;
 }
+export interface TeamMessageLimits {
+  maxBodyBytes: number;
+  maxMessages: number;
+  /**
+   * The complete encoded TeamWorkRequestView, including its other context.
+   */
+  maxRequestBytes: number;
+  maxRequestMessages: number;
+}
 export interface TeamMessage {
   body: string;
   causeMessageId: ExecutionId | null;
@@ -1810,7 +1822,7 @@ export interface TeamMessage {
   postIds: ExecutionId[];
   recipientMemberId: ExecutionId;
   recipientRoleVersionId: ExecutionId;
-  sender: TeamMemberAuthor;
+  sender: TeamDiscussionAuthor;
   sequence: Revision;
   target: TeamDiscussionTarget;
 }

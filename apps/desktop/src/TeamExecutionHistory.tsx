@@ -6,12 +6,15 @@ import { useSessionQuery } from "./SessionReadProvider";
 import type { SessionRequest } from "./executionCommands";
 import { workPlanCommands, type WorkPlanStatusView } from "./workPlanCommands";
 import { TeamWorkToolHistory, type OpenTeamToolTask } from "./TeamWorkToolHistory";
+import { TeamGuidanceControls } from "./TeamGuidanceControls";
+import type { TeamGuidanceSession } from "./TeamGuidanceSession";
 
-/** Read the original team facts; this pane never runs or adopts a model output. */
-export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpenToolTask, onReadPost }: {
+/** Original team facts and explicit guidance share the existing preparation owner. */
+export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpenToolTask, onReadPost, guidance, guidanceWritable = false }: {
   context: SessionRequest; status: WorkPlanStatusView; open: boolean;
   onOpenTask?: (taskId: string, attemptId: string) => Promise<boolean>; onReadPost: (postId: string) => void;
   onOpenToolTask?: OpenTeamToolTask;
+  guidance?: TeamGuidanceSession; guidanceWritable?: boolean;
 }) {
   const { t } = useTranslation(), errorRef = useRef<HTMLDivElement>(null), [afterWork, setAfterWork] = useState<string | null>(null), [afterMessage, setAfterMessage] = useState<string | null>(null);
   const planId = status.plan.planId, policy = status.plan.options.teamExecution;
@@ -29,6 +32,8 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpen
     <button type="button" className="secondary-button" disabled={read.isFetching} onClick={() => { void read.refetch(); }}>{t("ai.team.refresh")}</button>
     {read.isFetching ? <p role="status">{t("ai.team.loading")}</p> : null}
     {read.error ? <div role="alert" tabIndex={-1} ref={errorRef}><p>{t("ai.team.readFailed")}</p><CommandFailureDetails failure={commandFailure(read.error)}/></div> : null}
+    {guidance ? <TeamGuidanceControls context={context} status={status} open={open} view={view ?? null} current={!read.isFetching && !read.isStale && !read.error}
+      writable={guidanceWritable} session={guidance}/> : null}
     {view ? <>
       <h4>{t("ai.teamHistory.members")}</h4><ul>{view.members.map(member => <li key={member.request.memberId}><strong>{member.request.displayName}</strong><pre className="ai-text">{member.request.role}</pre><p>{member.config.endpoint} · {member.config.model}</p></li>)}</ul>
       {view.retiredMemberIds.length ? <details><summary>{t("ai.recovery.retiredMembers")}</summary><ul>{view.retiredMemberIds.map(id => <li key={id}><code>{id}</code></li>)}</ul></details> : null}
@@ -69,7 +74,7 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpen
       <h4>{t("ai.team.messages")}</h4>
       {view.messages.length ? view.messages.map(message => {
         const included = view.consumptions.filter(value => value.messageId === message.messageId);
-        return <article key={message.messageId}><h5>{memberName(message.sender.memberId, message.sender.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h5>
+        return <article key={message.messageId}><h5>{message.sender.kind === "human" ? t("ai.teamHistory.localUser") : memberName(message.sender.author.memberId, message.sender.author.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h5>
           <p>{entryName(message.target.unitId)} · {message.target.locale}</p><pre className="ai-text">{message.body}</pre>
           <p>{t(included.length ? "ai.team.included" : "ai.team.addressed", { count: included.length })}</p>{postButtons(message.postIds)}
           <details><summary>{t("ai.team.identityDetails")}</summary><p>{message.messageId}</p>{message.causeMessageId ? <p>{message.causeMessageId}</p> : null}

@@ -40,7 +40,7 @@ export function useWorkPlanControlSession(live: () => boolean) {
 export type WorkPlanControlSession = ReturnType<typeof useWorkPlanControlSession>;
 
 export function WorkPlanControls({ context, prepared, status, busy, disabled, consent, refresh,
-  run, onPlan, onStarted, onBlockedChange, onOpenTranslation, onOpenExtensions, session, editSeq, open, canFresh, ownerBusy }: {
+  run, runRevocation = run, revocationDisabled = disabled, onPlan, onStarted, onBlockedChange, onOpenTranslation, onOpenExtensions, session, editSeq, open, canFresh, ownerBusy }: {
   context: SessionRequest;
   session: WorkPlanControlSession; editSeq: number; open: boolean; canFresh: () => boolean; ownerBusy: () => boolean;
   prepared: WorkPlanView | null;
@@ -50,6 +50,8 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   consent: boolean;
   refresh: (planId: string, current: () => boolean) => Promise<WorkPlanStatusView>;
   run: (work: (current: WorkPlanContinuation) => Promise<void>) => Promise<void>;
+  runRevocation?: (work: (current: WorkPlanContinuation) => Promise<void>) => Promise<void>;
+  revocationDisabled?: boolean;
   onPlan: (id: string) => void;
   onStarted: (id: string, planId: string, taskId?: string) => void;
   onBlockedChange: (blocked: boolean) => void;
@@ -247,10 +249,10 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
 
   const scope={projectId:context.projectId,sessionToken:context.sessionToken,area:"ai" as const};
   const unavailable:CommandAvailability={enabled:false,reason:"unavailable"};
-  function gate(recovery=false):CommandAvailability {
+  function gate(recovery=false,revocation=false):CommandAvailability {
     if(!open||reads.retired)return{enabled:false,reason:"hidden"};
     if(ownerBusy()||busy)return{enabled:false,reason:"busy"};
-    if(!recovery&&(disabled||session.current().pending))return unavailable;
+    if(!recovery&&((revocation?revocationDisabled:disabled)||session.current().pending))return unavailable;
     return{enabled:true};
   }
   function statusCurrent() {
@@ -294,7 +296,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
       applicationToolExecutions:command==="continue"?confirmedApplications():[]}:undefined;
   }
   function controlAvailability(payload?:AiPlanControlCommandPayload):CommandAvailability {
-    const allowed=gate();if(!allowed.enabled)return allowed;
+    const allowed=gate(false,payload?.command!=="continue");if(!allowed.enabled)return allowed;
     if(!payload||!status||!statusCurrent()||jsonIdentity(payload)!==jsonIdentity(controlPayload(payload.command)))return unavailable;
     if(payload.command==="continue")return !status.plan.options.teamExecution&&!session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent&&checkerConfirmed&&toolsConfirmed
       &&applicationsConfirmed&&applicationTools.current()&&validMinutes?{enabled:true}:unavailable;
@@ -335,6 +337,10 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     if(original.kind!=="start") { if(session.current().missing)await mutate({...original,uncertain:true},current,false);return; }
     if(original.retryAllowed)await dispatchStart(original,current,true);
   }
+  function runPending(work: (current: WorkPlanContinuation) => Promise<void>) {
+    const pending = session.current().pending;
+    return pending?.kind === "control" && pending.request.command !== "continue" ? runRevocation(work) : run(work);
+  }
   function confirmReceipt(receipt:WorkPlanReceiptView,action:PlanPending) {
     if(action.kind==="start")return;
     const request=action.request;
@@ -363,13 +369,13 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     const metadata={category:"ai" as const,scope,binding:null,confirmation:"none" as const};
     const remove=[
       registry.register({...metadata,id:"ai.start",nameKey:"ai.generate",risk:"runs-ai",confirmation:"required",payloadKind:"ai-start",availability:authorizeAvailability,handler:payload=>{void run(current=>authorize(payload,current));}}),
-      registry.register({...metadata,id:"ai.plan.pause",nameKey:"ai.plan.pause",risk:"runs-ai",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="pause"?controlAvailability(payload):unavailable,handler:payload=>{void run(current=>control(payload,current));}}),
-      registry.register({...metadata,id:"ai.plan.stop",nameKey:"ai.plan.stop",risk:"runs-ai",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="stop"?controlAvailability(payload):unavailable,handler:payload=>{void run(current=>control(payload,current));}}),
-      registry.register({...metadata,id:"ai.plan.take-over",nameKey:"ai.plan.takeOver",risk:"runs-ai",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="take-over"?controlAvailability(payload):unavailable,handler:payload=>{void run(current=>control(payload,current));}}),
+      registry.register({...metadata,id:"ai.plan.pause",nameKey:"ai.plan.pause",risk:"runs-ai",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="pause"?controlAvailability(payload):unavailable,handler:payload=>{void runRevocation(current=>control(payload,current));}}),
+      registry.register({...metadata,id:"ai.plan.stop",nameKey:"ai.plan.stop",risk:"runs-ai",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="stop"?controlAvailability(payload):unavailable,handler:payload=>{void runRevocation(current=>control(payload,current));}}),
+      registry.register({...metadata,id:"ai.plan.take-over",nameKey:"ai.plan.takeOver",risk:"runs-ai",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="take-over"?controlAvailability(payload):unavailable,handler:payload=>{void runRevocation(current=>control(payload,current));}}),
       registry.register({...metadata,id:"ai.plan.continue",nameKey:"ai.plan.continue",risk:"runs-ai",confirmation:"required",payloadKind:"ai-plan-control",availability:payload=>payload?.command==="continue"?controlAvailability(payload):unavailable,handler:payload=>{void run(current=>control(payload,current));}}),
       registry.register({...metadata,id:"ai.plan.start-authorized",nameKey:"ai.plan.startAuthorized",risk:"runs-ai",payloadKind:"ai-plan-start",availability:readyAvailability,handler:()=>{const value=session.current().ready;if(value)void run(current=>start(value,current));}}),
-      registry.register({...metadata,id:"ai.plan.reconcile-action",nameKey:"ai.reconcile",risk:"reads-execution",payloadKind:"ai-plan-pending",availability:pendingAvailability,handler:()=>{void run(reconcile);}}),
-      registry.register({...metadata,id:"ai.plan.retry-action",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"ai-plan-pending",availability:payload=>pendingAvailability(payload,true),handler:()=>{void run(retryPending);}}),
+      registry.register({...metadata,id:"ai.plan.reconcile-action",nameKey:"ai.reconcile",risk:"reads-execution",payloadKind:"ai-plan-pending",availability:pendingAvailability,handler:()=>{void runPending(reconcile);}}),
+      registry.register({...metadata,id:"ai.plan.retry-action",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"ai-plan-pending",availability:payload=>pendingAvailability(payload,true),handler:()=>{void runPending(retryPending);}}),
       registry.register({...metadata,id:"ai.reconcile-start",nameKey:"ai.reconcile",risk:"reads-execution",payloadKind:"ai-start-pending",availability:startPendingAvailability,handler:()=>{void run(reconcile);}}),
       registry.register({...metadata,id:"ai.retry-start",nameKey:"ai.retrySame",risk:"retries-execution-action",payloadKind:"ai-start-pending",availability:payload=>startPendingAvailability(payload,true),handler:()=>{void run(retryPending);}}),
       registry.register({...metadata,id:"ai.plan.open-translation",nameKey:"ai.plan.edit",risk:"opens-translation",payloadKind:"ai-plan-translation",availability:translationAvailability,handler:payload=>{void openTranslation(payload);}}),

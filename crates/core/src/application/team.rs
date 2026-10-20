@@ -149,6 +149,15 @@ pub enum TeamDiscussionAuthor {
         binding: WorkPlanAgentExecutionBinding,
     },
 }
+impl TeamDiscussionAuthor {
+    /// Durable provenance shared by member and trusted human publications.
+    pub fn binding(&self) -> &WorkPlanAgentExecutionBinding {
+        match self {
+            Self::Member { author } => &author.binding,
+            Self::Human { binding, .. } => binding,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

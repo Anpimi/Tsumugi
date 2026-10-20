@@ -53,7 +53,10 @@ pub(super) fn table_names() -> impl Iterator<Item = String> {
 fn policy(plan: &WorkPlan) -> Result<TeamDiscussionPolicy, ExecutionError> {
     plan.options.team_discussions.ok_or_else(denied)
 }
-fn live_plan(c: &Connection, scope: &WorkPlanAgentScope) -> Result<WorkPlan, ExecutionError> {
+pub(super) fn live_plan(
+    c: &Connection,
+    scope: &WorkPlanAgentScope,
+) -> Result<WorkPlan, ExecutionError> {
     control::check_scope_in(c, scope)?;
     let stored = control::load(c, scope.lease.plan_id)?;
     let effective = super::recovery::plan_in(c, scope.lease.plan_id, scope.lease.generation)?;
@@ -76,7 +79,7 @@ fn live_plan(c: &Connection, scope: &WorkPlanAgentScope) -> Result<WorkPlan, Exe
     }
     Ok(effective)
 }
-fn check_target(
+pub(super) fn check_target(
     plan: &WorkPlan,
     scope: &WorkPlanAgentScope,
     target: &TeamDiscussionTarget,
@@ -1216,7 +1219,7 @@ struct TeamHistory {
     posts: Vec<TeamDiscussionPost>,
 }
 
-fn historical_plan(
+pub(super) fn historical_plan(
     c: &Connection,
     project: ExecutionId,
     plan: ExecutionId,
@@ -1230,6 +1233,36 @@ fn historical_plan(
         return Err(denied());
     }
     Ok(stored.plan)
+}
+
+/// Historical human provenance does not restore the original live scope.
+pub(super) fn human_author_history(
+    c: &Connection,
+    plan: &WorkPlan,
+    actor: &str,
+    binding: &WorkPlanAgentExecutionBinding,
+) -> Result<(), ExecutionError> {
+    if actor.trim().is_empty()
+        || actor.len() > 128
+        || binding.delegation.is_some()
+        || binding.lease.plan_id != plan.plan_id
+        || binding.lease.generation.get() == 0
+        || binding.lease.generation > control::load(c, plan.plan_id)?.lease.generation
+    {
+        return Err(corrupt());
+    }
+    agents::validate_scope_basis(plan, &agents::scope_from_binding(plan.project_id, binding))?;
+    let registered: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1)",
+            [binding.root_task.to_string()],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    if !registered {
+        return Err(corrupt());
+    }
+    Ok(())
 }
 
 /// Reopening and trusted history reads use the same bounded historical checks.
@@ -1325,19 +1358,7 @@ fn history_in(c: &Connection, plan: &WorkPlan) -> Result<TeamHistory, ExecutionE
                 &author.binding
             }
             TeamDiscussionAuthor::Human { actor, binding } => {
-                if actor.trim().is_empty() || actor.len() > 128 || binding.delegation.is_some() {
-                    return Err(corrupt());
-                }
-                let registered: bool = c
-                    .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1)",
-                        [binding.root_task.to_string()],
-                        |r| r.get(0),
-                    )
-                    .map_err(sql)?;
-                if !registered {
-                    return Err(corrupt());
-                }
+                human_author_history(c, plan, actor, binding)?;
                 binding
             }
         };

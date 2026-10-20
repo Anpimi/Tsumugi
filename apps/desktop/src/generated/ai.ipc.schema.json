@@ -1481,6 +1481,37 @@
         ],
         "type": "string"
       },
+      "SendHumanTeamMessage": {
+        "additionalProperties": false,
+        "description": "A trusted human action. The original command captures its lease separately.",
+        "properties": {
+          "body": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRecipientRoleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "messageId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recipientMemberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "messageId",
+          "recipientMemberId",
+          "expectedRecipientRoleVersionId",
+          "target",
+          "body"
+        ],
+        "type": "object"
+      },
       "SourceContextSelection": {
         "additionalProperties": false,
         "properties": {
@@ -2897,6 +2928,30 @@
         ],
         "type": "object"
       },
+      "WorkPlanTeamMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "message": {
+            "$ref": "#/definitions/SendHumanTeamMessage"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "lease",
+          "message"
+        ],
+        "type": "object"
+      },
       "WorkPlanTeamPostRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3368,6 +3423,12 @@
       "workPlanTeamHistory": {
         "$ref": "#/definitions/WorkPlanTeamHistoryRequest"
       },
+      "workPlanTeamMessage": {
+        "$ref": "#/definitions/WorkPlanTeamMessageRequest"
+      },
+      "workPlanTeamMessageAction": {
+        "$ref": "#/definitions/WorkPlanTeamMessageRequest"
+      },
       "workPlanTeamPost": {
         "$ref": "#/definitions/WorkPlanTeamPostRequest"
       },
@@ -3430,6 +3491,8 @@
       "workPlanTeamPost",
       "workPlanTeamPublish",
       "workPlanTeamPublicationAction",
+      "workPlanTeamMessage",
+      "workPlanTeamMessageAction",
       "workPlanAgentDelegate",
       "workPlanAgentReconcile",
       "workPlanAgentGenerationAttempt",
@@ -8795,6 +8858,9 @@
             },
             "type": "array"
           },
+          "messageLimits": {
+            "$ref": "#/definitions/TeamMessageLimits"
+          },
           "messages": {
             "items": {
               "$ref": "#/definitions/TeamMessage"
@@ -8861,6 +8927,7 @@
         },
         "required": [
           "planId",
+          "messageLimits",
           "effectiveVersion",
           "roster",
           "retiredMemberIds",
@@ -9116,7 +9183,7 @@
             "$ref": "#/definitions/ExecutionId"
           },
           "sender": {
-            "$ref": "#/definitions/TeamMemberAuthor"
+            "$ref": "#/definitions/TeamDiscussionAuthor"
           },
           "sequence": {
             "$ref": "#/definitions/Revision"
@@ -9157,6 +9224,43 @@
           "messageId",
           "taskId",
           "providerRequestId"
+        ],
+        "type": "object"
+      },
+      "TeamMessageLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxBodyBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxMessages": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxRequestBytes": {
+            "description": "The complete encoded TeamWorkRequestView, including its other context.",
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxRequestMessages": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxMessages",
+          "maxBodyBytes",
+          "maxRequestMessages",
+          "maxRequestBytes"
         ],
         "type": "object"
       },
@@ -11675,6 +11779,19 @@
       "workPlanTeamHistory": {
         "$ref": "#/definitions/TeamHistoryPage"
       },
+      "workPlanTeamMessage": {
+        "$ref": "#/definitions/TeamMessage"
+      },
+      "workPlanTeamMessageAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TeamMessage"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "workPlanTeamPost": {
         "$ref": "#/definitions/TeamDiscussionPost"
       },
@@ -11737,6 +11854,8 @@
       "workPlanTeamRecoveryEnd",
       "workPlanTeamPost",
       "workPlanTeamPublicationAction",
+      "workPlanTeamMessage",
+      "workPlanTeamMessageAction",
       "workPlanAgentReconcile",
       "workPlanAgentGeneration",
       "workPlanAgentGenerationAttempt",

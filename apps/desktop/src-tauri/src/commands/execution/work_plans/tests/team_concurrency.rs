@@ -232,10 +232,11 @@ fn pi_team_concurrent_candidates_preserve_inflight_manual_choice_and_consume_lat
     assert_eq!(late["body"], LATE);
     assert_eq!(late["target"], target);
     assert_eq!(late["postIds"], json!([post]));
-    assert_eq!(late["sender"]["memberId"], json!(ids[1]));
-    assert_eq!(late["sender"]["roleVersionId"], b_work["roleVersionId"]);
-    assert_eq!(late["sender"]["attemptId"], b_work["attemptId"]);
-    assert_eq!(late["sender"]["binding"]["lease"], grant["lease"]);
+    assert_eq!(late["sender"]["kind"], "member");
+    assert_eq!(late["sender"]["author"]["memberId"], json!(ids[1]));
+    assert_eq!(late["sender"]["author"]["roleVersionId"], b_work["roleVersionId"]);
+    assert_eq!(late["sender"]["author"]["attemptId"], b_work["attemptId"]);
+    assert_eq!(late["sender"]["author"]["binding"]["lease"], grant["lease"]);
     assert_eq!(late["recipientMemberId"], json!(ids[2]));
     assert_eq!(late["recipientRoleVersionId"], c_work["roleVersionId"]);
     let received = execution(&fixture, &plan);

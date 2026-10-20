@@ -148,6 +148,8 @@ export interface Requests {
   workPlanStatus: WorkPlanStatusRequest;
   workPlanTeamExecution: WorkPlanTeamExecutionRequest;
   workPlanTeamHistory: WorkPlanTeamHistoryRequest;
+  workPlanTeamMessage: WorkPlanTeamMessageRequest;
+  workPlanTeamMessageAction: WorkPlanTeamMessageRequest;
   workPlanTeamPost: WorkPlanTeamPostRequest;
   workPlanTeamPublicationAction: WorkPlanTeamPublicationActionRequest;
   workPlanTeamPublish: WorkPlanTeamPublishRequest;
@@ -909,6 +911,28 @@ export interface WorkPlanTeamHistoryRequest {
   projectId: ExecutionId;
   sessionToken: string;
 }
+export interface WorkPlanTeamMessageRequest {
+  lease: AutomationLease;
+  message: SendHumanTeamMessage;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+/**
+ * A trusted human action. The original command captures its lease separately.
+ */
+export interface SendHumanTeamMessage {
+  body: string;
+  expectedRecipientRoleVersionId: ExecutionId;
+  messageId: ExecutionId;
+  recipientMemberId: ExecutionId;
+  target: TeamDiscussionTarget;
+}
+export interface TeamDiscussionTarget {
+  locale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
 export interface WorkPlanTeamPostRequest {
   planId: ExecutionId;
   postId: ExecutionId;
@@ -932,12 +956,6 @@ export interface PublishTeamDiscussion {
   replyTo?: ExecutionId | null;
   supersedes?: ExecutionId | null;
   target: TeamDiscussionTarget;
-}
-export interface TeamDiscussionTarget {
-  locale: string;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  unitId: ExecutionId;
 }
 export interface WorkPlanTeamPublishRequest {
   lease: AutomationLease;

@@ -36,10 +36,10 @@ export function originalTeamPublicationClosed(status: WorkPlanStatusView, reques
 }
 
 /** Part of the existing preparation workflow, retained across pane and plan switches. */
-export function useTeamDiscussionSession(live: () => boolean, context: SessionRequest, changed: () => void) {
+export function useTeamDiscussionSession(live: () => boolean, context: SessionRequest, changed: () => void, available: () => boolean = () => true) {
   const [plans, setPlans] = useState<Record<string, PlanDiscussionState>>({}), ref = useRef(plans), liveRef = useRef(live);
-  const revision = useRef(0);
-  liveRef.current = live;
+  const revision = useRef(0), availableRef = useRef(available);
+  liveRef.current = live; availableRef.current = available;
   const current = (planId: string) => ref.current[planId] ?? initial();
   function update(planId: string, change: (before: PlanDiscussionState) => PlanDiscussionState) {
     if (!liveRef.current()) return;
@@ -62,7 +62,7 @@ export function useTeamDiscussionSession(live: () => boolean, context: SessionRe
   async function publish(status: WorkPlanStatusView, writable: boolean, expectedEditSeq: number) {
     const planId = status.plan.planId, before = current(planId), draft = structuredClone(before.draft);
     const basis = status.plan.scope.find(unit => unit.unitId === (draft.unitId || status.plan.scope[0]?.unitId));
-    if (!liveRef.current() || !writable || !teamPublicationActive(status) || before.pending || before.creating
+    if (!liveRef.current() || !availableRef.current() || !writable || !teamPublicationActive(status) || before.pending || before.creating
       || draft.editSeq !== expectedEditSeq || !basis || !draft.body.trim()
       || new TextEncoder().encode(draft.body).length > status.plan.teamDiscussionLimits!.maxPostBytes) return;
     const lease = structuredClone(status.lease);
@@ -91,7 +91,7 @@ export function useTeamDiscussionSession(live: () => boolean, context: SessionRe
   }
   async function retry(status: WorkPlanStatusView, writable: boolean) {
     const planId = status.plan.planId, pending = current(planId).pending;
-    if (!liveRef.current() || !writable || !teamPublicationActive(status) || pending?.phase !== "unknown" || !pending.retryAllowed
+    if (!liveRef.current() || !availableRef.current() || !writable || !teamPublicationActive(status) || pending?.phase !== "unknown" || !pending.retryAllowed
       || jsonIdentity(pending.request.lease) !== jsonIdentity(status.lease)) return;
     update(planId, value => ({ ...value, failure: null, notice: null, pending: { ...pending, phase: "publishing", retryAllowed: false } }));
     await send(planId, pending.request, pending.editSeq);

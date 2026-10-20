@@ -98,7 +98,7 @@ fn owned_work(fixture: &Fixture, plan: ExecutionId, attempts: &[ExecutionId]) ->
         })
 }
 
-fn wait_drained(fixture: &Fixture, plan: ExecutionId, attempts: &[ExecutionId]) {
+pub(super) fn wait_drained(fixture: &Fixture, plan: ExecutionId, attempts: &[ExecutionId]) {
     let deadline = Instant::now() + Duration::from_secs(30);
     while owned_work(fixture, plan, attempts) {
         assert!(
@@ -110,7 +110,7 @@ fn wait_drained(fixture: &Fixture, plan: ExecutionId, attempts: &[ExecutionId]) 
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn assert_reaped(pid: u32) {
+pub(super) fn assert_reaped(pid: u32) {
     assert!(
         !std::process::Command::new("/bin/kill")
             .args(["-0", &pid.to_string()])
