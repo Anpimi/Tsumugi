@@ -1,5 +1,20 @@
 # Application versioning and changelog maintenance
 
+Tool guidance can now be shared with captured model destinations only through
+an explicit, default-off plan policy. The policy enters the original plan digest
+and approval; existing plans without it retain human-only reading. Members see
+declared metadata before requesting immutable Skill or Resource text. The
+original scope, exact dispatch and deadline are checked before and after reading.
+No new execution permission, package loader or accounting ledger is introduced.
+
+The persisted sharing policy advances the current-only project format to
+schema 60. Earlier development projects are preserved and refused; create a new
+project and reimport sources. WorkPlan3, Member3, SDK/Process3 and dependencies
+remain unchanged. Regenerate Desktop contracts. This remains in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual
+Unreleased updates and no extra package version bump. Earlier entries retain
+their introduction baselines.
+
 Physical model-request usage now retains separately reported cache read, cache
 write and reasoning details in its original receipt and budget owners. Unknown
 reports remain distinct from reported zero and known portions. These categories

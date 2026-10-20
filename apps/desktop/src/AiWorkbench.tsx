@@ -19,6 +19,7 @@ import { TeamExecutionDisclosure } from "./TeamExecutionDisclosure";
 import { TeamRecoveryControls } from "./TeamRecoveryControls";
 import { TeamExecutionHistory } from "./TeamExecutionHistory";
 import { AiPreviewItems } from "./AiPreviewItems";
+import { ToolGuidanceSharing } from "./ToolGuidanceSharing";
 import { AiOutputUsage, AiProviderBudget } from "./AiUsage";
 import {useAiPreparation,type WorkPlanContinuation} from "./AiPreparationSession";
 import { WorkPlanControls } from "./WorkPlanControls";
@@ -378,7 +379,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
           selectionPolicy: (choice.stage === "generation" || choice.stage === "checks") && mode !== "assisted" ? "candidates-only" : previous.selectionPolicy,
           stages:previous.stages.map(item=>item.stage===choice.stage?{...item,mode}:choice.stage==="generation"&&mode!=="assisted"&&item.stage==="checks"&&item.mode==="assisted"?{...item,mode:"manual"}:item)
         };
-        if (choice.stage === "generation" && mode !== "assisted") { delete next.teamDiscussions; delete next.teamExecution; }
+        if (choice.stage === "generation" && mode !== "assisted") { delete next.teamDiscussions; delete next.teamExecution; delete next.toolGuidance; }
         return next;
       });
     }}><option value="manual">{t("ai.plan.modes.manual")}</option>{choice.stage==="generation"?<option value="assisted">{t("ai.plan.modes.assisted")}</option>:choice.stage==="checks"&&assisted?<option value="assisted">{t("ai.plan.mechanicalChecks")}</option>:null}<option value="skipped">{t("ai.plan.modes.skipped")}</option></select></label>)}
@@ -391,6 +392,12 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     {options.selectionPolicy!=="candidates-only"?<p>{t("ai.plan.checkedSelection")}</p>:null}</>:null}
 {assisted?<><ModelConnectionPicker config={config} label={t("connections.choose")} active={open} disabled={locked} editSeq={preparation.editSeq} onSelect={preparation.selectConnection} onOpenSettings={onOpenConnections}/><PreparationBudgetSummary config={config} policy={options.teamDiscussions} team={!!preparation.teamDraft}/><AiConnectionFields config={config} setConfig={setConfig} presetName={presetName} setPresetName={setPresetName} connectionOpen={connectionOpen} setConnectionOpen={setConnectionOpen} failure={failure}/></>:null}
     {assisted?<WorkPlanToolChoice ref={toolChoice} open={open} disabled={locked} value={toolDraft} onChange={setToolDraft}/>:null}
+    {assisted?<><label className="source-check"><input type="checkbox" checked={!!options.toolGuidance} disabled={locked||!toolDraft?.entries.length}
+      onChange={event=>{
+        const enabled=event.target.checked;
+        if(enabled&&!toolDraft?.entries.length)return;
+        setOptions(previous=>{const next={...previous};if(enabled)next.toolGuidance={profile:"declared-tools-1"};else delete next.toolGuidance;return next;});
+      }}/>{t("ai.toolGuidanceSharing.enable")}</label><p>{t("ai.toolGuidanceSharing.help")}</p></>:null}
     <label className="field">{t("ai.locale")}<select value={locale} disabled={!!preparation.maintenance} onChange={e=>{setLocale(e.target.value);}}>{!targetAvailable&&locale?<option value={locale} disabled>{locale}</option>:null}{project.metadata.targetLocales.map(l=><option key={l}>{l}</option>)}</select></label>
     {assisted?<label className="source-check"><input type="checkbox" checked={!!options.teamDiscussions} onChange={event=>{
       const enabled=event.target.checked;
@@ -420,7 +427,8 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       {!sharingPlan?.options.teamExecution?<p>{sharing.config.endpoint} · {sharing.config.model}</p>:null}
       <p>{t("ai.limits",{defaultValue:enUS.ai.limits,requests:sharing.config.maxRequests,concurrency:sharing.config.concurrency,tokens:sharing.config.maxOutputTokens,retries:sharing.config.maxRetries})}</p>
       <p>{t(sharingPlan?.options.teamExecution?sharingPlan.options.teamDiscussions?.profile==="current-plan-2"?"ai.team.artifactCostUnknown":"ai.team.costUnknown":sharingPlan?.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactCostUnknown":sharingPlan?.options.teamDiscussions?"ai.discussions.costUnknown":"ai.costUnknown")}</p><p>{t("ai.rateLimit")}</p>
-      {sharingPlan?.options.teamExecution?<TeamExecutionDisclosure plan={sharingPlan}/>:<><AiPreviewItems items={sharing.items}/>{sharingPlan?<TeamDiscussionDisclosure plan={sharingPlan}/>:null}</>}
+      {sharingPlan?.options.teamExecution?<TeamExecutionDisclosure plan={sharingPlan}/>:<><AiPreviewItems items={sharing.items}/>{sharingPlan?<><TeamDiscussionDisclosure plan={sharingPlan}/><ToolGuidanceSharing plan={sharingPlan} config={sharing.config}/></>:null}</>}
+      {prepared?.options.toolGuidance&&!status?<p>{t("ai.toolGuidanceSharing.confirmation")}</p>:null}
       {prepared?.preview&&!status?<label className="source-check"><input type="checkbox" checked={consent} disabled={locked||!preparation.connectionCurrent()} onChange={e=>setConsent(e.target.checked)}/>{t(prepared.options.teamExecution?prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.team.artifactConsent":"ai.team.consent":prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactConsent":prepared.options.teamDiscussions?"ai.discussions.consent":"ai.consent")}</label>:null}
     </section>:null}
     <WorkPlanControls context={context} prepared={prepared} status={status} busy={busy} disabled={disabled||!!pendingAdopt||preparation.guidance.blocked()} consent={consent}

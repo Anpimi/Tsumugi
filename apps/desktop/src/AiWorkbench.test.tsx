@@ -783,6 +783,77 @@ async function chooseReferences(user: ReturnType<typeof userEvent.setup>, views:
   await user.type(screen.getByRole("spinbutton", { name: "Total tool-call limit" }), "3");
 }
 
+it("captures tool-guidance sharing only after explicit selection and clears consent when generation or tools are removed", async () => {
+  const user = await preview(), views = installReferenceProviders();
+  const toggle = screen.getByRole("checkbox", { name: i18n.t("ai.toolGuidanceSharing.enable") });
+  expect(toggle).not.toBeChecked(); expect(toggle).toBeDisabled();
+  await chooseReferences(user, views);
+  expect(toggle).not.toBeChecked(); expect(toggle).toBeEnabled();
+  await user.click(toggle);
+  expect(discussionPreparation.current().options.toolGuidance).toEqual({ profile: "declared-tools-1" });
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  await screen.findByRole("heading", { name: "Data sharing preview" });
+  expect(screen.getByText(i18n.t("ai.toolGuidanceSharing.confirmation"))).toBeVisible();
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_work_plan").at(-1)?.[1].request.options.toolGuidance).toEqual({ profile: "declared-tools-1" });
+  const consent = screen.getByRole("checkbox", { name: /I confirm sending/ });
+  expect(consent).not.toBeChecked(); await user.click(consent);
+  await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("ai.plan.stages.generation") }), "manual");
+  expect(discussionPreparation.current().options.toolGuidance).toBeUndefined();
+  expect(discussionPreparation.current().consent).toBe(false); expect(discussionPreparation.current().preparedPlan).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: i18n.t("ai.toolGuidanceSharing.enable") })).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("ai.plan.stages.generation") }), "assisted");
+  const restored = screen.getByRole("checkbox", { name: i18n.t("ai.toolGuidanceSharing.enable") });
+  expect(restored).not.toBeChecked(); await user.click(restored);
+  await user.click(screen.getByRole("checkbox", { name: "Include read-only reference tools" }));
+  expect(restored).not.toBeChecked(); expect(restored).toBeDisabled();
+  expect(discussionPreparation.current().options.toolGuidance).toBeUndefined();
+  expect(invoke.mock.calls.some(([command]) => ["read_work_plan_agent_skill", "read_work_plan_agent_resource", "authorize_work_plan", "start_work_plan"].includes(command))).toBe(false);
+});
+
+it("keeps newer B and a withdrawn tool-guidance sharing choice when preparation A returns late", async () => {
+  const user = await preview(), views = installReferenceProviders(); await chooseReferences(user, views);
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.toolGuidanceSharing.enable") }));
+  const original = invoke.getMockImplementation()!; let release = () => {}, captured: WorkPlanView | null = null;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    const value = await original(command, args);
+    if (command === "prepare_work_plan") { captured = value; await gate; }
+    return value;
+  });
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  await waitFor(() => expect(captured).not.toBeNull());
+  act(() => {
+    discussionPreparation.setOptions(previous => { const next = { ...previous }; delete next.toolGuidance; return next; });
+    discussionPreparation.setConfig(previous => ({ ...previous, model: "Newer B model" }));
+  });
+  await act(async () => { release(); await gate; });
+  await waitFor(() => expect(discussionPreparation.current().busy).toBe(false));
+  expect(discussionPreparation.current().options.toolGuidance).toBeUndefined();
+  expect(discussionPreparation.current().config.model).toBe("Newer B model");
+  expect(discussionPreparation.current().preparedPlan).toBeNull(); expect(discussionPreparation.current().consent).toBe(false);
+});
+
+it.each(["drops", "adds"])("rejects a preparation acknowledgement that %s tool-guidance sharing", async changed => {
+  const user = await preview(), views = installReferenceProviders(); await chooseReferences(user, views);
+  if (changed === "drops") await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.toolGuidanceSharing.enable") }));
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    const value = await original(command, args);
+    if (command === "prepare_work_plan") {
+      const response: WorkPlanView = structuredClone(value);
+      if (changed === "drops") delete response.options.toolGuidance;
+      else response.options.toolGuidance = { profile: "declared-tools-1" };
+      return response;
+    }
+    return value;
+  });
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  await screen.findByRole("alert");
+  expect(discussionPreparation.current().preparedPlan).toBeNull(); expect(discussionPreparation.current().consent).toBe(false);
+  expect(!!discussionPreparation.current().options.toolGuidance).toBe(changed === "drops");
+  expect(invoke.mock.calls.some(([command]) => ["authorize_work_plan", "start_work_plan"].includes(command))).toBe(false);
+});
+
 it("prepares multiple exact reference providers with distinct handles and one shared limit, accepting reordered keyed acknowledgements", async () => {
   const user = await preview(), views = installReferenceProviders();
   await chooseReferences(user, views);

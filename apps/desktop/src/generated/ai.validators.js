@@ -124,7 +124,7 @@ return errors === 0;
 }
 
 export const validateRequestMaintenanceAssessment = validate228;
-const schema314 = {"$id":"urn:tsumugi:ipc:ai:requests:maintenanceAssessment","$ref":"urn:tsumugi:ipc:ai:requests#/properties/maintenanceAssessment"};
+const schema315 = {"$id":"urn:tsumugi:ipc:ai:requests:maintenanceAssessment","$ref":"urn:tsumugi:ipc:ai:requests#/properties/maintenanceAssessment"};
 const schema17 = {"additionalProperties":false,"properties":{"after":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"limit":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"snapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","snapshotId","locale","after","limit"],"type":"object"};
 
 function validate229(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -279,7 +279,7 @@ return errors === 0;
 }
 
 export const validateRequestPreview = validate231;
-const schema318 = {"$id":"urn:tsumugi:ipc:ai:requests:preview","$ref":"urn:tsumugi:ipc:ai:requests#/properties/preview"};
+const schema319 = {"$id":"urn:tsumugi:ipc:ai:requests:preview","$ref":"urn:tsumugi:ipc:ai:requests#/properties/preview"};
 const schema20 = {"additionalProperties":false,"properties":{"config":{"$ref":"#/definitions/AiConfig"},"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["sessionToken","projectId","config","locale","unitIds"],"type":"object"};
 const schema21 = {"additionalProperties":false,"properties":{"concurrency":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"connectionProfile":{"anyOf":[{"$ref":"#/definitions/ModelConnectionReference"},{"type":"null"}],"description":"Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."},"contextStrategy":{"anyOf":[{"$ref":"#/definitions/ContextStrategyReference"},{"type":"null"}],"description":"Immutable project provenance, independent of current defaults or consent."},"credentialEnv":{"type":"string"},"endpoint":{"type":"string"},"maxItems":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxOutputTokens":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRequests":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRetries":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"model":{"type":"string"},"shareContext":{"type":"boolean"},"shareTerms":{"type":"boolean"},"sourceContext":{"$ref":"#/definitions/SourceContextSelection"},"timeoutSeconds":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"tokenField":{"type":"string"}},"required":["contextStrategy","endpoint","model","credentialEnv","tokenField","maxItems","concurrency","maxRequests","maxOutputTokens","maxRetries","timeoutSeconds","shareTerms","shareContext","sourceContext"],"type":"object"};
 const schema30 = {"additionalProperties":false,"properties":{"extracted":{"type":"boolean"},"inferred":{"type":"boolean"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxItems":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"neighbors":{"type":"boolean"}},"required":["extracted","inferred","neighbors","maxBytes","maxItems"],"type":"object"};
@@ -1099,7 +1099,7 @@ return errors === 0;
 }
 
 export const validateRequestRead = validate235;
-const schema322 = {"$id":"urn:tsumugi:ipc:ai:requests:read","$ref":"urn:tsumugi:ipc:ai:requests#/properties/read"};
+const schema323 = {"$id":"urn:tsumugi:ipc:ai:requests:read","$ref":"urn:tsumugi:ipc:ai:requests#/properties/read"};
 const schema33 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","attemptId"],"type":"object"};
 
 function validate236(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -1185,7 +1185,7 @@ return errors === 0;
 }
 
 export const validateRequestStart = validate238;
-const schema326 = {"$id":"urn:tsumugi:ipc:ai:requests:start","$ref":"urn:tsumugi:ipc:ai:requests#/properties/start"};
+const schema327 = {"$id":"urn:tsumugi:ipc:ai:requests:start","$ref":"urn:tsumugi:ipc:ai:requests#/properties/start"};
 const schema36 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"confirmed":{"type":"boolean"},"digest":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","attemptId","digest","confirmed"],"type":"object"};
 
 function validate239(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -1297,7 +1297,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAction = validate241;
-const schema330 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAction"};
+const schema331 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAction"};
 const schema39 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","actionId"],"type":"object"};
 
 function validate242(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -1383,7 +1383,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentDelegate = validate244;
-const schema334 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentDelegate","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentDelegate"};
+const schema335 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentDelegate","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentDelegate"};
 const schema42 = {"additionalProperties":false,"properties":{"delegation":{"$ref":"#/definitions/AgentDelegationRequest"},"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","scopeId","delegation"],"type":"object"};
 const schema43 = {"additionalProperties":false,"properties":{"delegationId":{"$ref":"#/definitions/ExecutionId"},"toolHandles":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":32,"type":"array"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"minItems":1,"type":"array"}},"required":["delegationId","unitIds","toolHandles"],"type":"object"};
 
@@ -1607,7 +1607,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentGenerationAttempt = validate248;
-const schema338 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentGenerationAttempt","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentGenerationAttempt"};
+const schema339 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentGenerationAttempt","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentGenerationAttempt"};
 const schema49 = {"additionalProperties":false,"properties":{"generation":{"$ref":"#/definitions/AgentGenerationRequest"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"limit":{"format":"uint32","maximum":100,"minimum":1,"type":"integer"},"offset":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","scopeId","generation","inputDigest","offset","limit"],"type":"object"};
 const schema50 = {"additionalProperties":false,"description":"A bounded proposal within an already-authorized plan. It contains no model,\ndestination, payload, effect, human confirmation or authority override.","properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"minItems":1,"type":"array"}},"required":["taskId","attemptId","unitIds"],"type":"object"};
 
@@ -1886,7 +1886,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentGenerationOutput = validate252;
-const schema342 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentGenerationOutput","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentGenerationOutput"};
+const schema343 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentGenerationOutput","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentGenerationOutput"};
 const schema56 = {"additionalProperties":false,"properties":{"generation":{"$ref":"#/definitions/AgentGenerationRequest"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"itemId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"resultId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","scopeId","generation","inputDigest","itemId","resultId"],"type":"object"};
 
 function validate253(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -2033,7 +2033,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentGuidance = validate256;
-const schema348 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentGuidance","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentGuidance"};
+const schema349 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentGuidance","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentGuidance"};
 const schema61 = {"additionalProperties":false,"properties":{"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","scopeId"],"type":"object"};
 
 function validate257(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -2119,7 +2119,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentOpen = validate259;
-const schema352 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentOpen","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentOpen"};
+const schema353 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentOpen","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentOpen"};
 const schema64 = {"additionalProperties":false,"properties":{"lease":{"$ref":"#/definitions/AutomationLease"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","lease"],"type":"object"};
 const schema65 = {"additionalProperties":false,"description":"A reference to durable authority. Possessing or editing this reference does\nnot grant permission; Core checks the stored generation at every boundary.","properties":{"generation":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"}},"required":["planId","generation"],"type":"object"};
 const schema66 = {"pattern":"^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$","type":"string"};
@@ -2275,7 +2275,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentPrepare = validate263;
-const schema355 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentPrepare"};
+const schema356 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentPrepare"};
 const schema69 = {"additionalProperties":false,"properties":{"generation":{"$ref":"#/definitions/AgentGenerationRequest"},"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","scopeId","generation"],"type":"object"};
 
 function validate264(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -2374,7 +2374,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentReconcile = validate267;
-const schema359 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentReconcile","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentReconcile"};
+const schema360 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentReconcile","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentReconcile"};
 const schema72 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"lease":{"$ref":"#/definitions/AutomationLease"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","lease","taskId","attemptId","inputDigest"],"type":"object"};
 
 function validate268(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -2508,7 +2508,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentResource = validate271;
-const schema364 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentResource","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentResource"};
+const schema365 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentResource","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentResource"};
 const schema76 = {"additionalProperties":false,"properties":{"projectId":{"$ref":"#/definitions/ExecutionId"},"resourceId":{"maxLength":128,"minLength":1,"type":"string"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"toolHandle":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","scopeId","toolHandle","resourceId"],"type":"object"};
 const func3 = (function ucs2length(str) {
     const len = str.length;
@@ -2652,7 +2652,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentSkill = validate274;
-const schema369 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentSkill","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentSkill"};
+const schema370 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentSkill","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentSkill"};
 const schema80 = {"additionalProperties":false,"properties":{"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"skillId":{"maxLength":128,"minLength":1,"type":"string"},"toolHandle":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","scopeId","toolHandle","skillId"],"type":"object"};
 
 function validate275(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -2779,7 +2779,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentStart = validate277;
-const schema374 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentStart","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentStart"};
+const schema375 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentStart","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentStart"};
 const schema84 = {"additionalProperties":false,"properties":{"generation":{"$ref":"#/definitions/AgentGenerationRequest"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","scopeId","generation","inputDigest"],"type":"object"};
 
 function validate278(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -2900,7 +2900,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentToolAttempt = validate281;
-const schema378 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentToolAttempt","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentToolAttempt"};
+const schema379 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentToolAttempt","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentToolAttempt"};
 const schema87 = {"additionalProperties":false,"properties":{"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"limit":{"format":"uint32","maximum":100,"minimum":1,"type":"integer"},"offset":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"tool":{"$ref":"#/definitions/AgentToolRequest"}},"required":["sessionToken","projectId","scopeId","tool","inputDigest","offset","limit"],"type":"object"};
 const schema90 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"},"toolHandle":{"$ref":"#/definitions/ExecutionId"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"minItems":1,"type":"array"}},"required":["taskId","attemptId","toolHandle","unitIds"],"type":"object"};
 
@@ -3191,7 +3191,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentToolOutput = validate285;
-const schema382 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentToolOutput","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentToolOutput"};
+const schema383 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentToolOutput","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentToolOutput"};
 const schema95 = {"additionalProperties":false,"properties":{"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"itemId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"resultId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"tool":{"$ref":"#/definitions/AgentToolRequest"}},"required":["sessionToken","projectId","scopeId","tool","inputDigest","itemId","resultId"],"type":"object"};
 
 function validate286(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -3338,7 +3338,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentToolPrepare = validate289;
-const schema388 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentToolPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentToolPrepare"};
+const schema389 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentToolPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentToolPrepare"};
 const schema100 = {"additionalProperties":false,"properties":{"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"tool":{"$ref":"#/definitions/AgentToolRequest"}},"required":["sessionToken","projectId","scopeId","tool"],"type":"object"};
 
 function validate290(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -3437,7 +3437,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAgentToolStart = validate293;
-const schema392 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentToolStart","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentToolStart"};
+const schema393 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAgentToolStart","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAgentToolStart"};
 const schema103 = {"additionalProperties":false,"properties":{"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"tool":{"$ref":"#/definitions/AgentToolRequest"}},"required":["sessionToken","projectId","scopeId","tool","inputDigest"],"type":"object"};
 
 function validate294(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -3558,7 +3558,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAuthorizationAction = validate297;
-const schema396 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAuthorizationAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAuthorizationAction"};
+const schema397 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAuthorizationAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAuthorizationAction"};
 const schema106 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"applicationToolExecutions":{"items":{"$ref":"#/definitions/ApplicationScopeBasis"},"maxItems":32,"type":"array"},"checkerExecutions":{"items":{"$ref":"#/definitions/ReviewCheckerKey"},"type":"array"},"confirmed":{"type":"boolean"},"digest":{"type":"string"},"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"},"expiresAt":{"$ref":"#/definitions/UnsignedDecimal"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"toolExecution":{"type":"boolean"}},"required":["sessionToken","projectId","planId","digest","actionId","confirmed","checkerExecutions","toolExecution","applicationToolExecutions","effects","expiresAt"],"type":"object"};
 const schema114 = {"description":"Requested automatic effects, never a human language-review approval.","enum":["save-candidate","run-checks","select-missing","replace-captured-selection","adopt-resources","deliver","query-tools","publish-discussion","dispatch-team-work","send-team-message"],"type":"string"};
 const schema108 = {"additionalProperties":false,"description":"Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.","properties":{"activationGeneration":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"instanceId":{"$ref":"#/definitions/ExecutionId"}},"required":["instanceId","activationGeneration"],"type":"object"};
@@ -4191,7 +4191,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanAuthorize = validate302;
-const schema403 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAuthorize","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAuthorize"};
+const schema404 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanAuthorize","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanAuthorize"};
 
 function validate303(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -4455,7 +4455,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanControl = validate307;
-const schema410 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanControl","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanControl"};
+const schema411 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanControl","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanControl"};
 const schema118 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"applicationToolExecutions":{"items":{"$ref":"#/definitions/ApplicationScopeBasis"},"maxItems":32,"type":"array"},"checkerExecutions":{"items":{"$ref":"#/definitions/ReviewCheckerKey"},"type":"array"},"command":{"$ref":"#/definitions/WorkPlanCommand"},"confirmed":{"type":"boolean"},"expectedGeneration":{"$ref":"#/definitions/Revision"},"expiresAt":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"toolExecution":{"type":"boolean"}},"required":["sessionToken","projectId","actionId","planId","expectedGeneration","command","confirmed","checkerExecutions","toolExecution","applicationToolExecutions"],"type":"object"};
 const schema120 = {"enum":["pause","stop","take-over","continue"],"type":"string"};
 
@@ -4768,7 +4768,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanControlAction = validate312;
-const schema418 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanControlAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanControlAction"};
+const schema419 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanControlAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanControlAction"};
 
 function validate313(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -5079,7 +5079,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanGenerationDiscard = validate317;
-const schema426 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanGenerationDiscard","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanGenerationDiscard"};
+const schema427 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanGenerationDiscard","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanGenerationDiscard"};
 const schema125 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","attemptId"],"type":"object"};
 
 function validate318(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -5165,7 +5165,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanGenerationPrepare = validate320;
-const schema430 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanGenerationPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanGenerationPrepare"};
+const schema431 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanGenerationPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanGenerationPrepare"};
 const schema128 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"component":{"$ref":"#/definitions/PluginGenerationComponentRequest"},"generation":{"$ref":"#/definitions/GenerationServiceInput"},"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"toolQueries":{"items":{"$ref":"#/definitions/AgentToolRequest"},"maxItems":15,"type":"array"}},"required":["sessionToken","projectId","scopeId","attemptId","component","generation","toolQueries"],"type":"object"};
 const schema132 = {"additionalProperties":false,"description":"No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.","properties":{"attemptId":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"taskId":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"unitIds":{"items":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"maxItems":100,"minItems":1,"type":"array","uniqueItems":true}},"required":["taskId","attemptId","unitIds"],"type":"object"};
 const schema130 = {"additionalProperties":false,"properties":{"environmentDigest":{"type":"string"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["provider","profile","environmentDigest"],"type":"object"};
@@ -5730,7 +5730,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanGenerationStart = validate325;
-const schema436 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanGenerationStart","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanGenerationStart"};
+const schema437 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanGenerationStart","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanGenerationStart"};
 const schema135 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"expiresAtMs":{"$ref":"#/definitions/UnsignedDecimal"},"grantId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"unsandboxedExecution":{"type":"boolean"}},"required":["sessionToken","projectId","scopeId","attemptId","inputDigest","grantId","expiresAtMs","unsandboxedExecution"],"type":"object"};
 
 function validate326(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -5891,7 +5891,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanGenerationStartRead = validate328;
-const schema443 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanGenerationStartRead","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanGenerationStartRead"};
+const schema444 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanGenerationStartRead","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanGenerationStartRead"};
 const schema141 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","taskId","attemptId","inputDigest"],"type":"object"};
 
 function validate329(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -6003,7 +6003,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanPrepare = validate331;
-const schema448 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanPrepare"};
+const schema449 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanPrepare"};
 const schema145 = {"additionalProperties":false,"properties":{"advisoryChecks":{"items":{"$ref":"#/definitions/PluginTextReviewSelection"},"type":"array"},"config":{"anyOf":[{"$ref":"#/definitions/AiConfig"},{"type":"null"}]},"locale":{"type":"string"},"maintenance":{"anyOf":[{"$ref":"#/definitions/MaintenancePlanBasis"},{"type":"null"}]},"options":{"$ref":"#/definitions/PlanOptions"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"toolSelection":{"anyOf":[{"$ref":"#/definitions/WorkPlanToolSelection"},{"type":"null"}]},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["sessionToken","projectId","locale","unitIds","options","advisoryChecks","maintenance"],"type":"object"};
 const schema146 = {"additionalProperties":false,"description":"An explicit action-local subset. Installation never selects these rules.","properties":{"environmentDigest":{"type":"string"},"package":{"$ref":"#/definitions/PluginPackageRequest"},"resourceId":{"type":"string"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["package","resourceId","environmentDigest","rules"],"type":"object"};
 const schema147 = {"additionalProperties":false,"properties":{"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","packageDigest"],"type":"object"};
@@ -7086,9 +7086,10 @@ validate105.errors = vErrors;
 return errors === 0;
 }
 
-const schema166 = {"additionalProperties":false,"properties":{"adoptResources":{"type":"boolean"},"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"deliver":{"type":"boolean"},"selectionPolicy":{"$ref":"#/definitions/SelectionPolicy"},"stages":{"items":{"$ref":"#/definitions/StageChoice"},"type":"array"},"teamDiscussions":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionPolicy"},{"type":"null"}],"description":"Explicit consent for bounded, same-plan published discussions."},"teamExecution":{"anyOf":[{"$ref":"#/definitions/TeamExecutionPolicy"},{"type":"null"}]}},"required":["stages","selectionPolicy","advisoryChecks","adoptResources","deliver"],"type":"object"};
+const schema166 = {"additionalProperties":false,"properties":{"adoptResources":{"type":"boolean"},"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"deliver":{"type":"boolean"},"selectionPolicy":{"$ref":"#/definitions/SelectionPolicy"},"stages":{"items":{"$ref":"#/definitions/StageChoice"},"type":"array"},"teamDiscussions":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionPolicy"},{"type":"null"}],"description":"Explicit consent for bounded, same-plan published discussions."},"teamExecution":{"anyOf":[{"$ref":"#/definitions/TeamExecutionPolicy"},{"type":"null"}]},"toolGuidance":{"anyOf":[{"$ref":"#/definitions/ToolGuidancePolicy"},{"type":"null"}],"description":"Absent means that tool guidance is available only to the human reader."}},"required":["stages","selectionPolicy","advisoryChecks","adoptResources","deliver"],"type":"object"};
 const schema204 = {"enum":["candidates-only","missing-only","replace-captured-selection"],"type":"string"};
 const schema208 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"},{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-2","type":"string"}},"required":["profile"],"type":"object"}]};
+const schema219 = {"description":"Explicit model sharing of guidance declared by the captured tools.","oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"declared-tools-1","type":"string"}},"required":["profile"],"type":"object"}]};
 const schema167 = {"additionalProperties":false,"description":"Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.","properties":{"binding":{"$ref":"#/definitions/TextReviewBinding"},"declarationResourceId":{"type":"string"},"execution":{"$ref":"#/definitions/PluginExecutionBinding"},"resourcePins":{"items":{"$ref":"#/definitions/TextReviewResourcePin"},"type":"array"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["binding","execution","declarationResourceId","resourcePins","rules"],"type":"object"};
 const schema168 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/TextReviewDeclaration"},"resources":{"items":{"$ref":"#/definitions/TextReviewResourceBinding"},"type":"array"}},"required":["declaration","checker","resources"],"type":"object"};
 const schema169 = {"additionalProperties":false,"description":"Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.","properties":{"declaration":{"$ref":"#/definitions/CapabilityDeclaration"},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["provider","declaration"],"type":"object"};
@@ -11334,7 +11335,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(((((((key0 === "adoptResources") || (key0 === "advisoryChecks")) || (key0 === "deliver")) || (key0 === "selectionPolicy")) || (key0 === "stages")) || (key0 === "teamDiscussions")) || (key0 === "teamExecution"))){
+if(!((((((((key0 === "adoptResources") || (key0 === "advisoryChecks")) || (key0 === "deliver")) || (key0 === "selectionPolicy")) || (key0 === "stages")) || (key0 === "teamDiscussions")) || (key0 === "teamExecution")) || (key0 === "toolGuidance"))){
 validate115.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -11723,6 +11724,155 @@ var valid0 = _errs32 === errors;
 else {
 var valid0 = true;
 }
+if(valid0){
+if(data.toolGuidance !== undefined){
+let data11 = data.toolGuidance;
+const _errs37 = errors;
+const _errs38 = errors;
+let valid10 = false;
+const _errs39 = errors;
+const _errs41 = errors;
+let valid12 = false;
+let passing1 = null;
+const _errs42 = errors;
+if(errors === _errs42){
+if(data11 && typeof data11 == "object" && !Array.isArray(data11)){
+let missing3;
+if((data11.profile === undefined) && (missing3 = "profile")){
+const err15 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
+if(vErrors === null){
+vErrors = [err15];
+}
+else {
+vErrors.push(err15);
+}
+errors++;
+}
+else {
+const _errs44 = errors;
+for(const key3 in data11){
+if(!(key3 === "profile")){
+const err16 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err16];
+}
+else {
+vErrors.push(err16);
+}
+errors++;
+break;
+}
+}
+if(_errs44 === errors){
+if(data11.profile !== undefined){
+let data12 = data11.profile;
+if(typeof data12 !== "string"){
+const err17 = {instancePath:instancePath+"/toolGuidance/profile",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/properties/profile/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err17];
+}
+else {
+vErrors.push(err17);
+}
+errors++;
+}
+if("declared-tools-1" !== data12){
+const err18 = {instancePath:instancePath+"/toolGuidance/profile",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/properties/profile/const",keyword:"const",params:{allowedValue: "declared-tools-1"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err18];
+}
+else {
+vErrors.push(err18);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err19 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err19];
+}
+else {
+vErrors.push(err19);
+}
+errors++;
+}
+}
+var _valid4 = _errs42 === errors;
+if(_valid4){
+valid12 = true;
+passing1 = 0;
+}
+if(!valid12){
+const err20 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err20];
+}
+else {
+vErrors.push(err20);
+}
+errors++;
+}
+else {
+errors = _errs41;
+if(vErrors !== null){
+if(_errs41){
+vErrors.length = _errs41;
+}
+else {
+vErrors = null;
+}
+}
+}
+var _valid3 = _errs39 === errors;
+valid10 = valid10 || _valid3;
+if(!valid10){
+const _errs47 = errors;
+if(data11 !== null){
+const err21 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/properties/toolGuidance/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err21];
+}
+else {
+vErrors.push(err21);
+}
+errors++;
+}
+var _valid3 = _errs47 === errors;
+valid10 = valid10 || _valid3;
+}
+if(!valid10){
+const err22 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/properties/toolGuidance/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err22];
+}
+else {
+vErrors.push(err22);
+}
+errors++;
+validate115.errors = vErrors;
+return false;
+}
+else {
+errors = _errs38;
+if(vErrors !== null){
+if(_errs38){
+vErrors.length = _errs38;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid0 = _errs37 === errors;
+}
+else {
+var valid0 = true;
+}
+}
 }
 }
 }
@@ -11741,9 +11891,9 @@ validate115.errors = vErrors;
 return errors === 0;
 }
 
-const schema220 = {"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/WorkPlanToolSelectionEntry"},"maxItems":32,"minItems":1,"type":"array"},"maxInvocations":{"format":"uint32","maximum":300,"minimum":1,"type":"integer"}},"required":["maxInvocations","entries"],"type":"object"};
-const schema221 = {"additionalProperties":false,"properties":{"handle":{"$ref":"#/definitions/ExecutionId"},"selections":{"items":{"type":"string"},"type":"array"},"target":{"type":"string"},"tool":{"$ref":"#/definitions/PluginToolRequest"}},"required":["handle","tool","target","selections"],"type":"object"};
-const schema223 = {"additionalProperties":false,"properties":{"environmentDigest":{"type":"string"},"package":{"$ref":"#/definitions/PluginPackageRequest"},"resourceId":{"type":"string"}},"required":["package","resourceId","environmentDigest"],"type":"object"};
+const schema221 = {"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/WorkPlanToolSelectionEntry"},"maxItems":32,"minItems":1,"type":"array"},"maxInvocations":{"format":"uint32","maximum":300,"minimum":1,"type":"integer"}},"required":["maxInvocations","entries"],"type":"object"};
+const schema222 = {"additionalProperties":false,"properties":{"handle":{"$ref":"#/definitions/ExecutionId"},"selections":{"items":{"type":"string"},"type":"array"},"target":{"type":"string"},"tool":{"$ref":"#/definitions/PluginToolRequest"}},"required":["handle","tool","target","selections"],"type":"object"};
+const schema224 = {"additionalProperties":false,"properties":{"environmentDigest":{"type":"string"},"package":{"$ref":"#/definitions/PluginPackageRequest"},"resourceId":{"type":"string"}},"required":["package","resourceId","environmentDigest"],"type":"object"};
 
 function validate158(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -12347,8 +12497,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanStart = validate339;
-const schema452 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanStart","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanStart"};
-const schema225 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"expectedGeneration":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId","actionId","expectedGeneration"],"type":"object"};
+const schema453 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanStart","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanStart"};
+const schema226 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"expectedGeneration":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId","actionId","expectedGeneration"],"type":"object"};
 
 function validate340(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -12469,7 +12619,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanStartAction = validate342;
-const schema458 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanStartAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanStartAction"};
+const schema459 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanStartAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanStartAction"};
 
 function validate343(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -12590,8 +12740,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanStatus = validate345;
-const schema464 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanStatus","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanStatus"};
-const schema230 = {"additionalProperties":false,"properties":{"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId"],"type":"object"};
+const schema465 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanStatus","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanStatus"};
+const schema231 = {"additionalProperties":false,"properties":{"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId"],"type":"object"};
 
 function validate346(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -12676,8 +12826,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamExecution = validate348;
-const schema468 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamExecution","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamExecution"};
-const schema233 = {"additionalProperties":false,"properties":{"afterMessage":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"afterWork":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"limit":{"format":"uint32","maximum":16,"minimum":1,"type":"integer"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId","limit"],"type":"object"};
+const schema469 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamExecution","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamExecution"};
+const schema234 = {"additionalProperties":false,"properties":{"afterMessage":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"afterWork":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"limit":{"format":"uint32","maximum":16,"minimum":1,"type":"integer"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId","limit"],"type":"object"};
 
 function validate349(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -12946,8 +13096,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamHistory = validate351;
-const schema474 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamHistory","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamHistory"};
-const schema238 = {"additionalProperties":false,"properties":{"after":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"limit":{"format":"uint32","maximum":16,"minimum":1,"type":"integer"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId","limit"],"type":"object"};
+const schema475 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamHistory","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamHistory"};
+const schema239 = {"additionalProperties":false,"properties":{"after":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"limit":{"format":"uint32","maximum":16,"minimum":1,"type":"integer"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId","limit"],"type":"object"};
 
 function validate352(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -13138,10 +13288,10 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamMessage = validate354;
-const schema479 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamMessage","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamMessage"};
-const schema242 = {"additionalProperties":false,"properties":{"lease":{"$ref":"#/definitions/AutomationLease"},"message":{"$ref":"#/definitions/SendHumanTeamMessage"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","lease","message"],"type":"object"};
-const schema243 = {"additionalProperties":false,"description":"A trusted human action. The original command captures its lease separately.","properties":{"body":{"maxLength":8192,"minLength":1,"type":"string"},"expectedRecipientRoleVersionId":{"$ref":"#/definitions/ExecutionId"},"messageId":{"$ref":"#/definitions/ExecutionId"},"recipientMemberId":{"$ref":"#/definitions/ExecutionId"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["messageId","recipientMemberId","expectedRecipientRoleVersionId","target","body"],"type":"object"};
-const schema247 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","locale","sourceSnapshotId","sourceRevisionId"],"type":"object"};
+const schema480 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamMessage","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamMessage"};
+const schema243 = {"additionalProperties":false,"properties":{"lease":{"$ref":"#/definitions/AutomationLease"},"message":{"$ref":"#/definitions/SendHumanTeamMessage"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","lease","message"],"type":"object"};
+const schema244 = {"additionalProperties":false,"description":"A trusted human action. The original command captures its lease separately.","properties":{"body":{"maxLength":8192,"minLength":1,"type":"string"},"expectedRecipientRoleVersionId":{"$ref":"#/definitions/ExecutionId"},"messageId":{"$ref":"#/definitions/ExecutionId"},"recipientMemberId":{"$ref":"#/definitions/ExecutionId"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["messageId","recipientMemberId","expectedRecipientRoleVersionId","target","body"],"type":"object"};
+const schema248 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","locale","sourceSnapshotId","sourceRevisionId"],"type":"object"};
 
 function validate176(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -13433,7 +13583,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamMessageAction = validate359;
-const schema482 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamMessageAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamMessageAction"};
+const schema483 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamMessageAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamMessageAction"};
 
 function validate360(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -13531,8 +13681,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamPost = validate364;
-const schema485 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamPost","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamPost"};
-const schema252 = {"additionalProperties":false,"properties":{"planId":{"$ref":"#/definitions/ExecutionId"},"postId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId","postId"],"type":"object"};
+const schema486 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamPost","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamPost"};
+const schema253 = {"additionalProperties":false,"properties":{"planId":{"$ref":"#/definitions/ExecutionId"},"postId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId","postId"],"type":"object"};
 
 function validate365(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -13630,11 +13780,11 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamPublicationAction = validate367;
-const schema490 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamPublicationAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamPublicationAction"};
-const schema256 = {"additionalProperties":false,"properties":{"lease":{"$ref":"#/definitions/AutomationLease"},"projectId":{"$ref":"#/definitions/ExecutionId"},"publication":{"$ref":"#/definitions/PublishTeamDiscussion"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","lease","publication"],"type":"object"};
-const schema258 = {"additionalProperties":false,"description":"Model arguments contain content and relationships, never an author override.","properties":{"body":{"type":"string"},"kind":{"$ref":"#/definitions/TeamDiscussionKind"},"postId":{"$ref":"#/definitions/ExecutionId"},"references":{"items":{"$ref":"#/definitions/TeamArtifactReference"},"type":"array"},"replyTo":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"supersedes":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["postId","target","kind","body","references"],"type":"object"};
-const schema259 = {"enum":["note","challenge","rejection","resolution"],"type":"string"};
-const schema261 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation-revision","type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","revisionId"],"type":"object"},{"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"source-result","type":"string"},"resultId":{"$ref":"#/definitions/ExecutionId"},"snapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","snapshotId","attemptId","resultId"],"type":"object"}]};
+const schema491 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamPublicationAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamPublicationAction"};
+const schema257 = {"additionalProperties":false,"properties":{"lease":{"$ref":"#/definitions/AutomationLease"},"projectId":{"$ref":"#/definitions/ExecutionId"},"publication":{"$ref":"#/definitions/PublishTeamDiscussion"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","lease","publication"],"type":"object"};
+const schema259 = {"additionalProperties":false,"description":"Model arguments contain content and relationships, never an author override.","properties":{"body":{"type":"string"},"kind":{"$ref":"#/definitions/TeamDiscussionKind"},"postId":{"$ref":"#/definitions/ExecutionId"},"references":{"items":{"$ref":"#/definitions/TeamArtifactReference"},"type":"array"},"replyTo":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"supersedes":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["postId","target","kind","body","references"],"type":"object"};
+const schema260 = {"enum":["note","challenge","rejection","resolution"],"type":"string"};
+const schema262 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation-revision","type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","revisionId"],"type":"object"},{"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"source-result","type":"string"},"resultId":{"$ref":"#/definitions/ExecutionId"},"snapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","snapshotId","attemptId","resultId"],"type":"object"}]};
 
 function validate186(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -13946,7 +14096,7 @@ validate185.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitio
 return false;
 }
 if(!((((data1 === "note") || (data1 === "challenge")) || (data1 === "rejection")) || (data1 === "resolution"))){
-validate185.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamDiscussionKind/enum",keyword:"enum",params:{allowedValues: schema259.enum},message:"must be equal to one of the allowed values"}];
+validate185.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamDiscussionKind/enum",keyword:"enum",params:{allowedValues: schema260.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -14247,8 +14397,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamPublish = validate372;
-const schema493 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamPublish","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamPublish"};
-const schema268 = {"additionalProperties":false,"properties":{"lease":{"$ref":"#/definitions/AutomationLease"},"projectId":{"$ref":"#/definitions/ExecutionId"},"publication":{"$ref":"#/definitions/PublishTeamDiscussion"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","lease","publication"],"type":"object"};
+const schema494 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamPublish","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamPublish"};
+const schema269 = {"additionalProperties":false,"properties":{"lease":{"$ref":"#/definitions/AutomationLease"},"projectId":{"$ref":"#/definitions/ExecutionId"},"publication":{"$ref":"#/definitions/PublishTeamDiscussion"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","lease","publication"],"type":"object"};
 
 function validate373(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -14346,9 +14496,9 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamRecoveryAction = validate377;
-const schema496 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryAction"};
-const schema270 = {"additionalProperties":false,"properties":{"applicationToolExecutions":{"items":{"$ref":"#/definitions/ApplicationScopeBasis"},"maxItems":32,"type":"array"},"checkerExecutions":{"items":{"$ref":"#/definitions/ReviewCheckerKey"},"type":"array"},"planId":{"$ref":"#/definitions/ExecutionId"},"preparationId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"recovery":{"$ref":"#/definitions/AuthorizeTeamRecovery"},"sessionToken":{"type":"string"},"toolExecution":{"type":"boolean"}},"required":["sessionToken","projectId","preparationId","planId","recovery","checkerExecutions","toolExecution","applicationToolExecutions"],"type":"object"};
-const schema274 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"confirmed":{"type":"boolean"},"digest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"}},"required":["actionId","digest","confirmed","effects"],"type":"object"};
+const schema497 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryAction","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryAction"};
+const schema271 = {"additionalProperties":false,"properties":{"applicationToolExecutions":{"items":{"$ref":"#/definitions/ApplicationScopeBasis"},"maxItems":32,"type":"array"},"checkerExecutions":{"items":{"$ref":"#/definitions/ReviewCheckerKey"},"type":"array"},"planId":{"$ref":"#/definitions/ExecutionId"},"preparationId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"recovery":{"$ref":"#/definitions/AuthorizeTeamRecovery"},"sessionToken":{"type":"string"},"toolExecution":{"type":"boolean"}},"required":["sessionToken","projectId","preparationId","planId","recovery","checkerExecutions","toolExecution","applicationToolExecutions"],"type":"object"};
+const schema275 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"confirmed":{"type":"boolean"},"digest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"}},"required":["actionId","digest","confirmed","effects"],"type":"object"};
 const pattern21 = new RegExp("^[0-9a-f]{64}$", "u");
 
 function validate198(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -14656,7 +14806,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamRecoveryAuthorize = validate383;
-const schema501 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryAuthorize","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryAuthorize"};
+const schema502 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryAuthorize","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryAuthorize"};
 
 function validate384(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -14848,7 +14998,7 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamRecoveryEnd = validate389;
-const schema506 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryEnd","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryEnd"};
+const schema507 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryEnd","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryEnd"};
 
 function validate390(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -15040,10 +15190,10 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamRecoveryPrepare = validate395;
-const schema511 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryPrepare"};
-const schema277 = {"additionalProperties":false,"properties":{"preparationId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"recovery":{"$ref":"#/definitions/PrepareTeamRecovery"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","preparationId","recovery"],"type":"object"};
-const schema280 = {"additionalProperties":false,"properties":{"expectedEffectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"expectedLease":{"$ref":"#/definitions/AutomationLease"},"members":{"items":{"$ref":"#/definitions/TeamExecutionMember"},"maxItems":8,"minItems":1,"type":"array"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"work":{"$ref":"#/definitions/TeamHumanWork"}},"required":["projectId","planId","expectedLease","expectedEffectiveVersion","members","work"],"type":"object"};
-const schema281 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"digest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"lease":{"$ref":"#/definitions/AutomationLease"}},"required":["actionId","lease","digest"],"type":"object"};
+const schema512 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryPrepare","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryPrepare"};
+const schema278 = {"additionalProperties":false,"properties":{"preparationId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"recovery":{"$ref":"#/definitions/PrepareTeamRecovery"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","preparationId","recovery"],"type":"object"};
+const schema281 = {"additionalProperties":false,"properties":{"expectedEffectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"expectedLease":{"$ref":"#/definitions/AutomationLease"},"members":{"items":{"$ref":"#/definitions/TeamExecutionMember"},"maxItems":8,"minItems":1,"type":"array"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"work":{"$ref":"#/definitions/TeamHumanWork"}},"required":["projectId","planId","expectedLease","expectedEffectiveVersion","members","work"],"type":"object"};
+const schema282 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"digest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"lease":{"$ref":"#/definitions/AutomationLease"}},"required":["actionId","lease","digest"],"type":"object"};
 
 function validate205(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -15123,8 +15273,8 @@ validate205.errors = vErrors;
 return errors === 0;
 }
 
-const schema285 = {"additionalProperties":false,"properties":{"instructions":{"maxLength":8192,"minLength":1,"type":"string"},"kind":{"$ref":"#/definitions/TeamWorkKind"},"memberId":{"$ref":"#/definitions/ExecutionId"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":16,"type":"array"},"priorWork":{"items":{"$ref":"#/definitions/TeamWorkReference"},"maxItems":16,"type":"array"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"workId":{"$ref":"#/definitions/ExecutionId"}},"required":["workId","memberId","target","kind","instructions","postIds","priorWork"],"type":"object"};
-const schema289 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["taskId","attemptId","inputDigest"],"type":"object"};
+const schema286 = {"additionalProperties":false,"properties":{"instructions":{"maxLength":8192,"minLength":1,"type":"string"},"kind":{"$ref":"#/definitions/TeamWorkKind"},"memberId":{"$ref":"#/definitions/ExecutionId"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":16,"type":"array"},"priorWork":{"items":{"$ref":"#/definitions/TeamWorkReference"},"maxItems":16,"type":"array"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"workId":{"$ref":"#/definitions/ExecutionId"}},"required":["workId","memberId","target","kind","instructions","postIds","priorWork"],"type":"object"};
+const schema290 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["taskId","attemptId","inputDigest"],"type":"object"};
 
 function validate211(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -15630,8 +15780,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamRecoveryState = validate399;
-const schema515 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryState","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryState"};
-const schema293 = {"additionalProperties":false,"properties":{"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId"],"type":"object"};
+const schema516 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamRecoveryState","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamRecoveryState"};
+const schema294 = {"additionalProperties":false,"properties":{"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","planId"],"type":"object"};
 
 function validate400(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -15716,8 +15866,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkPlanTeamWorkTools = validate402;
-const schema519 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamWorkTools","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamWorkTools"};
-const schema296 = {"additionalProperties":false,"properties":{"after":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"limit":{"format":"uint32","maximum":16,"minimum":1,"type":"integer"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"work":{"$ref":"#/definitions/TeamWorkReference"}},"required":["sessionToken","projectId","planId","work","limit"],"type":"object"};
+const schema520 = {"$id":"urn:tsumugi:ipc:ai:requests:workPlanTeamWorkTools","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workPlanTeamWorkTools"};
+const schema297 = {"additionalProperties":false,"properties":{"after":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"limit":{"format":"uint32","maximum":16,"minimum":1,"type":"integer"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"work":{"$ref":"#/definitions/TeamWorkReference"}},"required":["sessionToken","projectId","planId","work","limit"],"type":"object"};
 
 function validate403(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -15921,8 +16071,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkProtectionRead = validate406;
-const schema524 = {"$id":"urn:tsumugi:ipc:ai:requests:workProtectionRead","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workProtectionRead"};
-const schema300 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","unitId","locale"],"type":"object"};
+const schema525 = {"$id":"urn:tsumugi:ipc:ai:requests:workProtectionRead","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workProtectionRead"};
+const schema301 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","unitId","locale"],"type":"object"};
 
 function validate407(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -16020,8 +16170,8 @@ return errors === 0;
 }
 
 export const validateRequestWorkProtectionSet = validate409;
-const schema528 = {"$id":"urn:tsumugi:ipc:ai:requests:workProtectionSet","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workProtectionSet"};
-const schema303 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"confirmedRelease":{"type":"boolean"},"expectedRevision":{"$ref":"#/definitions/Revision"},"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"protected":{"type":"boolean"},"selectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sessionToken":{"type":"string"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","actionId","unitId","locale","sourceRevisionId","expectedRevision","protected","confirmedRelease"],"type":"object"};
+const schema529 = {"$id":"urn:tsumugi:ipc:ai:requests:workProtectionSet","$ref":"urn:tsumugi:ipc:ai:requests#/properties/workProtectionSet"};
+const schema304 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"confirmedRelease":{"type":"boolean"},"expectedRevision":{"$ref":"#/definitions/Revision"},"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"protected":{"type":"boolean"},"selectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sessionToken":{"type":"string"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["sessionToken","projectId","actionId","unitId","locale","sourceRevisionId","expectedRevision","protected","confirmedRelease"],"type":"object"};
 
 function validate410(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -16036,7 +16186,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema303.properties, key0))){
+if(!(func2.call(schema304.properties, key0))){
 validate410.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -16257,8 +16407,8 @@ return errors === 0;
 }
 
 export const validateResponseEffectRetry = validate412;
-const schema536 = {"$id":"urn:tsumugi:ipc:ai:responses:effectRetry","$ref":"urn:tsumugi:ipc:ai:responses#/properties/effectRetry"};
-const schema1132 = {"type":"boolean"};
+const schema537 = {"$id":"urn:tsumugi:ipc:ai:responses:effectRetry","$ref":"urn:tsumugi:ipc:ai:responses#/properties/effectRetry"};
+const schema1134 = {"type":"boolean"};
 
 function validate412(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 /*# sourceURL="urn:tsumugi:ipc:ai:responses:effectRetry" */;
@@ -16273,8 +16423,8 @@ return errors === 0;
 }
 
 export const validateResponseIdentity = validate860;
-const schema1133 = {"$id":"urn:tsumugi:ipc:ai:responses:identity","$ref":"urn:tsumugi:ipc:ai:responses#/properties/identity"};
-const schema538 = {"pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","type":"string"};
+const schema1135 = {"$id":"urn:tsumugi:ipc:ai:responses:identity","$ref":"urn:tsumugi:ipc:ai:responses#/properties/identity"};
+const schema539 = {"pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","type":"string"};
 const pattern50 = new RegExp("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", "u");
 
 function validate860(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -16299,12 +16449,12 @@ return errors === 0;
 }
 
 export const validateResponseMaintenanceAssessment = validate861;
-const schema1135 = {"$id":"urn:tsumugi:ipc:ai:responses:maintenanceAssessment","$ref":"urn:tsumugi:ipc:ai:responses#/properties/maintenanceAssessment"};
-const schema539 = {"additionalProperties":false,"properties":{"after":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"coverage":{"type":"string"},"digest":{"type":"string"},"limit":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"locale":{"type":"string"},"nextOrdinal":{"format":"uint32","maximum":4294967295,"minimum":0,"type":["integer","null"]},"projectId":{"$ref":"#/definitions/ExecutionId"},"rows":{"items":{"$ref":"#/definitions/MaintenanceRow"},"type":"array"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","sourceSnapshotId","locale","after","limit","nextOrdinal","rows","coverage","digest"],"type":"object"};
-const schema541 = {"additionalProperties":false,"properties":{"mappingUnresolved":{"type":"boolean"},"nativeKey":{"type":"string"},"protection":{"$ref":"#/definitions/WorkProtection"},"reasons":{"items":{"type":"string"},"type":"array"},"reviewBasis":{"type":"string"},"selectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceText":{"type":"string"},"suggested":{"$ref":"#/definitions/MaintenanceAction"},"translationRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"translationText":{"type":["string","null"]},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","sourceRevisionId","nativeKey","sourceText","translationText","selectionId","translationRevisionId","reviewBasis","protection","mappingUnresolved","reasons","suggested"],"type":"object"};
-const schema547 = {"enum":["keep","recheck","repair","unresolved"],"type":"string"};
-const schema542 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"protected":{"type":"boolean"},"revision":{"$ref":"#/definitions/Revision"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","locale","revision","protected"],"type":"object"};
-const schema543 = {"pattern":"^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$","type":"string"};
+const schema1137 = {"$id":"urn:tsumugi:ipc:ai:responses:maintenanceAssessment","$ref":"urn:tsumugi:ipc:ai:responses#/properties/maintenanceAssessment"};
+const schema540 = {"additionalProperties":false,"properties":{"after":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"coverage":{"type":"string"},"digest":{"type":"string"},"limit":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"locale":{"type":"string"},"nextOrdinal":{"format":"uint32","maximum":4294967295,"minimum":0,"type":["integer","null"]},"projectId":{"$ref":"#/definitions/ExecutionId"},"rows":{"items":{"$ref":"#/definitions/MaintenanceRow"},"type":"array"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","sourceSnapshotId","locale","after","limit","nextOrdinal","rows","coverage","digest"],"type":"object"};
+const schema542 = {"additionalProperties":false,"properties":{"mappingUnresolved":{"type":"boolean"},"nativeKey":{"type":"string"},"protection":{"$ref":"#/definitions/WorkProtection"},"reasons":{"items":{"type":"string"},"type":"array"},"reviewBasis":{"type":"string"},"selectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceText":{"type":"string"},"suggested":{"$ref":"#/definitions/MaintenanceAction"},"translationRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"translationText":{"type":["string","null"]},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","sourceRevisionId","nativeKey","sourceText","translationText","selectionId","translationRevisionId","reviewBasis","protection","mappingUnresolved","reasons","suggested"],"type":"object"};
+const schema548 = {"enum":["keep","recheck","repair","unresolved"],"type":"string"};
+const schema543 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"protected":{"type":"boolean"},"revision":{"$ref":"#/definitions/Revision"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","locale","revision","protected"],"type":"object"};
+const schema544 = {"pattern":"^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$","type":"string"};
 
 function validate416(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -16422,7 +16572,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema541.properties, key0))){
+if(!(func2.call(schema542.properties, key0))){
 validate415.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -16626,7 +16776,7 @@ validate415.errors = [{instancePath:instancePath+"/suggested",schemaPath:"#/defi
 return false;
 }
 if(!((((data9 === "keep") || (data9 === "recheck")) || (data9 === "repair")) || (data9 === "unresolved"))){
-validate415.errors = [{instancePath:instancePath+"/suggested",schemaPath:"#/definitions/MaintenanceAction/enum",keyword:"enum",params:{allowedValues: schema547.enum},message:"must be equal to one of the allowed values"}];
+validate415.errors = [{instancePath:instancePath+"/suggested",schemaPath:"#/definitions/MaintenanceAction/enum",keyword:"enum",params:{allowedValues: schema548.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs25 === errors;
@@ -16716,7 +16866,7 @@ if(data.translationText !== undefined){
 let data11 = data.translationText;
 const _errs35 = errors;
 if((typeof data11 !== "string") && (data11 !== null)){
-validate415.errors = [{instancePath:instancePath+"/translationText",schemaPath:"#/properties/translationText/type",keyword:"type",params:{type: schema541.properties.translationText.type},message:"must be string,null"}];
+validate415.errors = [{instancePath:instancePath+"/translationText",schemaPath:"#/properties/translationText/type",keyword:"type",params:{type: schema542.properties.translationText.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs35 === errors;
@@ -16783,7 +16933,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema539.properties, key0))){
+if(!(func2.call(schema540.properties, key0))){
 validate862.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -16884,7 +17034,7 @@ if(data.nextOrdinal !== undefined){
 let data5 = data.nextOrdinal;
 const _errs12 = errors;
 if((!(((typeof data5 == "number") && (!(data5 % 1) && !isNaN(data5))) && (isFinite(data5)))) && (data5 !== null)){
-validate862.errors = [{instancePath:instancePath+"/nextOrdinal",schemaPath:"#/properties/nextOrdinal/type",keyword:"type",params:{type: schema539.properties.nextOrdinal.type},message:"must be integer,null"}];
+validate862.errors = [{instancePath:instancePath+"/nextOrdinal",schemaPath:"#/properties/nextOrdinal/type",keyword:"type",params:{type: schema540.properties.nextOrdinal.type},message:"must be integer,null"}];
 return false;
 }
 if(errors === _errs12){
@@ -17014,13 +17164,13 @@ return errors === 0;
 }
 
 export const validateResponsePrepared = validate865;
-const schema1139 = {"$id":"urn:tsumugi:ipc:ai:responses:prepared","$ref":"urn:tsumugi:ipc:ai:responses#/properties/prepared"};
-const schema551 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"preview":{"$ref":"#/definitions/AiPreviewView"}},"required":["preview","attemptId"],"type":"object"};
-const schema553 = {"additionalProperties":false,"properties":{"config":{"$ref":"#/definitions/AiConfig"},"digest":{"type":"string"},"items":{"items":{"$ref":"#/definitions/AiItemView"},"type":"array"},"recipe":{"type":"string"}},"required":["config","recipe","items","digest"],"type":"object"};
-const schema554 = {"additionalProperties":false,"properties":{"concurrency":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"connectionProfile":{"anyOf":[{"$ref":"#/definitions/ModelConnectionReference"},{"type":"null"}],"description":"Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."},"contextStrategy":{"anyOf":[{"$ref":"#/definitions/ContextStrategyReference"},{"type":"null"}],"description":"Immutable project provenance, independent of current defaults or consent."},"credentialEnv":{"type":"string"},"endpoint":{"type":"string"},"maxItems":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxOutputTokens":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRequests":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRetries":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"model":{"type":"string"},"shareContext":{"type":"boolean"},"shareTerms":{"type":"boolean"},"sourceContext":{"$ref":"#/definitions/SourceContextSelection"},"timeoutSeconds":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"tokenField":{"type":"string"}},"required":["contextStrategy","endpoint","model","credentialEnv","tokenField","maxItems","concurrency","maxRequests","maxOutputTokens","maxRetries","timeoutSeconds","shareTerms","shareContext","sourceContext"],"type":"object"};
-const schema563 = {"additionalProperties":false,"properties":{"extracted":{"type":"boolean"},"inferred":{"type":"boolean"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxItems":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"neighbors":{"type":"boolean"}},"required":["extracted","inferred","neighbors","maxBytes","maxItems"],"type":"object"};
-const schema555 = {"additionalProperties":false,"description":"A persistent data identity, never a credential, execution grant or consent.","properties":{"digest":{"type":"string"},"profileId":{"$ref":"#/definitions/ExecutionId"},"revision":{"$ref":"#/definitions/UnsignedDecimal"},"storeId":{"$ref":"#/definitions/ExecutionId"}},"required":["storeId","profileId","revision","digest"],"type":"object"};
-const schema557 = {"pattern":"^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$","type":"string"};
+const schema1141 = {"$id":"urn:tsumugi:ipc:ai:responses:prepared","$ref":"urn:tsumugi:ipc:ai:responses#/properties/prepared"};
+const schema552 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"preview":{"$ref":"#/definitions/AiPreviewView"}},"required":["preview","attemptId"],"type":"object"};
+const schema554 = {"additionalProperties":false,"properties":{"config":{"$ref":"#/definitions/AiConfig"},"digest":{"type":"string"},"items":{"items":{"$ref":"#/definitions/AiItemView"},"type":"array"},"recipe":{"type":"string"}},"required":["config","recipe","items","digest"],"type":"object"};
+const schema555 = {"additionalProperties":false,"properties":{"concurrency":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"connectionProfile":{"anyOf":[{"$ref":"#/definitions/ModelConnectionReference"},{"type":"null"}],"description":"Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."},"contextStrategy":{"anyOf":[{"$ref":"#/definitions/ContextStrategyReference"},{"type":"null"}],"description":"Immutable project provenance, independent of current defaults or consent."},"credentialEnv":{"type":"string"},"endpoint":{"type":"string"},"maxItems":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxOutputTokens":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRequests":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRetries":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"model":{"type":"string"},"shareContext":{"type":"boolean"},"shareTerms":{"type":"boolean"},"sourceContext":{"$ref":"#/definitions/SourceContextSelection"},"timeoutSeconds":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"tokenField":{"type":"string"}},"required":["contextStrategy","endpoint","model","credentialEnv","tokenField","maxItems","concurrency","maxRequests","maxOutputTokens","maxRetries","timeoutSeconds","shareTerms","shareContext","sourceContext"],"type":"object"};
+const schema564 = {"additionalProperties":false,"properties":{"extracted":{"type":"boolean"},"inferred":{"type":"boolean"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxItems":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"neighbors":{"type":"boolean"}},"required":["extracted","inferred","neighbors","maxBytes","maxItems"],"type":"object"};
+const schema556 = {"additionalProperties":false,"description":"A persistent data identity, never a credential, execution grant or consent.","properties":{"digest":{"type":"string"},"profileId":{"$ref":"#/definitions/ExecutionId"},"revision":{"$ref":"#/definitions/UnsignedDecimal"},"storeId":{"$ref":"#/definitions/ExecutionId"}},"required":["storeId","profileId","revision","digest"],"type":"object"};
+const schema558 = {"pattern":"^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$","type":"string"};
 
 function validate423(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -17134,7 +17284,7 @@ validate423.errors = vErrors;
 return errors === 0;
 }
 
-const schema559 = {"additionalProperties":false,"properties":{"candidateId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"revisionId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","revisionId","candidateId"],"type":"object"};
+const schema560 = {"additionalProperties":false,"properties":{"candidateId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"revisionId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","revisionId","candidateId"],"type":"object"};
 
 function validate425(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -17249,7 +17399,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema554.properties, key0))){
+if(!(func2.call(schema555.properties, key0))){
 validate422.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -17755,8 +17905,8 @@ validate422.errors = vErrors;
 return errors === 0;
 }
 
-const schema564 = {"additionalProperties":false,"properties":{"context":{"anyOf":[{"$ref":"#/definitions/ContextRevision"},{"type":"null"}]},"nativeKey":{"type":"string"},"omissions":{"items":{"type":"string"},"type":"array"},"projectContext":{"$ref":"#/definitions/ProjectFactCapture"},"resourceBaseline":{"$ref":"#/definitions/UnsignedDecimal"},"sourceContext":{"$ref":"#/definitions/SourceContextCapture"},"sourceLocale":{"type":"string"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"sourceText":{"type":"string"},"targetLocale":{"type":"string"},"terms":{"items":{"$ref":"#/definitions/SharedTerm"},"type":"array"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","sourceRevisionId","sourceSnapshotId","nativeKey","sourceLocale","sourceText","targetLocale","terms","context","sourceContext","projectContext","omissions","resourceBaseline"],"type":"object"};
-const schema565 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"previousRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"reason":{"type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"text":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["revisionId","unitId","locale","text","reason","previousRevisionId"],"type":"object"};
+const schema565 = {"additionalProperties":false,"properties":{"context":{"anyOf":[{"$ref":"#/definitions/ContextRevision"},{"type":"null"}]},"nativeKey":{"type":"string"},"omissions":{"items":{"type":"string"},"type":"array"},"projectContext":{"$ref":"#/definitions/ProjectFactCapture"},"resourceBaseline":{"$ref":"#/definitions/UnsignedDecimal"},"sourceContext":{"$ref":"#/definitions/SourceContextCapture"},"sourceLocale":{"type":"string"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"sourceText":{"type":"string"},"targetLocale":{"type":"string"},"terms":{"items":{"$ref":"#/definitions/SharedTerm"},"type":"array"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","sourceRevisionId","sourceSnapshotId","nativeKey","sourceLocale","sourceText","targetLocale","terms","context","sourceContext","projectContext","omissions","resourceBaseline"],"type":"object"};
+const schema566 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"previousRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"reason":{"type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"text":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["revisionId","unitId","locale","text","reason","previousRevisionId"],"type":"object"};
 
 function validate429(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -17951,23 +18101,23 @@ validate429.errors = vErrors;
 return errors === 0;
 }
 
-const schema569 = {"description":"Pinned local decisions are separate from raw SDK facts and the provider projection.","oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"not-selected","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"decisions":{"items":{"$ref":"#/definitions/ContextFactDecision"},"type":"array"},"kind":{"const":"selected","type":"string"},"manual":{"type":"boolean"},"scope":{"$ref":"#/definitions/SourceContextRequest"}},"required":["kind","scope","manual","decisions"],"type":"object"}]};
-const schema570 = {"additionalProperties":false,"properties":{"request":{"$ref":"#/definitions/ContextFactWrite"}},"required":["request"],"type":"object"};
-const schema571 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"actor":{"type":"string"},"basis":{"$ref":"#/definitions/SourceFactBasis"},"disposition":{"$ref":"#/definitions/ContextFactDisposition"},"expectedDecisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"reason":{"type":"string"}},"required":["actionId","basis","expectedDecisionId","disposition","actor","reason"],"type":"object"};
-const schema590 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"replace","type":"string"},"text":{"type":"string"}},"required":["kind","text"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"reject-inference","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"restore","type":"string"}},"required":["kind"],"type":"object"}]};
-const schema573 = {"additionalProperties":false,"properties":{"fact":{"$ref":"#/definitions/SelectedSourceFact"},"scope":{"$ref":"#/definitions/SourceContextRequest"},"sourceResultDigest":{"type":"string"},"sourceResultId":{"$ref":"#/definitions/ExecutionId"}},"required":["scope","sourceResultId","sourceResultDigest","fact"],"type":"object"};
-const schema574 = {"additionalProperties":false,"description":"One whole fact, with the original block target and source references.","properties":{"blockIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"fact":{"$ref":"#/definitions/SourceContextFact"},"factIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"handling":{"$ref":"#/definitions/ExtensionHandling"},"inRevisionBasis":{"type":"boolean"},"schema":{"$ref":"#/definitions/ContractRef"},"target":{"$ref":"#/definitions/ContentTarget"}},"required":["blockIndex","factIndex","target","schema","handling","inRevisionBasis","fact"],"type":"object"};
-const schema581 = {"oneOf":[{"const":"required","description":"An operation that needs this block must have the exact interpreter.","type":"string"},{"const":"preserve","description":"Preserve the payload exactly, including when its schema is understood.","type":"string"},{"const":"optional","description":"Interpretation is optional; an unknown payload is still preserved.","type":"string"}]};
-const schema582 = {"additionalProperties":false,"description":"Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.","properties":{"behaviorVersion":{"maximum":4294967295,"minimum":1,"type":"integer"},"id":{"type":"string"},"schemaVersion":{"maximum":4294967295,"minimum":1,"type":"integer"}},"required":["id","schemaVersion","behaviorVersion"],"type":"object"};
-const schema583 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"snapshot","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"const":"unit","type":"string"}},"required":["kind","id"],"type":"object"},{"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"const":"occurrence","type":"string"}},"required":["kind","id"],"type":"object"}]};
-const schema575 = {"additionalProperties":false,"properties":{"id":{"description":"Unique only inside this block; it is not a project revision or entity ID.","pattern":"^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])","type":"string"},"kind":{"$ref":"#/definitions/SourceContextFactKind"},"origin":{"$ref":"#/definitions/SourceContextFactOrigin"},"text":{"pattern":"^[\\s\\S]{1,4096}(?![\\s\\S])","type":"string"}},"required":["id","kind","text","origin"],"type":"object"};
-const schema576 = {"description":"Classification for presentation, without interpreting a format's syntax or\nnormalizing its literal text. Other source-associated information uses Note.","enum":["speaker","role","scene","time","location","note"],"type":"string"};
+const schema570 = {"description":"Pinned local decisions are separate from raw SDK facts and the provider projection.","oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"not-selected","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"decisions":{"items":{"$ref":"#/definitions/ContextFactDecision"},"type":"array"},"kind":{"const":"selected","type":"string"},"manual":{"type":"boolean"},"scope":{"$ref":"#/definitions/SourceContextRequest"}},"required":["kind","scope","manual","decisions"],"type":"object"}]};
+const schema571 = {"additionalProperties":false,"properties":{"request":{"$ref":"#/definitions/ContextFactWrite"}},"required":["request"],"type":"object"};
+const schema572 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"actor":{"type":"string"},"basis":{"$ref":"#/definitions/SourceFactBasis"},"disposition":{"$ref":"#/definitions/ContextFactDisposition"},"expectedDecisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"reason":{"type":"string"}},"required":["actionId","basis","expectedDecisionId","disposition","actor","reason"],"type":"object"};
+const schema591 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"replace","type":"string"},"text":{"type":"string"}},"required":["kind","text"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"reject-inference","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"restore","type":"string"}},"required":["kind"],"type":"object"}]};
+const schema574 = {"additionalProperties":false,"properties":{"fact":{"$ref":"#/definitions/SelectedSourceFact"},"scope":{"$ref":"#/definitions/SourceContextRequest"},"sourceResultDigest":{"type":"string"},"sourceResultId":{"$ref":"#/definitions/ExecutionId"}},"required":["scope","sourceResultId","sourceResultDigest","fact"],"type":"object"};
+const schema575 = {"additionalProperties":false,"description":"One whole fact, with the original block target and source references.","properties":{"blockIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"fact":{"$ref":"#/definitions/SourceContextFact"},"factIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"handling":{"$ref":"#/definitions/ExtensionHandling"},"inRevisionBasis":{"type":"boolean"},"schema":{"$ref":"#/definitions/ContractRef"},"target":{"$ref":"#/definitions/ContentTarget"}},"required":["blockIndex","factIndex","target","schema","handling","inRevisionBasis","fact"],"type":"object"};
+const schema582 = {"oneOf":[{"const":"required","description":"An operation that needs this block must have the exact interpreter.","type":"string"},{"const":"preserve","description":"Preserve the payload exactly, including when its schema is understood.","type":"string"},{"const":"optional","description":"Interpretation is optional; an unknown payload is still preserved.","type":"string"}]};
+const schema583 = {"additionalProperties":false,"description":"Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.","properties":{"behaviorVersion":{"maximum":4294967295,"minimum":1,"type":"integer"},"id":{"type":"string"},"schemaVersion":{"maximum":4294967295,"minimum":1,"type":"integer"}},"required":["id","schemaVersion","behaviorVersion"],"type":"object"};
+const schema584 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"snapshot","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"const":"unit","type":"string"}},"required":["kind","id"],"type":"object"},{"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"const":"occurrence","type":"string"}},"required":["kind","id"],"type":"object"}]};
+const schema576 = {"additionalProperties":false,"properties":{"id":{"description":"Unique only inside this block; it is not a project revision or entity ID.","pattern":"^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])","type":"string"},"kind":{"$ref":"#/definitions/SourceContextFactKind"},"origin":{"$ref":"#/definitions/SourceContextFactOrigin"},"text":{"pattern":"^[\\s\\S]{1,4096}(?![\\s\\S])","type":"string"}},"required":["id","kind","text","origin"],"type":"object"};
+const schema577 = {"description":"Classification for presentation, without interpreting a format's syntax or\nnormalizing its literal text. Other source-associated information uses Note.","enum":["speaker","role","scene","time","location","note"],"type":"string"};
 const pattern70 = new RegExp("^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])", "u");
 const pattern71 = new RegExp("^[\\s\\S]{1,4096}(?![\\s\\S])", "u");
-const schema577 = {"description":"References are observations in captured source, not proof of an inference.\nHuman project decisions remain in the project's independent revision owner.","oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"extracted","type":"string"},"sources":{"items":{"$ref":"#/definitions/SourceReference"},"maxItems":8,"minItems":1,"type":"array"}},"required":["kind","sources"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"inferred","type":"string"},"rationale":{"pattern":"^[\\s\\S]{1,4096}(?![\\s\\S])","type":"string"},"sources":{"items":{"$ref":"#/definitions/SourceReference"},"maxItems":8,"minItems":1,"type":"array"}},"required":["kind","rationale","sources"],"type":"object"}]};
-const schema578 = {"additionalProperties":false,"properties":{"artifactId":{"type":"string"},"range":{"$ref":"#/definitions/TextRange"}},"required":["artifactId","range"],"type":"object"};
-const schema579 = {"additionalProperties":false,"description":"Half-open offsets into one exact string, never between different strings.","properties":{"encoding":{"$ref":"#/definitions/TextEncoding"},"end":{"maximum":4294967295,"minimum":0,"type":"integer"},"start":{"maximum":4294967295,"minimum":0,"type":"integer"}},"required":["encoding","start","end"],"type":"object"};
-const schema580 = {"enum":["utf8-byte","utf16","grapheme"],"type":"string"};
+const schema578 = {"description":"References are observations in captured source, not proof of an inference.\nHuman project decisions remain in the project's independent revision owner.","oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"extracted","type":"string"},"sources":{"items":{"$ref":"#/definitions/SourceReference"},"maxItems":8,"minItems":1,"type":"array"}},"required":["kind","sources"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"inferred","type":"string"},"rationale":{"pattern":"^[\\s\\S]{1,4096}(?![\\s\\S])","type":"string"},"sources":{"items":{"$ref":"#/definitions/SourceReference"},"maxItems":8,"minItems":1,"type":"array"}},"required":["kind","rationale","sources"],"type":"object"}]};
+const schema579 = {"additionalProperties":false,"properties":{"artifactId":{"type":"string"},"range":{"$ref":"#/definitions/TextRange"}},"required":["artifactId","range"],"type":"object"};
+const schema580 = {"additionalProperties":false,"description":"Half-open offsets into one exact string, never between different strings.","properties":{"encoding":{"$ref":"#/definitions/TextEncoding"},"end":{"maximum":4294967295,"minimum":0,"type":"integer"},"start":{"maximum":4294967295,"minimum":0,"type":"integer"}},"required":["encoding","start","end"],"type":"object"};
+const schema581 = {"enum":["utf8-byte","utf16","grapheme"],"type":"string"};
 
 function validate439(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -17997,7 +18147,7 @@ validate439.errors = [{instancePath:instancePath+"/encoding",schemaPath:"#/defin
 return false;
 }
 if(!(((data0 === "utf8-byte") || (data0 === "utf16")) || (data0 === "grapheme"))){
-validate439.errors = [{instancePath:instancePath+"/encoding",schemaPath:"#/definitions/TextEncoding/enum",keyword:"enum",params:{allowedValues: schema580.enum},message:"must be equal to one of the allowed values"}];
+validate439.errors = [{instancePath:instancePath+"/encoding",schemaPath:"#/definitions/TextEncoding/enum",keyword:"enum",params:{allowedValues: schema581.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -18530,7 +18680,7 @@ validate436.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitio
 return false;
 }
 if(!((((((data1 === "speaker") || (data1 === "role")) || (data1 === "scene")) || (data1 === "time")) || (data1 === "location")) || (data1 === "note"))){
-validate436.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/SourceContextFactKind/enum",keyword:"enum",params:{allowedValues: schema576.enum},message:"must be equal to one of the allowed values"}];
+validate436.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/SourceContextFactKind/enum",keyword:"enum",params:{allowedValues: schema577.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -19240,7 +19390,7 @@ validate435.errors = vErrors;
 return errors === 0;
 }
 
-const schema584 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","sourceSnapshotId","unitId","sourceRevisionId","locale"],"type":"object"};
+const schema585 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","sourceSnapshotId","unitId","sourceRevisionId","locale"],"type":"object"};
 
 function validate446(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -20226,11 +20376,11 @@ validate431.errors = vErrors;
 return errors === 0;
 }
 
-const schema593 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"not-selected","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"selected","type":"string"},"value":{"$ref":"#/definitions/SelectedSourceContext"}},"required":["kind","value"],"type":"object"}]};
-const schema594 = {"additionalProperties":false,"properties":{"contentRevision":{"$ref":"#/definitions/Revision"},"facts":{"items":{"$ref":"#/definitions/SelectedSourceFact"},"type":"array"},"localUnitId":{"type":"string"},"neighbors":{"items":{"$ref":"#/definitions/SourceContextNeighbor"},"type":"array"},"observations":{"$ref":"#/definitions/SourceContextObservations"},"omissions":{"$ref":"#/definitions/SourceContextOmissions"},"scope":{"$ref":"#/definitions/SourceContextRequest"},"selection":{"$ref":"#/definitions/SourceContextSelection"},"sourceAttemptId":{"$ref":"#/definitions/ExecutionId"},"sourceLocale":{"type":"string"},"sourceResultDigest":{"type":"string"},"sourceResultId":{"$ref":"#/definitions/ExecutionId"}},"required":["scope","contentRevision","sourceAttemptId","sourceResultId","sourceResultDigest","sourceLocale","localUnitId","selection","observations","facts","neighbors","omissions"],"type":"object"};
-const schema596 = {"additionalProperties":false,"properties":{"adjacentTo":{"items":{"$ref":"#/definitions/SourceContextAdjacency"},"type":"array"},"occurrence":{"$ref":"#/definitions/SourceContextOccurrence"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"text":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","sourceRevisionId","occurrence","text","adjacentTo"],"type":"object"};
-const schema597 = {"additionalProperties":false,"properties":{"direction":{"allOf":[{"$ref":"#/definitions/SourceContextDirection"}],"description":"The neighbor's position relative to this selected occurrence."},"occurrenceId":{"$ref":"#/definitions/ExecutionId"}},"required":["occurrenceId","direction"],"type":"object"};
-const schema598 = {"enum":["before","after"],"type":"string"};
+const schema594 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"not-selected","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"selected","type":"string"},"value":{"$ref":"#/definitions/SelectedSourceContext"}},"required":["kind","value"],"type":"object"}]};
+const schema595 = {"additionalProperties":false,"properties":{"contentRevision":{"$ref":"#/definitions/Revision"},"facts":{"items":{"$ref":"#/definitions/SelectedSourceFact"},"type":"array"},"localUnitId":{"type":"string"},"neighbors":{"items":{"$ref":"#/definitions/SourceContextNeighbor"},"type":"array"},"observations":{"$ref":"#/definitions/SourceContextObservations"},"omissions":{"$ref":"#/definitions/SourceContextOmissions"},"scope":{"$ref":"#/definitions/SourceContextRequest"},"selection":{"$ref":"#/definitions/SourceContextSelection"},"sourceAttemptId":{"$ref":"#/definitions/ExecutionId"},"sourceLocale":{"type":"string"},"sourceResultDigest":{"type":"string"},"sourceResultId":{"$ref":"#/definitions/ExecutionId"}},"required":["scope","contentRevision","sourceAttemptId","sourceResultId","sourceResultDigest","sourceLocale","localUnitId","selection","observations","facts","neighbors","omissions"],"type":"object"};
+const schema597 = {"additionalProperties":false,"properties":{"adjacentTo":{"items":{"$ref":"#/definitions/SourceContextAdjacency"},"type":"array"},"occurrence":{"$ref":"#/definitions/SourceContextOccurrence"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"text":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","sourceRevisionId","occurrence","text","adjacentTo"],"type":"object"};
+const schema598 = {"additionalProperties":false,"properties":{"direction":{"allOf":[{"$ref":"#/definitions/SourceContextDirection"}],"description":"The neighbor's position relative to this selected occurrence."},"occurrenceId":{"$ref":"#/definitions/ExecutionId"}},"required":["occurrenceId","direction"],"type":"object"};
+const schema599 = {"enum":["before","after"],"type":"string"};
 
 function validate457(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -20260,7 +20410,7 @@ validate457.errors = [{instancePath:instancePath+"/direction",schemaPath:"#/defi
 return false;
 }
 if(!((data0 === "before") || (data0 === "after"))){
-validate457.errors = [{instancePath:instancePath+"/direction",schemaPath:"#/definitions/SourceContextDirection/enum",keyword:"enum",params:{allowedValues: schema598.enum},message:"must be equal to one of the allowed values"}];
+validate457.errors = [{instancePath:instancePath+"/direction",schemaPath:"#/definitions/SourceContextDirection/enum",keyword:"enum",params:{allowedValues: schema599.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -20303,7 +20453,7 @@ validate457.errors = vErrors;
 return errors === 0;
 }
 
-const schema600 = {"additionalProperties":false,"properties":{"localOccurrenceId":{"type":"string"},"occurrenceId":{"$ref":"#/definitions/ExecutionId"},"source":{"$ref":"#/definitions/SourceReference"}},"required":["occurrenceId","localOccurrenceId","source"],"type":"object"};
+const schema601 = {"additionalProperties":false,"properties":{"localOccurrenceId":{"type":"string"},"occurrenceId":{"$ref":"#/definitions/ExecutionId"},"source":{"$ref":"#/definitions/SourceReference"}},"required":["occurrenceId","localOccurrenceId","source"],"type":"object"};
 
 function validate459(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -20518,8 +20668,8 @@ validate456.errors = vErrors;
 return errors === 0;
 }
 
-const schema604 = {"additionalProperties":false,"description":"Missing, explicitly empty and unknown schema observations are distinct.","properties":{"emptyBlocks":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"knownBlocks":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"knownFacts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"missingBlocks":{"type":"boolean"},"neighborOccurrences":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unknownBlocks":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unknownRequiredBlocks":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unknownSamples":{"items":{"$ref":"#/definitions/UnknownSourceBlockSample"},"type":"array"}},"required":["missingBlocks","knownBlocks","knownFacts","emptyBlocks","unknownBlocks","unknownRequiredBlocks","neighborOccurrences","unknownSamples"],"type":"object"};
-const schema605 = {"additionalProperties":false,"properties":{"blockIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"handling":{"$ref":"#/definitions/ExtensionHandling"},"schema":{"$ref":"#/definitions/ContractRef"},"target":{"$ref":"#/definitions/ContentTarget"}},"required":["blockIndex","target","schema","handling"],"type":"object"};
+const schema605 = {"additionalProperties":false,"description":"Missing, explicitly empty and unknown schema observations are distinct.","properties":{"emptyBlocks":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"knownBlocks":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"knownFacts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"missingBlocks":{"type":"boolean"},"neighborOccurrences":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unknownBlocks":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unknownRequiredBlocks":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unknownSamples":{"items":{"$ref":"#/definitions/UnknownSourceBlockSample"},"type":"array"}},"required":["missingBlocks","knownBlocks","knownFacts","emptyBlocks","unknownBlocks","unknownRequiredBlocks","neighborOccurrences","unknownSamples"],"type":"object"};
+const schema606 = {"additionalProperties":false,"properties":{"blockIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"handling":{"$ref":"#/definitions/ExtensionHandling"},"schema":{"$ref":"#/definitions/ContractRef"},"target":{"$ref":"#/definitions/ContentTarget"}},"required":["blockIndex","target","schema","handling"],"type":"object"};
 
 function validate464(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -21363,9 +21513,9 @@ validate463.errors = vErrors;
 return errors === 0;
 }
 
-const schema609 = {"additionalProperties":false,"properties":{"byteBudget":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"extracted":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"inferred":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"itemLimit":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"neighbors":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"notSelected":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"samples":{"items":{"$ref":"#/definitions/SourceContextOmissionSample"},"type":"array"}},"required":["extracted","inferred","neighbors","notSelected","byteBudget","itemLimit","samples"],"type":"object"};
-const schema610 = {"description":"A pointer only; omitted text and rationale never enter the capture.","oneOf":[{"additionalProperties":false,"properties":{"blockIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"factIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"kind":{"const":"fact","type":"string"},"reason":{"$ref":"#/definitions/SourceContextOmissionReason"}},"required":["kind","blockIndex","factIndex","reason"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"neighbor","type":"string"},"occurrenceId":{"$ref":"#/definitions/ExecutionId"},"reason":{"$ref":"#/definitions/SourceContextOmissionReason"}},"required":["kind","occurrenceId","reason"],"type":"object"}]};
-const schema611 = {"enum":["not-selected","byte-budget","item-limit"],"type":"string"};
+const schema610 = {"additionalProperties":false,"properties":{"byteBudget":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"extracted":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"inferred":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"itemLimit":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"neighbors":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"notSelected":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"samples":{"items":{"$ref":"#/definitions/SourceContextOmissionSample"},"type":"array"}},"required":["extracted","inferred","neighbors","notSelected","byteBudget","itemLimit","samples"],"type":"object"};
+const schema611 = {"description":"A pointer only; omitted text and rationale never enter the capture.","oneOf":[{"additionalProperties":false,"properties":{"blockIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"factIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"kind":{"const":"fact","type":"string"},"reason":{"$ref":"#/definitions/SourceContextOmissionReason"}},"required":["kind","blockIndex","factIndex","reason"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"neighbor","type":"string"},"occurrenceId":{"$ref":"#/definitions/ExecutionId"},"reason":{"$ref":"#/definitions/SourceContextOmissionReason"}},"required":["kind","occurrenceId","reason"],"type":"object"}]};
+const schema612 = {"enum":["not-selected","byte-budget","item-limit"],"type":"string"};
 
 function validate468(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -21536,7 +21686,7 @@ vErrors.push(err10);
 errors++;
 }
 if(!(((data3 === "not-selected") || (data3 === "byte-budget")) || (data3 === "item-limit"))){
-const err11 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/SourceContextOmissionReason/enum",keyword:"enum",params:{allowedValues: schema611.enum},message:"must be equal to one of the allowed values"};
+const err11 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/SourceContextOmissionReason/enum",keyword:"enum",params:{allowedValues: schema612.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err11];
 }
@@ -21679,7 +21829,7 @@ vErrors.push(err19);
 errors++;
 }
 if(!(((data6 === "not-selected") || (data6 === "byte-budget")) || (data6 === "item-limit"))){
-const err20 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/SourceContextOmissionReason/enum",keyword:"enum",params:{allowedValues: schema611.enum},message:"must be equal to one of the allowed values"};
+const err20 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/SourceContextOmissionReason/enum",keyword:"enum",params:{allowedValues: schema612.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err20];
 }
@@ -21991,7 +22141,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema594.properties, key0))){
+if(!(func2.call(schema595.properties, key0))){
 validate454.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -22548,7 +22698,7 @@ validate453.errors = vErrors;
 return errors === 0;
 }
 
-const schema619 = {"additionalProperties":false,"properties":{"protected":{"type":"boolean"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"source":{"type":"string"},"target":{"type":"string"}},"required":["revisionId","source","target","protected"],"type":"object"};
+const schema620 = {"additionalProperties":false,"properties":{"protected":{"type":"boolean"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"source":{"type":"string"},"target":{"type":"string"}},"required":["revisionId","source","target","protected"],"type":"object"};
 
 function validate474(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -22656,7 +22806,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema564.properties, key0))){
+if(!(func2.call(schema565.properties, key0))){
 validate428.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -23144,10 +23294,10 @@ return errors === 0;
 }
 
 export const validateResponseView = validate869;
-const schema1142 = {"$id":"urn:tsumugi:ipc:ai:responses:view","$ref":"urn:tsumugi:ipc:ai:responses#/properties/view"};
-const schema622 = {"additionalProperties":false,"properties":{"budget":{"anyOf":[{"$ref":"#/definitions/ProviderBudget"},{"type":"null"}]},"config":{"$ref":"#/definitions/AiConfig"},"detail":{"$ref":"#/definitions/AttemptDetail"},"planGeneration":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"planId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"recipe":{"type":"string"},"rows":{"items":{"$ref":"#/definitions/AiRow"},"type":"array"}},"required":["planId","planGeneration","budget","config","recipe","detail","rows"],"type":"object"};
-const schema623 = {"additionalProperties":false,"properties":{"cacheRead":{"$ref":"#/definitions/ReportedTokenTotal"},"cacheWrite":{"$ref":"#/definitions/ReportedTokenTotal"},"completionTokens":{"pattern":"^(0|[1-9][0-9]{0,21})$","type":"string"},"dispatched":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"},"legacyHeld":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"},"limit":{"format":"uint32","maximum":300,"minimum":1,"type":"integer"},"promptTokens":{"pattern":"^(0|[1-9][0-9]{0,21})$","type":"string"},"reasoning":{"$ref":"#/definitions/ReportedTokenTotal"},"unresolved":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"},"usageUnknown":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"}},"required":["limit","dispatched","legacyHeld","unresolved","usageUnknown","promptTokens","completionTokens","cacheRead","cacheWrite","reasoning"],"type":"object"};
-const schema624 = {"additionalProperties":false,"properties":{"tokens":{"description":"Sum of the reliably reported portion; unknown requests are not zeros.","pattern":"^(0|[1-9][0-9]{0,21})$","type":"string"},"unknownRequests":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"}},"required":["tokens","unknownRequests"],"type":"object"};
+const schema1144 = {"$id":"urn:tsumugi:ipc:ai:responses:view","$ref":"urn:tsumugi:ipc:ai:responses#/properties/view"};
+const schema623 = {"additionalProperties":false,"properties":{"budget":{"anyOf":[{"$ref":"#/definitions/ProviderBudget"},{"type":"null"}]},"config":{"$ref":"#/definitions/AiConfig"},"detail":{"$ref":"#/definitions/AttemptDetail"},"planGeneration":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"planId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"recipe":{"type":"string"},"rows":{"items":{"$ref":"#/definitions/AiRow"},"type":"array"}},"required":["planId","planGeneration","budget","config","recipe","detail","rows"],"type":"object"};
+const schema624 = {"additionalProperties":false,"properties":{"cacheRead":{"$ref":"#/definitions/ReportedTokenTotal"},"cacheWrite":{"$ref":"#/definitions/ReportedTokenTotal"},"completionTokens":{"pattern":"^(0|[1-9][0-9]{0,21})$","type":"string"},"dispatched":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"},"legacyHeld":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"},"limit":{"format":"uint32","maximum":300,"minimum":1,"type":"integer"},"promptTokens":{"pattern":"^(0|[1-9][0-9]{0,21})$","type":"string"},"reasoning":{"$ref":"#/definitions/ReportedTokenTotal"},"unresolved":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"},"usageUnknown":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"}},"required":["limit","dispatched","legacyHeld","unresolved","usageUnknown","promptTokens","completionTokens","cacheRead","cacheWrite","reasoning"],"type":"object"};
+const schema625 = {"additionalProperties":false,"properties":{"tokens":{"description":"Sum of the reliably reported portion; unknown requests are not zeros.","pattern":"^(0|[1-9][0-9]{0,21})$","type":"string"},"unknownRequests":{"format":"uint32","maximum":300,"minimum":0,"type":"integer"}},"required":["tokens","unknownRequests"],"type":"object"};
 const pattern92 = new RegExp("^(0|[1-9][0-9]{0,21})$", "u");
 
 function validate480(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -23163,7 +23313,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema623.properties, key0))){
+if(!(func2.call(schema624.properties, key0))){
 validate480.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -23616,14 +23766,14 @@ validate480.errors = vErrors;
 return errors === 0;
 }
 
-const schema627 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"items":{"items":{"$ref":"#/definitions/ItemView"},"type":"array"},"nextOffset":{"format":"uint32","maximum":4294967295,"minimum":0,"type":["integer","null"]},"operation":{"type":"string"},"progress":{"$ref":"#/definitions/Progress"},"recovery":{"$ref":"#/definitions/RecoveryPlan"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["attemptId","taskId","operation","progress","items","recovery","nextOffset"],"type":"object"};
-const schema637 = {"additionalProperties":false,"properties":{"adopted":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"cancelled":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"failed":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"queued":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"running":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"succeeded":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"total":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unknown":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["total","queued","running","succeeded","failed","cancelled","unknown","adopted"],"type":"object"};
-const schema629 = {"additionalProperties":false,"description":"Read-only execution projection shared by human and bounded consumers.","properties":{"resultId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"scope":{"$ref":"#/definitions/Scope"},"status":{"$ref":"#/definitions/ItemStatus"}},"required":["status","scope","resultId"],"type":"object"};
-const schema631 = {"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"type":"string"},"locale":{"type":["string","null"]}},"required":["kind","id","locale"],"type":"object"};
-const schema632 = {"additionalProperties":false,"properties":{"adoption":{"$ref":"#/definitions/AdoptionState"},"cancellationRequested":{"type":"boolean"},"diagnostic":{"type":["string","null"]},"execution":{"$ref":"#/definitions/ExecutionState"},"itemId":{"$ref":"#/definitions/ExecutionId"},"retrySafe":{"type":"boolean"},"validation":{"$ref":"#/definitions/ValidationState"}},"required":["itemId","execution","validation","adoption","cancellationRequested","retrySafe","diagnostic"],"type":"object"};
-const schema633 = {"enum":["unapplied","committed","conflict","rejected"],"type":"string"};
-const schema634 = {"enum":["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"],"type":"string"};
-const schema636 = {"enum":["absent","pending","valid","invalid"],"type":"string"};
+const schema628 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"items":{"items":{"$ref":"#/definitions/ItemView"},"type":"array"},"nextOffset":{"format":"uint32","maximum":4294967295,"minimum":0,"type":["integer","null"]},"operation":{"type":"string"},"progress":{"$ref":"#/definitions/Progress"},"recovery":{"$ref":"#/definitions/RecoveryPlan"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["attemptId","taskId","operation","progress","items","recovery","nextOffset"],"type":"object"};
+const schema638 = {"additionalProperties":false,"properties":{"adopted":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"cancelled":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"failed":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"queued":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"running":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"succeeded":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"total":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unknown":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["total","queued","running","succeeded","failed","cancelled","unknown","adopted"],"type":"object"};
+const schema630 = {"additionalProperties":false,"description":"Read-only execution projection shared by human and bounded consumers.","properties":{"resultId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"scope":{"$ref":"#/definitions/Scope"},"status":{"$ref":"#/definitions/ItemStatus"}},"required":["status","scope","resultId"],"type":"object"};
+const schema632 = {"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"type":"string"},"locale":{"type":["string","null"]}},"required":["kind","id","locale"],"type":"object"};
+const schema633 = {"additionalProperties":false,"properties":{"adoption":{"$ref":"#/definitions/AdoptionState"},"cancellationRequested":{"type":"boolean"},"diagnostic":{"type":["string","null"]},"execution":{"$ref":"#/definitions/ExecutionState"},"itemId":{"$ref":"#/definitions/ExecutionId"},"retrySafe":{"type":"boolean"},"validation":{"$ref":"#/definitions/ValidationState"}},"required":["itemId","execution","validation","adoption","cancellationRequested","retrySafe","diagnostic"],"type":"object"};
+const schema634 = {"enum":["unapplied","committed","conflict","rejected"],"type":"string"};
+const schema635 = {"enum":["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"],"type":"string"};
+const schema637 = {"enum":["absent","pending","valid","invalid"],"type":"string"};
 
 function validate485(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -23653,7 +23803,7 @@ validate485.errors = [{instancePath:instancePath+"/adoption",schemaPath:"#/defin
 return false;
 }
 if(!((((data0 === "unapplied") || (data0 === "committed")) || (data0 === "conflict")) || (data0 === "rejected"))){
-validate485.errors = [{instancePath:instancePath+"/adoption",schemaPath:"#/definitions/AdoptionState/enum",keyword:"enum",params:{allowedValues: schema633.enum},message:"must be equal to one of the allowed values"}];
+validate485.errors = [{instancePath:instancePath+"/adoption",schemaPath:"#/definitions/AdoptionState/enum",keyword:"enum",params:{allowedValues: schema634.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -23678,7 +23828,7 @@ if(data.diagnostic !== undefined){
 let data2 = data.diagnostic;
 const _errs7 = errors;
 if((typeof data2 !== "string") && (data2 !== null)){
-validate485.errors = [{instancePath:instancePath+"/diagnostic",schemaPath:"#/properties/diagnostic/type",keyword:"type",params:{type: schema632.properties.diagnostic.type},message:"must be string,null"}];
+validate485.errors = [{instancePath:instancePath+"/diagnostic",schemaPath:"#/properties/diagnostic/type",keyword:"type",params:{type: schema633.properties.diagnostic.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs7 === errors;
@@ -23695,7 +23845,7 @@ validate485.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/defi
 return false;
 }
 if(!((((((data3 === "queued") || (data3 === "dispatched")) || (data3 === "succeeded")) || (data3 === "failed")) || (data3 === "cancelled-before-dispatch")) || (data3 === "unknown"))){
-validate485.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema634.enum},message:"must be equal to one of the allowed values"}];
+validate485.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema635.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs9 === errors;
@@ -23746,7 +23896,7 @@ validate485.errors = [{instancePath:instancePath+"/validation",schemaPath:"#/def
 return false;
 }
 if(!((((data6 === "absent") || (data6 === "pending")) || (data6 === "valid")) || (data6 === "invalid"))){
-validate485.errors = [{instancePath:instancePath+"/validation",schemaPath:"#/definitions/ValidationState/enum",keyword:"enum",params:{allowedValues: schema636.enum},message:"must be equal to one of the allowed values"}];
+validate485.errors = [{instancePath:instancePath+"/validation",schemaPath:"#/definitions/ValidationState/enum",keyword:"enum",params:{allowedValues: schema637.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs17 === errors;
@@ -23919,7 +24069,7 @@ if(data1.locale !== undefined){
 let data4 = data1.locale;
 const _errs17 = errors;
 if((typeof data4 !== "string") && (data4 !== null)){
-validate484.errors = [{instancePath:instancePath+"/scope/locale",schemaPath:"#/definitions/Scope/properties/locale/type",keyword:"type",params:{type: schema631.properties.locale.type},message:"must be string,null"}];
+validate484.errors = [{instancePath:instancePath+"/scope/locale",schemaPath:"#/definitions/Scope/properties/locale/type",keyword:"type",params:{type: schema632.properties.locale.type},message:"must be string,null"}];
 return false;
 }
 var valid4 = _errs17 === errors;
@@ -23968,9 +24118,9 @@ validate484.errors = vErrors;
 return errors === 0;
 }
 
-const schema638 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"units":{"items":{"$ref":"#/definitions/RecoveryUnit"},"type":"array"}},"required":["attemptId","units"],"type":"object"};
-const schema640 = {"additionalProperties":false,"properties":{"actions":{"items":{"$ref":"#/definitions/RecoveryAction"},"type":"array"},"blockedReason":{"type":["string","null"]},"itemIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"receiptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"remainingItemIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"resultIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"scopes":{"items":{"$ref":"#/definitions/Scope"},"type":"array"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","itemIds","scopes","remainingItemIds","resultIds","actions","blockedReason","receiptId"],"type":"object"};
-const schema641 = {"enum":["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"],"type":"string"};
+const schema639 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"units":{"items":{"$ref":"#/definitions/RecoveryUnit"},"type":"array"}},"required":["attemptId","units"],"type":"object"};
+const schema641 = {"additionalProperties":false,"properties":{"actions":{"items":{"$ref":"#/definitions/RecoveryAction"},"type":"array"},"blockedReason":{"type":["string","null"]},"itemIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"receiptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"remainingItemIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"resultIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"scopes":{"items":{"$ref":"#/definitions/Scope"},"type":"array"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","itemIds","scopes","remainingItemIds","resultIds","actions","blockedReason","receiptId"],"type":"object"};
+const schema642 = {"enum":["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"],"type":"string"};
 
 function validate489(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -24007,7 +24157,7 @@ validate489.errors = [{instancePath:instancePath+"/actions/" + i0,schemaPath:"#/
 return false;
 }
 if(!((((((data1 === "resume-undispatched") || (data1 === "retry-safe-failure")) || (data1 === "validate-output")) || (data1 === "adopt-result")) || (data1 === "query-outcome")) || (data1 === "view-receipt"))){
-validate489.errors = [{instancePath:instancePath+"/actions/" + i0,schemaPath:"#/definitions/RecoveryAction/enum",keyword:"enum",params:{allowedValues: schema641.enum},message:"must be equal to one of the allowed values"}];
+validate489.errors = [{instancePath:instancePath+"/actions/" + i0,schemaPath:"#/definitions/RecoveryAction/enum",keyword:"enum",params:{allowedValues: schema642.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid1 = _errs4 === errors;
@@ -24031,7 +24181,7 @@ if(data.blockedReason !== undefined){
 let data2 = data.blockedReason;
 const _errs7 = errors;
 if((typeof data2 !== "string") && (data2 !== null)){
-validate489.errors = [{instancePath:instancePath+"/blockedReason",schemaPath:"#/properties/blockedReason/type",keyword:"type",params:{type: schema640.properties.blockedReason.type},message:"must be string,null"}];
+validate489.errors = [{instancePath:instancePath+"/blockedReason",schemaPath:"#/properties/blockedReason/type",keyword:"type",params:{type: schema641.properties.blockedReason.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs7 === errors;
@@ -24293,7 +24443,7 @@ if(data11.locale !== undefined){
 let data14 = data11.locale;
 const _errs41 = errors;
 if((typeof data14 !== "string") && (data14 !== null)){
-validate489.errors = [{instancePath:instancePath+"/scopes/" + i4+"/locale",schemaPath:"#/definitions/Scope/properties/locale/type",keyword:"type",params:{type: schema631.properties.locale.type},message:"must be string,null"}];
+validate489.errors = [{instancePath:instancePath+"/scopes/" + i4+"/locale",schemaPath:"#/definitions/Scope/properties/locale/type",keyword:"type",params:{type: schema632.properties.locale.type},message:"must be string,null"}];
 return false;
 }
 var valid13 = _errs41 === errors;
@@ -24530,7 +24680,7 @@ if(data.nextOffset !== undefined){
 let data3 = data.nextOffset;
 const _errs8 = errors;
 if((!(((typeof data3 == "number") && (!(data3 % 1) && !isNaN(data3))) && (isFinite(data3)))) && (data3 !== null)){
-validate483.errors = [{instancePath:instancePath+"/nextOffset",schemaPath:"#/properties/nextOffset/type",keyword:"type",params:{type: schema627.properties.nextOffset.type},message:"must be integer,null"}];
+validate483.errors = [{instancePath:instancePath+"/nextOffset",schemaPath:"#/properties/nextOffset/type",keyword:"type",params:{type: schema628.properties.nextOffset.type},message:"must be integer,null"}];
 return false;
 }
 if(errors === _errs8){
@@ -24873,15 +25023,15 @@ validate483.errors = vErrors;
 return errors === 0;
 }
 
-const schema651 = {"additionalProperties":false,"properties":{"automation":{"anyOf":[{"$ref":"#/definitions/EffectView"},{"type":"null"}]},"candidateDecision":{"anyOf":[{"$ref":"#/definitions/CandidateDecision"},{"type":"null"}]},"item":{"$ref":"#/definitions/AiItemView"},"itemId":{"$ref":"#/definitions/ExecutionId"},"output":{"anyOf":[{"$ref":"#/definitions/AiOutputView"},{"type":"null"}]},"resultId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"savedRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]}},"required":["item","itemId","resultId","output","savedRevisionId","automation"],"type":"object"};
-const schema652 = {"additionalProperties":false,"properties":{"actionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"error":{"anyOf":[{"$ref":"#/definitions/CommandError"},{"type":"null"}]},"phase":{"$ref":"#/definitions/EffectPhase"},"receipt":{"anyOf":[{"$ref":"#/definitions/AutomaticSelectionReceipt"},{"type":"null"}]},"retryable":{"type":"boolean"}},"required":["phase","actionId","receipt","error","retryable"],"type":"object"};
-const schema683 = {"enum":["waiting","saving-candidate","saved","checking","checked","selected","blocked","failed","cancelled"],"type":"string"};
-const schema654 = {"properties":{"code":{"$ref":"#/definitions/CommandErrorCode"},"conflict":{"anyOf":[{"$ref":"#/definitions/ConflictEvidence"},{"type":"null"}]},"currentRevision":{"pattern":"^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$","type":"string"},"diagnosticId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"field":{"type":"string"},"itemIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"outcome":{"$ref":"#/definitions/CommandOutcome"},"reason":{"type":"string"},"recoveryActions":{"items":{"$ref":"#/definitions/RecoveryAction"},"type":"array"},"recoveryGuidance":{"anyOf":[{"$ref":"#/definitions/RecoveryGuidance"},{"type":"null"}]},"recoveryRequired":{"type":"boolean"},"stage":{"$ref":"#/definitions/CommandStage"}},"required":["code","stage","outcome","recoveryRequired"],"type":"object"};
-const schema655 = {"enum":["invalid-input","destination-conflict","missing-project","permission-denied","unsupported-schema","corrupt-project","stale-revision","session-invalid","project-in-use","busy","storage-failed","outcome-unknown","limit-exceeded","result-mismatch","output-invalid","dependency-conflict","cancelled"],"type":"string"};
-const schema679 = {"enum":["rejected","unknown"],"type":"string"};
-const schema681 = {"description":"A read or user decision to make before another mutation; never replay authority.","enum":["reconcile-original","review-current","choose-destination"],"type":"string"};
-const schema682 = {"enum":["create","open","read","rename","add-target-locale","set-target-locales","close","plugin-install","plugin-settings","model-connections","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"],"type":"string"};
-const schema656 = {"description":"Values compared at the rejecting boundary, without user text or credentials.","oneOf":[{"additionalProperties":false,"properties":{"current":{"$ref":"#/definitions/ExecutionId"},"expected":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"source-revision","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"translation-selection","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"type":"string"},"expected":{"type":"string"},"kind":{"const":"review-basis","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"review-decision","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"review-check","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"review-waiver","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"source-fallback","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"type":"string"},"expected":{"type":"string"},"kind":{"const":"build-eligibility","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"type":"string"},"expected":{"type":"string"},"kind":{"const":"comparison-basis","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"term-revision","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"context-revision","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"source-snapshot","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"$ref":"#/definitions/Revision"},"expected":{"$ref":"#/definitions/Revision"},"kind":{"const":"content-revision","type":"string"}},"required":["kind","expected","current"],"type":"object"}]};
+const schema652 = {"additionalProperties":false,"properties":{"automation":{"anyOf":[{"$ref":"#/definitions/EffectView"},{"type":"null"}]},"candidateDecision":{"anyOf":[{"$ref":"#/definitions/CandidateDecision"},{"type":"null"}]},"item":{"$ref":"#/definitions/AiItemView"},"itemId":{"$ref":"#/definitions/ExecutionId"},"output":{"anyOf":[{"$ref":"#/definitions/AiOutputView"},{"type":"null"}]},"resultId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"savedRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]}},"required":["item","itemId","resultId","output","savedRevisionId","automation"],"type":"object"};
+const schema653 = {"additionalProperties":false,"properties":{"actionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"error":{"anyOf":[{"$ref":"#/definitions/CommandError"},{"type":"null"}]},"phase":{"$ref":"#/definitions/EffectPhase"},"receipt":{"anyOf":[{"$ref":"#/definitions/AutomaticSelectionReceipt"},{"type":"null"}]},"retryable":{"type":"boolean"}},"required":["phase","actionId","receipt","error","retryable"],"type":"object"};
+const schema684 = {"enum":["waiting","saving-candidate","saved","checking","checked","selected","blocked","failed","cancelled"],"type":"string"};
+const schema655 = {"properties":{"code":{"$ref":"#/definitions/CommandErrorCode"},"conflict":{"anyOf":[{"$ref":"#/definitions/ConflictEvidence"},{"type":"null"}]},"currentRevision":{"pattern":"^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$","type":"string"},"diagnosticId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"field":{"type":"string"},"itemIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"outcome":{"$ref":"#/definitions/CommandOutcome"},"reason":{"type":"string"},"recoveryActions":{"items":{"$ref":"#/definitions/RecoveryAction"},"type":"array"},"recoveryGuidance":{"anyOf":[{"$ref":"#/definitions/RecoveryGuidance"},{"type":"null"}]},"recoveryRequired":{"type":"boolean"},"stage":{"$ref":"#/definitions/CommandStage"}},"required":["code","stage","outcome","recoveryRequired"],"type":"object"};
+const schema656 = {"enum":["invalid-input","destination-conflict","missing-project","permission-denied","unsupported-schema","corrupt-project","stale-revision","session-invalid","project-in-use","busy","storage-failed","outcome-unknown","limit-exceeded","result-mismatch","output-invalid","dependency-conflict","cancelled"],"type":"string"};
+const schema680 = {"enum":["rejected","unknown"],"type":"string"};
+const schema682 = {"description":"A read or user decision to make before another mutation; never replay authority.","enum":["reconcile-original","review-current","choose-destination"],"type":"string"};
+const schema683 = {"enum":["create","open","read","rename","add-target-locale","set-target-locales","close","plugin-install","plugin-settings","model-connections","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"],"type":"string"};
+const schema657 = {"description":"Values compared at the rejecting boundary, without user text or credentials.","oneOf":[{"additionalProperties":false,"properties":{"current":{"$ref":"#/definitions/ExecutionId"},"expected":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"source-revision","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"translation-selection","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"type":"string"},"expected":{"type":"string"},"kind":{"const":"review-basis","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"review-decision","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"review-check","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"review-waiver","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"source-fallback","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"type":"string"},"expected":{"type":"string"},"kind":{"const":"build-eligibility","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"type":"string"},"expected":{"type":"string"},"kind":{"const":"comparison-basis","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"term-revision","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"context-revision","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expected":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"kind":{"const":"source-snapshot","type":"string"}},"required":["kind","expected","current"],"type":"object"},{"additionalProperties":false,"properties":{"current":{"$ref":"#/definitions/Revision"},"expected":{"$ref":"#/definitions/Revision"},"kind":{"const":"content-revision","type":"string"}},"required":["kind","expected","current"],"type":"object"}]};
 
 function validate496(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -27479,7 +27629,7 @@ validate495.errors = [{instancePath:instancePath+"/code",schemaPath:"#/definitio
 return false;
 }
 if(!(((((((((((((((((data0 === "invalid-input") || (data0 === "destination-conflict")) || (data0 === "missing-project")) || (data0 === "permission-denied")) || (data0 === "unsupported-schema")) || (data0 === "corrupt-project")) || (data0 === "stale-revision")) || (data0 === "session-invalid")) || (data0 === "project-in-use")) || (data0 === "busy")) || (data0 === "storage-failed")) || (data0 === "outcome-unknown")) || (data0 === "limit-exceeded")) || (data0 === "result-mismatch")) || (data0 === "output-invalid")) || (data0 === "dependency-conflict")) || (data0 === "cancelled"))){
-validate495.errors = [{instancePath:instancePath+"/code",schemaPath:"#/definitions/CommandErrorCode/enum",keyword:"enum",params:{allowedValues: schema655.enum},message:"must be equal to one of the allowed values"}];
+validate495.errors = [{instancePath:instancePath+"/code",schemaPath:"#/definitions/CommandErrorCode/enum",keyword:"enum",params:{allowedValues: schema656.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs1 === errors;
@@ -27702,7 +27852,7 @@ validate495.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/defini
 return false;
 }
 if(!((data7 === "rejected") || (data7 === "unknown"))){
-validate495.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/CommandOutcome/enum",keyword:"enum",params:{allowedValues: schema679.enum},message:"must be equal to one of the allowed values"}];
+validate495.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/CommandOutcome/enum",keyword:"enum",params:{allowedValues: schema680.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs25 === errors;
@@ -27738,7 +27888,7 @@ validate495.errors = [{instancePath:instancePath+"/recoveryActions/" + i1,schema
 return false;
 }
 if(!((((((data10 === "resume-undispatched") || (data10 === "retry-safe-failure")) || (data10 === "validate-output")) || (data10 === "adopt-result")) || (data10 === "query-outcome")) || (data10 === "view-receipt"))){
-validate495.errors = [{instancePath:instancePath+"/recoveryActions/" + i1,schemaPath:"#/definitions/RecoveryAction/enum",keyword:"enum",params:{allowedValues: schema641.enum},message:"must be equal to one of the allowed values"}];
+validate495.errors = [{instancePath:instancePath+"/recoveryActions/" + i1,schemaPath:"#/definitions/RecoveryAction/enum",keyword:"enum",params:{allowedValues: schema642.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid8 = _errs32 === errors;
@@ -27775,7 +27925,7 @@ vErrors.push(err6);
 errors++;
 }
 if(!(((data11 === "reconcile-original") || (data11 === "review-current")) || (data11 === "choose-destination"))){
-const err7 = {instancePath:instancePath+"/recoveryGuidance",schemaPath:"#/definitions/RecoveryGuidance/enum",keyword:"enum",params:{allowedValues: schema681.enum},message:"must be equal to one of the allowed values"};
+const err7 = {instancePath:instancePath+"/recoveryGuidance",schemaPath:"#/definitions/RecoveryGuidance/enum",keyword:"enum",params:{allowedValues: schema682.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err7];
 }
@@ -27850,7 +28000,7 @@ validate495.errors = [{instancePath:instancePath+"/stage",schemaPath:"#/definiti
 return false;
 }
 if(!(((((((((((((((data13 === "create") || (data13 === "open")) || (data13 === "read")) || (data13 === "rename")) || (data13 === "add-target-locale")) || (data13 === "set-target-locales")) || (data13 === "close")) || (data13 === "plugin-install")) || (data13 === "plugin-settings")) || (data13 === "model-connections")) || (data13 === "execution-read")) || (data13 === "execution-cancel")) || (data13 === "execution-recover")) || (data13 === "execution-adopt")) || (data13 === "execution-quiesce"))){
-validate495.errors = [{instancePath:instancePath+"/stage",schemaPath:"#/definitions/CommandStage/enum",keyword:"enum",params:{allowedValues: schema682.enum},message:"must be equal to one of the allowed values"}];
+validate495.errors = [{instancePath:instancePath+"/stage",schemaPath:"#/definitions/CommandStage/enum",keyword:"enum",params:{allowedValues: schema683.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs44 === errors;
@@ -27880,10 +28030,10 @@ validate495.errors = vErrors;
 return errors === 0;
 }
 
-const schema684 = {"additionalProperties":false,"description":"A policy action is distinct from a human review decision. Replaying this\nreceipt does not select again or restore an older authority or check basis.\nCandidatesOnly records candidate QA with no selection, current CheckRun or\nselection block; its rule outcomes remain evidence rather than approval.","properties":{"blocked":{"anyOf":[{"$ref":"#/definitions/AutomaticSelectionBlock"},{"type":"null"}]},"candidateBasis":{"$ref":"#/definitions/ReviewBasis"},"capturedSelectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"checkRunId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"evidence":{"anyOf":[{"$ref":"#/definitions/ReviewCheckEvidence"},{"type":"null"}]},"policy":{"$ref":"#/definitions/SelectionPolicy"},"policyVersion":{"type":"string"},"protectionRevision":{"$ref":"#/definitions/Revision"},"request":{"$ref":"#/definitions/AutomaticSelectionRequest"},"rules":{"items":{"$ref":"#/definitions/CheckRuleResult"},"type":"array"},"selection":{"anyOf":[{"$ref":"#/definitions/TranslationSelection"},{"type":"null"}]},"validatorVersion":{"type":"string"}},"required":["request","policyVersion","policy","protectionRevision","candidateBasis","capturedSelectionId","validatorVersion","rules","evidence","blocked","selection","checkRunId"],"type":"object"};
-const schema685 = {"enum":["protected","already-selected","checks"],"type":"string"};
-const schema765 = {"enum":["candidates-only","missing-only","replace-captured-selection"],"type":"string"};
-const schema686 = {"additionalProperties":false,"properties":{"contextRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"revisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"selectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"termRevisionIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["sourceSnapshotId","sourceRevisionId","selectionId","revisionId","contextRevisionId","termRevisionIds"],"type":"object"};
+const schema685 = {"additionalProperties":false,"description":"A policy action is distinct from a human review decision. Replaying this\nreceipt does not select again or restore an older authority or check basis.\nCandidatesOnly records candidate QA with no selection, current CheckRun or\nselection block; its rule outcomes remain evidence rather than approval.","properties":{"blocked":{"anyOf":[{"$ref":"#/definitions/AutomaticSelectionBlock"},{"type":"null"}]},"candidateBasis":{"$ref":"#/definitions/ReviewBasis"},"capturedSelectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"checkRunId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"evidence":{"anyOf":[{"$ref":"#/definitions/ReviewCheckEvidence"},{"type":"null"}]},"policy":{"$ref":"#/definitions/SelectionPolicy"},"policyVersion":{"type":"string"},"protectionRevision":{"$ref":"#/definitions/Revision"},"request":{"$ref":"#/definitions/AutomaticSelectionRequest"},"rules":{"items":{"$ref":"#/definitions/CheckRuleResult"},"type":"array"},"selection":{"anyOf":[{"$ref":"#/definitions/TranslationSelection"},{"type":"null"}]},"validatorVersion":{"type":"string"}},"required":["request","policyVersion","policy","protectionRevision","candidateBasis","capturedSelectionId","validatorVersion","rules","evidence","blocked","selection","checkRunId"],"type":"object"};
+const schema686 = {"enum":["protected","already-selected","checks"],"type":"string"};
+const schema766 = {"enum":["candidates-only","missing-only","replace-captured-selection"],"type":"string"};
+const schema687 = {"additionalProperties":false,"properties":{"contextRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"revisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"selectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"termRevisionIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["sourceSnapshotId","sourceRevisionId","selectionId","revisionId","contextRevisionId","termRevisionIds"],"type":"object"};
 
 function validate500(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -28236,14 +28386,14 @@ validate500.errors = vErrors;
 return errors === 0;
 }
 
-const schema695 = {"additionalProperties":false,"properties":{"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"diagnostics":{"items":{"$ref":"#/definitions/TextReviewDiagnostic"},"type":"array"},"origins":{"items":{"$ref":"#/definitions/ReviewCheckOriginEvidence"},"type":"array"},"qaBasis":{"type":"string"},"requiredChecks":{"$ref":"#/definitions/RequiredCheckSet"},"results":{"items":{"$ref":"#/definitions/CheckResult"},"type":"array"},"sourceBinding":{"$ref":"#/definitions/SourceReviewBinding"}},"required":["qaBasis","requiredChecks","results","sourceBinding","advisoryChecks","origins","diagnostics"],"type":"object"};
-const schema696 = {"additionalProperties":false,"description":"Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.","properties":{"binding":{"$ref":"#/definitions/TextReviewBinding"},"declarationResourceId":{"type":"string"},"execution":{"$ref":"#/definitions/PluginExecutionBinding"},"resourcePins":{"items":{"$ref":"#/definitions/TextReviewResourcePin"},"type":"array"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["binding","execution","declarationResourceId","resourcePins","rules"],"type":"object"};
-const schema697 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/TextReviewDeclaration"},"resources":{"items":{"$ref":"#/definitions/TextReviewResourceBinding"},"type":"array"}},"required":["declaration","checker","resources"],"type":"object"};
-const schema698 = {"additionalProperties":false,"description":"Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.","properties":{"declaration":{"$ref":"#/definitions/CapabilityDeclaration"},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["provider","declaration"],"type":"object"};
-const schema699 = {"additionalProperties":false,"properties":{"contract":{"$ref":"#/definitions/ContractRef"},"effect":{"$ref":"#/definitions/EffectKind"},"errorSchema":{"$ref":"#/definitions/ContractRef"},"inputSchema":{"$ref":"#/definitions/ContractRef"},"limits":{"$ref":"#/definitions/CapabilityLimits"},"outputSchema":{"$ref":"#/definitions/ContractRef"},"permissions":{"items":{"$ref":"#/definitions/PermissionRequest"},"type":"array"},"profiles":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["contract","inputSchema","outputSchema","errorSchema","profiles","effect","permissions","limits"],"type":"object"};
-const schema701 = {"description":"Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.","enum":["read-only","proposal","external"],"type":"string"};
-const schema704 = {"additionalProperties":false,"description":"Requested upper bounds. The host must also enforce its own current limits.","properties":{"concurrency":{"maximum":65535,"minimum":1,"type":"integer"},"maxInputBytes":{"maximum":4294967295,"minimum":1,"type":"integer"},"maxOutputBytes":{"maximum":4294967295,"minimum":1,"type":"integer"},"timeoutMs":{"maximum":4294967295,"minimum":1,"type":"integer"}},"required":["maxInputBytes","maxOutputBytes","concurrency","timeoutMs"],"type":"object"};
-const schema706 = {"description":"These are requested permissions, never an authorization token.","oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"captured-input","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"staged-output","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"contract":{"$ref":"#/definitions/ContractRef"},"kind":{"const":"project-service","type":"string"}},"required":["kind","contract"],"type":"object"},{"additionalProperties":false,"properties":{"destination":{"type":"string"},"kind":{"const":"network","type":"string"}},"required":["kind","destination"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"process","type":"string"},"program":{"type":"string"}},"required":["kind","program"],"type":"object"}]};
+const schema696 = {"additionalProperties":false,"properties":{"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"diagnostics":{"items":{"$ref":"#/definitions/TextReviewDiagnostic"},"type":"array"},"origins":{"items":{"$ref":"#/definitions/ReviewCheckOriginEvidence"},"type":"array"},"qaBasis":{"type":"string"},"requiredChecks":{"$ref":"#/definitions/RequiredCheckSet"},"results":{"items":{"$ref":"#/definitions/CheckResult"},"type":"array"},"sourceBinding":{"$ref":"#/definitions/SourceReviewBinding"}},"required":["qaBasis","requiredChecks","results","sourceBinding","advisoryChecks","origins","diagnostics"],"type":"object"};
+const schema697 = {"additionalProperties":false,"description":"Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.","properties":{"binding":{"$ref":"#/definitions/TextReviewBinding"},"declarationResourceId":{"type":"string"},"execution":{"$ref":"#/definitions/PluginExecutionBinding"},"resourcePins":{"items":{"$ref":"#/definitions/TextReviewResourcePin"},"type":"array"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["binding","execution","declarationResourceId","resourcePins","rules"],"type":"object"};
+const schema698 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/TextReviewDeclaration"},"resources":{"items":{"$ref":"#/definitions/TextReviewResourceBinding"},"type":"array"}},"required":["declaration","checker","resources"],"type":"object"};
+const schema699 = {"additionalProperties":false,"description":"Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.","properties":{"declaration":{"$ref":"#/definitions/CapabilityDeclaration"},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["provider","declaration"],"type":"object"};
+const schema700 = {"additionalProperties":false,"properties":{"contract":{"$ref":"#/definitions/ContractRef"},"effect":{"$ref":"#/definitions/EffectKind"},"errorSchema":{"$ref":"#/definitions/ContractRef"},"inputSchema":{"$ref":"#/definitions/ContractRef"},"limits":{"$ref":"#/definitions/CapabilityLimits"},"outputSchema":{"$ref":"#/definitions/ContractRef"},"permissions":{"items":{"$ref":"#/definitions/PermissionRequest"},"type":"array"},"profiles":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["contract","inputSchema","outputSchema","errorSchema","profiles","effect","permissions","limits"],"type":"object"};
+const schema702 = {"description":"Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.","enum":["read-only","proposal","external"],"type":"string"};
+const schema705 = {"additionalProperties":false,"description":"Requested upper bounds. The host must also enforce its own current limits.","properties":{"concurrency":{"maximum":65535,"minimum":1,"type":"integer"},"maxInputBytes":{"maximum":4294967295,"minimum":1,"type":"integer"},"maxOutputBytes":{"maximum":4294967295,"minimum":1,"type":"integer"},"timeoutMs":{"maximum":4294967295,"minimum":1,"type":"integer"}},"required":["maxInputBytes","maxOutputBytes","concurrency","timeoutMs"],"type":"object"};
+const schema707 = {"description":"These are requested permissions, never an authorization token.","oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"captured-input","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"staged-output","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"contract":{"$ref":"#/definitions/ContractRef"},"kind":{"const":"project-service","type":"string"}},"required":["kind","contract"],"type":"object"},{"additionalProperties":false,"properties":{"destination":{"type":"string"},"kind":{"const":"network","type":"string"}},"required":["kind","destination"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"process","type":"string"},"program":{"type":"string"}},"required":["kind","program"],"type":"object"}]};
 
 function validate507(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -29009,7 +29159,7 @@ validate506.errors = [{instancePath:instancePath+"/effect",schemaPath:"#/definit
 return false;
 }
 if(!(((data4 === "read-only") || (data4 === "proposal")) || (data4 === "external"))){
-validate506.errors = [{instancePath:instancePath+"/effect",schemaPath:"#/definitions/EffectKind/enum",keyword:"enum",params:{allowedValues: schema701.enum},message:"must be equal to one of the allowed values"}];
+validate506.errors = [{instancePath:instancePath+"/effect",schemaPath:"#/definitions/EffectKind/enum",keyword:"enum",params:{allowedValues: schema702.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs12 === errors;
@@ -29637,8 +29787,8 @@ validate506.errors = vErrors;
 return errors === 0;
 }
 
-const schema709 = {"additionalProperties":false,"description":"A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.","properties":{"componentId":{"type":"string"},"contributionId":{"type":"string"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","componentId","contributionId","packageDigest"],"type":"object"};
-const schema710 = {"additionalProperties":false,"description":"Claimed package identity; a host must authenticate the actual package source.","properties":{"id":{"type":"string"},"publisher":{"type":"string"},"version":{"type":"string"}},"required":["publisher","id","version"],"type":"object"};
+const schema710 = {"additionalProperties":false,"description":"A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.","properties":{"componentId":{"type":"string"},"contributionId":{"type":"string"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","componentId","contributionId","packageDigest"],"type":"object"};
+const schema711 = {"additionalProperties":false,"description":"Claimed package identity; a host must authenticate the actual package source.","properties":{"id":{"type":"string"},"publisher":{"type":"string"},"version":{"type":"string"}},"required":["publisher","id","version"],"type":"object"};
 
 function validate510(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -29839,9 +29989,9 @@ validate505.errors = vErrors;
 return errors === 0;
 }
 
-const schema711 = {"additionalProperties":false,"description":"One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.","properties":{"checker":{"type":"string"},"disposition":{"$ref":"#/definitions/TextReviewDisposition"},"profile":{"$ref":"#/definitions/ContractRef"},"rules":{"items":{"$ref":"#/definitions/TextReviewRuleDeclaration"},"type":"array"},"supportingResources":{"items":{"type":"string"},"type":"array"}},"required":["profile","checker","disposition","supportingResources","rules"],"type":"object"};
-const schema712 = {"description":"Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.","enum":["advisory"],"type":"string"};
-const schema714 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"requiresTranslation":{"type":"boolean"},"rule":{"$ref":"#/definitions/ContractRef"},"title":{"type":"string"}},"required":["rule","requiresTranslation","title","description"],"type":"object"};
+const schema712 = {"additionalProperties":false,"description":"One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.","properties":{"checker":{"type":"string"},"disposition":{"$ref":"#/definitions/TextReviewDisposition"},"profile":{"$ref":"#/definitions/ContractRef"},"rules":{"items":{"$ref":"#/definitions/TextReviewRuleDeclaration"},"type":"array"},"supportingResources":{"items":{"type":"string"},"type":"array"}},"required":["profile","checker","disposition","supportingResources","rules"],"type":"object"};
+const schema713 = {"description":"Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.","enum":["advisory"],"type":"string"};
+const schema715 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"requiresTranslation":{"type":"boolean"},"rule":{"$ref":"#/definitions/ContractRef"},"title":{"type":"string"}},"required":["rule","requiresTranslation","title","description"],"type":"object"};
 
 function validate514(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -30056,7 +30206,7 @@ validate513.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/de
 return false;
 }
 if(!(data1 === "advisory")){
-validate513.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/definitions/TextReviewDisposition/enum",keyword:"enum",params:{allowedValues: schema712.enum},message:"must be equal to one of the allowed values"}];
+validate513.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/definitions/TextReviewDisposition/enum",keyword:"enum",params:{allowedValues: schema713.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -30242,7 +30392,7 @@ validate513.errors = vErrors;
 return errors === 0;
 }
 
-const schema716 = {"additionalProperties":false,"description":"A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.","properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["contributionId","schema"],"type":"object"};
+const schema717 = {"additionalProperties":false,"description":"A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.","properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["contributionId","schema"],"type":"object"};
 
 function validate517(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -30478,9 +30628,9 @@ validate504.errors = vErrors;
 return errors === 0;
 }
 
-const schema718 = {"additionalProperties":false,"properties":{"applicationScope":{"anyOf":[{"$ref":"#/definitions/ApplicationScopeBasis"},{"type":"null"}]},"capability":{"$ref":"#/definitions/CapabilityBinding"},"componentScope":{"allOf":[{"$ref":"#/definitions/ComponentScope"}],"description":"Captured from the selected component, never inferred from a result."},"environment":{"allOf":[{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"}],"description":"Exact captured Node artifacts or actual native application Host identity.\nThis data value does not authenticate its source or grant execution."},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]}},"required":["capability","componentScope","applicationScope","profile","environment"],"type":"object"};
-const schema721 = {"enum":["application","project","attempt"],"type":"string"};
-const schema719 = {"additionalProperties":false,"description":"Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.","properties":{"activationGeneration":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"instanceId":{"$ref":"#/definitions/ExecutionId"}},"required":["instanceId","activationGeneration"],"type":"object"};
+const schema719 = {"additionalProperties":false,"properties":{"applicationScope":{"anyOf":[{"$ref":"#/definitions/ApplicationScopeBasis"},{"type":"null"}]},"capability":{"$ref":"#/definitions/CapabilityBinding"},"componentScope":{"allOf":[{"$ref":"#/definitions/ComponentScope"}],"description":"Captured from the selected component, never inferred from a result."},"environment":{"allOf":[{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"}],"description":"Exact captured Node artifacts or actual native application Host identity.\nThis data value does not authenticate its source or grant execution."},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]}},"required":["capability","componentScope","applicationScope","profile","environment"],"type":"object"};
+const schema722 = {"enum":["application","project","attempt"],"type":"string"};
+const schema720 = {"additionalProperties":false,"description":"Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.","properties":{"activationGeneration":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"instanceId":{"$ref":"#/definitions/ExecutionId"}},"required":["instanceId","activationGeneration"],"type":"object"};
 
 function validate521(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -30563,13 +30713,13 @@ validate521.errors = vErrors;
 return errors === 0;
 }
 
-const schema722 = {"anyOf":[{"$ref":"#/definitions/RuntimeEnvironmentDescriptor"},{"$ref":"#/definitions/NativeHostEnvironmentDescriptor"}],"description":"Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."};
-const schema723 = {"additionalProperties":false,"description":"Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.","properties":{"host":{"$ref":"#/definitions/RuntimeArtifactBinding"},"platform":{"$ref":"#/definitions/RuntimePlatform"},"processProtocol":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"profile":{"$ref":"#/definitions/RuntimeEnvironmentProfile"},"protocolVersion":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"sdkVersion":{"type":"string"},"tool":{"$ref":"#/definitions/RuntimeArtifactBinding"},"toolVersion":{"type":"string"}},"required":["protocolVersion","platform","sdkVersion","processProtocol","profile","toolVersion","tool","host"],"type":"object"};
-const schema724 = {"additionalProperties":false,"properties":{"entrypoint":{"type":"string"},"treeDigest":{"description":"Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.","type":"string"}},"required":["treeDigest","entrypoint"],"type":"object"};
-const schema728 = {"description":"The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.","enum":["node-system-libraries-v1"],"type":"string"};
-const schema725 = {"additionalProperties":false,"properties":{"architecture":{"$ref":"#/definitions/RuntimeArchitecture"},"operatingSystem":{"$ref":"#/definitions/RuntimeOperatingSystem"}},"required":["operatingSystem","architecture"],"type":"object"};
-const schema726 = {"enum":["aarch64","x86_64"],"type":"string"};
-const schema727 = {"enum":["macos","linux"],"type":"string"};
+const schema723 = {"anyOf":[{"$ref":"#/definitions/RuntimeEnvironmentDescriptor"},{"$ref":"#/definitions/NativeHostEnvironmentDescriptor"}],"description":"Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."};
+const schema724 = {"additionalProperties":false,"description":"Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.","properties":{"host":{"$ref":"#/definitions/RuntimeArtifactBinding"},"platform":{"$ref":"#/definitions/RuntimePlatform"},"processProtocol":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"profile":{"$ref":"#/definitions/RuntimeEnvironmentProfile"},"protocolVersion":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"sdkVersion":{"type":"string"},"tool":{"$ref":"#/definitions/RuntimeArtifactBinding"},"toolVersion":{"type":"string"}},"required":["protocolVersion","platform","sdkVersion","processProtocol","profile","toolVersion","tool","host"],"type":"object"};
+const schema725 = {"additionalProperties":false,"properties":{"entrypoint":{"type":"string"},"treeDigest":{"description":"Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.","type":"string"}},"required":["treeDigest","entrypoint"],"type":"object"};
+const schema729 = {"description":"The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.","enum":["node-system-libraries-v1"],"type":"string"};
+const schema726 = {"additionalProperties":false,"properties":{"architecture":{"$ref":"#/definitions/RuntimeArchitecture"},"operatingSystem":{"$ref":"#/definitions/RuntimeOperatingSystem"}},"required":["operatingSystem","architecture"],"type":"object"};
+const schema727 = {"enum":["aarch64","x86_64"],"type":"string"};
+const schema728 = {"enum":["macos","linux"],"type":"string"};
 
 function validate526(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -30599,7 +30749,7 @@ validate526.errors = [{instancePath:instancePath+"/architecture",schemaPath:"#/d
 return false;
 }
 if(!((data0 === "aarch64") || (data0 === "x86_64"))){
-validate526.errors = [{instancePath:instancePath+"/architecture",schemaPath:"#/definitions/RuntimeArchitecture/enum",keyword:"enum",params:{allowedValues: schema726.enum},message:"must be equal to one of the allowed values"}];
+validate526.errors = [{instancePath:instancePath+"/architecture",schemaPath:"#/definitions/RuntimeArchitecture/enum",keyword:"enum",params:{allowedValues: schema727.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -30616,7 +30766,7 @@ validate526.errors = [{instancePath:instancePath+"/operatingSystem",schemaPath:"
 return false;
 }
 if(!((data1 === "macos") || (data1 === "linux"))){
-validate526.errors = [{instancePath:instancePath+"/operatingSystem",schemaPath:"#/definitions/RuntimeOperatingSystem/enum",keyword:"enum",params:{allowedValues: schema727.enum},message:"must be equal to one of the allowed values"}];
+validate526.errors = [{instancePath:instancePath+"/operatingSystem",schemaPath:"#/definitions/RuntimeOperatingSystem/enum",keyword:"enum",params:{allowedValues: schema728.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs5 === errors;
@@ -30764,7 +30914,7 @@ validate525.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/defini
 return false;
 }
 if(!(data5 === "node-system-libraries-v1")){
-validate525.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/definitions/RuntimeEnvironmentProfile/enum",keyword:"enum",params:{allowedValues: schema728.enum},message:"must be equal to one of the allowed values"}];
+validate525.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/definitions/RuntimeEnvironmentProfile/enum",keyword:"enum",params:{allowedValues: schema729.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs13 === errors;
@@ -30901,9 +31051,9 @@ validate525.errors = vErrors;
 return errors === 0;
 }
 
-const schema730 = {"additionalProperties":false,"description":"The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.","properties":{"executable":{"$ref":"#/definitions/NativeHostExecutableIdentity"},"hostVersion":{"type":"string"},"platform":{"$ref":"#/definitions/RuntimePlatform"},"processProtocol":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"profile":{"$ref":"#/definitions/NativeHostProfile"},"protocolVersion":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"sdkVersion":{"type":"string"}},"required":["protocolVersion","platform","sdkVersion","processProtocol","profile","hostVersion","executable"],"type":"object"};
-const schema731 = {"description":"Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.","oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"darwin-code-directory-hash-v1","type":"string"},"value":{"type":"string"}},"required":["kind","value"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"linux-executable-sha256-v1","type":"string"},"value":{"type":"string"}},"required":["kind","value"],"type":"object"}]};
-const schema732 = {"enum":["native-application-host-v1"],"type":"string"};
+const schema731 = {"additionalProperties":false,"description":"The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.","properties":{"executable":{"$ref":"#/definitions/NativeHostExecutableIdentity"},"hostVersion":{"type":"string"},"platform":{"$ref":"#/definitions/RuntimePlatform"},"processProtocol":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"profile":{"$ref":"#/definitions/NativeHostProfile"},"protocolVersion":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"sdkVersion":{"type":"string"}},"required":["protocolVersion","platform","sdkVersion","processProtocol","profile","hostVersion","executable"],"type":"object"};
+const schema732 = {"description":"Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.","oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"darwin-code-directory-hash-v1","type":"string"},"value":{"type":"string"}},"required":["kind","value"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"linux-executable-sha256-v1","type":"string"},"value":{"type":"string"}},"required":["kind","value"],"type":"object"}]};
+const schema733 = {"enum":["native-application-host-v1"],"type":"string"};
 
 function validate529(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -31217,7 +31367,7 @@ validate529.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/defini
 return false;
 }
 if(!(data8 === "native-application-host-v1")){
-validate529.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/definitions/NativeHostProfile/enum",keyword:"enum",params:{allowedValues: schema732.enum},message:"must be equal to one of the allowed values"}];
+validate529.errors = [{instancePath:instancePath+"/profile",schemaPath:"#/definitions/NativeHostProfile/enum",keyword:"enum",params:{allowedValues: schema733.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs24 === errors;
@@ -31428,7 +31578,7 @@ validate520.errors = [{instancePath:instancePath+"/componentScope",schemaPath:"#
 return false;
 }
 if(!(((data2 === "application") || (data2 === "project")) || (data2 === "attempt"))){
-validate520.errors = [{instancePath:instancePath+"/componentScope",schemaPath:"#/definitions/ComponentScope/enum",keyword:"enum",params:{allowedValues: schema721.enum},message:"must be equal to one of the allowed values"}];
+validate520.errors = [{instancePath:instancePath+"/componentScope",schemaPath:"#/definitions/ComponentScope/enum",keyword:"enum",params:{allowedValues: schema722.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs8 === errors;
@@ -31669,7 +31819,7 @@ validate520.errors = vErrors;
 return errors === 0;
 }
 
-const schema734 = {"additionalProperties":false,"description":"Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.","properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"},"sha256":{"type":"string"}},"required":["contributionId","schema","sha256"],"type":"object"};
+const schema735 = {"additionalProperties":false,"description":"Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.","properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"},"sha256":{"type":"string"}},"required":["contributionId","schema","sha256"],"type":"object"};
 
 function validate534(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -32052,10 +32202,10 @@ validate503.errors = vErrors;
 return errors === 0;
 }
 
-const schema737 = {"additionalProperties":false,"description":"Optional public presentation associated with one actual finding. Diagnostic\nprose is not authenticated or sanitized by these structural checks.","properties":{"code":{"type":"string"},"detail":{"type":["string","null"]},"key":{"$ref":"#/definitions/CheckKey"},"location":{"anyOf":[{"$ref":"#/definitions/TextReviewLocation"},{"type":"null"}]},"resourceEntry":{"anyOf":[{"$ref":"#/definitions/TextReviewResourceEntry"},{"type":"null"}]},"suggestion":{"type":["string","null"]},"target":{"type":"string"}},"required":["key","code","target","location","detail","suggestion","resourceEntry"],"type":"object"};
-const schema744 = {"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"entryId":{"type":"string"}},"required":["contributionId","entryId"],"type":"object"};
-const schema738 = {"additionalProperties":false,"properties":{"implementation":{"$ref":"#/definitions/CheckImplementation"},"rule":{"$ref":"#/definitions/ContractRef"}},"required":["rule","implementation"],"type":"object"};
-const schema739 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"core","type":"string"},"validator":{"$ref":"#/definitions/ContractRef"}},"required":["kind","validator"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"plugin","type":"string"},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["kind","provider"],"type":"object"}]};
+const schema738 = {"additionalProperties":false,"description":"Optional public presentation associated with one actual finding. Diagnostic\nprose is not authenticated or sanitized by these structural checks.","properties":{"code":{"type":"string"},"detail":{"type":["string","null"]},"key":{"$ref":"#/definitions/CheckKey"},"location":{"anyOf":[{"$ref":"#/definitions/TextReviewLocation"},{"type":"null"}]},"resourceEntry":{"anyOf":[{"$ref":"#/definitions/TextReviewResourceEntry"},{"type":"null"}]},"suggestion":{"type":["string","null"]},"target":{"type":"string"}},"required":["key","code","target","location","detail","suggestion","resourceEntry"],"type":"object"};
+const schema745 = {"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"entryId":{"type":"string"}},"required":["contributionId","entryId"],"type":"object"};
+const schema739 = {"additionalProperties":false,"properties":{"implementation":{"$ref":"#/definitions/CheckImplementation"},"rule":{"$ref":"#/definitions/ContractRef"}},"required":["rule","implementation"],"type":"object"};
+const schema740 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"core","type":"string"},"validator":{"$ref":"#/definitions/ContractRef"}},"required":["kind","validator"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"plugin","type":"string"},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["kind","provider"],"type":"object"}]};
 
 function validate539(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -32573,8 +32723,8 @@ validate538.errors = vErrors;
 return errors === 0;
 }
 
-const schema742 = {"additionalProperties":false,"properties":{"field":{"$ref":"#/definitions/TextReviewField"},"range":{"$ref":"#/definitions/TextRange"}},"required":["field","range"],"type":"object"};
-const schema743 = {"enum":["source","translation"],"type":"string"};
+const schema743 = {"additionalProperties":false,"properties":{"field":{"$ref":"#/definitions/TextReviewField"},"range":{"$ref":"#/definitions/TextRange"}},"required":["field","range"],"type":"object"};
+const schema744 = {"enum":["source","translation"],"type":"string"};
 
 function validate543(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -32604,7 +32754,7 @@ validate543.errors = [{instancePath:instancePath+"/field",schemaPath:"#/definiti
 return false;
 }
 if(!((data0 === "source") || (data0 === "translation"))){
-validate543.errors = [{instancePath:instancePath+"/field",schemaPath:"#/definitions/TextReviewField/enum",keyword:"enum",params:{allowedValues: schema743.enum},message:"must be equal to one of the allowed values"}];
+validate543.errors = [{instancePath:instancePath+"/field",schemaPath:"#/definitions/TextReviewField/enum",keyword:"enum",params:{allowedValues: schema744.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -32674,7 +32824,7 @@ if(data.detail !== undefined){
 let data1 = data.detail;
 const _errs4 = errors;
 if((typeof data1 !== "string") && (data1 !== null)){
-validate537.errors = [{instancePath:instancePath+"/detail",schemaPath:"#/properties/detail/type",keyword:"type",params:{type: schema737.properties.detail.type},message:"must be string,null"}];
+validate537.errors = [{instancePath:instancePath+"/detail",schemaPath:"#/properties/detail/type",keyword:"type",params:{type: schema738.properties.detail.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -32887,7 +33037,7 @@ if(data.suggestion !== undefined){
 let data7 = data.suggestion;
 const _errs24 = errors;
 if((typeof data7 !== "string") && (data7 !== null)){
-validate537.errors = [{instancePath:instancePath+"/suggestion",schemaPath:"#/properties/suggestion/type",keyword:"type",params:{type: schema737.properties.suggestion.type},message:"must be string,null"}];
+validate537.errors = [{instancePath:instancePath+"/suggestion",schemaPath:"#/properties/suggestion/type",keyword:"type",params:{type: schema738.properties.suggestion.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs24 === errors;
@@ -32925,9 +33075,9 @@ validate537.errors = vErrors;
 return errors === 0;
 }
 
-const schema745 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"inputDigest":{"type":"string"},"outcome":{"$ref":"#/definitions/ReviewInvocationOutcome"},"resultDigest":{"type":"string"},"resultId":{"$ref":"#/definitions/ExecutionId"}},"required":["checker","attemptId","inputDigest","resultId","resultDigest","outcome"],"type":"object"};
-const schema749 = {"enum":["succeeded","failed","unknown"],"type":"string"};
-const schema747 = {"additionalProperties":false,"properties":{"profile":{"$ref":"#/definitions/ContractRef"},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["provider","profile"],"type":"object"};
+const schema746 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"inputDigest":{"type":"string"},"outcome":{"$ref":"#/definitions/ReviewInvocationOutcome"},"resultDigest":{"type":"string"},"resultId":{"$ref":"#/definitions/ExecutionId"}},"required":["checker","attemptId","inputDigest","resultId","resultDigest","outcome"],"type":"object"};
+const schema750 = {"enum":["succeeded","failed","unknown"],"type":"string"};
+const schema748 = {"additionalProperties":false,"properties":{"profile":{"$ref":"#/definitions/ContractRef"},"provider":{"$ref":"#/definitions/ProviderSelectionBinding"}},"required":["provider","profile"],"type":"object"};
 
 function validate548(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -33150,7 +33300,7 @@ validate547.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/defini
 return false;
 }
 if(!(((data3 === "succeeded") || (data3 === "failed")) || (data3 === "unknown"))){
-validate547.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/ReviewInvocationOutcome/enum",keyword:"enum",params:{allowedValues: schema749.enum},message:"must be equal to one of the allowed values"}];
+validate547.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/ReviewInvocationOutcome/enum",keyword:"enum",params:{allowedValues: schema750.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs8 === errors;
@@ -33209,9 +33359,9 @@ validate547.errors = vErrors;
 return errors === 0;
 }
 
-const schema751 = {"additionalProperties":false,"description":"Wire projection of the host's captured union. Receiving this from a plugin\ndoes not make it a trusted policy or permit it to replace the expected set.","properties":{"policy":{"$ref":"#/definitions/ContractRef"},"requirements":{"items":{"$ref":"#/definitions/CheckRequirement"},"type":"array"}},"required":["policy","requirements"],"type":"object"};
-const schema753 = {"additionalProperties":false,"properties":{"inputDigest":{"type":"string"},"key":{"$ref":"#/definitions/CheckKey"},"mandatory":{"type":"boolean"},"notApplicable":{"anyOf":[{"$ref":"#/definitions/NotApplicableBasis"},{"type":"null"}]},"scopeDigest":{"type":"string"},"targets":{"items":{"type":"string"},"type":"array"},"waivable":{"type":"boolean"}},"required":["key","inputDigest","scopeDigest","targets","mandatory","waivable","notApplicable"],"type":"object"};
-const schema754 = {"additionalProperties":false,"description":"A trusted capture of an allowed reason and its exact scope basis, not a\nplugin's claim that it is safe to skip a required check.","properties":{"basisDigest":{"type":"string"},"code":{"type":"string"}},"required":["code","basisDigest"],"type":"object"};
+const schema752 = {"additionalProperties":false,"description":"Wire projection of the host's captured union. Receiving this from a plugin\ndoes not make it a trusted policy or permit it to replace the expected set.","properties":{"policy":{"$ref":"#/definitions/ContractRef"},"requirements":{"items":{"$ref":"#/definitions/CheckRequirement"},"type":"array"}},"required":["policy","requirements"],"type":"object"};
+const schema754 = {"additionalProperties":false,"properties":{"inputDigest":{"type":"string"},"key":{"$ref":"#/definitions/CheckKey"},"mandatory":{"type":"boolean"},"notApplicable":{"anyOf":[{"$ref":"#/definitions/NotApplicableBasis"},{"type":"null"}]},"scopeDigest":{"type":"string"},"targets":{"items":{"type":"string"},"type":"array"},"waivable":{"type":"boolean"}},"required":["key","inputDigest","scopeDigest","targets","mandatory","waivable","notApplicable"],"type":"object"};
+const schema755 = {"additionalProperties":false,"description":"A trusted capture of an allowed reason and its exact scope basis, not a\nplugin's claim that it is safe to skip a required check.","properties":{"basisDigest":{"type":"string"},"code":{"type":"string"}},"required":["code","basisDigest"],"type":"object"};
 
 function validate553(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -33637,10 +33787,10 @@ validate552.errors = vErrors;
 return errors === 0;
 }
 
-const schema755 = {"additionalProperties":false,"properties":{"coveredTargets":{"items":{"type":"string"},"type":"array"},"inputDigest":{"type":"string"},"key":{"$ref":"#/definitions/CheckKey"},"outcome":{"$ref":"#/definitions/CheckOutcome"},"scopeDigest":{"type":"string"}},"required":["key","inputDigest","scopeDigest","coveredTargets","outcome"],"type":"object"};
-const schema756 = {"oneOf":[{"additionalProperties":false,"properties":{"findings":{"items":{"$ref":"#/definitions/CheckFinding2"},"type":"array"},"kind":{"const":"completed","type":"string"}},"required":["kind","findings"],"type":"object"},{"additionalProperties":false,"properties":{"basis":{"$ref":"#/definitions/NotApplicableBasis"},"kind":{"const":"not-applicable","type":"string"}},"required":["kind","basis"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"failed","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"cancelled","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"unavailable","type":"string"}},"required":["kind"],"type":"object"}]};
-const schema757 = {"additionalProperties":false,"properties":{"code":{"type":"string"},"severity":{"$ref":"#/definitions/FindingSeverity"},"target":{"type":"string"}},"required":["code","target","severity"],"type":"object"};
-const schema758 = {"enum":["warning","error"],"type":"string"};
+const schema756 = {"additionalProperties":false,"properties":{"coveredTargets":{"items":{"type":"string"},"type":"array"},"inputDigest":{"type":"string"},"key":{"$ref":"#/definitions/CheckKey"},"outcome":{"$ref":"#/definitions/CheckOutcome"},"scopeDigest":{"type":"string"}},"required":["key","inputDigest","scopeDigest","coveredTargets","outcome"],"type":"object"};
+const schema757 = {"oneOf":[{"additionalProperties":false,"properties":{"findings":{"items":{"$ref":"#/definitions/CheckFinding2"},"type":"array"},"kind":{"const":"completed","type":"string"}},"required":["kind","findings"],"type":"object"},{"additionalProperties":false,"properties":{"basis":{"$ref":"#/definitions/NotApplicableBasis"},"kind":{"const":"not-applicable","type":"string"}},"required":["kind","basis"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"failed","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"cancelled","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"unavailable","type":"string"}},"required":["kind"],"type":"object"}]};
+const schema758 = {"additionalProperties":false,"properties":{"code":{"type":"string"},"severity":{"$ref":"#/definitions/FindingSeverity"},"target":{"type":"string"}},"required":["code","target","severity"],"type":"object"};
+const schema759 = {"enum":["warning","error"],"type":"string"};
 
 function validate560(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -33682,7 +33832,7 @@ validate560.errors = [{instancePath:instancePath+"/severity",schemaPath:"#/defin
 return false;
 }
 if(!((data1 === "warning") || (data1 === "error"))){
-validate560.errors = [{instancePath:instancePath+"/severity",schemaPath:"#/definitions/FindingSeverity/enum",keyword:"enum",params:{allowedValues: schema758.enum},message:"must be equal to one of the allowed values"}];
+validate560.errors = [{instancePath:instancePath+"/severity",schemaPath:"#/definitions/FindingSeverity/enum",keyword:"enum",params:{allowedValues: schema759.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -34385,9 +34535,9 @@ validate557.errors = vErrors;
 return errors === 0;
 }
 
-const schema760 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/PluginExecutionBinding"},"declaration":{"$ref":"#/definitions/ReviewDeclaration"}},"required":["declaration","checker"],"type":"object"};
-const schema761 = {"additionalProperties":false,"properties":{"checker":{"type":"string"},"profile":{"$ref":"#/definitions/ContractRef"},"rules":{"items":{"$ref":"#/definitions/ReviewRuleDeclaration"},"type":"array"}},"required":["profile","checker","rules"],"type":"object"};
-const schema763 = {"additionalProperties":false,"description":"A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.","properties":{"requiresTranslation":{"type":"boolean"},"rule":{"$ref":"#/definitions/ContractRef"}},"required":["rule","requiresTranslation"],"type":"object"};
+const schema761 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/PluginExecutionBinding"},"declaration":{"$ref":"#/definitions/ReviewDeclaration"}},"required":["declaration","checker"],"type":"object"};
+const schema762 = {"additionalProperties":false,"properties":{"checker":{"type":"string"},"profile":{"$ref":"#/definitions/ContractRef"},"rules":{"items":{"$ref":"#/definitions/ReviewRuleDeclaration"},"type":"array"}},"required":["profile","checker","rules"],"type":"object"};
+const schema764 = {"additionalProperties":false,"description":"A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.","properties":{"requiresTranslation":{"type":"boolean"},"rule":{"$ref":"#/definitions/ContractRef"}},"required":["rule","requiresTranslation"],"type":"object"};
 
 function validate567(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -34964,8 +35114,8 @@ validate502.errors = vErrors;
 return errors === 0;
 }
 
-const schema767 = {"additionalProperties":false,"description":"The host supplies only a saved AI revision and a durable lease. Core derives\nthe observed scope and policy from the authorized plan, never from model text.","properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"lease":{"$ref":"#/definitions/AutomationLease"},"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","lease","unitId","locale","revisionId"],"type":"object"};
-const schema769 = {"additionalProperties":false,"description":"A reference to durable authority. Possessing or editing this reference does\nnot grant permission; Core checks the stored generation at every boundary.","properties":{"generation":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"}},"required":["planId","generation"],"type":"object"};
+const schema768 = {"additionalProperties":false,"description":"The host supplies only a saved AI revision and a durable lease. Core derives\nthe observed scope and policy from the authorized plan, never from model text.","properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"lease":{"$ref":"#/definitions/AutomationLease"},"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","lease","unitId","locale","revisionId"],"type":"object"};
+const schema770 = {"additionalProperties":false,"description":"A reference to durable authority. Possessing or editing this reference does\nnot grant permission; Core checks the stored generation at every boundary.","properties":{"generation":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"}},"required":["planId","generation"],"type":"object"};
 
 function validate573(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -35192,8 +35342,8 @@ validate572.errors = vErrors;
 return errors === 0;
 }
 
-const schema775 = {"additionalProperties":false,"properties":{"findings":{"items":{"$ref":"#/definitions/CheckFinding"},"type":"array"},"key":{"$ref":"#/definitions/CheckKey"},"mandatory":{"type":"boolean"},"reason":{"type":["string","null"]},"rule":{"type":"string"},"status":{"type":"string"}},"required":["rule","key","mandatory","status","reason","findings"],"type":"object"};
-const schema776 = {"additionalProperties":false,"properties":{"code":{"type":"string"},"detail":{"type":"string"},"issueId":{"type":"string"},"rule":{"type":"string"},"severity":{"type":"string"},"waivable":{"type":"boolean"}},"required":["issueId","rule","code","detail","severity","waivable"],"type":"object"};
+const schema776 = {"additionalProperties":false,"properties":{"findings":{"items":{"$ref":"#/definitions/CheckFinding"},"type":"array"},"key":{"$ref":"#/definitions/CheckKey"},"mandatory":{"type":"boolean"},"reason":{"type":["string","null"]},"rule":{"type":"string"},"status":{"type":"string"}},"required":["rule","key","mandatory","status","reason","findings"],"type":"object"};
+const schema777 = {"additionalProperties":false,"properties":{"code":{"type":"string"},"detail":{"type":"string"},"issueId":{"type":"string"},"rule":{"type":"string"},"severity":{"type":"string"},"waivable":{"type":"boolean"}},"required":["issueId","rule","code","detail","severity","waivable"],"type":"object"};
 
 function validate576(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -35372,7 +35522,7 @@ if(data.reason !== undefined){
 let data10 = data.reason;
 const _errs23 = errors;
 if((typeof data10 !== "string") && (data10 !== null)){
-validate576.errors = [{instancePath:instancePath+"/reason",schemaPath:"#/properties/reason/type",keyword:"type",params:{type: schema775.properties.reason.type},message:"must be string,null"}];
+validate576.errors = [{instancePath:instancePath+"/reason",schemaPath:"#/properties/reason/type",keyword:"type",params:{type: schema776.properties.reason.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs23 === errors;
@@ -35421,7 +35571,7 @@ validate576.errors = vErrors;
 return errors === 0;
 }
 
-const schema777 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"eventId":{"$ref":"#/definitions/ExecutionId"},"locale":{"type":"string"},"previousEventId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"revisionId":{"$ref":"#/definitions/ExecutionId"},"sequence":{"$ref":"#/definitions/Revision"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["eventId","unitId","locale","sequence","revisionId","actionId","previousEventId"],"type":"object"};
+const schema778 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"eventId":{"$ref":"#/definitions/ExecutionId"},"locale":{"type":"string"},"previousEventId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"revisionId":{"$ref":"#/definitions/ExecutionId"},"sequence":{"$ref":"#/definitions/Revision"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["eventId","unitId","locale","sequence","revisionId","actionId","previousEventId"],"type":"object"};
 
 function validate579(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -35673,7 +35823,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema684.properties, key0))){
+if(!(func2.call(schema685.properties, key0))){
 validate499.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -35697,7 +35847,7 @@ vErrors.push(err0);
 errors++;
 }
 if(!(((data0 === "protected") || (data0 === "already-selected")) || (data0 === "checks"))){
-const err1 = {instancePath:instancePath+"/blocked",schemaPath:"#/definitions/AutomaticSelectionBlock/enum",keyword:"enum",params:{allowedValues: schema685.enum},message:"must be equal to one of the allowed values"};
+const err1 = {instancePath:instancePath+"/blocked",schemaPath:"#/definitions/AutomaticSelectionBlock/enum",keyword:"enum",params:{allowedValues: schema686.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err1];
 }
@@ -35982,7 +36132,7 @@ validate499.errors = [{instancePath:instancePath+"/policy",schemaPath:"#/definit
 return false;
 }
 if(!(((data5 === "candidates-only") || (data5 === "missing-only")) || (data5 === "replace-captured-selection"))){
-validate499.errors = [{instancePath:instancePath+"/policy",schemaPath:"#/definitions/SelectionPolicy/enum",keyword:"enum",params:{allowedValues: schema765.enum},message:"must be equal to one of the allowed values"}];
+validate499.errors = [{instancePath:instancePath+"/policy",schemaPath:"#/definitions/SelectionPolicy/enum",keyword:"enum",params:{allowedValues: schema766.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs29 === errors;
@@ -36319,7 +36469,7 @@ validate494.errors = [{instancePath:instancePath+"/phase",schemaPath:"#/definiti
 return false;
 }
 if(!(((((((((data2 === "waiting") || (data2 === "saving-candidate")) || (data2 === "saved")) || (data2 === "checking")) || (data2 === "checked")) || (data2 === "selected")) || (data2 === "blocked")) || (data2 === "failed")) || (data2 === "cancelled"))){
-validate494.errors = [{instancePath:instancePath+"/phase",schemaPath:"#/definitions/EffectPhase/enum",keyword:"enum",params:{allowedValues: schema683.enum},message:"must be equal to one of the allowed values"}];
+validate494.errors = [{instancePath:instancePath+"/phase",schemaPath:"#/definitions/EffectPhase/enum",keyword:"enum",params:{allowedValues: schema684.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs14 === errors;
@@ -36411,9 +36561,9 @@ validate494.errors = vErrors;
 return errors === 0;
 }
 
-const schema784 = {"additionalProperties":false,"properties":{"request":{"$ref":"#/definitions/CandidateDecisionWrite"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["request","sourceSnapshotId"],"type":"object"};
-const schema785 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"actor":{"type":"string"},"disposition":{"$ref":"#/definitions/CandidateDisposition"},"expectedDecisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expectedSelectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"reason":{"type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","unitId","locale","revisionId","sourceRevisionId","expectedSelectionId","expectedDecisionId","disposition","actor","reason"],"type":"object"};
-const schema787 = {"enum":["rejected","restored"],"type":"string"};
+const schema785 = {"additionalProperties":false,"properties":{"request":{"$ref":"#/definitions/CandidateDecisionWrite"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["request","sourceSnapshotId"],"type":"object"};
+const schema786 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"actor":{"type":"string"},"disposition":{"$ref":"#/definitions/CandidateDisposition"},"expectedDecisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"expectedSelectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"locale":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"reason":{"type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","actionId","unitId","locale","revisionId","sourceRevisionId","expectedSelectionId","expectedDecisionId","disposition","actor","reason"],"type":"object"};
+const schema788 = {"enum":["rejected","restored"],"type":"string"};
 
 function validate584(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -36428,7 +36578,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema785.properties, key0))){
+if(!(func2.call(schema786.properties, key0))){
 validate584.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -36477,7 +36627,7 @@ validate584.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/de
 return false;
 }
 if(!((data2 === "rejected") || (data2 === "restored"))){
-validate584.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/definitions/CandidateDisposition/enum",keyword:"enum",params:{allowedValues: schema787.enum},message:"must be equal to one of the allowed values"}];
+validate584.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/definitions/CandidateDisposition/enum",keyword:"enum",params:{allowedValues: schema788.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs7 === errors;
@@ -36840,8 +36990,8 @@ validate583.errors = vErrors;
 return errors === 0;
 }
 
-const schema796 = {"additionalProperties":false,"properties":{"requests":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"targetLocale":{"type":"string"},"text":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"},"usage":{"anyOf":[{"$ref":"#/definitions/AiUsageView"},{"type":"null"}]},"usageIncomplete":{"type":"boolean"}},"required":["unitId","targetLocale","text","usage","requests","usageIncomplete"],"type":"object"};
-const schema798 = {"additionalProperties":false,"properties":{"cacheReadTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"cacheWriteTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"completionTokens":{"$ref":"#/definitions/UnsignedDecimal"},"promptTokens":{"$ref":"#/definitions/UnsignedDecimal"},"reasoningTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]}},"required":["promptTokens","completionTokens","cacheReadTokens","cacheWriteTokens","reasoningTokens"],"type":"object"};
+const schema797 = {"additionalProperties":false,"properties":{"requests":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"targetLocale":{"type":"string"},"text":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"},"usage":{"anyOf":[{"$ref":"#/definitions/AiUsageView"},{"type":"null"}]},"usageIncomplete":{"type":"boolean"}},"required":["unitId","targetLocale","text","usage","requests","usageIncomplete"],"type":"object"};
+const schema799 = {"additionalProperties":false,"properties":{"cacheReadTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"cacheWriteTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"completionTokens":{"$ref":"#/definitions/UnsignedDecimal"},"promptTokens":{"$ref":"#/definitions/UnsignedDecimal"},"reasoningTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]}},"required":["promptTokens","completionTokens","cacheReadTokens","cacheWriteTokens","reasoningTokens"],"type":"object"};
 
 function validate589(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -38053,13 +38203,13 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlan = validate876;
-const schema1146 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlan","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlan"};
-const schema806 = {"additionalProperties":false,"properties":{"attemptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"checkers":{"items":{"$ref":"#/definitions/WorkPlanCheckerView"},"type":"array"},"digest":{"type":"string"},"locale":{"type":"string"},"maintenance":{"anyOf":[{"$ref":"#/definitions/MaintenancePlanBasis"},{"type":"null"}]},"memberPreviews":{"items":{"$ref":"#/definitions/TeamMemberPreviewView"},"type":["array","null"]},"options":{"$ref":"#/definitions/PlanOptions"},"planId":{"$ref":"#/definitions/ExecutionId"},"preview":{"anyOf":[{"$ref":"#/definitions/AiPreviewView"},{"type":"null"}]},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"teamDiscussionLimits":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionLimits"},{"type":"null"}]},"tools":{"anyOf":[{"$ref":"#/definitions/WorkPlanTools"},{"type":"null"}]}},"required":["planId","digest","locale","options","scope","preview","attemptId","checkers","tools","maintenance"],"type":"object"};
-const schema847 = {"additionalProperties":false,"properties":{"maxArtifactBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxMembers":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPostBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRoleVersionsPerMember":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxMembers","maxRoleVersionsPerMember","maxPosts","maxPostBytes","maxViewPosts","maxViewBytes","maxArtifactBytes"],"type":"object"};
-const schema808 = {"oneOf":[{"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"kind":{"const":"ready","type":"string"},"plugin":{"$ref":"#/definitions/ReviewCheckerView"}},"required":["kind","checker","plugin"],"type":"object"},{"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"error":{"$ref":"#/definitions/CommandError"},"kind":{"const":"unavailable","type":"string"}},"required":["kind","checker","error"],"type":"object"}]};
-const schema809 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"format","type":"string"},"plugin":{"$ref":"#/definitions/PluginReviewView"}},"required":["kind","plugin"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"advisory-text","type":"string"},"plugin":{"$ref":"#/definitions/PluginTextReviewView"}},"required":["kind","plugin"],"type":"object"}]};
-const schema810 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/ReviewDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","declaration","checker","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
-const schema811 = {"additionalProperties":false,"properties":{"publisherId":{"type":"string"},"sourceId":{"type":"string"}},"required":["sourceId","publisherId"],"type":"object"};
+const schema1148 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlan","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlan"};
+const schema807 = {"additionalProperties":false,"properties":{"attemptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"checkers":{"items":{"$ref":"#/definitions/WorkPlanCheckerView"},"type":"array"},"digest":{"type":"string"},"locale":{"type":"string"},"maintenance":{"anyOf":[{"$ref":"#/definitions/MaintenancePlanBasis"},{"type":"null"}]},"memberPreviews":{"items":{"$ref":"#/definitions/TeamMemberPreviewView"},"type":["array","null"]},"options":{"$ref":"#/definitions/PlanOptions"},"planId":{"$ref":"#/definitions/ExecutionId"},"preview":{"anyOf":[{"$ref":"#/definitions/AiPreviewView"},{"type":"null"}]},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"teamDiscussionLimits":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionLimits"},{"type":"null"}]},"tools":{"anyOf":[{"$ref":"#/definitions/WorkPlanTools"},{"type":"null"}]}},"required":["planId","digest","locale","options","scope","preview","attemptId","checkers","tools","maintenance"],"type":"object"};
+const schema849 = {"additionalProperties":false,"properties":{"maxArtifactBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxMembers":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPostBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRoleVersionsPerMember":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxMembers","maxRoleVersionsPerMember","maxPosts","maxPostBytes","maxViewPosts","maxViewBytes","maxArtifactBytes"],"type":"object"};
+const schema809 = {"oneOf":[{"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"kind":{"const":"ready","type":"string"},"plugin":{"$ref":"#/definitions/ReviewCheckerView"}},"required":["kind","checker","plugin"],"type":"object"},{"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"error":{"$ref":"#/definitions/CommandError"},"kind":{"const":"unavailable","type":"string"}},"required":["kind","checker","error"],"type":"object"}]};
+const schema810 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"format","type":"string"},"plugin":{"$ref":"#/definitions/PluginReviewView"}},"required":["kind","plugin"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"advisory-text","type":"string"},"plugin":{"$ref":"#/definitions/PluginTextReviewView"}},"required":["kind","plugin"],"type":"object"}]};
+const schema811 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/ReviewDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","declaration","checker","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
+const schema812 = {"additionalProperties":false,"properties":{"publisherId":{"type":"string"},"sourceId":{"type":"string"}},"required":["sourceId","publisherId"],"type":"object"};
 
 function validate598(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -38286,7 +38436,7 @@ validate598.errors = vErrors;
 return errors === 0;
 }
 
-const schema814 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/TextReviewBinding"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"resourcePins":{"items":{"$ref":"#/definitions/TextReviewResourcePin"},"type":"array"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","binding","resourcePins","rules","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
+const schema815 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/TextReviewBinding"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"resourcePins":{"items":{"$ref":"#/definitions/TextReviewResourcePin"},"type":"array"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","binding","resourcePins","rules","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
 
 function validate603(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -38301,7 +38451,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema814.properties, key0))){
+if(!(func2.call(schema815.properties, key0))){
 validate603.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -39131,7 +39281,7 @@ validate595.errors = vErrors;
 return errors === 0;
 }
 
-const schema819 = {"additionalProperties":false,"properties":{"assessment":{"$ref":"#/definitions/MaintenanceAssessment"},"choices":{"items":{"$ref":"#/definitions/MaintenanceChoice"},"type":"array"}},"required":["assessment","choices"],"type":"object"};
+const schema820 = {"additionalProperties":false,"properties":{"assessment":{"$ref":"#/definitions/MaintenanceAssessment"},"choices":{"items":{"$ref":"#/definitions/MaintenanceChoice"},"type":"array"}},"required":["assessment","choices"],"type":"object"};
 
 function validate414(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -39146,7 +39296,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema539.properties, key0))){
+if(!(func2.call(schema540.properties, key0))){
 validate414.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -39247,7 +39397,7 @@ if(data.nextOrdinal !== undefined){
 let data5 = data.nextOrdinal;
 const _errs12 = errors;
 if((!(((typeof data5 == "number") && (!(data5 % 1) && !isNaN(data5))) && (isFinite(data5)))) && (data5 !== null)){
-validate414.errors = [{instancePath:instancePath+"/nextOrdinal",schemaPath:"#/properties/nextOrdinal/type",keyword:"type",params:{type: schema539.properties.nextOrdinal.type},message:"must be integer,null"}];
+validate414.errors = [{instancePath:instancePath+"/nextOrdinal",schemaPath:"#/properties/nextOrdinal/type",keyword:"type",params:{type: schema540.properties.nextOrdinal.type},message:"must be integer,null"}];
 return false;
 }
 if(errors === _errs12){
@@ -39363,7 +39513,7 @@ validate414.errors = vErrors;
 return errors === 0;
 }
 
-const schema820 = {"additionalProperties":false,"properties":{"action":{"$ref":"#/definitions/MaintenanceAction"},"excluded":{"type":"boolean"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","action","excluded"],"type":"object"};
+const schema821 = {"additionalProperties":false,"properties":{"action":{"$ref":"#/definitions/MaintenanceAction"},"excluded":{"type":"boolean"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","action","excluded"],"type":"object"};
 
 function validate614(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -39393,7 +39543,7 @@ validate614.errors = [{instancePath:instancePath+"/action",schemaPath:"#/definit
 return false;
 }
 if(!((((data0 === "keep") || (data0 === "recheck")) || (data0 === "repair")) || (data0 === "unresolved"))){
-validate614.errors = [{instancePath:instancePath+"/action",schemaPath:"#/definitions/MaintenanceAction/enum",keyword:"enum",params:{allowedValues: schema547.enum},message:"must be equal to one of the allowed values"}];
+validate614.errors = [{instancePath:instancePath+"/action",schemaPath:"#/definitions/MaintenanceAction/enum",keyword:"enum",params:{allowedValues: schema548.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -39524,7 +39674,7 @@ validate612.errors = vErrors;
 return errors === 0;
 }
 
-const schema823 = {"additionalProperties":false,"properties":{"memberId":{"$ref":"#/definitions/ExecutionId"},"preview":{"$ref":"#/definitions/AiPreviewView"}},"required":["memberId","preview"],"type":"object"};
+const schema824 = {"additionalProperties":false,"properties":{"memberId":{"$ref":"#/definitions/ExecutionId"},"preview":{"$ref":"#/definitions/AiPreviewView"}},"required":["memberId","preview"],"type":"object"};
 
 function validate617(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -39592,11 +39742,12 @@ validate617.errors = vErrors;
 return errors === 0;
 }
 
-const schema825 = {"additionalProperties":false,"properties":{"adoptResources":{"type":"boolean"},"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"deliver":{"type":"boolean"},"selectionPolicy":{"$ref":"#/definitions/SelectionPolicy"},"stages":{"items":{"$ref":"#/definitions/StageChoice"},"type":"array"},"teamDiscussions":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionPolicy"},{"type":"null"}],"description":"Explicit consent for bounded, same-plan published discussions."},"teamExecution":{"anyOf":[{"$ref":"#/definitions/TeamExecutionPolicy"},{"type":"null"}]}},"required":["stages","selectionPolicy","advisoryChecks","adoptResources","deliver"],"type":"object"};
-const schema830 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"},{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-2","type":"string"}},"required":["profile"],"type":"object"}]};
-const schema827 = {"additionalProperties":false,"properties":{"mode":{"$ref":"#/definitions/StageMode"},"stage":{"$ref":"#/definitions/WorkStage"}},"required":["stage","mode"],"type":"object"};
-const schema828 = {"enum":["manual","assisted","skipped"],"type":"string"};
-const schema829 = {"enum":["understanding","resources","generation","checks","delivery"],"type":"string"};
+const schema826 = {"additionalProperties":false,"properties":{"adoptResources":{"type":"boolean"},"advisoryChecks":{"items":{"$ref":"#/definitions/AdvisoryReviewCheck"},"type":"array"},"deliver":{"type":"boolean"},"selectionPolicy":{"$ref":"#/definitions/SelectionPolicy"},"stages":{"items":{"$ref":"#/definitions/StageChoice"},"type":"array"},"teamDiscussions":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionPolicy"},{"type":"null"}],"description":"Explicit consent for bounded, same-plan published discussions."},"teamExecution":{"anyOf":[{"$ref":"#/definitions/TeamExecutionPolicy"},{"type":"null"}]},"toolGuidance":{"anyOf":[{"$ref":"#/definitions/ToolGuidancePolicy"},{"type":"null"}],"description":"Absent means that tool guidance is available only to the human reader."}},"required":["stages","selectionPolicy","advisoryChecks","adoptResources","deliver"],"type":"object"};
+const schema831 = {"oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-1","type":"string"}},"required":["profile"],"type":"object"},{"additionalProperties":false,"properties":{"profile":{"const":"current-plan-2","type":"string"}},"required":["profile"],"type":"object"}]};
+const schema842 = {"description":"Explicit model sharing of guidance declared by the captured tools.","oneOf":[{"additionalProperties":false,"properties":{"profile":{"const":"declared-tools-1","type":"string"}},"required":["profile"],"type":"object"}]};
+const schema828 = {"additionalProperties":false,"properties":{"mode":{"$ref":"#/definitions/StageMode"},"stage":{"$ref":"#/definitions/WorkStage"}},"required":["stage","mode"],"type":"object"};
+const schema829 = {"enum":["manual","assisted","skipped"],"type":"string"};
+const schema830 = {"enum":["understanding","resources","generation","checks","delivery"],"type":"string"};
 
 function validate622(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -39626,7 +39777,7 @@ validate622.errors = [{instancePath:instancePath+"/mode",schemaPath:"#/definitio
 return false;
 }
 if(!(((data0 === "manual") || (data0 === "assisted")) || (data0 === "skipped"))){
-validate622.errors = [{instancePath:instancePath+"/mode",schemaPath:"#/definitions/StageMode/enum",keyword:"enum",params:{allowedValues: schema828.enum},message:"must be equal to one of the allowed values"}];
+validate622.errors = [{instancePath:instancePath+"/mode",schemaPath:"#/definitions/StageMode/enum",keyword:"enum",params:{allowedValues: schema829.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -39643,7 +39794,7 @@ validate622.errors = [{instancePath:instancePath+"/stage",schemaPath:"#/definiti
 return false;
 }
 if(!(((((data1 === "understanding") || (data1 === "resources")) || (data1 === "generation")) || (data1 === "checks")) || (data1 === "delivery"))){
-validate622.errors = [{instancePath:instancePath+"/stage",schemaPath:"#/definitions/WorkStage/enum",keyword:"enum",params:{allowedValues: schema829.enum},message:"must be equal to one of the allowed values"}];
+validate622.errors = [{instancePath:instancePath+"/stage",schemaPath:"#/definitions/WorkStage/enum",keyword:"enum",params:{allowedValues: schema830.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs5 === errors;
@@ -39664,10 +39815,10 @@ validate622.errors = vErrors;
 return errors === 0;
 }
 
-const schema831 = {"oneOf":[{"additionalProperties":false,"properties":{"initialMemberId":{"$ref":"#/definitions/ExecutionId"},"initialUnitId":{"$ref":"#/definitions/ExecutionId"},"limits":{"$ref":"#/definitions/TeamExecutionLimits"},"members":{"items":{"$ref":"#/definitions/TeamExecutionMember"},"type":"array"},"profile":{"const":"bounded-team-1","type":"string"}},"required":["profile","initialMemberId","initialUnitId","members","limits"],"type":"object"}]};
-const schema834 = {"additionalProperties":false,"properties":{"maxActivations":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxConcurrency":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxNoProgress":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxActivations","maxConcurrency","maxNoProgress"],"type":"object"};
-const schema835 = {"additionalProperties":false,"properties":{"config":{"$ref":"#/definitions/AiConfig"},"displayName":{"type":"string"},"kinds":{"items":{"$ref":"#/definitions/TeamWorkKind"},"type":"array"},"memberId":{"$ref":"#/definitions/ExecutionId"},"role":{"type":"string"},"roleVersionId":{"$ref":"#/definitions/ExecutionId"},"toolHandles":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["memberId","roleVersionId","displayName","role","config","unitIds","toolHandles","kinds"],"type":"object"};
-const schema836 = {"enum":["translation","review","evidence"],"type":"string"};
+const schema832 = {"oneOf":[{"additionalProperties":false,"properties":{"initialMemberId":{"$ref":"#/definitions/ExecutionId"},"initialUnitId":{"$ref":"#/definitions/ExecutionId"},"limits":{"$ref":"#/definitions/TeamExecutionLimits"},"members":{"items":{"$ref":"#/definitions/TeamExecutionMember"},"type":"array"},"profile":{"const":"bounded-team-1","type":"string"}},"required":["profile","initialMemberId","initialUnitId","members","limits"],"type":"object"}]};
+const schema835 = {"additionalProperties":false,"properties":{"maxActivations":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxConcurrency":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxNoProgress":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxActivations","maxConcurrency","maxNoProgress"],"type":"object"};
+const schema836 = {"additionalProperties":false,"properties":{"config":{"$ref":"#/definitions/AiConfig"},"displayName":{"type":"string"},"kinds":{"items":{"$ref":"#/definitions/TeamWorkKind"},"type":"array"},"memberId":{"$ref":"#/definitions/ExecutionId"},"role":{"type":"string"},"roleVersionId":{"$ref":"#/definitions/ExecutionId"},"toolHandles":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["memberId","roleVersionId","displayName","role","config","unitIds","toolHandles","kinds"],"type":"object"};
+const schema837 = {"enum":["translation","review","evidence"],"type":"string"};
 
 function validate625(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -39728,7 +39879,7 @@ validate625.errors = [{instancePath:instancePath+"/kinds/" + i0,schemaPath:"#/de
 return false;
 }
 if(!(((data3 === "translation") || (data3 === "review")) || (data3 === "evidence"))){
-validate625.errors = [{instancePath:instancePath+"/kinds/" + i0,schemaPath:"#/definitions/TeamWorkKind/enum",keyword:"enum",params:{allowedValues: schema836.enum},message:"must be equal to one of the allowed values"}];
+validate625.errors = [{instancePath:instancePath+"/kinds/" + i0,schemaPath:"#/definitions/TeamWorkKind/enum",keyword:"enum",params:{allowedValues: schema837.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid1 = _errs7 === errors;
@@ -40324,7 +40475,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(((((((key0 === "adoptResources") || (key0 === "advisoryChecks")) || (key0 === "deliver")) || (key0 === "selectionPolicy")) || (key0 === "stages")) || (key0 === "teamDiscussions")) || (key0 === "teamExecution"))){
+if(!((((((((key0 === "adoptResources") || (key0 === "advisoryChecks")) || (key0 === "deliver")) || (key0 === "selectionPolicy")) || (key0 === "stages")) || (key0 === "teamDiscussions")) || (key0 === "teamExecution")) || (key0 === "toolGuidance"))){
 validate620.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -40393,7 +40544,7 @@ validate620.errors = [{instancePath:instancePath+"/selectionPolicy",schemaPath:"
 return false;
 }
 if(!(((data4 === "candidates-only") || (data4 === "missing-only")) || (data4 === "replace-captured-selection"))){
-validate620.errors = [{instancePath:instancePath+"/selectionPolicy",schemaPath:"#/definitions/SelectionPolicy/enum",keyword:"enum",params:{allowedValues: schema765.enum},message:"must be equal to one of the allowed values"}];
+validate620.errors = [{instancePath:instancePath+"/selectionPolicy",schemaPath:"#/definitions/SelectionPolicy/enum",keyword:"enum",params:{allowedValues: schema766.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs9 === errors;
@@ -40713,6 +40864,155 @@ var valid0 = _errs32 === errors;
 else {
 var valid0 = true;
 }
+if(valid0){
+if(data.toolGuidance !== undefined){
+let data11 = data.toolGuidance;
+const _errs37 = errors;
+const _errs38 = errors;
+let valid10 = false;
+const _errs39 = errors;
+const _errs41 = errors;
+let valid12 = false;
+let passing1 = null;
+const _errs42 = errors;
+if(errors === _errs42){
+if(data11 && typeof data11 == "object" && !Array.isArray(data11)){
+let missing3;
+if((data11.profile === undefined) && (missing3 = "profile")){
+const err15 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
+if(vErrors === null){
+vErrors = [err15];
+}
+else {
+vErrors.push(err15);
+}
+errors++;
+}
+else {
+const _errs44 = errors;
+for(const key3 in data11){
+if(!(key3 === "profile")){
+const err16 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err16];
+}
+else {
+vErrors.push(err16);
+}
+errors++;
+break;
+}
+}
+if(_errs44 === errors){
+if(data11.profile !== undefined){
+let data12 = data11.profile;
+if(typeof data12 !== "string"){
+const err17 = {instancePath:instancePath+"/toolGuidance/profile",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/properties/profile/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err17];
+}
+else {
+vErrors.push(err17);
+}
+errors++;
+}
+if("declared-tools-1" !== data12){
+const err18 = {instancePath:instancePath+"/toolGuidance/profile",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/properties/profile/const",keyword:"const",params:{allowedValue: "declared-tools-1"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err18];
+}
+else {
+vErrors.push(err18);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err19 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err19];
+}
+else {
+vErrors.push(err19);
+}
+errors++;
+}
+}
+var _valid4 = _errs42 === errors;
+if(_valid4){
+valid12 = true;
+passing1 = 0;
+}
+if(!valid12){
+const err20 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/definitions/ToolGuidancePolicy/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err20];
+}
+else {
+vErrors.push(err20);
+}
+errors++;
+}
+else {
+errors = _errs41;
+if(vErrors !== null){
+if(_errs41){
+vErrors.length = _errs41;
+}
+else {
+vErrors = null;
+}
+}
+}
+var _valid3 = _errs39 === errors;
+valid10 = valid10 || _valid3;
+if(!valid10){
+const _errs47 = errors;
+if(data11 !== null){
+const err21 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/properties/toolGuidance/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err21];
+}
+else {
+vErrors.push(err21);
+}
+errors++;
+}
+var _valid3 = _errs47 === errors;
+valid10 = valid10 || _valid3;
+}
+if(!valid10){
+const err22 = {instancePath:instancePath+"/toolGuidance",schemaPath:"#/properties/toolGuidance/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err22];
+}
+else {
+vErrors.push(err22);
+}
+errors++;
+validate620.errors = vErrors;
+return false;
+}
+else {
+errors = _errs38;
+if(vErrors !== null){
+if(_errs38){
+vErrors.length = _errs38;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid0 = _errs37 === errors;
+}
+else {
+var valid0 = true;
+}
+}
 }
 }
 }
@@ -40731,7 +41031,7 @@ validate620.errors = vErrors;
 return errors === 0;
 }
 
-const schema842 = {"additionalProperties":false,"properties":{"nativeKey":{"type":"string"},"selectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","sourceSnapshotId","sourceRevisionId","nativeKey","selectionId"],"type":"object"};
+const schema844 = {"additionalProperties":false,"properties":{"nativeKey":{"type":"string"},"selectionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","sourceSnapshotId","sourceRevisionId","nativeKey","selectionId"],"type":"object"};
 
 function validate631(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -40923,9 +41223,9 @@ validate631.errors = vErrors;
 return errors === 0;
 }
 
-const schema848 = {"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/WorkPlanToolSpec"},"maxItems":32,"minItems":1,"type":"array"},"maxInvocations":{"format":"uint32","maximum":300,"minimum":1,"type":"integer"}},"required":["maxInvocations","entries"],"type":"object"};
-const schema849 = {"additionalProperties":false,"description":"Captured by the trusted host from an installed package, never model text.","properties":{"applicationCapabilities":{"description":"Complete captured callable membership of an Application instance.\nOther scopes carry an explicit empty roster; this data grants no lease.","items":{"$ref":"#/definitions/ProcessCapability"},"maxItems":128,"type":"array"},"binding":{"$ref":"#/definitions/CapabilityToolBinding"},"execution":{"$ref":"#/definitions/PluginExecutionBinding"},"handle":{"$ref":"#/definitions/ExecutionId"},"packageOrigin":true,"resourceId":{"type":"string"},"runtimeOrigin":true,"selections":{"items":{"type":"string"},"type":"array"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"},"target":{"type":"string"}},"required":["handle","binding","execution","applicationCapabilities","resourceId","settingsRevision","packageOrigin","runtimeOrigin","target","selections"],"type":"object"};
-const schema850 = {"additionalProperties":false,"description":"One callable declaration in the Host-captured component roster.","properties":{"capability":{"$ref":"#/definitions/CapabilityDeclaration"},"contributionId":{"type":"string"}},"required":["contributionId","capability"],"type":"object"};
+const schema850 = {"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/WorkPlanToolSpec"},"maxItems":32,"minItems":1,"type":"array"},"maxInvocations":{"format":"uint32","maximum":300,"minimum":1,"type":"integer"}},"required":["maxInvocations","entries"],"type":"object"};
+const schema851 = {"additionalProperties":false,"description":"Captured by the trusted host from an installed package, never model text.","properties":{"applicationCapabilities":{"description":"Complete captured callable membership of an Application instance.\nOther scopes carry an explicit empty roster; this data grants no lease.","items":{"$ref":"#/definitions/ProcessCapability"},"maxItems":128,"type":"array"},"binding":{"$ref":"#/definitions/CapabilityToolBinding"},"execution":{"$ref":"#/definitions/PluginExecutionBinding"},"handle":{"$ref":"#/definitions/ExecutionId"},"packageOrigin":true,"resourceId":{"type":"string"},"runtimeOrigin":true,"selections":{"items":{"type":"string"},"type":"array"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"},"target":{"type":"string"}},"required":["handle","binding","execution","applicationCapabilities","resourceId","settingsRevision","packageOrigin","runtimeOrigin","target","selections"],"type":"object"};
+const schema852 = {"additionalProperties":false,"description":"One callable declaration in the Host-captured component roster.","properties":{"capability":{"$ref":"#/definitions/CapabilityDeclaration"},"contributionId":{"type":"string"}},"required":["contributionId","capability"],"type":"object"};
 
 function validate635(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -40983,12 +41283,12 @@ validate635.errors = vErrors;
 return errors === 0;
 }
 
-const schema851 = {"additionalProperties":false,"description":"A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.","properties":{"capability":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/CapabilityToolDeclaration"},"resources":{"items":{"$ref":"#/definitions/ToolResourceBinding"},"type":"array"}},"required":["declaration","capability","resources"],"type":"object"};
-const schema852 = {"additionalProperties":false,"description":"A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.","properties":{"capabilityId":{"type":"string"},"description":{"type":"string"},"name":{"type":"string"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"query":{"anyOf":[{"$ref":"#/definitions/ToolQueryDeclaration"},{"type":"null"}],"description":"Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data."},"skill":{"type":["string","null"]},"supportingResources":{"items":{"type":"string"},"type":"array"},"title":{"type":"string"}},"required":["name","title","description","capabilityId","profile","supportingResources","skill"],"type":"object"};
-const schema854 = {"additionalProperties":false,"properties":{"inputSchema":{"$ref":"#/definitions/ContractRef"},"inputTemplate":true,"maxTextBytes":{"maximum":4294967295,"minimum":1,"type":"integer"},"output":{"$ref":"#/definitions/ToolQueryOutput"},"outputSchema":{"$ref":"#/definitions/ContractRef"},"selections":{"allOf":[{"$ref":"#/definitions/ToolQuerySelection"}],"description":"Explicit senses or categories. Matching text alone does not select them."},"target":{"allOf":[{"$ref":"#/definitions/ToolQuerySelection"}],"description":"One explicit target option; no host-side locale or value normalization."},"textPath":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["inputSchema","outputSchema","inputTemplate","textPath","maxTextBytes","target","selections","output"],"type":"object"};
-const schema858 = {"anyOf":[{"type":"string"},{"maximum":1999,"minimum":0,"type":"integer"}]};
-const schema856 = {"additionalProperties":false,"properties":{"columns":{"items":{"$ref":"#/definitions/ToolQueryColumn"},"type":"array"},"emptyDescription":{"type":"string"},"entriesPath":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"},"maxEntries":{"maximum":4294967295,"minimum":1,"type":"integer"}},"required":["entriesPath","columns","maxEntries","emptyDescription"],"type":"object"};
-const schema857 = {"additionalProperties":false,"properties":{"label":{"type":"string"},"path":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["label","path"],"type":"object"};
+const schema853 = {"additionalProperties":false,"description":"A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.","properties":{"capability":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/CapabilityToolDeclaration"},"resources":{"items":{"$ref":"#/definitions/ToolResourceBinding"},"type":"array"}},"required":["declaration","capability","resources"],"type":"object"};
+const schema854 = {"additionalProperties":false,"description":"A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.","properties":{"capabilityId":{"type":"string"},"description":{"type":"string"},"name":{"type":"string"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"query":{"anyOf":[{"$ref":"#/definitions/ToolQueryDeclaration"},{"type":"null"}],"description":"Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data."},"skill":{"type":["string","null"]},"supportingResources":{"items":{"type":"string"},"type":"array"},"title":{"type":"string"}},"required":["name","title","description","capabilityId","profile","supportingResources","skill"],"type":"object"};
+const schema856 = {"additionalProperties":false,"properties":{"inputSchema":{"$ref":"#/definitions/ContractRef"},"inputTemplate":true,"maxTextBytes":{"maximum":4294967295,"minimum":1,"type":"integer"},"output":{"$ref":"#/definitions/ToolQueryOutput"},"outputSchema":{"$ref":"#/definitions/ContractRef"},"selections":{"allOf":[{"$ref":"#/definitions/ToolQuerySelection"}],"description":"Explicit senses or categories. Matching text alone does not select them."},"target":{"allOf":[{"$ref":"#/definitions/ToolQuerySelection"}],"description":"One explicit target option; no host-side locale or value normalization."},"textPath":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["inputSchema","outputSchema","inputTemplate","textPath","maxTextBytes","target","selections","output"],"type":"object"};
+const schema860 = {"anyOf":[{"type":"string"},{"maximum":1999,"minimum":0,"type":"integer"}]};
+const schema858 = {"additionalProperties":false,"properties":{"columns":{"items":{"$ref":"#/definitions/ToolQueryColumn"},"type":"array"},"emptyDescription":{"type":"string"},"entriesPath":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"},"maxEntries":{"maximum":4294967295,"minimum":1,"type":"integer"}},"required":["entriesPath","columns","maxEntries","emptyDescription"],"type":"object"};
+const schema859 = {"additionalProperties":false,"properties":{"label":{"type":"string"},"path":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["label","path"],"type":"object"};
 
 function validate643(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -41350,8 +41650,8 @@ validate642.errors = vErrors;
 return errors === 0;
 }
 
-const schema861 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"label":{"type":"string"},"maxSelected":{"maximum":4294967295,"minimum":1,"type":"integer"},"minSelected":{"maximum":64,"minimum":0,"type":"integer"},"options":{"items":{"$ref":"#/definitions/ToolQueryOption"},"type":"array"},"path":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["label","description","path","options","minSelected","maxSelected"],"type":"object"};
-const schema862 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"label":{"type":"string"},"value":{"type":"string"}},"required":["value","label","description"],"type":"object"};
+const schema863 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"label":{"type":"string"},"maxSelected":{"maximum":4294967295,"minimum":1,"type":"integer"},"minSelected":{"maximum":64,"minimum":0,"type":"integer"},"options":{"items":{"$ref":"#/definitions/ToolQueryOption"},"type":"array"},"path":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["label","description","path","options","minSelected","maxSelected"],"type":"object"};
+const schema864 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"label":{"type":"string"},"value":{"type":"string"}},"required":["value","label","description"],"type":"object"};
 
 function validate646(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -42396,7 +42696,7 @@ if(data.skill !== undefined){
 let data8 = data.skill;
 const _errs27 = errors;
 if((typeof data8 !== "string") && (data8 !== null)){
-validate640.errors = [{instancePath:instancePath+"/skill",schemaPath:"#/properties/skill/type",keyword:"type",params:{type: schema852.properties.skill.type},message:"must be string,null"}];
+validate640.errors = [{instancePath:instancePath+"/skill",schemaPath:"#/properties/skill/type",keyword:"type",params:{type: schema854.properties.skill.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs27 === errors;
@@ -42465,7 +42765,7 @@ validate640.errors = vErrors;
 return errors === 0;
 }
 
-const schema865 = {"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["contributionId","schema"],"type":"object"};
+const schema867 = {"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["contributionId","schema"],"type":"object"};
 
 function validate651(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -42715,7 +43015,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema849.properties, key0))){
+if(!(func2.call(schema851.properties, key0))){
 validate634.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -43014,7 +43314,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema806.properties, key0))){
+if(!(func2.call(schema807.properties, key0))){
 validate877.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -43212,7 +43512,7 @@ if(data.memberPreviews !== undefined){
 let data6 = data.memberPreviews;
 const _errs21 = errors;
 if((!(Array.isArray(data6))) && (data6 !== null)){
-validate877.errors = [{instancePath:instancePath+"/memberPreviews",schemaPath:"#/properties/memberPreviews/type",keyword:"type",params:{type: schema806.properties.memberPreviews.type},message:"must be array,null"}];
+validate877.errors = [{instancePath:instancePath+"/memberPreviews",schemaPath:"#/properties/memberPreviews/type",keyword:"type",params:{type: schema807.properties.memberPreviews.type},message:"must be array,null"}];
 return false;
 }
 if(errors === _errs21){
@@ -43866,10 +44166,10 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAction = validate886;
-const schema1151 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAction"};
-const schema1152 = {"anyOf":[{"$ref":"#/definitions/WorkPlanReceiptView"},{"type":"null"}]};
-const schema869 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"attemptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"lease":{"$ref":"#/definitions/AutomationLease"},"parentTask":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"state":{"$ref":"#/definitions/WorkPlanState"}},"required":["actionId","lease","state","attemptId","parentTask"],"type":"object"};
-const schema873 = {"enum":["active","paused","stopped","taken-over"],"type":"string"};
+const schema1153 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAction"};
+const schema1154 = {"anyOf":[{"$ref":"#/definitions/WorkPlanReceiptView"},{"type":"null"}]};
+const schema871 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"attemptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"lease":{"$ref":"#/definitions/AutomationLease"},"parentTask":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"state":{"$ref":"#/definitions/WorkPlanState"}},"required":["actionId","lease","state","attemptId","parentTask"],"type":"object"};
+const schema875 = {"enum":["active","paused","stopped","taken-over"],"type":"string"};
 
 function validate658(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -44087,7 +44387,7 @@ validate658.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definiti
 return false;
 }
 if(!((((data4 === "active") || (data4 === "paused")) || (data4 === "stopped")) || (data4 === "taken-over"))){
-validate658.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema873.enum},message:"must be equal to one of the allowed values"}];
+validate658.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema875.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs20 === errors;
@@ -44180,9 +44480,9 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgent = validate890;
-const schema1153 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgent","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgent"};
-const schema874 = {"additionalProperties":false,"properties":{"budget":{"$ref":"#/definitions/ProviderBudget"},"delegation":{"anyOf":[{"$ref":"#/definitions/WorkPlanAgentSubset"},{"type":"null"}]},"lease":{"$ref":"#/definitions/AutomationLease"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"scopeId":{"$ref":"#/definitions/ExecutionId"}},"required":["scopeId","lease","parentTask","scope","budget","delegation"],"type":"object"};
-const schema875 = {"additionalProperties":false,"properties":{"delegationId":{"$ref":"#/definitions/ExecutionId"},"parentScopeId":{"$ref":"#/definitions/ExecutionId"},"toolHandles":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":32,"type":"array"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"minItems":1,"type":"array"}},"required":["delegationId","parentScopeId","unitIds","toolHandles"],"type":"object"};
+const schema1155 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgent","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgent"};
+const schema876 = {"additionalProperties":false,"properties":{"budget":{"$ref":"#/definitions/ProviderBudget"},"delegation":{"anyOf":[{"$ref":"#/definitions/WorkPlanAgentSubset"},{"type":"null"}]},"lease":{"$ref":"#/definitions/AutomationLease"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"scopeId":{"$ref":"#/definitions/ExecutionId"}},"required":["scopeId","lease","parentTask","scope","budget","delegation"],"type":"object"};
+const schema877 = {"additionalProperties":false,"properties":{"delegationId":{"$ref":"#/definitions/ExecutionId"},"parentScopeId":{"$ref":"#/definitions/ExecutionId"},"toolHandles":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":32,"type":"array"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"minItems":1,"type":"array"}},"required":["delegationId","parentScopeId","unitIds","toolHandles"],"type":"object"};
 
 function validate663(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -44565,8 +44865,8 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentGeneration = validate897;
-const schema1157 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentGeneration","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentGeneration"};
-const schema882 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"budget":{"$ref":"#/definitions/ProviderBudget"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["scopeId","parentTask","taskId","attemptId","inputDigest","scope","budget"],"type":"object"};
+const schema1159 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentGeneration","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentGeneration"};
+const schema884 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"budget":{"$ref":"#/definitions/ProviderBudget"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["scopeId","parentTask","taskId","attemptId","inputDigest","scope","budget"],"type":"object"};
 
 function validate898(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -44770,7 +45070,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentGenerationAttempt = validate902;
-const schema1163 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentGenerationAttempt","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentGenerationAttempt"};
+const schema1165 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentGenerationAttempt","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentGenerationAttempt"};
 
 function validate903(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -44848,7 +45148,7 @@ if(data.nextOffset !== undefined){
 let data3 = data.nextOffset;
 const _errs8 = errors;
 if((!(((typeof data3 == "number") && (!(data3 % 1) && !isNaN(data3))) && (isFinite(data3)))) && (data3 !== null)){
-validate903.errors = [{instancePath:instancePath+"/nextOffset",schemaPath:"#/properties/nextOffset/type",keyword:"type",params:{type: schema627.properties.nextOffset.type},message:"must be integer,null"}];
+validate903.errors = [{instancePath:instancePath+"/nextOffset",schemaPath:"#/properties/nextOffset/type",keyword:"type",params:{type: schema628.properties.nextOffset.type},message:"must be integer,null"}];
 return false;
 }
 if(errors === _errs8){
@@ -45205,11 +45505,11 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentGenerationOutput = validate907;
-const schema1168 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentGenerationOutput","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentGenerationOutput"};
-const schema887 = {"additionalProperties":false,"description":"Read-only display projection. The stored ResultEnvelope remains unchanged.","properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"capabilityId":{"type":"string"},"capabilityVersion":{"type":"string"},"diagnostic":{"anyOf":[{"$ref":"#/definitions/Diagnostic"},{"type":"null"}]},"dispatchToken":{"$ref":"#/definitions/ExecutionId"},"itemId":{"$ref":"#/definitions/ExecutionId"},"outcome":{"$ref":"#/definitions/ExecutionState"},"output":true,"plugin":{"anyOf":[{"$ref":"#/definitions/PluginResultEvidence"},{"type":"null"}]},"projectId":{"$ref":"#/definitions/ExecutionId"},"resultId":{"$ref":"#/definitions/ExecutionId"},"sourceFailure":{"anyOf":[{"$ref":"#/definitions/SourceExtractionError"},{"type":"null"}]},"supersedes":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]}},"required":["projectId","attemptId","itemId","resultId","supersedes","dispatchToken","capabilityId","capabilityVersion","outcome","output","diagnostic"],"type":"object"};
-const schema889 = {"additionalProperties":false,"properties":{"code":{"type":"string"},"retrySafe":{"type":"boolean"}},"required":["code","retrySafe"],"type":"object"};
-const schema893 = {"additionalProperties":false,"description":"The complete received SDK result retains exact payload bytes and identity.\n`channel` is supplied independently by the trusted Host, not read from output.","properties":{"authorizationId":{"$ref":"#/definitions/ExecutionId"},"channel":{"$ref":"#/definitions/ProviderBinding"},"result":{"$ref":"#/definitions/InvocationResult"}},"required":["authorizationId","channel","result"],"type":"object"};
-const schema895 = {"additionalProperties":false,"description":"A claimed wire binding. Only the trusted host can compare it to the actual\nverified package and channel; constructing this value proves no authority.","properties":{"activationGeneration":{"maximum":4294967295,"minimum":1,"type":"integer"},"componentId":{"type":"string"},"contributionId":{"type":"string"},"instanceId":{"type":"string"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","componentId","contributionId","packageDigest","instanceId","activationGeneration"],"type":"object"};
+const schema1170 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentGenerationOutput","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentGenerationOutput"};
+const schema889 = {"additionalProperties":false,"description":"Read-only display projection. The stored ResultEnvelope remains unchanged.","properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"capabilityId":{"type":"string"},"capabilityVersion":{"type":"string"},"diagnostic":{"anyOf":[{"$ref":"#/definitions/Diagnostic"},{"type":"null"}]},"dispatchToken":{"$ref":"#/definitions/ExecutionId"},"itemId":{"$ref":"#/definitions/ExecutionId"},"outcome":{"$ref":"#/definitions/ExecutionState"},"output":true,"plugin":{"anyOf":[{"$ref":"#/definitions/PluginResultEvidence"},{"type":"null"}]},"projectId":{"$ref":"#/definitions/ExecutionId"},"resultId":{"$ref":"#/definitions/ExecutionId"},"sourceFailure":{"anyOf":[{"$ref":"#/definitions/SourceExtractionError"},{"type":"null"}]},"supersedes":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]}},"required":["projectId","attemptId","itemId","resultId","supersedes","dispatchToken","capabilityId","capabilityVersion","outcome","output","diagnostic"],"type":"object"};
+const schema891 = {"additionalProperties":false,"properties":{"code":{"type":"string"},"retrySafe":{"type":"boolean"}},"required":["code","retrySafe"],"type":"object"};
+const schema895 = {"additionalProperties":false,"description":"The complete received SDK result retains exact payload bytes and identity.\n`channel` is supplied independently by the trusted Host, not read from output.","properties":{"authorizationId":{"$ref":"#/definitions/ExecutionId"},"channel":{"$ref":"#/definitions/ProviderBinding"},"result":{"$ref":"#/definitions/InvocationResult"}},"required":["authorizationId","channel","result"],"type":"object"};
+const schema897 = {"additionalProperties":false,"description":"A claimed wire binding. Only the trusted host can compare it to the actual\nverified package and channel; constructing this value proves no authority.","properties":{"activationGeneration":{"maximum":4294967295,"minimum":1,"type":"integer"},"componentId":{"type":"string"},"contributionId":{"type":"string"},"instanceId":{"type":"string"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","componentId","contributionId","packageDigest","instanceId","activationGeneration"],"type":"object"};
 
 function validate675(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -45394,10 +45694,10 @@ validate675.errors = vErrors;
 return errors === 0;
 }
 
-const schema897 = {"additionalProperties":false,"properties":{"capability":{"$ref":"#/definitions/ContractRef"},"context":{"$ref":"#/definitions/InvocationContext"},"outcome":{"$ref":"#/definitions/InvocationOutcome"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"provider":{"$ref":"#/definitions/ProviderBinding"},"resultId":{"type":"string"}},"required":["context","provider","capability","profile","resultId","outcome"],"type":"object"};
-const schema899 = {"additionalProperties":false,"properties":{"attemptId":{"type":"string"},"configurationDigest":{"type":"string"},"dispatchId":{"type":"string"},"environmentDigest":{"type":"string"},"inputDigest":{"type":"string"},"itemId":{"type":"string"},"operationId":{"type":"string"},"projectId":{"type":"string"},"scopeDigest":{"type":"string"},"scopeId":{"type":"string"}},"required":["projectId","operationId","attemptId","itemId","dispatchId","scopeId","inputDigest","scopeDigest","environmentDigest","configurationDigest"],"type":"object"};
-const schema900 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"succeeded","type":"string"},"output":{"$ref":"#/definitions/EncodedPayload"}},"required":["kind","output"],"type":"object"},{"additionalProperties":false,"properties":{"error":{"$ref":"#/definitions/EncodedPayload"},"kind":{"const":"failed","type":"string"}},"required":["kind","error"],"type":"object"},{"additionalProperties":false,"properties":{"error":{"$ref":"#/definitions/EncodedPayload"},"kind":{"const":"unknown","type":"string"}},"required":["kind","error"],"type":"object"}]};
-const schema901 = {"additionalProperties":false,"description":"Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.","properties":{"schema":{"$ref":"#/definitions/ContractRef"},"sha256":{"type":"string"},"utf8":{"type":"string"}},"required":["schema","utf8","sha256"],"type":"object"};
+const schema899 = {"additionalProperties":false,"properties":{"capability":{"$ref":"#/definitions/ContractRef"},"context":{"$ref":"#/definitions/InvocationContext"},"outcome":{"$ref":"#/definitions/InvocationOutcome"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"provider":{"$ref":"#/definitions/ProviderBinding"},"resultId":{"type":"string"}},"required":["context","provider","capability","profile","resultId","outcome"],"type":"object"};
+const schema901 = {"additionalProperties":false,"properties":{"attemptId":{"type":"string"},"configurationDigest":{"type":"string"},"dispatchId":{"type":"string"},"environmentDigest":{"type":"string"},"inputDigest":{"type":"string"},"itemId":{"type":"string"},"operationId":{"type":"string"},"projectId":{"type":"string"},"scopeDigest":{"type":"string"},"scopeId":{"type":"string"}},"required":["projectId","operationId","attemptId","itemId","dispatchId","scopeId","inputDigest","scopeDigest","environmentDigest","configurationDigest"],"type":"object"};
+const schema902 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"succeeded","type":"string"},"output":{"$ref":"#/definitions/EncodedPayload"}},"required":["kind","output"],"type":"object"},{"additionalProperties":false,"properties":{"error":{"$ref":"#/definitions/EncodedPayload"},"kind":{"const":"failed","type":"string"}},"required":["kind","error"],"type":"object"},{"additionalProperties":false,"properties":{"error":{"$ref":"#/definitions/EncodedPayload"},"kind":{"const":"unknown","type":"string"}},"required":["kind","error"],"type":"object"}]};
+const schema903 = {"additionalProperties":false,"description":"Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.","properties":{"schema":{"$ref":"#/definitions/ContractRef"},"sha256":{"type":"string"},"utf8":{"type":"string"}},"required":["schema","utf8","sha256"],"type":"object"};
 
 function validate679(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -46011,7 +46311,7 @@ return false;
 else {
 const _errs15 = errors;
 for(const key2 in data4){
-if(!(func2.call(schema899.properties, key2))){
+if(!(func2.call(schema901.properties, key2))){
 validate677.errors = [{instancePath:instancePath+"/context",schemaPath:"#/definitions/InvocationContext/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -46497,8 +46797,8 @@ validate674.errors = vErrors;
 return errors === 0;
 }
 
-const schema906 = {"additionalProperties":false,"description":"A bounded public diagnostic. Producers must use public descriptions and\ncaptured artifact IDs, never local paths, raw source text or secrets. Data\nvalidation cannot establish that arbitrary diagnostic text is safe to share.","properties":{"artifactId":{"type":["string","null"]},"code":{"$ref":"#/definitions/SourceExtractionErrorCode"},"detail":{"type":"string"}},"required":["code","artifactId","detail"],"type":"object"};
-const schema907 = {"description":"Finite public failure classifications; details never determine permissions.","enum":["invalid-input","unsupported-profile","invalid-source","unsupported-structure","limit-exceeded","cancelled"],"type":"string"};
+const schema908 = {"additionalProperties":false,"description":"A bounded public diagnostic. Producers must use public descriptions and\ncaptured artifact IDs, never local paths, raw source text or secrets. Data\nvalidation cannot establish that arbitrary diagnostic text is safe to share.","properties":{"artifactId":{"type":["string","null"]},"code":{"$ref":"#/definitions/SourceExtractionErrorCode"},"detail":{"type":"string"}},"required":["code","artifactId","detail"],"type":"object"};
+const schema909 = {"description":"Finite public failure classifications; details never determine permissions.","enum":["invalid-input","unsupported-profile","invalid-source","unsupported-structure","limit-exceeded","cancelled"],"type":"string"};
 
 function validate687(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -46524,7 +46824,7 @@ if(data.artifactId !== undefined){
 let data0 = data.artifactId;
 const _errs2 = errors;
 if((typeof data0 !== "string") && (data0 !== null)){
-validate687.errors = [{instancePath:instancePath+"/artifactId",schemaPath:"#/properties/artifactId/type",keyword:"type",params:{type: schema906.properties.artifactId.type},message:"must be string,null"}];
+validate687.errors = [{instancePath:instancePath+"/artifactId",schemaPath:"#/properties/artifactId/type",keyword:"type",params:{type: schema908.properties.artifactId.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -46541,7 +46841,7 @@ validate687.errors = [{instancePath:instancePath+"/code",schemaPath:"#/definitio
 return false;
 }
 if(!((((((data1 === "invalid-input") || (data1 === "unsupported-profile")) || (data1 === "invalid-source")) || (data1 === "unsupported-structure")) || (data1 === "limit-exceeded")) || (data1 === "cancelled"))){
-validate687.errors = [{instancePath:instancePath+"/code",schemaPath:"#/definitions/SourceExtractionErrorCode/enum",keyword:"enum",params:{allowedValues: schema907.enum},message:"must be equal to one of the allowed values"}];
+validate687.errors = [{instancePath:instancePath+"/code",schemaPath:"#/definitions/SourceExtractionErrorCode/enum",keyword:"enum",params:{allowedValues: schema909.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -46589,7 +46889,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema887.properties, key0))){
+if(!(func2.call(schema889.properties, key0))){
 validate908.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -46826,7 +47126,7 @@ validate908.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/defini
 return false;
 }
 if(!((((((data8 === "queued") || (data8 === "dispatched")) || (data8 === "succeeded")) || (data8 === "failed")) || (data8 === "cancelled-before-dispatch")) || (data8 === "unknown"))){
-validate908.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema634.enum},message:"must be equal to one of the allowed values"}];
+validate908.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema635.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs27 === errors;
@@ -47104,8 +47404,8 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentGuidance = validate912;
-const schema1178 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentGuidance","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentGuidance"};
-const schema909 = {"additionalProperties":false,"properties":{"parentTask":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"tools":{"items":{"$ref":"#/definitions/WorkPlanToolSpec"},"maxItems":32,"type":"array"}},"required":["scopeId","parentTask","tools"],"type":"object"};
+const schema1180 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentGuidance","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentGuidance"};
+const schema911 = {"additionalProperties":false,"properties":{"parentTask":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"tools":{"items":{"$ref":"#/definitions/WorkPlanToolSpec"},"maxItems":32,"type":"array"}},"required":["scopeId","parentTask","tools"],"type":"object"};
 
 function validate913(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -47234,10 +47534,10 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentReconcile = validate916;
-const schema1182 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentReconcile","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentReconcile"};
-const schema912 = {"additionalProperties":false,"properties":{"identity":{"$ref":"#/definitions/WorkPlanAgentExecutionIdentity"},"outcome":{"$ref":"#/definitions/WorkPlanAgentReconciliationOutcome"}},"required":["identity","outcome"],"type":"object"};
-const schema916 = {"enum":["active","enqueued","not-enqueued"],"type":"string"};
-const schema913 = {"additionalProperties":false,"description":"Human recovery identity. It contains no scope or execution authority.","properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"lease":{"$ref":"#/definitions/AutomationLease"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["lease","taskId","attemptId","inputDigest"],"type":"object"};
+const schema1184 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentReconcile","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentReconcile"};
+const schema914 = {"additionalProperties":false,"properties":{"identity":{"$ref":"#/definitions/WorkPlanAgentExecutionIdentity"},"outcome":{"$ref":"#/definitions/WorkPlanAgentReconciliationOutcome"}},"required":["identity","outcome"],"type":"object"};
+const schema918 = {"enum":["active","enqueued","not-enqueued"],"type":"string"};
+const schema915 = {"additionalProperties":false,"description":"Human recovery identity. It contains no scope or execution authority.","properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"lease":{"$ref":"#/definitions/AutomationLease"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["lease","taskId","attemptId","inputDigest"],"type":"object"};
 
 function validate694(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -47391,7 +47691,7 @@ validate917.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/defini
 return false;
 }
 if(!(((data1 === "active") || (data1 === "enqueued")) || (data1 === "not-enqueued"))){
-validate917.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/WorkPlanAgentReconciliationOutcome/enum",keyword:"enum",params:{allowedValues: schema916.enum},message:"must be equal to one of the allowed values"}];
+validate917.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/WorkPlanAgentReconciliationOutcome/enum",keyword:"enum",params:{allowedValues: schema918.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs3 === errors;
@@ -47426,9 +47726,9 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentResource = validate920;
-const schema1185 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentResource","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentResource"};
-const schema917 = {"additionalProperties":false,"properties":{"content":{"$ref":"#/definitions/WorkPlanGuidanceContent"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"tool":{"$ref":"#/definitions/WorkPlanToolSpec"}},"required":["scopeId","parentTask","tool","content"],"type":"object"};
-const schema918 = {"oneOf":[{"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"kind":{"const":"skill","type":"string"},"text":{"maxLength":65536,"type":"string"}},"required":["kind","contributionId","text"],"type":"object"},{"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"kind":{"const":"resource","type":"string"},"schema":{"$ref":"#/definitions/ContractRef"},"text":{"maxLength":65536,"type":"string"}},"required":["kind","contributionId","schema","text"],"type":"object"}]};
+const schema1187 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentResource","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentResource"};
+const schema919 = {"additionalProperties":false,"properties":{"content":{"$ref":"#/definitions/WorkPlanGuidanceContent"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"tool":{"$ref":"#/definitions/WorkPlanToolSpec"}},"required":["scopeId","parentTask","tool","content"],"type":"object"};
+const schema920 = {"oneOf":[{"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"kind":{"const":"skill","type":"string"},"text":{"maxLength":65536,"type":"string"}},"required":["kind","contributionId","text"],"type":"object"},{"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"kind":{"const":"resource","type":"string"},"schema":{"$ref":"#/definitions/ContractRef"},"text":{"maxLength":65536,"type":"string"}},"required":["kind","contributionId","schema","text"],"type":"object"}]};
 
 function validate699(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -48009,7 +48309,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentSkill = validate925;
-const schema1189 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentSkill","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentSkill"};
+const schema1191 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentSkill","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentSkill"};
 
 function validate926(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -48127,8 +48427,8 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentTool = validate930;
-const schema1193 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentTool","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentTool"};
-const schema922 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"},"toolHandle":{"$ref":"#/definitions/ExecutionId"}},"required":["scopeId","parentTask","taskId","attemptId","toolHandle","inputDigest","scope"],"type":"object"};
+const schema1195 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentTool","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentTool"};
+const schema924 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[a-f0-9]{64}$","type":"string"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"},"toolHandle":{"$ref":"#/definitions/ExecutionId"}},"required":["scopeId","parentTask","taskId","attemptId","toolHandle","inputDigest","scope"],"type":"object"};
 
 function validate931(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -48342,7 +48642,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentToolAttempt = validate934;
-const schema1200 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentToolAttempt","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentToolAttempt"};
+const schema1202 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentToolAttempt","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentToolAttempt"};
 
 function validate935(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -48420,7 +48720,7 @@ if(data.nextOffset !== undefined){
 let data3 = data.nextOffset;
 const _errs8 = errors;
 if((!(((typeof data3 == "number") && (!(data3 % 1) && !isNaN(data3))) && (isFinite(data3)))) && (data3 !== null)){
-validate935.errors = [{instancePath:instancePath+"/nextOffset",schemaPath:"#/properties/nextOffset/type",keyword:"type",params:{type: schema627.properties.nextOffset.type},message:"must be integer,null"}];
+validate935.errors = [{instancePath:instancePath+"/nextOffset",schemaPath:"#/properties/nextOffset/type",keyword:"type",params:{type: schema628.properties.nextOffset.type},message:"must be integer,null"}];
 return false;
 }
 if(errors === _errs8){
@@ -48777,7 +49077,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAgentToolOutput = validate939;
-const schema1205 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentToolOutput","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentToolOutput"};
+const schema1207 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAgentToolOutput","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAgentToolOutput"};
 
 function validate940(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -48792,7 +49092,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema887.properties, key0))){
+if(!(func2.call(schema889.properties, key0))){
 validate940.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -49029,7 +49329,7 @@ validate940.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/defini
 return false;
 }
 if(!((((((data8 === "queued") || (data8 === "dispatched")) || (data8 === "succeeded")) || (data8 === "failed")) || (data8 === "cancelled-before-dispatch")) || (data8 === "unknown"))){
-validate940.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema634.enum},message:"must be equal to one of the allowed values"}];
+validate940.errors = [{instancePath:instancePath+"/outcome",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema635.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs27 === errors;
@@ -49307,12 +49607,12 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanAuthorizationAction = validate944;
-const schema1215 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAuthorizationAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAuthorizationAction"};
-const schema1216 = {"anyOf":[{"$ref":"#/definitions/WorkPlanActionReadView"},{"type":"null"}]};
-const schema928 = {"additionalProperties":false,"properties":{"projectId":{"$ref":"#/definitions/ExecutionId"},"receipt":{"$ref":"#/definitions/WorkPlanReceiptView"},"request":{"$ref":"#/definitions/WorkPlanRecordedAction"}},"required":["projectId","request","receipt"],"type":"object"};
-const schema930 = {"description":"Only the persisted Core transition; Host-local execution consent is independent.","oneOf":[{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"confirmed":{"type":"boolean"},"digest":{"type":"string"},"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"},"expiresAt":{"$ref":"#/definitions/UnsignedDecimal"},"kind":{"const":"authorize","type":"string"},"planId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","planId","actionId","digest","confirmed","effects","expiresAt"],"type":"object"},{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"command":{"$ref":"#/definitions/WorkPlanCommand"},"confirmed":{"type":"boolean"},"expectedGeneration":{"$ref":"#/definitions/Revision"},"expiresAt":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"kind":{"const":"control","type":"string"},"planId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","planId","actionId","expectedGeneration","command","confirmed","expiresAt"],"type":"object"}]};
-const schema932 = {"description":"Requested automatic effects, never a human language-review approval.","enum":["save-candidate","run-checks","select-missing","replace-captured-selection","adopt-resources","deliver","query-tools","publish-discussion","dispatch-team-work","send-team-message"],"type":"string"};
-const schema936 = {"enum":["pause","stop","take-over","continue"],"type":"string"};
+const schema1217 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanAuthorizationAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanAuthorizationAction"};
+const schema1218 = {"anyOf":[{"$ref":"#/definitions/WorkPlanActionReadView"},{"type":"null"}]};
+const schema930 = {"additionalProperties":false,"properties":{"projectId":{"$ref":"#/definitions/ExecutionId"},"receipt":{"$ref":"#/definitions/WorkPlanReceiptView"},"request":{"$ref":"#/definitions/WorkPlanRecordedAction"}},"required":["projectId","request","receipt"],"type":"object"};
+const schema932 = {"description":"Only the persisted Core transition; Host-local execution consent is independent.","oneOf":[{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"confirmed":{"type":"boolean"},"digest":{"type":"string"},"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"},"expiresAt":{"$ref":"#/definitions/UnsignedDecimal"},"kind":{"const":"authorize","type":"string"},"planId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","planId","actionId","digest","confirmed","effects","expiresAt"],"type":"object"},{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"command":{"$ref":"#/definitions/WorkPlanCommand"},"confirmed":{"type":"boolean"},"expectedGeneration":{"$ref":"#/definitions/Revision"},"expiresAt":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"kind":{"const":"control","type":"string"},"planId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","planId","actionId","expectedGeneration","command","confirmed","expiresAt"],"type":"object"}]};
+const schema934 = {"description":"Requested automatic effects, never a human language-review approval.","enum":["save-candidate","run-checks","select-missing","replace-captured-selection","adopt-resources","deliver","query-tools","publish-discussion","dispatch-team-work","send-team-message"],"type":"string"};
+const schema938 = {"enum":["pause","stop","take-over","continue"],"type":"string"};
 
 function validate711(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -49441,7 +49741,7 @@ vErrors.push(err6);
 errors++;
 }
 if(!((((((((((data4 === "save-candidate") || (data4 === "run-checks")) || (data4 === "select-missing")) || (data4 === "replace-captured-selection")) || (data4 === "adopt-resources")) || (data4 === "deliver")) || (data4 === "query-tools")) || (data4 === "publish-discussion")) || (data4 === "dispatch-team-work")) || (data4 === "send-team-message"))){
-const err7 = {instancePath:instancePath+"/effects/" + i0,schemaPath:"#/definitions/AutomationEffect/enum",keyword:"enum",params:{allowedValues: schema932.enum},message:"must be equal to one of the allowed values"};
+const err7 = {instancePath:instancePath+"/effects/" + i0,schemaPath:"#/definitions/AutomationEffect/enum",keyword:"enum",params:{allowedValues: schema934.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err7];
 }
@@ -49672,7 +49972,7 @@ vErrors.push(err20);
 errors++;
 }
 if(!((((data9 === "pause") || (data9 === "stop")) || (data9 === "take-over")) || (data9 === "continue"))){
-const err21 = {instancePath:instancePath+"/command",schemaPath:"#/definitions/WorkPlanCommand/enum",keyword:"enum",params:{allowedValues: schema936.enum},message:"must be equal to one of the allowed values"};
+const err21 = {instancePath:instancePath+"/command",schemaPath:"#/definitions/WorkPlanCommand/enum",keyword:"enum",params:{allowedValues: schema938.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err21];
 }
@@ -50083,8 +50383,8 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanControlAction = validate948;
-const schema1217 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanControlAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanControlAction"};
-const schema1218 = {"anyOf":[{"$ref":"#/definitions/WorkPlanActionReadView"},{"type":"null"}]};
+const schema1219 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanControlAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanControlAction"};
+const schema1220 = {"anyOf":[{"$ref":"#/definitions/WorkPlanActionReadView"},{"type":"null"}]};
 
 function validate949(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -50154,10 +50454,10 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanGenerationPreflight = validate952;
-const schema1219 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanGenerationPreflight","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanGenerationPreflight"};
-const schema940 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"budget":{"$ref":"#/definitions/ProviderBudget"},"component":{"$ref":"#/definitions/PluginGenerationComponentView"},"generation":{"$ref":"#/definitions/GenerationServiceInput"},"inputDigest":{"type":"string"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"preparedTools":{"items":{"$ref":"#/definitions/WorkPlanGenerationToolPreflight"},"type":"array"},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["scopeId","parentTask","attemptId","taskId","inputDigest","component","generation","preparedTools","scope","budget"],"type":"object"};
-const schema948 = {"additionalProperties":false,"description":"No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.","properties":{"attemptId":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"taskId":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"unitIds":{"items":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"maxItems":100,"minItems":1,"type":"array","uniqueItems":true}},"required":["taskId","attemptId","unitIds"],"type":"object"};
-const schema942 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/CapabilityBinding"},"componentScope":{"$ref":"#/definitions/ComponentScope"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","binding","componentScope","profile","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
+const schema1221 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanGenerationPreflight","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanGenerationPreflight"};
+const schema942 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"budget":{"$ref":"#/definitions/ProviderBudget"},"component":{"$ref":"#/definitions/PluginGenerationComponentView"},"generation":{"$ref":"#/definitions/GenerationServiceInput"},"inputDigest":{"type":"string"},"parentTask":{"$ref":"#/definitions/ExecutionId"},"preparedTools":{"items":{"$ref":"#/definitions/WorkPlanGenerationToolPreflight"},"type":"array"},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"scopeId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["scopeId","parentTask","attemptId","taskId","inputDigest","component","generation","preparedTools","scope","budget"],"type":"object"};
+const schema950 = {"additionalProperties":false,"description":"No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.","properties":{"attemptId":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"taskId":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"unitIds":{"items":{"pattern":"^[A-Za-z0-9.\\-_:/]{1,128}$","type":"string"},"maxItems":100,"minItems":1,"type":"array","uniqueItems":true}},"required":["taskId","attemptId","unitIds"],"type":"object"};
+const schema944 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/CapabilityBinding"},"componentScope":{"$ref":"#/definitions/ComponentScope"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","binding","componentScope","profile","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
 
 function validate717(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -50199,7 +50499,7 @@ validate717.errors = [{instancePath:instancePath+"/componentScope",schemaPath:"#
 return false;
 }
 if(!(((data1 === "application") || (data1 === "project")) || (data1 === "attempt"))){
-validate717.errors = [{instancePath:instancePath+"/componentScope",schemaPath:"#/definitions/ComponentScope/enum",keyword:"enum",params:{allowedValues: schema721.enum},message:"must be equal to one of the allowed values"}];
+validate717.errors = [{instancePath:instancePath+"/componentScope",schemaPath:"#/definitions/ComponentScope/enum",keyword:"enum",params:{allowedValues: schema722.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs3 === errors;
@@ -50595,8 +50895,8 @@ validate717.errors = vErrors;
 return errors === 0;
 }
 
-const schema950 = {"additionalProperties":false,"properties":{"callId":{"type":"string"},"handleId":{"type":"string"},"input":{"$ref":"#/definitions/EncodedPayload"},"inputDigest":{"type":"string"},"query":{"$ref":"#/definitions/AgentToolRequest"},"tool":{"$ref":"#/definitions/WorkPlanToolSpec"}},"required":["query","handleId","callId","inputDigest","tool","input"],"type":"object"};
-const schema951 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"},"toolHandle":{"$ref":"#/definitions/ExecutionId"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"minItems":1,"type":"array"}},"required":["taskId","attemptId","toolHandle","unitIds"],"type":"object"};
+const schema952 = {"additionalProperties":false,"properties":{"callId":{"type":"string"},"handleId":{"type":"string"},"input":{"$ref":"#/definitions/EncodedPayload"},"inputDigest":{"type":"string"},"query":{"$ref":"#/definitions/AgentToolRequest"},"tool":{"$ref":"#/definitions/WorkPlanToolSpec"}},"required":["query","handleId","callId","inputDigest","tool","input"],"type":"object"};
+const schema953 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"},"toolHandle":{"$ref":"#/definitions/ExecutionId"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"minItems":1,"type":"array"}},"required":["taskId","attemptId","toolHandle","unitIds"],"type":"object"};
 
 function validate723(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -50873,7 +51173,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema940.properties, key0))){
+if(!(func2.call(schema942.properties, key0))){
 validate953.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -51247,9 +51547,9 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanGenerationStartRead = validate959;
-const schema1226 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanGenerationStartRead","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanGenerationStartRead"};
-const schema1227 = {"anyOf":[{"$ref":"#/definitions/PluginStartActionRead"},{"type":"null"}]};
-const schema958 = {"additionalProperties":false,"description":"Evidence of one exact ordinary plugin input in the durable execution ledger.\nThis proves enqueueing, never current scope, worker completion or live consent.","properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"type":"string"},"operation":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","taskId","attemptId","operation","inputDigest"],"type":"object"};
+const schema1228 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanGenerationStartRead","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanGenerationStartRead"};
+const schema1229 = {"anyOf":[{"$ref":"#/definitions/PluginStartActionRead"},{"type":"null"}]};
+const schema960 = {"additionalProperties":false,"description":"Evidence of one exact ordinary plugin input in the durable execution ledger.\nThis proves enqueueing, never current scope, worker completion or live consent.","properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"type":"string"},"operation":{"type":"string"},"projectId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","taskId","attemptId","operation","inputDigest"],"type":"object"};
 
 function validate729(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -51445,7 +51745,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanReceipt = validate963;
-const schema1228 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanReceipt","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanReceipt"};
+const schema1230 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanReceipt","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanReceipt"};
 
 function validate964(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -51663,7 +51963,7 @@ validate964.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definiti
 return false;
 }
 if(!((((data4 === "active") || (data4 === "paused")) || (data4 === "stopped")) || (data4 === "taken-over"))){
-validate964.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema873.enum},message:"must be equal to one of the allowed values"}];
+validate964.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema875.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs20 === errors;
@@ -51701,9 +52001,9 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanStartAction = validate967;
-const schema1234 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanStartAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanStartAction"};
-const schema1235 = {"anyOf":[{"$ref":"#/definitions/WorkPlanStartReceipt"},{"type":"null"}]};
-const schema962 = {"additionalProperties":false,"description":"Evidence that the exact authorized fixed input was durably enqueued.","properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"attemptId":{"$ref":"#/definitions/ExecutionId"},"expectedGeneration":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","planId","actionId","expectedGeneration","attemptId","taskId"],"type":"object"};
+const schema1236 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanStartAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanStartAction"};
+const schema1237 = {"anyOf":[{"$ref":"#/definitions/WorkPlanStartReceipt"},{"type":"null"}]};
+const schema964 = {"additionalProperties":false,"description":"Evidence that the exact authorized fixed input was durably enqueued.","properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"attemptId":{"$ref":"#/definitions/ExecutionId"},"expectedGeneration":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["projectId","planId","actionId","expectedGeneration","attemptId","taskId"],"type":"object"};
 
 function validate732(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -51942,9 +52242,9 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanStatus = validate971;
-const schema1236 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanStatus","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanStatus"};
-const schema969 = {"additionalProperties":false,"properties":{"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"},"expiresAt":{"$ref":"#/definitions/UnsignedDecimal"},"lease":{"$ref":"#/definitions/AutomationLease"},"plan":{"$ref":"#/definitions/WorkPlanView"},"state":{"$ref":"#/definitions/WorkPlanState"},"toolInvocations":{"anyOf":[{"$ref":"#/definitions/WorkPlanToolUsage"},{"type":"null"}]}},"required":["plan","lease","state","effects","expiresAt","toolInvocations"],"type":"object"};
-const schema973 = {"additionalProperties":false,"properties":{"limit":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"reserved":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["reserved","limit"],"type":"object"};
+const schema1238 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanStatus","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanStatus"};
+const schema971 = {"additionalProperties":false,"properties":{"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"},"expiresAt":{"$ref":"#/definitions/UnsignedDecimal"},"lease":{"$ref":"#/definitions/AutomationLease"},"plan":{"$ref":"#/definitions/WorkPlanView"},"state":{"$ref":"#/definitions/WorkPlanState"},"toolInvocations":{"anyOf":[{"$ref":"#/definitions/WorkPlanToolUsage"},{"type":"null"}]}},"required":["plan","lease","state","effects","expiresAt","toolInvocations"],"type":"object"};
+const schema975 = {"additionalProperties":false,"properties":{"limit":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"reserved":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["reserved","limit"],"type":"object"};
 
 function validate594(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -51959,7 +52259,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema806.properties, key0))){
+if(!(func2.call(schema807.properties, key0))){
 validate594.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -52157,7 +52457,7 @@ if(data.memberPreviews !== undefined){
 let data6 = data.memberPreviews;
 const _errs21 = errors;
 if((!(Array.isArray(data6))) && (data6 !== null)){
-validate594.errors = [{instancePath:instancePath+"/memberPreviews",schemaPath:"#/properties/memberPreviews/type",keyword:"type",params:{type: schema806.properties.memberPreviews.type},message:"must be array,null"}];
+validate594.errors = [{instancePath:instancePath+"/memberPreviews",schemaPath:"#/properties/memberPreviews/type",keyword:"type",params:{type: schema807.properties.memberPreviews.type},message:"must be array,null"}];
 return false;
 }
 if(errors === _errs21){
@@ -52833,7 +53133,7 @@ validate972.errors = [{instancePath:instancePath+"/effects/" + i0,schemaPath:"#/
 return false;
 }
 if(!((((((((((data1 === "save-candidate") || (data1 === "run-checks")) || (data1 === "select-missing")) || (data1 === "replace-captured-selection")) || (data1 === "adopt-resources")) || (data1 === "deliver")) || (data1 === "query-tools")) || (data1 === "publish-discussion")) || (data1 === "dispatch-team-work")) || (data1 === "send-team-message"))){
-validate972.errors = [{instancePath:instancePath+"/effects/" + i0,schemaPath:"#/definitions/AutomationEffect/enum",keyword:"enum",params:{allowedValues: schema932.enum},message:"must be equal to one of the allowed values"}];
+validate972.errors = [{instancePath:instancePath+"/effects/" + i0,schemaPath:"#/definitions/AutomationEffect/enum",keyword:"enum",params:{allowedValues: schema934.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid1 = _errs4 === errors;
@@ -52907,7 +53207,7 @@ validate972.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definiti
 return false;
 }
 if(!((((data5 === "active") || (data5 === "paused")) || (data5 === "stopped")) || (data5 === "taken-over"))){
-validate972.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema873.enum},message:"must be equal to one of the allowed values"}];
+validate972.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema875.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs12 === errors;
@@ -53132,11 +53432,11 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamExecution = validate976;
-const schema1242 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamExecution","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamExecution"};
-const schema974 = {"additionalProperties":false,"properties":{"budget":{"anyOf":[{"$ref":"#/definitions/ProviderBudget"},{"type":"null"}]},"consumptions":{"items":{"$ref":"#/definitions/TeamMessageConsumption"},"type":"array"},"effectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"members":{"items":{"$ref":"#/definitions/TeamMemberRole"},"type":"array"},"messageLimits":{"$ref":"#/definitions/TeamMessageLimits"},"messages":{"items":{"$ref":"#/definitions/TeamMessage"},"type":"array"},"nextMessageAfter":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"nextWorkAfter":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"planId":{"$ref":"#/definitions/ExecutionId"},"retiredMemberIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"roleVersions":{"items":{"$ref":"#/definitions/TeamMemberRole"},"type":"array"},"roster":{"items":{"$ref":"#/definitions/TeamExecutionMember"},"type":"array"},"stopReason":{"anyOf":[{"$ref":"#/definitions/TeamStopReason"},{"type":"null"}]},"works":{"items":{"$ref":"#/definitions/TeamWorkView"},"type":"array"}},"required":["planId","messageLimits","effectiveVersion","roster","retiredMemberIds","roleVersions","members","works","messages","consumptions","budget","stopReason","nextWorkAfter","nextMessageAfter"],"type":"object"};
-const schema989 = {"additionalProperties":false,"properties":{"maxBodyBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxMessages":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRequestBytes":{"description":"The complete encoded TeamWorkRequestView, including its other context.","format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRequestMessages":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxMessages","maxBodyBytes","maxRequestMessages","maxRequestBytes"],"type":"object"};
-const schema1016 = {"enum":["activation-limit","no-progress","expired","budget-exhausted","needs-reconciliation"],"type":"string"};
-const schema975 = {"additionalProperties":false,"description":"Presentation in an admitted request, not proof of a remote model's understanding.","properties":{"messageId":{"$ref":"#/definitions/ExecutionId"},"providerRequestId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["messageId","taskId","providerRequestId"],"type":"object"};
+const schema1244 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamExecution","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamExecution"};
+const schema976 = {"additionalProperties":false,"properties":{"budget":{"anyOf":[{"$ref":"#/definitions/ProviderBudget"},{"type":"null"}]},"consumptions":{"items":{"$ref":"#/definitions/TeamMessageConsumption"},"type":"array"},"effectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"members":{"items":{"$ref":"#/definitions/TeamMemberRole"},"type":"array"},"messageLimits":{"$ref":"#/definitions/TeamMessageLimits"},"messages":{"items":{"$ref":"#/definitions/TeamMessage"},"type":"array"},"nextMessageAfter":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"nextWorkAfter":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"planId":{"$ref":"#/definitions/ExecutionId"},"retiredMemberIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"roleVersions":{"items":{"$ref":"#/definitions/TeamMemberRole"},"type":"array"},"roster":{"items":{"$ref":"#/definitions/TeamExecutionMember"},"type":"array"},"stopReason":{"anyOf":[{"$ref":"#/definitions/TeamStopReason"},{"type":"null"}]},"works":{"items":{"$ref":"#/definitions/TeamWorkView"},"type":"array"}},"required":["planId","messageLimits","effectiveVersion","roster","retiredMemberIds","roleVersions","members","works","messages","consumptions","budget","stopReason","nextWorkAfter","nextMessageAfter"],"type":"object"};
+const schema991 = {"additionalProperties":false,"properties":{"maxBodyBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxMessages":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRequestBytes":{"description":"The complete encoded TeamWorkRequestView, including its other context.","format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRequestMessages":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxMessages","maxBodyBytes","maxRequestMessages","maxRequestBytes"],"type":"object"};
+const schema1018 = {"enum":["activation-limit","no-progress","expired","budget-exhausted","needs-reconciliation"],"type":"string"};
+const schema977 = {"additionalProperties":false,"description":"Presentation in an admitted request, not proof of a remote model's understanding.","properties":{"messageId":{"$ref":"#/definitions/ExecutionId"},"providerRequestId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["messageId","taskId","providerRequestId"],"type":"object"};
 
 function validate740(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -53237,7 +53537,7 @@ validate740.errors = vErrors;
 return errors === 0;
 }
 
-const schema979 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"digest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"lease":{"$ref":"#/definitions/AutomationLease"}},"required":["actionId","lease","digest"],"type":"object"};
+const schema981 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"digest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"lease":{"$ref":"#/definitions/AutomationLease"}},"required":["actionId","lease","digest"],"type":"object"};
 
 function validate742(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -53327,8 +53627,8 @@ validate742.errors = vErrors;
 return errors === 0;
 }
 
-const schema981 = {"additionalProperties":false,"description":"Descriptive identity and the original model configuration, never a grant.","properties":{"config":{"$ref":"#/definitions/AiConfig"},"generation":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"},"request":{"$ref":"#/definitions/TeamMemberRoleWrite"},"version":{"$ref":"#/definitions/Revision"}},"required":["planId","version","generation","request","config"],"type":"object"};
-const schema984 = {"additionalProperties":false,"properties":{"displayName":{"type":"string"},"expectedRoleVersionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"memberId":{"$ref":"#/definitions/ExecutionId"},"role":{"type":"string"},"roleVersionId":{"$ref":"#/definitions/ExecutionId"}},"required":["memberId","roleVersionId","expectedRoleVersionId","displayName","role"],"type":"object"};
+const schema983 = {"additionalProperties":false,"description":"Descriptive identity and the original model configuration, never a grant.","properties":{"config":{"$ref":"#/definitions/AiConfig"},"generation":{"$ref":"#/definitions/Revision"},"planId":{"$ref":"#/definitions/ExecutionId"},"request":{"$ref":"#/definitions/TeamMemberRoleWrite"},"version":{"$ref":"#/definitions/Revision"}},"required":["planId","version","generation","request","config"],"type":"object"};
+const schema986 = {"additionalProperties":false,"properties":{"displayName":{"type":"string"},"expectedRoleVersionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"memberId":{"$ref":"#/definitions/ExecutionId"},"role":{"type":"string"},"roleVersionId":{"$ref":"#/definitions/ExecutionId"}},"required":["memberId","roleVersionId","expectedRoleVersionId","displayName","role"],"type":"object"};
 
 function validate747(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -53636,10 +53936,10 @@ validate745.errors = vErrors;
 return errors === 0;
 }
 
-const schema990 = {"additionalProperties":false,"properties":{"body":{"type":"string"},"causeMessageId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"messageId":{"$ref":"#/definitions/ExecutionId"},"planId":{"$ref":"#/definitions/ExecutionId"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"recipientMemberId":{"$ref":"#/definitions/ExecutionId"},"recipientRoleVersionId":{"$ref":"#/definitions/ExecutionId"},"sender":{"$ref":"#/definitions/TeamDiscussionAuthor"},"sequence":{"$ref":"#/definitions/Revision"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["messageId","sequence","planId","sender","recipientMemberId","recipientRoleVersionId","target","body","postIds","causeMessageId"],"type":"object"};
-const schema997 = {"oneOf":[{"additionalProperties":false,"properties":{"author":{"$ref":"#/definitions/TeamMemberAuthor"},"kind":{"const":"member","type":"string"}},"required":["kind","author"],"type":"object"},{"additionalProperties":false,"properties":{"actor":{"type":"string"},"binding":{"$ref":"#/definitions/WorkPlanAgentExecutionBinding"},"kind":{"const":"human","type":"string"}},"required":["kind","actor","binding"],"type":"object"}]};
-const schema998 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"binding":{"$ref":"#/definitions/WorkPlanAgentExecutionBinding"},"dispatchToken":{"$ref":"#/definitions/ExecutionId"},"itemId":{"$ref":"#/definitions/ExecutionId"},"memberId":{"$ref":"#/definitions/ExecutionId"},"roleVersionId":{"$ref":"#/definitions/ExecutionId"}},"required":["memberId","roleVersionId","attemptId","itemId","dispatchToken","binding"],"type":"object"};
-const schema1000 = {"additionalProperties":false,"description":"Immutable provenance, never a substitute for a live opaque scope.","properties":{"callerId":{"$ref":"#/definitions/ExecutionId"},"delegation":{"anyOf":[{"$ref":"#/definitions/WorkPlanAgentSubset"},{"type":"null"}]},"lease":{"$ref":"#/definitions/AutomationLease"},"rootTask":{"$ref":"#/definitions/ExecutionId"}},"required":["lease","rootTask","callerId","delegation"],"type":"object"};
+const schema992 = {"additionalProperties":false,"properties":{"body":{"type":"string"},"causeMessageId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"messageId":{"$ref":"#/definitions/ExecutionId"},"planId":{"$ref":"#/definitions/ExecutionId"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"recipientMemberId":{"$ref":"#/definitions/ExecutionId"},"recipientRoleVersionId":{"$ref":"#/definitions/ExecutionId"},"sender":{"$ref":"#/definitions/TeamDiscussionAuthor"},"sequence":{"$ref":"#/definitions/Revision"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["messageId","sequence","planId","sender","recipientMemberId","recipientRoleVersionId","target","body","postIds","causeMessageId"],"type":"object"};
+const schema999 = {"oneOf":[{"additionalProperties":false,"properties":{"author":{"$ref":"#/definitions/TeamMemberAuthor"},"kind":{"const":"member","type":"string"}},"required":["kind","author"],"type":"object"},{"additionalProperties":false,"properties":{"actor":{"type":"string"},"binding":{"$ref":"#/definitions/WorkPlanAgentExecutionBinding"},"kind":{"const":"human","type":"string"}},"required":["kind","actor","binding"],"type":"object"}]};
+const schema1000 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"binding":{"$ref":"#/definitions/WorkPlanAgentExecutionBinding"},"dispatchToken":{"$ref":"#/definitions/ExecutionId"},"itemId":{"$ref":"#/definitions/ExecutionId"},"memberId":{"$ref":"#/definitions/ExecutionId"},"roleVersionId":{"$ref":"#/definitions/ExecutionId"}},"required":["memberId","roleVersionId","attemptId","itemId","dispatchToken","binding"],"type":"object"};
+const schema1002 = {"additionalProperties":false,"description":"Immutable provenance, never a substitute for a live opaque scope.","properties":{"callerId":{"$ref":"#/definitions/ExecutionId"},"delegation":{"anyOf":[{"$ref":"#/definitions/WorkPlanAgentSubset"},{"type":"null"}]},"lease":{"$ref":"#/definitions/AutomationLease"},"rootTask":{"$ref":"#/definitions/ExecutionId"}},"required":["lease","rootTask","callerId","delegation"],"type":"object"};
 
 function validate753(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -54185,7 +54485,7 @@ validate751.errors = vErrors;
 return errors === 0;
 }
 
-const schema1008 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","locale","sourceSnapshotId","sourceRevisionId"],"type":"object"};
+const schema1010 = {"additionalProperties":false,"properties":{"locale":{"type":"string"},"sourceRevisionId":{"$ref":"#/definitions/ExecutionId"},"sourceSnapshotId":{"$ref":"#/definitions/ExecutionId"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["unitId","locale","sourceSnapshotId","sourceRevisionId"],"type":"object"};
 
 function validate760(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -54313,7 +54613,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema990.properties, key0))){
+if(!(func2.call(schema992.properties, key0))){
 validate750.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -54603,10 +54903,10 @@ validate750.errors = vErrors;
 return errors === 0;
 }
 
-const schema1017 = {"additionalProperties":false,"properties":{"author":{"anyOf":[{"$ref":"#/definitions/TeamMemberAuthor"},{"type":"null"}]},"candidateRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"execution":{"$ref":"#/definitions/ExecutionState"},"origin":{"$ref":"#/definitions/TeamWorkOrigin"},"output":{"anyOf":[{"$ref":"#/definitions/TeamWorkOutput"},{"type":"null"}]},"receipt":{"$ref":"#/definitions/TeamWorkReceipt"},"request":{"anyOf":[{"$ref":"#/definitions/RequestTeamWork"},{"type":"null"}]},"sequence":{"$ref":"#/definitions/Revision"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"validation":{"$ref":"#/definitions/ValidationState"}},"required":["origin","sequence","receipt","author","request","target","execution","validation","output","candidateRevisionId"],"type":"object"};
-const schema1020 = {"oneOf":[{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"start","type":"string"}},"required":["kind","actionId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"member","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"human-continuation","type":"string"},"work":{"$ref":"#/definitions/TeamHumanWork"}},"required":["kind","actionId","work"],"type":"object"}]};
-const schema1023 = {"additionalProperties":false,"properties":{"instructions":{"maxLength":8192,"minLength":1,"type":"string"},"kind":{"$ref":"#/definitions/TeamWorkKind"},"memberId":{"$ref":"#/definitions/ExecutionId"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":16,"type":"array"},"priorWork":{"items":{"$ref":"#/definitions/TeamWorkReference"},"maxItems":16,"type":"array"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"workId":{"$ref":"#/definitions/ExecutionId"}},"required":["workId","memberId","target","kind","instructions","postIds","priorWork"],"type":"object"};
-const schema1027 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["taskId","attemptId","inputDigest"],"type":"object"};
+const schema1019 = {"additionalProperties":false,"properties":{"author":{"anyOf":[{"$ref":"#/definitions/TeamMemberAuthor"},{"type":"null"}]},"candidateRevisionId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"execution":{"$ref":"#/definitions/ExecutionState"},"origin":{"$ref":"#/definitions/TeamWorkOrigin"},"output":{"anyOf":[{"$ref":"#/definitions/TeamWorkOutput"},{"type":"null"}]},"receipt":{"$ref":"#/definitions/TeamWorkReceipt"},"request":{"anyOf":[{"$ref":"#/definitions/RequestTeamWork"},{"type":"null"}]},"sequence":{"$ref":"#/definitions/Revision"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"validation":{"$ref":"#/definitions/ValidationState"}},"required":["origin","sequence","receipt","author","request","target","execution","validation","output","candidateRevisionId"],"type":"object"};
+const schema1022 = {"oneOf":[{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"start","type":"string"}},"required":["kind","actionId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"member","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"human-continuation","type":"string"},"work":{"$ref":"#/definitions/TeamHumanWork"}},"required":["kind","actionId","work"],"type":"object"}]};
+const schema1025 = {"additionalProperties":false,"properties":{"instructions":{"maxLength":8192,"minLength":1,"type":"string"},"kind":{"$ref":"#/definitions/TeamWorkKind"},"memberId":{"$ref":"#/definitions/ExecutionId"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":16,"type":"array"},"priorWork":{"items":{"$ref":"#/definitions/TeamWorkReference"},"maxItems":16,"type":"array"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"workId":{"$ref":"#/definitions/ExecutionId"}},"required":["workId","memberId","target","kind","instructions","postIds","priorWork"],"type":"object"};
+const schema1029 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["taskId","attemptId","inputDigest"],"type":"object"};
 
 function validate769(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -54762,7 +55062,7 @@ validate768.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitio
 return false;
 }
 if(!(((data1 === "translation") || (data1 === "review")) || (data1 === "evidence"))){
-validate768.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamWorkKind/enum",keyword:"enum",params:{allowedValues: schema836.enum},message:"must be equal to one of the allowed values"}];
+validate768.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamWorkKind/enum",keyword:"enum",params:{allowedValues: schema837.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -55281,11 +55581,11 @@ validate767.errors = vErrors;
 return errors === 0;
 }
 
-const schema1031 = {"additionalProperties":false,"properties":{"outcome":{"$ref":"#/definitions/TeamWorkOutcome"},"requests":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"usage":{"anyOf":[{"$ref":"#/definitions/Usage"},{"type":"null"}]},"usageIncomplete":{"type":"boolean"}},"required":["outcome","usage","requests","usageIncomplete"],"type":"object"};
-const schema1032 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation","type":"string"},"targetLocale":{"type":"string"},"text":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","unitId","targetLocale","text"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"review","type":"string"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"reviewed":{"$ref":"#/definitions/TeamReviewBasis"},"verdict":{"$ref":"#/definitions/TeamReviewVerdict"}},"required":["kind","reviewed","postIds","verdict"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"evidence","type":"string"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["kind","postIds"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"waiting","type":"string"},"requestedIntentIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["kind","requestedIntentIds"],"type":"object"}]};
-const schema1042 = {"enum":["accept","revise","unresolved"],"type":"string"};
-const schema1035 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"post","type":"string"},"postId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","postId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"artifact","type":"string"},"reference":{"$ref":"#/definitions/TeamArtifactReference"}},"required":["kind","reference"],"type":"object"}]};
-const schema1037 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation-revision","type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","revisionId"],"type":"object"},{"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"source-result","type":"string"},"resultId":{"$ref":"#/definitions/ExecutionId"},"snapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","snapshotId","attemptId","resultId"],"type":"object"}]};
+const schema1033 = {"additionalProperties":false,"properties":{"outcome":{"$ref":"#/definitions/TeamWorkOutcome"},"requests":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"usage":{"anyOf":[{"$ref":"#/definitions/Usage"},{"type":"null"}]},"usageIncomplete":{"type":"boolean"}},"required":["outcome","usage","requests","usageIncomplete"],"type":"object"};
+const schema1034 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation","type":"string"},"targetLocale":{"type":"string"},"text":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","unitId","targetLocale","text"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"review","type":"string"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"reviewed":{"$ref":"#/definitions/TeamReviewBasis"},"verdict":{"$ref":"#/definitions/TeamReviewVerdict"}},"required":["kind","reviewed","postIds","verdict"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"evidence","type":"string"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["kind","postIds"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"waiting","type":"string"},"requestedIntentIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"}},"required":["kind","requestedIntentIds"],"type":"object"}]};
+const schema1044 = {"enum":["accept","revise","unresolved"],"type":"string"};
+const schema1037 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"post","type":"string"},"postId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","postId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"artifact","type":"string"},"reference":{"$ref":"#/definitions/TeamArtifactReference"}},"required":["kind","reference"],"type":"object"}]};
+const schema1039 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation-revision","type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","revisionId"],"type":"object"},{"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"source-result","type":"string"},"resultId":{"$ref":"#/definitions/ExecutionId"},"snapshotId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","snapshotId","attemptId","resultId"],"type":"object"}]};
 
 function validate777(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -56162,7 +56462,7 @@ vErrors.push(err16);
 errors++;
 }
 if(!(((data8 === "accept") || (data8 === "revise")) || (data8 === "unresolved"))){
-const err17 = {instancePath:instancePath+"/verdict",schemaPath:"#/definitions/TeamReviewVerdict/enum",keyword:"enum",params:{allowedValues: schema1042.enum},message:"must be equal to one of the allowed values"};
+const err17 = {instancePath:instancePath+"/verdict",schemaPath:"#/definitions/TeamReviewVerdict/enum",keyword:"enum",params:{allowedValues: schema1044.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err17];
 }
@@ -56515,7 +56815,7 @@ validate775.errors = vErrors;
 return errors === 0;
 }
 
-const schema1045 = {"additionalProperties":false,"properties":{"cacheReadTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"cacheWriteTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"completionTokens":{"format":"uint64","minimum":0,"type":"integer"},"promptTokens":{"format":"uint64","minimum":0,"type":"integer"},"reasoningTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]}},"required":["promptTokens","completionTokens","cacheReadTokens","cacheWriteTokens","reasoningTokens"],"type":"object"};
+const schema1047 = {"additionalProperties":false,"properties":{"cacheReadTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"cacheWriteTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]},"completionTokens":{"format":"uint64","minimum":0,"type":"integer"},"promptTokens":{"format":"uint64","minimum":0,"type":"integer"},"reasoningTokens":{"anyOf":[{"$ref":"#/definitions/UnsignedDecimal"},{"type":"null"}]}},"required":["promptTokens","completionTokens","cacheReadTokens","cacheWriteTokens","reasoningTokens"],"type":"object"};
 
 function validate781(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -56967,7 +57267,7 @@ validate774.errors = vErrors;
 return errors === 0;
 }
 
-const schema1049 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"type":"string"},"intentId":{"$ref":"#/definitions/ExecutionId"},"memberId":{"$ref":"#/definitions/ExecutionId"},"planId":{"$ref":"#/definitions/ExecutionId"},"roleVersionId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["intentId","planId","memberId","roleVersionId","taskId","attemptId","inputDigest"],"type":"object"};
+const schema1051 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"type":"string"},"intentId":{"$ref":"#/definitions/ExecutionId"},"memberId":{"$ref":"#/definitions/ExecutionId"},"planId":{"$ref":"#/definitions/ExecutionId"},"roleVersionId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"}},"required":["intentId","planId","memberId","roleVersionId","taskId","attemptId","inputDigest"],"type":"object"};
 
 function validate784(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -57150,7 +57450,7 @@ validate784.errors = vErrors;
 return errors === 0;
 }
 
-const schema1056 = {"additionalProperties":false,"properties":{"causeMessageId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"instructions":{"type":"string"},"intentId":{"$ref":"#/definitions/ExecutionId"},"kind":{"$ref":"#/definitions/TeamWorkKind"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"recipientMemberId":{"$ref":"#/definitions/ExecutionId"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["intentId","recipientMemberId","target","kind","instructions","postIds","causeMessageId"],"type":"object"};
+const schema1058 = {"additionalProperties":false,"properties":{"causeMessageId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"instructions":{"type":"string"},"intentId":{"$ref":"#/definitions/ExecutionId"},"kind":{"$ref":"#/definitions/TeamWorkKind"},"postIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"recipientMemberId":{"$ref":"#/definitions/ExecutionId"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["intentId","recipientMemberId","target","kind","instructions","postIds","causeMessageId"],"type":"object"};
 
 function validate786(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -57291,7 +57591,7 @@ validate786.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitio
 return false;
 }
 if(!(((data3 === "translation") || (data3 === "review")) || (data3 === "evidence"))){
-validate786.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamWorkKind/enum",keyword:"enum",params:{allowedValues: schema836.enum},message:"must be equal to one of the allowed values"}];
+validate786.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamWorkKind/enum",keyword:"enum",params:{allowedValues: schema837.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs14 === errors;
@@ -57405,7 +57705,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema1017.properties, key0))){
+if(!(func2.call(schema1019.properties, key0))){
 validate765.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -57553,7 +57853,7 @@ validate765.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/defi
 return false;
 }
 if(!((((((data2 === "queued") || (data2 === "dispatched")) || (data2 === "succeeded")) || (data2 === "failed")) || (data2 === "cancelled-before-dispatch")) || (data2 === "unknown"))){
-validate765.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema634.enum},message:"must be equal to one of the allowed values"}];
+validate765.errors = [{instancePath:instancePath+"/execution",schemaPath:"#/definitions/ExecutionState/enum",keyword:"enum",params:{allowedValues: schema635.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs14 === errors;
@@ -57740,7 +58040,7 @@ validate765.errors = [{instancePath:instancePath+"/validation",schemaPath:"#/def
 return false;
 }
 if(!((((data9 === "absent") || (data9 === "pending")) || (data9 === "valid")) || (data9 === "invalid"))){
-validate765.errors = [{instancePath:instancePath+"/validation",schemaPath:"#/definitions/ValidationState/enum",keyword:"enum",params:{allowedValues: schema636.enum},message:"must be equal to one of the allowed values"}];
+validate765.errors = [{instancePath:instancePath+"/validation",schemaPath:"#/definitions/ValidationState/enum",keyword:"enum",params:{allowedValues: schema637.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs33 === errors;
@@ -57783,7 +58083,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema974.properties, key0))){
+if(!(func2.call(schema976.properties, key0))){
 validate977.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -58386,7 +58686,7 @@ vErrors.push(err10);
 errors++;
 }
 if(!(((((data22 === "activation-limit") || (data22 === "no-progress")) || (data22 === "expired")) || (data22 === "budget-exhausted")) || (data22 === "needs-reconciliation"))){
-const err11 = {instancePath:instancePath+"/stopReason",schemaPath:"#/definitions/TeamStopReason/enum",keyword:"enum",params:{allowedValues: schema1016.enum},message:"must be equal to one of the allowed values"};
+const err11 = {instancePath:instancePath+"/stopReason",schemaPath:"#/definitions/TeamStopReason/enum",keyword:"enum",params:{allowedValues: schema1018.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err11];
 }
@@ -58509,11 +58809,11 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamHistory = validate987;
-const schema1250 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamHistory","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamHistory"};
-const schema1064 = {"additionalProperties":false,"properties":{"authorRoles":{"items":{"$ref":"#/definitions/TeamMemberRole"},"maxItems":16,"type":"array"},"members":{"items":{"$ref":"#/definitions/TeamMemberRole"},"maxItems":8,"type":"array"},"nextAfter":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"planId":{"$ref":"#/definitions/ExecutionId"},"posts":{"items":{"$ref":"#/definitions/TeamDiscussionPost"},"maxItems":16,"type":"array"}},"required":["planId","members","authorRoles","posts","nextAfter"],"type":"object"};
-const schema1067 = {"additionalProperties":false,"properties":{"author":{"$ref":"#/definitions/TeamDiscussionAuthor"},"planId":{"$ref":"#/definitions/ExecutionId"},"publication":{"$ref":"#/definitions/PublishTeamDiscussion"},"sequence":{"$ref":"#/definitions/Revision"}},"required":["planId","sequence","author","publication"],"type":"object"};
-const schema1069 = {"additionalProperties":false,"description":"Model arguments contain content and relationships, never an author override.","properties":{"body":{"type":"string"},"kind":{"$ref":"#/definitions/TeamDiscussionKind"},"postId":{"$ref":"#/definitions/ExecutionId"},"references":{"items":{"$ref":"#/definitions/TeamArtifactReference"},"type":"array"},"replyTo":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"supersedes":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["postId","target","kind","body","references","replyTo","supersedes"],"type":"object"};
-const schema1070 = {"enum":["note","challenge","rejection","resolution"],"type":"string"};
+const schema1252 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamHistory","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamHistory"};
+const schema1066 = {"additionalProperties":false,"properties":{"authorRoles":{"items":{"$ref":"#/definitions/TeamMemberRole"},"maxItems":16,"type":"array"},"members":{"items":{"$ref":"#/definitions/TeamMemberRole"},"maxItems":8,"type":"array"},"nextAfter":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"planId":{"$ref":"#/definitions/ExecutionId"},"posts":{"items":{"$ref":"#/definitions/TeamDiscussionPost"},"maxItems":16,"type":"array"}},"required":["planId","members","authorRoles","posts","nextAfter"],"type":"object"};
+const schema1069 = {"additionalProperties":false,"properties":{"author":{"$ref":"#/definitions/TeamDiscussionAuthor"},"planId":{"$ref":"#/definitions/ExecutionId"},"publication":{"$ref":"#/definitions/PublishTeamDiscussion"},"sequence":{"$ref":"#/definitions/Revision"}},"required":["planId","sequence","author","publication"],"type":"object"};
+const schema1071 = {"additionalProperties":false,"description":"Model arguments contain content and relationships, never an author override.","properties":{"body":{"type":"string"},"kind":{"$ref":"#/definitions/TeamDiscussionKind"},"postId":{"$ref":"#/definitions/ExecutionId"},"references":{"items":{"$ref":"#/definitions/TeamArtifactReference"},"type":"array"},"replyTo":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"supersedes":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["postId","target","kind","body","references","replyTo","supersedes"],"type":"object"};
+const schema1072 = {"enum":["note","challenge","rejection","resolution"],"type":"string"};
 
 function validate797(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -58555,7 +58855,7 @@ validate797.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitio
 return false;
 }
 if(!((((data1 === "note") || (data1 === "challenge")) || (data1 === "rejection")) || (data1 === "resolution"))){
-validate797.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamDiscussionKind/enum",keyword:"enum",params:{allowedValues: schema1070.enum},message:"must be equal to one of the allowed values"}];
+validate797.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamDiscussionKind/enum",keyword:"enum",params:{allowedValues: schema1072.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -59159,7 +59459,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamMessage = validate993;
-const schema1254 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamMessage","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamMessage"};
+const schema1256 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamMessage","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamMessage"};
 
 function validate994(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -59174,7 +59474,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema990.properties, key0))){
+if(!(func2.call(schema992.properties, key0))){
 validate994.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -59478,8 +59778,8 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamMessageAction = validate998;
-const schema1263 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamMessageAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamMessageAction"};
-const schema1264 = {"anyOf":[{"$ref":"#/definitions/TeamMessage"},{"type":"null"}]};
+const schema1265 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamMessageAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamMessageAction"};
+const schema1266 = {"anyOf":[{"$ref":"#/definitions/TeamMessage"},{"type":"null"}]};
 
 function validate999(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -59549,7 +59849,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamPost = validate1002;
-const schema1265 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamPost","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamPost"};
+const schema1267 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamPost","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamPost"};
 
 function validate1003(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -59667,8 +59967,8 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamPublicationAction = validate1007;
-const schema1269 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamPublicationAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamPublicationAction"};
-const schema1270 = {"anyOf":[{"$ref":"#/definitions/TeamDiscussionPost"},{"type":"null"}]};
+const schema1271 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamPublicationAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamPublicationAction"};
+const schema1272 = {"anyOf":[{"$ref":"#/definitions/TeamDiscussionPost"},{"type":"null"}]};
 
 function validate1008(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -59738,10 +60038,10 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamRecoveryAction = validate1011;
-const schema1271 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryAction"};
-const schema1272 = {"anyOf":[{"$ref":"#/definitions/WorkPlanTeamRecoveryActionView"},{"type":"null"}]};
-const schema1075 = {"additionalProperties":false,"properties":{"projectId":{"$ref":"#/definitions/ExecutionId"},"receipt":{"$ref":"#/definitions/TeamRecoveryReceipt"},"request":{"$ref":"#/definitions/WorkPlanTeamRecoveryRecordedRequest"}},"required":["projectId","request","receipt"],"type":"object"};
-const schema1077 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"attemptId":{"$ref":"#/definitions/ExecutionId"},"baseLease":{"$ref":"#/definitions/AutomationLease"},"cancellationRevision":{"$ref":"#/definitions/Revision"},"effectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"inputDigest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"state":{"$ref":"#/definitions/WorkPlanState"},"taskId":{"$ref":"#/definitions/ExecutionId"},"workId":{"$ref":"#/definitions/ExecutionId"}},"required":["actionId","baseLease","effectiveVersion","state","cancellationRevision","workId","taskId","attemptId","inputDigest"],"type":"object"};
+const schema1273 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryAction","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryAction"};
+const schema1274 = {"anyOf":[{"$ref":"#/definitions/WorkPlanTeamRecoveryActionView"},{"type":"null"}]};
+const schema1077 = {"additionalProperties":false,"properties":{"projectId":{"$ref":"#/definitions/ExecutionId"},"receipt":{"$ref":"#/definitions/TeamRecoveryReceipt"},"request":{"$ref":"#/definitions/WorkPlanTeamRecoveryRecordedRequest"}},"required":["projectId","request","receipt"],"type":"object"};
+const schema1079 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"attemptId":{"$ref":"#/definitions/ExecutionId"},"baseLease":{"$ref":"#/definitions/AutomationLease"},"cancellationRevision":{"$ref":"#/definitions/Revision"},"effectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"inputDigest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"state":{"$ref":"#/definitions/WorkPlanState"},"taskId":{"$ref":"#/definitions/ExecutionId"},"workId":{"$ref":"#/definitions/ExecutionId"}},"required":["actionId","baseLease","effectiveVersion","state","cancellationRevision","workId","taskId","attemptId","inputDigest"],"type":"object"};
 
 function validate808(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -59756,7 +60056,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema1077.properties, key0))){
+if(!(func2.call(schema1079.properties, key0))){
 validate808.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -59882,7 +60182,7 @@ validate808.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definiti
 return false;
 }
 if(!((((data6 === "active") || (data6 === "paused")) || (data6 === "stopped")) || (data6 === "taken-over"))){
-validate808.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema873.enum},message:"must be equal to one of the allowed values"}];
+validate808.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema875.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs15 === errors;
@@ -59954,8 +60254,8 @@ validate808.errors = vErrors;
 return errors === 0;
 }
 
-const schema1084 = {"additionalProperties":false,"properties":{"applicationToolExecutions":{"items":{"$ref":"#/definitions/ApplicationScopeBasis"},"type":"array"},"checkerExecutions":{"items":{"$ref":"#/definitions/ReviewCheckerKey"},"type":"array"},"planId":{"$ref":"#/definitions/ExecutionId"},"recovery":{"$ref":"#/definitions/AuthorizeTeamRecovery"},"toolExecution":{"type":"boolean"}},"required":["planId","recovery","checkerExecutions","toolExecution","applicationToolExecutions"],"type":"object"};
-const schema1086 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"confirmed":{"type":"boolean"},"digest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"}},"required":["actionId","digest","confirmed","effects"],"type":"object"};
+const schema1086 = {"additionalProperties":false,"properties":{"applicationToolExecutions":{"items":{"$ref":"#/definitions/ApplicationScopeBasis"},"type":"array"},"checkerExecutions":{"items":{"$ref":"#/definitions/ReviewCheckerKey"},"type":"array"},"planId":{"$ref":"#/definitions/ExecutionId"},"recovery":{"$ref":"#/definitions/AuthorizeTeamRecovery"},"toolExecution":{"type":"boolean"}},"required":["planId","recovery","checkerExecutions","toolExecution","applicationToolExecutions"],"type":"object"};
+const schema1088 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"confirmed":{"type":"boolean"},"digest":{"pattern":"^[0-9a-f]{64}$","type":"string"},"effects":{"items":{"$ref":"#/definitions/AutomationEffect"},"type":"array"}},"required":["actionId","digest","confirmed","effects"],"type":"object"};
 
 function validate815(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -60047,7 +60347,7 @@ validate815.errors = [{instancePath:instancePath+"/effects/" + i0,schemaPath:"#/
 return false;
 }
 if(!((((((((((data4 === "save-candidate") || (data4 === "run-checks")) || (data4 === "select-missing")) || (data4 === "replace-captured-selection")) || (data4 === "adopt-resources")) || (data4 === "deliver")) || (data4 === "query-tools")) || (data4 === "publish-discussion")) || (data4 === "dispatch-team-work")) || (data4 === "send-team-message"))){
-validate815.errors = [{instancePath:instancePath+"/effects/" + i0,schemaPath:"#/definitions/AutomationEffect/enum",keyword:"enum",params:{allowedValues: schema932.enum},message:"must be equal to one of the allowed values"}];
+validate815.errors = [{instancePath:instancePath+"/effects/" + i0,schemaPath:"#/definitions/AutomationEffect/enum",keyword:"enum",params:{allowedValues: schema934.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid2 = _errs11 === errors;
@@ -60372,8 +60672,8 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamRecoveryEnd = validate1015;
-const schema1273 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryEnd","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryEnd"};
-const schema1089 = {"oneOf":[{"additionalProperties":false,"properties":{"action":{"$ref":"#/definitions/WorkPlanTeamRecoveryActionView"},"kind":{"const":"authorization-recorded","type":"string"}},"required":["kind","action"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"preparation-closed","type":"string"},"preparationId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"request":{"$ref":"#/definitions/WorkPlanTeamRecoveryRecordedRequest"}},"required":["kind","projectId","preparationId","request"],"type":"object"}]};
+const schema1275 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryEnd","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryEnd"};
+const schema1091 = {"oneOf":[{"additionalProperties":false,"properties":{"action":{"$ref":"#/definitions/WorkPlanTeamRecoveryActionView"},"kind":{"const":"authorization-recorded","type":"string"}},"required":["kind","action"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"preparation-closed","type":"string"},"preparationId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"request":{"$ref":"#/definitions/WorkPlanTeamRecoveryRecordedRequest"}},"required":["kind","projectId","preparationId","request"],"type":"object"}]};
 
 function validate1016(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -60678,13 +60978,13 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamRecoveryPreview = validate1020;
-const schema1277 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryPreview","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryPreview"};
-const schema1092 = {"additionalProperties":false,"properties":{"checkers":{"items":{"$ref":"#/definitions/WorkPlanCheckerView"},"type":"array"},"preparationId":{"$ref":"#/definitions/ExecutionId"},"preview":{"$ref":"#/definitions/TeamRecoveryPreviewView"},"tools":{"anyOf":[{"$ref":"#/definitions/WorkPlanTools"},{"type":"null"}]}},"required":["preparationId","preview","tools","checkers"],"type":"object"};
-const schema1094 = {"additionalProperties":false,"properties":{"activations":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"attemptId":{"$ref":"#/definitions/ExecutionId"},"baseEffectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"baseLease":{"$ref":"#/definitions/AutomationLease"},"budget":{"$ref":"#/definitions/ProviderBudget"},"digest":{"type":"string"},"discussionPreviews":{"items":{"$ref":"#/definitions/TeamRecoveryDiscussionPreview"},"type":"array"},"expiresAtMs":{"$ref":"#/definitions/UnsignedDecimal"},"inputDigest":{"type":"string"},"limits":{"$ref":"#/definitions/TeamExecutionLimits"},"memberPreviews":{"items":{"$ref":"#/definitions/TeamMemberPreviewView"},"type":"array"},"members":{"items":{"$ref":"#/definitions/TeamExecutionMember"},"type":"array"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"retiredMemberIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"rootTaskId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"},"unconfirmedCompletions":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"work":{"$ref":"#/definitions/TeamHumanWork"}},"required":["projectId","planId","baseLease","baseEffectiveVersion","digest","members","retiredMemberIds","memberPreviews","discussionPreviews","work","taskId","attemptId","inputDigest","rootTaskId","expiresAtMs","limits","budget","activations","unconfirmedCompletions"],"type":"object"};
-const schema1096 = {"additionalProperties":false,"properties":{"artifacts":{"items":{"$ref":"#/definitions/TeamArtifactRead"},"type":"array"},"memberId":{"$ref":"#/definitions/ExecutionId"},"posts":{"items":{"$ref":"#/definitions/TeamDiscussionPost"},"type":"array"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"throughSequence":{"$ref":"#/definitions/Revision"}},"required":["memberId","target","throughSequence","posts","artifacts"],"type":"object"};
-const schema1097 = {"additionalProperties":false,"description":"One immutable cited body, never a current selection or a context expansion.","properties":{"artifact":{"$ref":"#/definitions/TeamArtifactBody"},"kind":{"$ref":"#/definitions/TeamArtifactReadKind"},"postId":{"$ref":"#/definitions/ExecutionId"},"referenceIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["kind","postId","referenceIndex","target","artifact"],"type":"object"};
-const schema1104 = {"enum":["untrusted-team-artifact"],"type":"string"};
-const schema1098 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation-revision","type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"text":{"type":"string"}},"required":["kind","revisionId","text"],"type":"object"},{"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"source-result","type":"string"},"nativeKey":{"type":"string"},"occurrenceId":{"$ref":"#/definitions/ExecutionId"},"resultId":{"$ref":"#/definitions/ExecutionId"},"snapshotId":{"$ref":"#/definitions/ExecutionId"},"text":{"type":"string"}},"required":["kind","snapshotId","attemptId","resultId","occurrenceId","nativeKey","text"],"type":"object"}]};
+const schema1279 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryPreview","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryPreview"};
+const schema1094 = {"additionalProperties":false,"properties":{"checkers":{"items":{"$ref":"#/definitions/WorkPlanCheckerView"},"type":"array"},"preparationId":{"$ref":"#/definitions/ExecutionId"},"preview":{"$ref":"#/definitions/TeamRecoveryPreviewView"},"tools":{"anyOf":[{"$ref":"#/definitions/WorkPlanTools"},{"type":"null"}]}},"required":["preparationId","preview","tools","checkers"],"type":"object"};
+const schema1096 = {"additionalProperties":false,"properties":{"activations":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"attemptId":{"$ref":"#/definitions/ExecutionId"},"baseEffectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"baseLease":{"$ref":"#/definitions/AutomationLease"},"budget":{"$ref":"#/definitions/ProviderBudget"},"digest":{"type":"string"},"discussionPreviews":{"items":{"$ref":"#/definitions/TeamRecoveryDiscussionPreview"},"type":"array"},"expiresAtMs":{"$ref":"#/definitions/UnsignedDecimal"},"inputDigest":{"type":"string"},"limits":{"$ref":"#/definitions/TeamExecutionLimits"},"memberPreviews":{"items":{"$ref":"#/definitions/TeamMemberPreviewView"},"type":"array"},"members":{"items":{"$ref":"#/definitions/TeamExecutionMember"},"type":"array"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"retiredMemberIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"rootTaskId":{"$ref":"#/definitions/ExecutionId"},"taskId":{"$ref":"#/definitions/ExecutionId"},"unconfirmedCompletions":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"work":{"$ref":"#/definitions/TeamHumanWork"}},"required":["projectId","planId","baseLease","baseEffectiveVersion","digest","members","retiredMemberIds","memberPreviews","discussionPreviews","work","taskId","attemptId","inputDigest","rootTaskId","expiresAtMs","limits","budget","activations","unconfirmedCompletions"],"type":"object"};
+const schema1098 = {"additionalProperties":false,"properties":{"artifacts":{"items":{"$ref":"#/definitions/TeamArtifactRead"},"type":"array"},"memberId":{"$ref":"#/definitions/ExecutionId"},"posts":{"items":{"$ref":"#/definitions/TeamDiscussionPost"},"type":"array"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"},"throughSequence":{"$ref":"#/definitions/Revision"}},"required":["memberId","target","throughSequence","posts","artifacts"],"type":"object"};
+const schema1099 = {"additionalProperties":false,"description":"One immutable cited body, never a current selection or a context expansion.","properties":{"artifact":{"$ref":"#/definitions/TeamArtifactBody"},"kind":{"$ref":"#/definitions/TeamArtifactReadKind"},"postId":{"$ref":"#/definitions/ExecutionId"},"referenceIndex":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"target":{"$ref":"#/definitions/TeamDiscussionTarget"}},"required":["kind","postId","referenceIndex","target","artifact"],"type":"object"};
+const schema1106 = {"enum":["untrusted-team-artifact"],"type":"string"};
+const schema1100 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation-revision","type":"string"},"revisionId":{"$ref":"#/definitions/ExecutionId"},"text":{"type":"string"}},"required":["kind","revisionId","text"],"type":"object"},{"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"source-result","type":"string"},"nativeKey":{"type":"string"},"occurrenceId":{"$ref":"#/definitions/ExecutionId"},"resultId":{"$ref":"#/definitions/ExecutionId"},"snapshotId":{"$ref":"#/definitions/ExecutionId"},"text":{"type":"string"}},"required":["kind","snapshotId","attemptId","resultId","occurrenceId","nativeKey","text"],"type":"object"}]};
 
 function validate831(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -61152,7 +61452,7 @@ validate830.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitio
 return false;
 }
 if(!(data1 === "untrusted-team-artifact")){
-validate830.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamArtifactReadKind/enum",keyword:"enum",params:{allowedValues: schema1104.enum},message:"must be equal to one of the allowed values"}];
+validate830.errors = [{instancePath:instancePath+"/kind",schemaPath:"#/definitions/TeamArtifactReadKind/enum",keyword:"enum",params:{allowedValues: schema1106.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs3 === errors;
@@ -61403,7 +61703,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema1094.properties, key0))){
+if(!(func2.call(schema1096.properties, key0))){
 validate825.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -62113,7 +62413,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamRecoveryReceipt = validate1026;
-const schema1280 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryReceipt","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryReceipt"};
+const schema1282 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryReceipt","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryReceipt"};
 
 function validate1027(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -62128,7 +62428,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema1077.properties, key0))){
+if(!(func2.call(schema1079.properties, key0))){
 validate1027.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -62254,7 +62554,7 @@ validate1027.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definit
 return false;
 }
 if(!((((data6 === "active") || (data6 === "paused")) || (data6 === "stopped")) || (data6 === "taken-over"))){
-validate1027.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema873.enum},message:"must be equal to one of the allowed values"}];
+validate1027.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema875.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs15 === errors;
@@ -62340,10 +62640,10 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamRecoveryState = validate1031;
-const schema1288 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryState","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryState"};
-const schema1115 = {"additionalProperties":false,"properties":{"hostCallbacksDrained":{"type":"boolean"},"runtime":{"anyOf":[{"$ref":"#/definitions/TeamRecoveryRuntimeState"},{"type":"null"}]},"state":{"$ref":"#/definitions/TeamRecoveryStateView"}},"required":["state","runtime","hostCallbacksDrained"],"type":"object"};
-const schema1116 = {"additionalProperties":false,"description":"A runtime observation is descriptive. It is not a continuation permit.","properties":{"originalDeadlineAvailable":{"type":"boolean"},"producersDrained":{"type":"boolean"}},"required":["originalDeadlineAvailable","producersDrained"],"type":"object"};
-const schema1117 = {"additionalProperties":false,"properties":{"activations":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"budget":{"$ref":"#/definitions/ProviderBudget"},"effectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"expiresAtMs":{"$ref":"#/definitions/UnsignedDecimal"},"lease":{"$ref":"#/definitions/AutomationLease"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"rootTaskId":{"$ref":"#/definitions/ExecutionId"},"state":{"$ref":"#/definitions/WorkPlanState"},"unconfirmedCompletions":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unresolvedWork":{"items":{"$ref":"#/definitions/TeamWorkReference"},"type":"array"}},"required":["projectId","planId","lease","state","effectiveVersion","rootTaskId","expiresAtMs","budget","activations","unconfirmedCompletions","unresolvedWork"],"type":"object"};
+const schema1290 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamRecoveryState","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamRecoveryState"};
+const schema1117 = {"additionalProperties":false,"properties":{"hostCallbacksDrained":{"type":"boolean"},"runtime":{"anyOf":[{"$ref":"#/definitions/TeamRecoveryRuntimeState"},{"type":"null"}]},"state":{"$ref":"#/definitions/TeamRecoveryStateView"}},"required":["state","runtime","hostCallbacksDrained"],"type":"object"};
+const schema1118 = {"additionalProperties":false,"description":"A runtime observation is descriptive. It is not a continuation permit.","properties":{"originalDeadlineAvailable":{"type":"boolean"},"producersDrained":{"type":"boolean"}},"required":["originalDeadlineAvailable","producersDrained"],"type":"object"};
+const schema1119 = {"additionalProperties":false,"properties":{"activations":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"budget":{"$ref":"#/definitions/ProviderBudget"},"effectiveVersion":{"$ref":"#/definitions/TeamEffectiveVersion"},"expiresAtMs":{"$ref":"#/definitions/UnsignedDecimal"},"lease":{"$ref":"#/definitions/AutomationLease"},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"rootTaskId":{"$ref":"#/definitions/ExecutionId"},"state":{"$ref":"#/definitions/WorkPlanState"},"unconfirmedCompletions":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"unresolvedWork":{"items":{"$ref":"#/definitions/TeamWorkReference"},"type":"array"}},"required":["projectId","planId","lease","state","effectiveVersion","rootTaskId","expiresAtMs","budget","activations","unconfirmedCompletions","unresolvedWork"],"type":"object"};
 
 function validate846(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -62358,7 +62658,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema1117.properties, key0))){
+if(!(func2.call(schema1119.properties, key0))){
 validate846.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -62524,7 +62824,7 @@ validate846.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definiti
 return false;
 }
 if(!((((data8 === "active") || (data8 === "paused")) || (data8 === "stopped")) || (data8 === "taken-over"))){
-validate846.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema873.enum},message:"must be equal to one of the allowed values"}];
+validate846.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/WorkPlanState/enum",keyword:"enum",params:{allowedValues: schema875.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs19 === errors;
@@ -62815,9 +63115,9 @@ return errors === 0;
 }
 
 export const validateResponseWorkPlanTeamWorkTools = validate1035;
-const schema1291 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamWorkTools","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamWorkTools"};
-const schema1123 = {"additionalProperties":false,"properties":{"attempts":{"items":{"$ref":"#/definitions/TeamWorkToolAttempt"},"maxItems":16,"type":"array"},"nextAfter":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"work":{"$ref":"#/definitions/TeamWorkReference"}},"required":["projectId","planId","work","attempts","nextAfter"],"type":"object"};
-const schema1124 = {"additionalProperties":false,"properties":{"name":{"description":"The display title captured in the original tool declaration.","type":"string"},"progress":{"allOf":[{"$ref":"#/definitions/Progress"}],"description":"The existing historical projection cannot confirm a live producer."},"reference":{"allOf":[{"$ref":"#/definitions/TeamWorkReference"}],"description":"An exact tool execution identity; it is not a team work or a scope."},"sequence":{"$ref":"#/definitions/Revision"},"storedResultItems":{"description":"Items with a current result, not proof of validation, effect or drainage.","format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"toolHandle":{"$ref":"#/definitions/ExecutionId"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"type":"array"}},"required":["sequence","reference","toolHandle","name","unitIds","progress","storedResultItems"],"type":"object"};
+const schema1293 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlanTeamWorkTools","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlanTeamWorkTools"};
+const schema1125 = {"additionalProperties":false,"properties":{"attempts":{"items":{"$ref":"#/definitions/TeamWorkToolAttempt"},"maxItems":16,"type":"array"},"nextAfter":{"anyOf":[{"$ref":"#/definitions/Revision"},{"type":"null"}]},"planId":{"$ref":"#/definitions/ExecutionId"},"projectId":{"$ref":"#/definitions/ExecutionId"},"work":{"$ref":"#/definitions/TeamWorkReference"}},"required":["projectId","planId","work","attempts","nextAfter"],"type":"object"};
+const schema1126 = {"additionalProperties":false,"properties":{"name":{"description":"The display title captured in the original tool declaration.","type":"string"},"progress":{"allOf":[{"$ref":"#/definitions/Progress"}],"description":"The existing historical projection cannot confirm a live producer."},"reference":{"allOf":[{"$ref":"#/definitions/TeamWorkReference"}],"description":"An exact tool execution identity; it is not a team work or a scope."},"sequence":{"$ref":"#/definitions/Revision"},"storedResultItems":{"description":"Items with a current result, not proof of validation, effect or drainage.","format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"toolHandle":{"$ref":"#/definitions/ExecutionId"},"unitIds":{"items":{"$ref":"#/definitions/ExecutionId"},"maxItems":100,"type":"array"}},"required":["sequence","reference","toolHandle","name","unitIds","progress","storedResultItems"],"type":"object"};
 
 function validate854(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -63473,7 +63773,7 @@ return errors === 0;
 }
 
 export const validateResponseWorkProtection = validate1040;
-const schema1296 = {"$id":"urn:tsumugi:ipc:ai:responses:workProtection","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workProtection"};
+const schema1298 = {"$id":"urn:tsumugi:ipc:ai:responses:workProtection","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workProtection"};
 
 function validate1041(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;

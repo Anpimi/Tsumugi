@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { AiPreviewItems } from "./AiPreviewItems";
 import { AiProviderBudget } from "./AiUsage";
 import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
+import { ToolGuidanceSharing } from "./ToolGuidanceSharing";
 import type { TeamWorkReference } from "./generated/ai.requests";
 import type { TeamRecoveryPreviewView } from "./generated/ai.responses";
 import type { WorkPlanView } from "./workPlanCommands";
@@ -32,6 +33,7 @@ export function TeamRecoveryDisclosure({ plan, preview, unresolvedWork, onOpenTa
         <p>{t("ai.team.capturedMemberLimits", { requests: String(member.config.maxRequests), tokens: String(member.config.maxOutputTokens), timeout: String(member.config.timeoutSeconds), retries: String(member.config.maxRetries) })}</p>
         <p>{t("ai.team.allowedKinds", { kinds: member.kinds.map(kind => t(`ai.team.workKinds.${kind}`)).join(", ") })}</p>
         <p>{t("ai.team.allowedEntries", { entries: member.unitIds.map(id => names.get(id) ?? "").join(", ") })}</p>
+        <ToolGuidanceSharing plan={plan} config={member.config} toolHandles={member.toolHandles}/>
         <AiPreviewItems items={input.preview.items}/>
         <h6>{t("ai.recovery.existingDiscussions")}</h6>
         {preview.discussionPreviews.filter(value => value.memberId === member.memberId).map(view => <article key={view.target.unitId}>

@@ -3,6 +3,8 @@
 mod application;
 #[path = "work_plan_tools/guidance.rs"]
 mod guidance;
+#[path = "work_plan_tools/member_guidance.rs"]
+mod member_guidance;
 #[path = "work_plan_tools/subsets.rs"]
 mod subsets;
 #[path = "work_plan_tools/team_history.rs"]
@@ -152,6 +154,27 @@ fn fixture_with_tool_runners_and_leases(
     runners: Vec<Arc<dyn Runner>>,
     application_leases: std::collections::BTreeMap<ExecutionId, ApplicationExecutionLease>,
 ) -> Fixture {
+    fixture_with_options(
+        limit,
+        tools,
+        runners,
+        application_leases,
+        PlanOptions::default(),
+        AiConfig {
+            endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+            model: "synthetic".into(),
+            ..AiConfig::default()
+        },
+    )
+}
+fn fixture_with_options(
+    limit: u32,
+    tools: Vec<WorkPlanToolSpec>,
+    runners: Vec<Arc<dyn Runner>>,
+    application_leases: std::collections::BTreeMap<ExecutionId, ApplicationExecutionLease>,
+    options: PlanOptions,
+    config: AiConfig,
+) -> Fixture {
     let (temp, mut store, rows) = support::source_fixture();
     let units = rows
         .iter()
@@ -159,14 +182,10 @@ fn fixture_with_tool_runners_and_leases(
         .collect::<Vec<_>>();
     let plan = store
         .prepare_work_plan_with_tools(
-            Some(AiConfig {
-                endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
-                model: "synthetic".into(),
-                ..AiConfig::default()
-            }),
+            Some(config),
             "zh-CN",
             &units,
-            PlanOptions::default(),
+            options,
             Some(WorkPlanTools {
                 max_invocations: limit,
                 entries: tools,

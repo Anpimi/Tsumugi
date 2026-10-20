@@ -59,6 +59,7 @@ impl Owner {
             tool_revision: revisions.into_iter().next(),
             team_author: Some(author),
             team_policy: plan.options.team_discussions,
+            tool_guidance: plan.options.tool_guidance,
             team_work: true,
         })
     }

@@ -174,6 +174,7 @@ impl ProjectStore {
                 let preview = self.preview_ai(config, locale, units)?;
                 let mut options = options;
                 let team = options.team_execution.take();
+                let guidance = options.tool_guidance.take();
                 let mut captures = Vec::new();
                 if let Some(team) = &team {
                     for member in team.members() {
@@ -186,7 +187,8 @@ impl ProjectStore {
                     }
                 }
                 let plan = WorkPlan::capture(project, preview, selection_basis, options)?
-                    .with_tools(tools)?;
+                    .with_tools(tools)?
+                    .with_tool_guidance(guidance)?;
                 if let Some(team) = team {
                     plan.with_team(team, captures)
                 } else {
@@ -795,6 +797,7 @@ mod tests {
             deliver: false,
             team_discussions: None,
             team_execution: None,
+            tool_guidance: None,
         };
         let manual = store
             .prepare_work_plan(None, "zh-CN", &[units[0]], options)

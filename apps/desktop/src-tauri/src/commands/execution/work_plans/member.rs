@@ -3,6 +3,10 @@
 use super::*;
 mod coordination;
 pub(super) mod environment;
+#[path = "member_guidance.rs"]
+mod tool_guidance;
+#[cfg(test)]
+pub(super) use tool_guidance::GuidanceReadProbe;
 use environment::{EnvironmentAdmission, EnvironmentAttempt};
 use serde_json::{Value, json};
 use std::{
@@ -24,7 +28,7 @@ use tsumugi_core::{
     application::{
         AgentToolRequest, CapturedTeamAuthor, CapturedTeamDiscussionView,
         CapturedTeamWorkView, PublishTeamDiscussion, ReadTeamArtifact, ReadTeamDiscussion,
-        RequestTeamWork, SendTeamMessage, TeamDiscussionPolicy,
+        RequestTeamWork, SendTeamMessage, TeamDiscussionPolicy, ToolGuidancePolicy,
         WorkPlanAgentExecutionBinding, WorkPlanToolSpec,
         team_discussion_tools, team_execution_tools,
     },
@@ -155,6 +159,7 @@ impl Owner {
             tool_revision: revisions.into_iter().next(),
             team_author,
             team_policy,
+            tool_guidance: plan.options.tool_guidance,
             team_work: false,
         })
     }
@@ -224,6 +229,7 @@ struct CapturedScope {
     tool_revision: Option<UnsignedDecimal>,
     team_author: Option<CapturedTeamAuthor>,
     team_policy: Option<TeamDiscussionPolicy>,
+    tool_guidance: Option<ToolGuidancePolicy>,
     team_work: bool,
 }
 
@@ -329,7 +335,7 @@ impl MemberFactory {
             }
         }).await?;
         let runtime_revision = environment.settings_revision;
-        let settings_stop = admission.wait(|| request.check_service_dispatch(), || {
+        let (settings_stop, guidance) = admission.wait(|| request.check_service_dispatch(), || {
             let owner = self.owner.clone();
             let checking = captured.clone();
             let selected = request.clone();
@@ -340,7 +346,14 @@ impl MemberFactory {
                     Ok(admission.enter(&owner.context.plugins, runtime_revision,
                         || selected.check_service_dispatch(), |stop| {
                             owner.check_scope(sessions, &checking)?;
-                            Ok(stop)
+                            let guidance = if checking.tool_guidance.is_some() {
+                                let (_, store) = owner.original(sessions)?;
+                                Some(store.capture_member_tool_guidance(&checking.scope, &selected)
+                                    .map_err(map_recover)?)
+                            } else {
+                                None
+                            };
+                            Ok((stop, guidance))
                         }))
                 })?.await
             }
@@ -357,6 +370,12 @@ impl MemberFactory {
             parameters: json!({"type":"object","properties":{"unitId":{"type":"string","enum":[prompt.item.unit_id]}},
                 "required":["unitId"],"additionalProperties":false}),
         }).collect();
+        let context = if let Some(guidance) = &guidance {
+            roster.extend(tool_guidance::tools(guidance));
+            tool_guidance::context(guidance)?
+        } else {
+            json!([])
+        };
         if let Some(policy) = captured.team_policy {
             roster.extend(team_discussion_tools(policy).into_iter().map(|tool| MemberTool {
                 name: tool.name,
@@ -389,7 +408,7 @@ impl MemberFactory {
                     context_tokens: profile.context_tokens,
                 },
                 system_prompt: prompt.system.into(),
-                context: json!([]),
+                context,
                 input: prompt.input.into(),
                 tools: roster,
                 max_turns: prompt.config.max_requests.min(128),
@@ -752,6 +771,20 @@ impl Handler {
         }
         Ok(Some(tool))
     }
+    fn guidance_tool(
+        &self,
+        name: &str,
+        arguments: &Value,
+    ) -> Result<Option<tool_guidance::Read>, ExecutionError> {
+        let Some(read) = tool_guidance::decode(name, arguments)? else {
+            return Ok(None);
+        };
+        if self.captured.tool_guidance.is_none() {
+            return Err(fail(ErrorCode::Unauthorized, "member-guidance-policy"));
+        }
+        read.validate(&self.captured.tools)?;
+        Ok(Some(read))
+    }
     async fn execute_team_tool(&mut self, tool: TeamToolRequest) -> Result<MemberReply, ExecutionError> {
         let owner = self.owner.clone();
         let captured = self.captured.clone();
@@ -847,6 +880,9 @@ impl Handler {
         arguments: Value,
     ) -> Result<MemberReply, ExecutionError> {
         self.live()?;
+        if let Some(read) = self.guidance_tool(&name, &arguments)? {
+            return self.read_guidance(&read).await;
+        }
         if let Some(tool) = self.team_tool(&name, &arguments)? {
             return self.execute_team_tool(tool).await;
         }
@@ -1343,7 +1379,9 @@ impl MemberHandler for Handler {
                 MemberCall::BeforeTool {
                     name, arguments, ..
                 } => {
-                    if self.team_tool(&name, &arguments)?.is_none() {
+                    if self.guidance_tool(&name, &arguments)?.is_none()
+                        && self.team_tool(&name, &arguments)?.is_none()
+                    {
                         self.selected_tool(&name, &arguments)?;
                     }
                     self.check_scope().await?;

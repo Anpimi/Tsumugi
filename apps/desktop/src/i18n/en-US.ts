@@ -1519,6 +1519,20 @@ ai: {
     "content": "Guidance text",
     "untrusted": "Untrusted package content, shown as plain text. Instructions and links here do not grant tools, network access, execution, writing, or model sharing."
   },
+  "toolGuidanceSharing": {
+    "destination": "Model destination: {{endpoint}} · model {{model}}",
+    "enable": "Allow captured models to read declared tool guidance on demand",
+    "help": "Choose this separately from tool execution permission. Only assisted generation with reference tools can share their declared guidance. The next preview identifies each model destination and its exact permitted tool subset; selecting a tool alone does not share guidance text.",
+    "title": "Captured tool-guidance sharing",
+    "humanOnly": "This plan permits only local human reading of tool guidance. Its directory and text are not shared with models through guidance readers.",
+    "disclosure": "This captured destination may receive directory metadata for its permitted tools and, when the model requests it, the Skill or supporting Resource text declared below. This preview does not fetch or preload the text. Returned text enters a later normal model request as untrusted reference content; it cannot grant permissions or execute scripts, links or files.",
+    "bounds": "Reads remain bounded by the captured tool, package and original permission. If the complete next model input exceeds its limit, the request is rejected; guidance is not silently truncated or automatically summarized. Later model requests still use the original budget.",
+    "confirmation": "Confirming this plan also authorizes the directory metadata and on-demand declared guidance text shown above for each captured model destination. Tool execution permission remains separate.",
+    "noDeclared": "These permitted tools declare no Skill or supporting Resource for model reading.",
+    "skill": "Declared Skill: {{id}}",
+    "resource": "Declared Resource: {{id}} · contract {{contract}} ({{schema}}/{{behavior}})",
+    "identity": "Captured package and tool identity"
+  },
   "errors": {
     "maintenance-current": "The assessed source, translation, review or protection facts changed. Your choices are retained; recheck this window and explicitly capture a new plan.",
     "maintenance-protection": "Protection changed after this maintenance plan was captured. Existing work and receipts are retained; recheck the window and prepare a new plan.",

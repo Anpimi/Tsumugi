@@ -1,6 +1,8 @@
 //! The production member factory, Core HTTP/budget owner and an actual SDK
 //! query process share one synthetic project. No external model is contacted.
 use super::*;
+#[path = "member_guidance.rs"]
+mod guidance;
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -167,6 +169,11 @@ fn provider(
         let (raw, body) = request(&mut first);
         calls.push(raw);
         assert_eq!(body["stream"], true);
+        let prepared_text = body.to_string();
+        assert!(!prepared_text.contains("untrusted-tool-guidance-directory"));
+        assert!(!prepared_text.contains("read_captured_tool_skill"));
+        assert!(!prepared_text.contains("read_captured_tool_resource"));
+        assert!(!prepared_text.contains("Query only; do not adopt."));
         let pid = member_pid(&staging);
         assert_ne!(pid, std::process::id());
         if matches!(mode, Mode::HttpStall) {

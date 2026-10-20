@@ -6,9 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
-Current development compatibility is project schema 59 and internal member
+Current development compatibility is project schema 60 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
+
+- Explicitly opt in to share declared tool guidance with captured model
+  destinations. Members receive a directory first and may request the linked
+  Skill or reference text through the original controlled tool boundary.
+  Reading alone keeps the original human-only behavior, and withdrawal or
+  expiry prevents late text from reaching a follow-up request.
 
 - Retain reported cache read, cache write and reasoning token details with the
   original model-request records. Show reported zero separately from missing

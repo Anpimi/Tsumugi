@@ -63,7 +63,7 @@ impl ApplicationPlugins {
         expected: &tsumugi_core::application::WorkPlanToolSpec,
         read: impl FnOnce(&tsumugi_plugin_host::PackageImage) -> Result<T, CommandError>,
     ) -> Result<T, CommandError> {
-        self.read_installed_snapshot(|store, settings, _, allowed| {
+        let image = self.read_installed_snapshot(|store, settings, _, allowed| {
             if UnsignedDecimal::from(settings.revision()) != expected.settings_revision {
                 return Err(map_store_error(InstallError::RevisionConflict));
             }
@@ -99,8 +99,12 @@ impl ApplicationPlugins {
             {
                 return Err(invalid());
             }
-            read(image)
-        })
+            Ok(image.clone())
+        })?;
+        // The Store retains its single-owner lock while capturing an immutable
+        // image. Text consumers must not extend that lock or block revocation.
+        let value = read(&image)?;
+        self.with_environment_revision(expected.settings_revision, || Ok(value))
     }
 
     pub(in crate::commands) fn capture_tool(

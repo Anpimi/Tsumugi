@@ -392,6 +392,12 @@ export type TeamExecutionPolicy = {
   profile: "bounded-team-1";
 };
 export type TeamWorkKind = "translation" | "review" | "evidence";
+/**
+ * Explicit model sharing of guidance declared by the captured tools.
+ */
+export type ToolGuidancePolicy = {
+  profile: "declared-tools-1";
+};
 export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
 export type InvocationOutcome =
@@ -1382,6 +1388,10 @@ export interface PlanOptions {
    */
   teamDiscussions?: TeamDiscussionPolicy | null;
   teamExecution?: TeamExecutionPolicy | null;
+  /**
+   * Absent means that tool guidance is available only to the human reader.
+   */
+  toolGuidance?: ToolGuidancePolicy | null;
 }
 export interface StageChoice {
   mode: StageMode;

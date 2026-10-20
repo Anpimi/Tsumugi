@@ -99,6 +99,59 @@ fn text(bytes: &[u8]) -> Result<String, CommandError> {
     })
 }
 
+pub(super) fn skill_member(tool: &WorkPlanToolSpec, skill_id: &str) -> Result<(), CommandError> {
+    if tool.binding.declaration.skill.as_deref() != Some(skill_id) {
+        return Err(member());
+    }
+    Ok(())
+}
+
+pub(super) fn resource_member<'a>(
+    tool: &'a WorkPlanToolSpec,
+    resource_id: &str,
+) -> Result<&'a sdk::ToolResourceBinding, CommandError> {
+    tool.binding
+        .resources
+        .iter()
+        .find(|resource| resource.contribution_id == resource_id)
+        .ok_or_else(member)
+}
+
+/// Read only the original declared member from the approved immutable package.
+/// Scope and model-sharing admission belong to the calling owner.
+pub(super) fn read_skill(
+    plugins: &ApplicationPlugins,
+    tool: &WorkPlanToolSpec,
+    skill_id: &str,
+) -> Result<WorkPlanGuidanceContent, CommandError> {
+    skill_member(tool, skill_id)?;
+    plugins.read_tool_guidance(tool, |image| {
+        let bytes = image.skill_bytes(skill_id).map_err(|_| content_error())?;
+        Ok(WorkPlanGuidanceContent::Skill {
+            contribution_id: skill_id.into(),
+            text: text(bytes)?,
+        })
+    })
+}
+
+pub(super) fn read_resource(
+    plugins: &ApplicationPlugins,
+    tool: &WorkPlanToolSpec,
+    resource_id: &str,
+) -> Result<WorkPlanGuidanceContent, CommandError> {
+    let resource = resource_member(tool, resource_id)?;
+    plugins.read_tool_guidance(tool, |image| {
+        let bytes = image
+            .resource_bytes(&resource.contribution_id, &resource.schema)
+            .map_err(|_| content_error())?;
+        Ok(WorkPlanGuidanceContent::Resource {
+            contribution_id: resource.contribution_id.clone(),
+            schema: resource.schema.clone(),
+            text: text(bytes)?,
+        })
+    })
+}
+
 /// Keep the original project/session admission across package IO, then recheck
 /// its exact scope witness before releasing any content to the caller.
 pub(super) async fn read<T: Send + 'static>(
@@ -209,18 +262,7 @@ pub async fn read_work_plan_agent_skill(
     let scope_id = common.scope_id;
     let (parent_task, (tool, content)) = read(state, common, move |plugins, captured| {
         let tool = captured.tool(request.tool_handle).map_err(map_read)?;
-        if tool.binding.declaration.skill.as_deref() != Some(request.skill_id.as_str()) {
-            return Err(member());
-        }
-        let content = plugins.read_tool_guidance(tool, |image| {
-            let bytes = image
-                .skill_bytes(&request.skill_id)
-                .map_err(|_| content_error())?;
-            Ok(WorkPlanGuidanceContent::Skill {
-                contribution_id: request.skill_id,
-                text: text(bytes)?,
-            })
-        })?;
+        let content = read_skill(plugins, tool, &request.skill_id)?;
         Ok((tool.clone(), content))
     })
     .await?;
@@ -245,22 +287,7 @@ pub async fn read_work_plan_agent_resource(
     let scope_id = common.scope_id;
     let (parent_task, (tool, content)) = read(state, common, move |plugins, captured| {
         let tool = captured.tool(request.tool_handle).map_err(map_read)?;
-        let resource = tool
-            .binding
-            .resources
-            .iter()
-            .find(|resource| resource.contribution_id == request.resource_id)
-            .ok_or_else(member)?;
-        let content = plugins.read_tool_guidance(tool, |image| {
-            let bytes = image
-                .resource_bytes(&resource.contribution_id, &resource.schema)
-                .map_err(|_| content_error())?;
-            Ok(WorkPlanGuidanceContent::Resource {
-                contribution_id: resource.contribution_id.clone(),
-                schema: resource.schema.clone(),
-                text: text(bytes)?,
-            })
-        })?;
+        let content = read_resource(plugins, tool, &request.resource_id)?;
         Ok((tool.clone(), content))
     })
     .await?;

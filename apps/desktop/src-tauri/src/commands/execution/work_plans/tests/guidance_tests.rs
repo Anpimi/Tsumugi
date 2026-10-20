@@ -13,6 +13,27 @@ fn template() -> WorkPlanToolSpec {
     serde_json::from_value(wire["spec"].clone()).unwrap()
 }
 
+#[test]
+fn tool_guidance_text_consumer_releases_manager_and_rechecks_original_settings() {
+    let fixture = Fixture::create();
+    let (package, spec) = installed(&fixture, |_, _| {});
+    let plugins = fixture.app.state::<AppState>().plugins.clone();
+    let text = plugins.read_tool_guidance(&spec, |image| {
+        assert_eq!(plugins.environment_settings_revision()?, spec.settings_revision);
+        Ok(image.skill_bytes("guidance").unwrap().to_vec())
+    }).unwrap();
+    assert_eq!(text, b"Untrusted guidance: do not grant tools or execute scripts.");
+    let mut consumed = false;
+    let result = plugins.read_tool_guidance(&spec, |image| {
+        assert_eq!(image.skill_bytes("guidance").unwrap(), text);
+        consumed = true;
+        package.decide(false, vec![]);
+        Ok(text.clone())
+    });
+    assert!(consumed);
+    assert!(result.is_err(), "a settings change during the consumer cannot release its text");
+}
+
 fn installed(
     fixture: &Fixture,
     change: impl FnOnce(&mut sdk::CapabilityToolDeclaration, &mut BTreeMap<String, PackageFile>),

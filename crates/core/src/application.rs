@@ -456,6 +456,26 @@ impl CapturedWorkPlanToolGuidance {
     }
 }
 
+/// Model sharing requires an original live dispatch as well as the tool scope.
+/// A manual guidance observation cannot be used as this proof.
+#[derive(Clone, Debug)]
+pub struct CapturedMemberToolGuidance {
+    pub(crate) guidance: CapturedWorkPlanToolGuidance,
+    pub(crate) attempt_id: ExecutionId,
+    pub(crate) input_digest: String,
+    pub(crate) item_id: ExecutionId,
+    pub(crate) dispatch_token: ExecutionId,
+    pub(crate) deadline: std::time::Instant,
+}
+impl CapturedMemberToolGuidance {
+    pub fn tools(&self) -> &[WorkPlanToolSpec] {
+        self.guidance.tools()
+    }
+    pub fn tool(&self, handle: ExecutionId) -> Result<&WorkPlanToolSpec, ExecutionError> {
+        self.guidance.tool(handle)
+    }
+}
+
 impl WorkPlanAgentScope {
     pub fn delegation(&self) -> Option<&WorkPlanAgentSubset> {
         self.delegation.as_ref()
@@ -598,6 +618,15 @@ pub struct SetWorkProtection {
     pub confirmed_release: bool,
 }
 
+/// Explicit model sharing of guidance declared by the captured tools.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "profile", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ToolGuidancePolicy {
+    #[serde(rename = "declared-tools-1")]
+    DeclaredToolsV1 {},
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -612,6 +641,9 @@ pub struct PlanOptions {
     pub team_discussions: Option<TeamDiscussionPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_execution: Option<TeamExecutionPolicy>,
+    /// Absent means that tool guidance is available only to the human reader.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_guidance: Option<ToolGuidancePolicy>,
 }
 
 impl Default for PlanOptions {
@@ -645,6 +677,7 @@ impl Default for PlanOptions {
             deliver: false,
             team_discussions: None,
             team_execution: None,
+            tool_guidance: None,
         }
     }
 }
@@ -666,6 +699,7 @@ impl PlanOptions {
             || (self.deliver && !self.assisted(WorkStage::Delivery))
             || (self.team_discussions.is_some() && !self.assisted(WorkStage::Generation))
             || (self.team_execution.is_some() && self.team_discussions.is_none())
+            || (self.tool_guidance.is_some() && !self.assisted(WorkStage::Generation))
         {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
@@ -900,6 +934,15 @@ impl WorkPlan {
         self.validate()?;
         Ok(self)
     }
+    pub(crate) fn with_tool_guidance(
+        mut self,
+        policy: Option<ToolGuidancePolicy>,
+    ) -> Result<Self, ExecutionError> {
+        self.options.tool_guidance = policy;
+        self.digest = self.computed_digest()?;
+        self.validate()?;
+        Ok(self)
+    }
     pub(crate) fn with_team(
         mut self,
         policy: TeamExecutionPolicy,
@@ -969,6 +1012,12 @@ impl WorkPlan {
 
     pub fn validate(&self) -> Result<(), ExecutionError> {
         self.options.validate()?;
+        if self.options.tool_guidance.is_some() && self.tools.is_none() {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "work-plan-guidance-tools",
+            ));
+        }
         if let Some(basis) = &self.maintenance {
             let units = basis.repair_units()?;
             if basis.assessment.project_id != self.project_id

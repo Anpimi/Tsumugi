@@ -170,6 +170,7 @@ export function TeamRecoveryControls({ context, status, session, open, disabled,
       {applicationTools.groups.length ? <WorkPlanApplicationToolObservation observation={applicationTools.observation}/> : null}
       {checkerRequired ? reviewedCheckers.map(checker => checker.kind === "ready" ? <fieldset key={checkerIdentity(checker.checker)}><legend>{t("ai.plan.checkerConsent")}</legend><ReviewCheckerDetails view={checker.plugin}/>
         <label className="source-check"><input type="checkbox" checked={checkerConsent.includes(checkerIdentity(checker.checker))} disabled={session.blocked()} onChange={event => setCheckerConsent(before => event.target.checked ? [...before, checkerIdentity(checker.checker)] : before.filter(value => value !== checkerIdentity(checker.checker)))}/>{t("ai.plan.checkerConsent")}</label></fieldset> : <p key={checkerIdentity(checker.checker)} role="alert">{t("ai.plan.checkerUnavailable")}</p>) : null}
+      {plan.options.toolGuidance?<p>{t("ai.toolGuidanceSharing.confirmation")}</p>:null}
       <label className="source-check"><input type="checkbox" checked={state.consent} disabled={session.blocked() || !basisCurrent || !session.connectionCurrent()} onChange={event => session.setConsent(event.target.checked)}/>{t(plan.options.teamDiscussions?.profile === "current-plan-2" ? "ai.recovery.artifactConsent" : "ai.recovery.consent")}</label>
       {button("authorize", true)}
     </> : null}

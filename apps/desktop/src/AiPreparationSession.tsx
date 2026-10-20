@@ -747,7 +747,13 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     planControl, agent, component, discussions, recovery, guidance, canOpenTeamToolHistory,
     canOpenRecoveryTask: (taskId: string, attemptId: string) => live() && !parentReserved(true) && recovery.taskReferences().some(reference => reference.taskId === taskId && reference.attemptId === attemptId), captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
-    setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
+    setToolDraft:(value:PlanToolDraft|null) => {
+      edit("toolDraft",value);
+      if(!value?.entries.length&&current().options.toolGuidance){
+        const options={...current().options};delete options.toolGuidance;
+        update(before=>({...before,options:fixed(options)}));
+      }
+    },
     setTeamDraft:(value:TeamExecutionDraft|null) => edit("teamDraft",value), editTeamConfig, selectTeamConnection,
     setAdvisoryChecks:(value:PluginTextReviewSelection[]) => edit("advisoryChecks",value),
     current,reserved,targetAvailable,connectionCurrent,selectConnection,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,receiveContentSelection,canReceiveContentSelection,loadStrategyDefault,

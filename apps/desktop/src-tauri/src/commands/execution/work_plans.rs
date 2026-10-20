@@ -42,6 +42,8 @@ pub(super) struct WorkPlanSession {
     recovery_authorize_probe: Option<generation::CaptureProbe>,
     #[cfg(test)]
     tool_reply_probes: BTreeMap<ExecutionId, member::ToolReplyProbe>,
+    #[cfg(test)]
+    member_guidance_probes: BTreeMap<ExecutionId, member::GuidanceReadProbe>,
 }
 impl WorkPlanSession {
     pub(super) fn stop_package(

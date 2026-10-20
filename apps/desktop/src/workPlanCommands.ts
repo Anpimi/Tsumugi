@@ -304,6 +304,7 @@ export const workPlanCommands = {
       || value.options.deliver !== request.options.deliver
       || jsonIdentity(value.options.teamDiscussions) !== jsonIdentity(request.options.teamDiscussions)
       || jsonIdentity(value.options.teamExecution) !== jsonIdentity(request.options.teamExecution)
+      || jsonIdentity(value.options.toolGuidance) !== jsonIdentity(request.options.toolGuidance)
       || !validDiscussionDisclosure(value)
       || !validTeamExecutionDisclosure(value)
       || value.options.stages.length !== stages.size

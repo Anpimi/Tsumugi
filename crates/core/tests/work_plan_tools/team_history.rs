@@ -24,6 +24,18 @@ fn setup() -> (
     CapturedTeamAuthor,
     CapturedTeamAuthor,
 ) {
+    let (fixture, root, author, other, _) = setup_with_guidance(None);
+    (fixture, root, author, other)
+}
+pub(super) fn setup_with_guidance(
+    guidance: Option<ToolGuidancePolicy>,
+) -> (
+    Fixture,
+    PreparedTeamWork,
+    CapturedTeamAuthor,
+    CapturedTeamAuthor,
+    DispatchRequest,
+) {
     let (temp, mut store, rows) = support::source_fixture();
     let units: Vec<_> = rows.iter().map(|row| row.unit_id.unwrap()).collect();
     let selected = tool();
@@ -51,6 +63,7 @@ fn setup() -> (
         ..member.clone()
     };
     let mut options = PlanOptions::default();
+    options.tool_guidance = guidance;
     options.team_discussions = Some(TeamDiscussionPolicy::CurrentPlanV1 {});
     options.team_execution = Some(TeamExecutionPolicy::BoundedTeamV1 {
         initial_member_id: member.member_id,
@@ -111,6 +124,7 @@ fn setup() -> (
         )
         .unwrap();
     let author = store.capture_team_work_author(&dispatched).unwrap();
+    let root_dispatch = dispatched;
     let child = store
         .prepare_team_work(
             &author,
@@ -143,7 +157,7 @@ fn setup() -> (
         consent,
         units,
     };
-    (f, root, author, other)
+    (f, root, author, other, root_dispatch)
 }
 fn enqueue(f: &mut Fixture, author: &CapturedTeamAuthor) -> PreparedWorkPlanTool {
     let write = AgentToolRequest {
