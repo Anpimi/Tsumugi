@@ -68,17 +68,36 @@ impl From<AiItem> for AiItemView {
 pub struct AiUsageView {
     pub prompt_tokens: UnsignedDecimal,
     pub completion_tokens: UnsignedDecimal,
+    #[serde(deserialize_with = "serde::Deserialize::deserialize")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "nullable_usage_tokens"))]
+    pub cache_read_tokens: Option<UnsignedDecimal>,
+    #[serde(deserialize_with = "serde::Deserialize::deserialize")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "nullable_usage_tokens"))]
+    pub cache_write_tokens: Option<UnsignedDecimal>,
+    #[serde(deserialize_with = "serde::Deserialize::deserialize")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "nullable_usage_tokens"))]
+    pub reasoning_tokens: Option<UnsignedDecimal>,
+}
+#[cfg(feature = "wire-schema")]
+fn nullable_usage_tokens(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    <Option<UnsignedDecimal> as schemars::JsonSchema>::json_schema(generator)
 }
 impl From<Usage> for AiUsageView {
     fn from(
         Usage {
             prompt_tokens,
             completion_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            reasoning_tokens,
         }: Usage,
     ) -> Self {
         Self {
             prompt_tokens: prompt_tokens.into(),
             completion_tokens: completion_tokens.into(),
+            cache_read_tokens,
+            cache_write_tokens,
+            reasoning_tokens,
         }
     }
 }
@@ -219,7 +238,10 @@ mod tests {
             wire_item
         );
 
-        let wire_output = fixture["responses"]["view"]["rows"][0]["output"].clone();
+        let mut wire_output = fixture["responses"]["view"]["rows"][0]["output"].clone();
+        wire_output["usage"]["cacheReadTokens"] = serde_json::json!("9007199254740993");
+        wire_output["usage"]["cacheWriteTokens"] = serde_json::json!("0");
+        wire_output["usage"]["reasoningTokens"] = serde_json::json!(u64::MAX.to_string());
         let mut stored_output = wire_output.clone();
         stored_output["usage"]["promptTokens"] = serde_json::json!(9007199254740993u64);
         stored_output["usage"]["completionTokens"] = serde_json::json!(u64::MAX);
@@ -229,6 +251,11 @@ mod tests {
             serde_json::to_value(AiOutputView::from(output)).unwrap(),
             wire_output
         );
+        for key in ["cacheReadTokens", "cacheWriteTokens", "reasoningTokens"] {
+            let mut missing = wire_output["usage"].clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(serde_json::from_value::<AiUsageView>(missing).is_err());
+        }
     }
 
     #[test]

@@ -162,7 +162,10 @@ impl MemberHandler for SyntheticHandler {
                     let mut trace = self.trace.lock().unwrap();
                     trace.order.push("prepare");
                     trace.prepares.push((request_id, messages));
-                    MemberReply::Prepared { request_id, shared_view: None }
+                    MemberReply::Prepared {
+                        request_id,
+                        shared_view: None,
+                    }
                 }
                 MemberCall::Http {
                     request_id,
@@ -367,7 +370,10 @@ async fn actual_member_process_preserves_tool_pairs_and_unknown_usage_and_reaps(
                 trace.http[0].0,
                 Some(Usage {
                     prompt_tokens: 0,
-                    completion_tokens: 0
+                    completion_tokens: 0,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    reasoning_tokens: None,
                 })
             ),
             (trace.http[1].0, None)

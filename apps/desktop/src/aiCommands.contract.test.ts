@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/aiCommands.contract.json";
 import { aiCommands } from "./aiCommands";
 import * as validators from "./generated/ai.validators";
@@ -7,6 +7,7 @@ import type { AiView, CheckKey } from "./generated/ai.responses";
 import { textReviewViewFixture } from "./testSupport/textReviewFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { ruleIdentity } from "./reviewIdentity";
+import { unreportedTokenTotalsFixture } from "./testSupport/usageFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -176,11 +177,55 @@ it("keeps malformed or unrelated start acknowledgements unknown", async () => {
 
 
 it("validates durable budget counters and exact aggregate usage", () => {
-  const budget = {limit:300,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"5534023222112865484500",completionTokens:"0"};
+  const budget = {limit:300,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"5534023222112865484500",completionTokens:"0",...unreportedTokenTotalsFixture(2)};
   expect(validators.validateResponseView({...fixture.responses.view,budget})).toBe(true);
   for (const value of [1, "01", "-1", "1e2", "10000000000000000000000"]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,promptTokens:value}})).toBe(false);
   for (const value of [-1, 0.5, 301]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,dispatched:value}})).toBe(false);
   expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,extra:true}})).toBe(false);
+});
+
+describe("generated reported-usage wire", () => {
+  it("requires nullable details and preserves canonical unsigned detail strings in actual AI responses", () => {
+    const view = fixture.responses.view, row = view.rows[0];
+    const usage = { ...row.output.usage, promptTokens: "18446744073709551615", completionTokens: "18446744073709551615" };
+    expect(validators.validateResponseView(view)).toBe(true);
+    for (const field of ["cacheReadTokens", "cacheWriteTokens", "reasoningTokens"] as const) {
+      for (const value of [null, "0", "18446744073709551615"]) {
+        const reported = { ...usage, [field]: value };
+        expect(validators.validateResponseView({ ...view, rows: [{ ...row, output: { ...row.output, usage: reported } }] }), `${field}: ${String(value)}`).toBe(true);
+        expect(reported[field]).toBe(value);
+      }
+      const missing: Record<string, unknown> = { ...usage };
+      delete missing[field];
+      expect(validators.validateResponseView({ ...view, rows: [{ ...row, output: { ...row.output, usage: missing } }] }), `missing ${field}`).toBe(false);
+      for (const value of [0, "01", "18446744073709551616"]) {
+        expect(validators.validateResponseView({ ...view, rows: [{ ...row, output: { ...row.output, usage: { ...usage, [field]: value } } }] }), `${field}: ${String(value)}`).toBe(false);
+      }
+    }
+  });
+
+  it("requires all ledger detail totals with canonical decimal portions and bounded missing-request counts", () => {
+    const view = fixture.responses.view;
+    // The ordinary read has no ledger budget; the automatic-plan fixture has one.
+    const budget = { ...fixture.responses.automaticView.budget, limit: 300, dispatched: 300, usageUnknown: 0 };
+    for (const field of ["cacheRead", "cacheWrite", "reasoning"] as const) {
+      for (const tokens of ["0", "18446744073709551615", "5534023222112865484500"]) {
+        for (const unknownRequests of [0, 300]) {
+          const reported = { tokens, unknownRequests };
+          expect(validators.validateResponseView({ ...view, budget: { ...budget, [field]: reported } }), `${field}: ${tokens}, ${unknownRequests}`).toBe(true);
+          expect(reported.tokens).toBe(tokens);
+        }
+      }
+      const missing: Record<string, unknown> = { ...budget };
+      delete missing[field];
+      expect(validators.validateResponseView({ ...view, budget: missing }), `missing ${field}`).toBe(false);
+      for (const value of [null, { tokens: "0" }, { unknownRequests: 0 },
+        ...[0, "01", "10000000000000000000000"].map(tokens => ({ tokens, unknownRequests: 0 })),
+        ...[-1, 301, 0.5, "0", null].map(unknownRequests => ({ tokens: "0", unknownRequests }))]) {
+        expect(validators.validateResponseView({ ...view, budget: { ...budget, [field]: value } }), `${field}: ${JSON.stringify(value)}`).toBe(false);
+      }
+    }
+  });
 });
 
 

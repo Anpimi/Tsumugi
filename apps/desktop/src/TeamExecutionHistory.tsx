@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { enUS } from "./i18n/en-US";
 import { CommandFailureDetails, commandFailure } from "./CommandFailure";
 import { useSessionQuery } from "./SessionReadProvider";
 import type { SessionRequest } from "./executionCommands";
 import { workPlanCommands, type WorkPlanStatusView } from "./workPlanCommands";
 import { TeamWorkToolHistory, type OpenTeamToolTask } from "./TeamWorkToolHistory";
 import { TeamGuidanceControls } from "./TeamGuidanceControls";
+import { AiOutputUsage, AiProviderBudget } from "./AiUsage";
 import type { TeamGuidanceSession } from "./TeamGuidanceSession";
 
 /** Original team facts and explicit guidance share the existing preparation owner. */
@@ -38,8 +38,7 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpen
       <h4>{t("ai.teamHistory.members")}</h4><ul>{view.members.map(member => <li key={member.request.memberId}><strong>{member.request.displayName}</strong><pre className="ai-text">{member.request.role}</pre><p>{member.config.endpoint} · {member.config.model}</p></li>)}</ul>
       {view.retiredMemberIds.length ? <details><summary>{t("ai.recovery.retiredMembers")}</summary><ul>{view.retiredMemberIds.map(id => <li key={id}><code>{id}</code></li>)}</ul></details> : null}
       {view.stopReason ? <p role="status">{t(`ai.team.stops.${view.stopReason}`)}</p> : null}
-      {view.budget ? <><p>{t("ai.budgetSummary", { ...view.budget, defaultValue: enUS.ai.budgetSummary })}</p><p>{t("ai.budgetUsage", { ...view.budget, defaultValue: enUS.ai.budgetUsage })}</p>
-        {view.budget.legacyHeld > 0 ? <p>{t("ai.legacyBudget", { count: view.budget.legacyHeld, defaultValue: enUS.ai.legacyBudget })}</p> : null}</> : <p>{t("ai.team.noBudget")}</p>}
+      {view.budget ? <AiProviderBudget budget={view.budget}/> : <p>{t("ai.team.noBudget")}</p>}
       <h4>{t("ai.team.works")}</h4>
       {view.works.length ? view.works.map(work => {
         const target = work.target, outcome = work.validation === "valid" ? work.output?.outcome : null, human = work.origin.kind === "human-continuation" ? work.origin.work : null;
@@ -57,7 +56,7 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpen
           {outcome?.kind === "review" ? <><p>{t(`ai.team.verdicts.${outcome.verdict}`)}</p>{postButtons(outcome.postIds)}</> : null}
           {outcome?.kind === "evidence" ? <><p>{t("ai.team.evidence")}</p>{postButtons(outcome.postIds)}</> : null}
           {outcome?.kind === "waiting" ? <p>{t("ai.team.waiting", { count: outcome.requestedIntentIds.length })}</p> : null}
-          {work.output ? <p>{work.output.usage ? t("ai.usage", { ...work.output.usage, defaultValue: enUS.ai.usage }) : t("ai.usageUnknown")}{work.output.usage && work.output.usageIncomplete ? ` · ${t("ai.usageUnknown")}` : ""}</p> : null}
+          {work.output ? <AiOutputUsage usage={work.output.usage} incomplete={work.output.usageIncomplete}/> : null}
           {onOpenTask ? <button type="button" className="secondary-button" onClick={() => { void onOpenTask(work.receipt.taskId, work.receipt.attemptId); }}>{t("ai.team.openTask")}</button> : null}
           <TeamWorkToolHistory key={work.receipt.inputDigest} context={context} plan={status.plan}
             work={{ taskId: work.receipt.taskId, attemptId: work.receipt.attemptId, inputDigest: work.receipt.inputDigest }}

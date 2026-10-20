@@ -39,7 +39,7 @@ pub use persistence::{
     FallbackWrite, GlossaryCapture, GlossaryCaptureOrigin, GlossaryEntry, GlossaryFile, ImpactItem,
     ImpactPage, ImpactReason, PersistenceError, PersistenceErrorCode, PersistenceStage,
     PreparedAutomaticSelection, PreparedReviewCheck, ProjectStore, ProviderBudget, Reconciliation,
-    RecoveryPlan, RecoveryUnit, ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind,
+    RecoveryPlan, RecoveryUnit, ReportedTokenTotal, ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind,
     ReleaseView, ReleasedArtifact, ResourceChangeKind, ResourceDecision, ResourceDecisionKind,
     ResourceDecisionResult, ResourceImpactConfidence, ResourceImpactKind, ResourceImpactStatus,
     ResourcePreview, ResourcePreviewRow, ReviewBasis, ReviewCheckActionRequest, ReviewCheckActionSelection, ReviewCheckActionRead,

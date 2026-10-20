@@ -182,7 +182,10 @@
             "targetLocale": "zh-CN",
             "usage": {
               "promptTokens": "9007199254740993",
-              "completionTokens": "18446744073709551615"
+              "completionTokens": "18446744073709551615",
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
             }
           },
           "resultId": "60000000-0000-4000-8000-000000000009",
@@ -291,7 +294,19 @@
         "limit": 1,
         "promptTokens": "1",
         "unresolved": 0,
-        "usageUnknown": 0
+        "usageUnknown": 0,
+        "cacheRead": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "cacheWrite": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "reasoning": {
+          "tokens": "0",
+          "unknownRequests": 1
+        }
       },
       "config": {
         "concurrency": 1,
@@ -834,7 +849,10 @@
             "unitId": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3",
             "usage": {
               "completionTokens": "1",
-              "promptTokens": "1"
+              "promptTokens": "1",
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
             },
             "usageIncomplete": false
           },

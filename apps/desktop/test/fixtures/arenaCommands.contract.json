@@ -375,7 +375,10 @@
             "targetLocale": "zh-CN",
             "usage": {
               "promptTokens": "9007199254740993",
-              "completionTokens": "18446744073709551615"
+              "completionTokens": "18446744073709551615",
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
             }
           },
           "label": 0,
@@ -425,7 +428,10 @@
             "targetLocale": "zh-CN",
             "usage": {
               "promptTokens": "9007199254740993",
-              "completionTokens": "18446744073709551615"
+              "completionTokens": "18446744073709551615",
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
             }
           },
           "label": 1,

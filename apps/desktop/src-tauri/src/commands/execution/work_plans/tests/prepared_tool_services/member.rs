@@ -191,7 +191,9 @@ fn provider(
         let tool = json!({"id":"synthetic-tool-turn","object":"chat.completion.chunk","created":1,"model":"synthetic-member",
             "choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"lookup-source","type":"function","function":{"name":name,"arguments":arguments}}]},"finish_reason":null}]});
         let finish = json!({"id":"synthetic-tool-turn","object":"chat.completion.chunk","created":1,"model":"synthetic-member",
-            "choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":2}});
+            "choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":2,
+                "prompt_tokens_details":{"cached_tokens":4,"cache_write_tokens":0},
+                "completion_tokens_details":{"reasoning_tokens":1}}});
         respond(
             &mut first,
             "text/event-stream",
@@ -325,7 +327,8 @@ fn pi_member_real_process_core_transport_original_query_and_unknown_usage_reopen
     assert_eq!(output["output"]["usageIncomplete"], true);
     assert_eq!(
         output["output"]["usage"],
-        json!({"promptTokens":10,"completionTokens":2})
+        json!({"promptTokens":10,"completionTokens":2,
+            "cacheReadTokens":null,"cacheWriteTokens":null,"reasoningTokens":null})
     );
     let (calls, _) = provider.join().unwrap();
     assert_eq!(calls.len(), 3);
@@ -351,6 +354,11 @@ fn pi_member_real_process_core_transport_original_query_and_unknown_usage_reopen
         assert_eq!(state, "response");
     }
     assert!(requests[0].1.is_some());
+    assert_eq!(
+        serde_json::from_slice::<Value>(requests[0].1.as_ref().unwrap()).unwrap(),
+        json!({"promptTokens":10,"completionTokens":2,
+            "cacheReadTokens":"4","cacheWriteTokens":"0","reasoningTokens":"1"})
+    );
     assert!(requests[1].1.is_none());
     drop(statement);
     drop(connection);
@@ -373,6 +381,14 @@ fn pi_member_real_process_core_transport_original_query_and_unknown_usage_reopen
         ),
         ("11", "3")
     );
+    for (reported, tokens) in [
+        (&budget.cache_read, "4"),
+        (&budget.cache_write, "0"),
+        (&budget.reasoning, "1"),
+    ] {
+        assert_eq!(reported.tokens, tokens);
+        assert_eq!(reported.unknown_requests, 2);
+    }
     assert_eq!(
         reopened
             .execution_attempt(

@@ -340,7 +340,10 @@ fn team_coordination_typed_waiting_no_progress_and_paused_history_do_not_restore
             &waiting,
             Some(ai::Usage {
                 prompt_tokens: 0,
-                completion_tokens: u64::from(seed.config().max_output_tokens) + 1
+                completion_tokens: u64::from(seed.config().max_output_tokens) + 1,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
             }),
             1,
             false

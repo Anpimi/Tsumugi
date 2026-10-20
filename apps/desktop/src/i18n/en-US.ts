@@ -1354,6 +1354,15 @@ ai: {
   "refresh": "Refresh",
   "usage": "Reported usage: {{promptTokens}} input / {{completionTokens}} output tokens",
   "usageUnknown": "Total usage / billing unknown",
+  "usageDetails": {
+    "title": "Reported token details", "cacheRead": "Cache read tokens", "cacheWrite": "Cache write tokens", "reasoning": "Reasoning tokens",
+    "reported": "Reported: {{tokens}} tokens", "notReported": "Not reported",
+    "partial": "Reported portion: {{tokens}} tokens; requests without this detail: {{requests}}.",
+    "partialTotals": "These input and output counts are only the reported portion. Some request totals remain unknown.",
+    "subsets": "Cache read and cache write are details of the original input count and may overlap. Reasoning is a detail of the original output count. None is added again to the input or output totals.",
+    "billingUnknown": "Reported tokens do not establish the billed amount. Cost remains unknown.",
+    "requests": "Model requests: {{count}}"
+  },
   "saved": "Candidate saved",
   "saveCandidate": "Save candidate",
   "openEditor": "Compare and select in editor",

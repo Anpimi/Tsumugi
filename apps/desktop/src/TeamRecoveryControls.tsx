@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { enUS } from "./i18n/en-US";
 import { useSessionQuery } from "./SessionReadProvider";
 import { CommandFailureDetails, commandFailure } from "./CommandFailure";
 import { workPlanCommands, type WorkPlanStatusView } from "./workPlanCommands";
@@ -11,6 +10,7 @@ import { newTeamMember } from "./TeamExecutionDraft";
 import { recoveryDraftProblem } from "./TeamRecoveryDraft";
 import { teamRecoveryAvailable, type TeamRecoverySession } from "./TeamRecoverySession";
 import { TeamRecoveryDisclosure } from "./TeamRecoveryDisclosure";
+import { AiProviderBudget } from "./AiUsage";
 import { useWorkbenchCommands, type AiTeamRecoveryCommandPayload, type CommandAvailability } from "./workbenchCommands";
 import { useWorkPlanApplicationTools, WorkPlanApplicationToolDetails, WorkPlanApplicationToolObservation } from "./workPlanApplicationTools";
 import { PluginPermissions } from "./PluginPermissions";
@@ -106,7 +106,7 @@ export function TeamRecoveryControls({ context, status, session, open, disabled,
       : observation.state.state === "active" ? "ai.recovery.pauseFirst" : canPrepare ? "ai.recovery.available" : "ai.recovery.draining")}</p>
       <p>{t("ai.recovery.counters", { activations: String(observation.state.activations), completions: String(observation.state.unconfirmedCompletions) })}</p>
       <p>{t("ai.recovery.deadline", { date: new Date(Number(observation.state.expiresAtMs)).toLocaleString(i18n.language) })}</p>
-      <p>{t("ai.budgetSummary", { ...observation.state.budget, defaultValue: enUS.ai.budgetSummary })}</p><p>{t("ai.budgetUsage", { ...observation.state.budget, defaultValue: enUS.ai.budgetUsage })}</p>
+      <AiProviderBudget budget={observation.state.budget}/>
     </> : null}
     {otherPlan ? <p>{t("ai.recovery.otherDraft")} <button type="button" className="text-button" onClick={() => onPlan(otherPlan)}>{t("ai.recovery.returnDraft")}</button></p> : null}
     {observation && observation.state.unresolvedWork.length > 16 ? <p role="alert">{t("ai.recovery.problems.unresolvedLimit")}</p> : null}

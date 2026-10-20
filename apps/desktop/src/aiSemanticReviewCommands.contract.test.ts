@@ -66,7 +66,7 @@ it("keeps full unsigned token counters and rejects number substitution or invent
   expect(result.view!.rows[0].output!.usage!.promptTokens).toBe("18446744073709551615");
   const number = structuredClone(fixture.responses.view);
   const invalid: unknown = { ...number, view: { ...number.view, rows: [{ ...number.view.rows[0],
-    output: { ...number.view.rows[0].output, usage: { promptTokens: 1, completionTokens: "1" } } }] } };
+    output: { ...number.view.rows[0].output, usage: { ...number.view.rows[0].output.usage, promptTokens: 1, completionTokens: "1" } } }] } };
   expect(validators.validateResponseSemanticRead(invalid)).toBe(false);
   expect(validators.validateResponseSemanticRead({ ...result, view: { ...result.view,
     rows: [{ ...result.view!.rows[0], run: { ...result.view!.rows[0].run, approval: true } }] } })).toBe(false);

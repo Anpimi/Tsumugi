@@ -1271,8 +1271,11 @@ export interface AiSemanticReviewFinding {
   suggestion: string | null;
 }
 export interface AiUsageView {
+  cacheReadTokens: UnsignedDecimal | null;
+  cacheWriteTokens: UnsignedDecimal | null;
   completionTokens: UnsignedDecimal;
   promptTokens: UnsignedDecimal;
+  reasoningTokens: UnsignedDecimal | null;
 }
 export interface AiSemanticReviewRun {
   actionId: ExecutionId;

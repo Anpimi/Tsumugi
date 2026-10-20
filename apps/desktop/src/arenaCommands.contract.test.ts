@@ -4,6 +4,7 @@ import { arenaCommands, confirmArenaComparison, confirmArenaMerge } from "./aren
 import * as validators from "./generated/arena.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { unreportedTokenTotalsFixture } from "./testSupport/usageFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -132,7 +133,7 @@ it("rejects unknown origins, unbounded indices and incomplete confirmations", ()
   for (const label of [-1, 0.5, 4294967296]) expect(validators.validateResponseView({ ...view, rows: [{ ...row, label }] })).toBe(false);
   expect(validators.validateResponseView({ ...view, rows: [{ ...row, sourceOrder: 4294967296 }] })).toBe(false);
   expect(validators.validateResponseComparisons([{ ...fixture.responses.comparisons[0], comparisonId: null }])).toBe(false);
-  expect(validators.validateResponseView({ ...view, rows: [{ ...row, output: { ...row.output, usage: { promptTokens: 1, completionTokens: "0" } } }] })).toBe(false);
+  expect(validators.validateResponseView({ ...view, rows: [{ ...row, output: { ...row.output, usage: { ...row.output.usage, promptTokens: 1, completionTokens: "0" } } }] })).toBe(false);
   expect(validators.validateResponseReveal({})).toBe(false);
 });
 
@@ -164,7 +165,7 @@ it("binds mutation acknowledgements and keeps an unrelated action unknown", asyn
 
 
 it("validates durable budget counters and exact aggregate usage", () => {
-  const budget = {limit:300,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"5534023222112865484500",completionTokens:"0"};
+  const budget = {limit:300,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"5534023222112865484500",completionTokens:"0",...unreportedTokenTotalsFixture(2)};
   expect(validators.validateResponseView({...fixture.responses.view,budget})).toBe(true);
   for (const value of [1, "01", "-1", "1e2", "10000000000000000000000"]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,promptTokens:value}})).toBe(false);
   for (const value of [-1, 0.5, 301]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,dispatched:value}})).toBe(false);

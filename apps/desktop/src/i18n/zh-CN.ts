@@ -1345,6 +1345,15 @@ ai: {
   "refresh": "刷新",
   "usage": "服务报告用量：输入 {{promptTokens}} / 输出 {{completionTokens}} token",
   "usageUnknown": "总用量／计费未知",
+  "usageDetails": {
+    "title": "已报告 token 细项", "cacheRead": "缓存读取 token", "cacheWrite": "缓存写入 token", "reasoning": "推理 token",
+    "reported": "已报告：{{tokens}} token", "notReported": "未报告",
+    "partial": "已报告部分：{{tokens}} token；{{requests}} 次请求未报告此细项。",
+    "partialTotals": "这些输入与输出计数仅包含已报告部分，部分请求的总用量仍未知。",
+    "subsets": "缓存读取与缓存写入属于原输入计数的细项，二者可能重叠。推理属于原输出计数的细项。这些细项均不会再次加到输入或输出总量。",
+    "billingUnknown": "报告的 token 数不能证明账单金额，费用仍未知。",
+    "requests": "模型请求数：{{count}}"
+  },
   "saved": "候选已保存",
   "saveCandidate": "保存候选",
   "openEditor": "在编辑器比较与选择",

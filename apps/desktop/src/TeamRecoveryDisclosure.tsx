@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { enUS } from "./i18n/en-US";
 import { AiPreviewItems } from "./AiPreviewItems";
+import { AiProviderBudget } from "./AiUsage";
 import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
 import type { TeamWorkReference } from "./generated/ai.requests";
 import type { TeamRecoveryPreviewView } from "./generated/ai.responses";
@@ -14,7 +14,7 @@ export function TeamRecoveryDisclosure({ plan, preview, unresolvedWork, onOpenTa
     <p>{t("ai.team.capturedLimits", { activations: String(preview.limits.maxActivations), concurrency: String(preview.limits.maxConcurrency), noProgress: String(preview.limits.maxNoProgress) })}</p>
     <p>{t("ai.team.completionLimitHelp")}</p>
     <p>{t("ai.recovery.counters", { activations: String(preview.activations), completions: String(preview.unconfirmedCompletions) })}</p>
-    <p>{t("ai.budgetSummary", { ...preview.budget, defaultValue: enUS.ai.budgetSummary })}</p><p>{t("ai.budgetUsage", { ...preview.budget, defaultValue: enUS.ai.budgetUsage })}</p>
+    <AiProviderBudget budget={preview.budget}/>
     <p>{t("ai.recovery.workSummary", { member: preview.members.find(member => member.memberId === preview.work.memberId)?.displayName ?? "",
       entry: names.get(preview.work.target.unitId) ?? "", locale: preview.work.target.locale, kind: t(`ai.team.workKinds.${preview.work.kind}`) })}</p>
     <pre className="ai-text">{preview.work.instructions}</pre>

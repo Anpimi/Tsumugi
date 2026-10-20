@@ -6,6 +6,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+Current development compatibility is project schema 59 and internal member
+protocol 3. Earlier format numbers below describe feature introduction baselines
+within this same undistributed batch.
+
+- Retain reported cache read, cache write and reasoning token details with the
+  original model-request records. Show reported zero separately from missing
+  and partial reports, without adding those details to input/output totals or
+  treating tokens as a verified bill. New detail counters retain exact decimal
+  values; missing reports remain unknown through recovery and history.
+
 - Send explicitly shared human guidance to an approved team member and entry.
   Track local reception separately from inclusion in the next authorized model
   request; the current request stays frozen and idle members are not awakened.

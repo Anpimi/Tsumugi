@@ -179,6 +179,9 @@ fn member_candidate_uses_original_item_and_bounded_usage_contract() {
             Some(Usage {
                 prompt_tokens: 1,
                 completion_tokens: u64::from(seed.config().max_output_tokens) + 1,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
             }),
             1,
             false

@@ -5,6 +5,7 @@ import arenaFixture from "../test/fixtures/arenaCommands.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { confirmArenaView, useArenaDraftSession } from "./ArenaDraftSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
+import { unreportedTokenTotalsFixture } from "./testSupport/usageFixture";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { ArenaConfig, ArenaPrepared, ArenaView, ComparisonView, CompareRequest, MergeRequest } from "./arenaCommands";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
@@ -92,7 +93,7 @@ function viewFor(value = prepared, displayOrder = value.preview.config.variants.
   });
   view.rows.sort((left,right)=>left.sourceOrder-right.sourceOrder||left.label-right.label);
   view.detail.progress.total=value.preview.items.length;view.detail.progress.succeeded=value.preview.items.length;
-  view.budget={...view.budget!,limit:value.preview.config.maxRequests,dispatched:value.preview.items.length,usageUnknown:value.preview.items.length};
+  view.budget={...view.budget!,limit:value.preview.config.maxRequests,dispatched:value.preview.items.length,usageUnknown:value.preview.items.length,...unreportedTokenTotalsFixture(value.preview.items.length)};
   expect(view.rows.length % count).toBe(0);
   return view;
 }

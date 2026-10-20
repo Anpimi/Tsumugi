@@ -158,7 +158,19 @@
       "unresolved": 0,
       "usageUnknown": 0,
       "promptTokens": "1",
-      "completionTokens": "1"
+      "completionTokens": "1",
+      "cacheRead": {
+        "tokens": "0",
+        "unknownRequests": 1
+      },
+      "cacheWrite": {
+        "tokens": "0",
+        "unknownRequests": 1
+      },
+      "reasoning": {
+        "tokens": "0",
+        "unknownRequests": 1
+      }
     },
     "taskId": "60000000-0000-4000-8000-000000000022"
   },
@@ -208,7 +220,19 @@
       "unresolved": 0,
       "usageUnknown": 0,
       "promptTokens": "1",
-      "completionTokens": "1"
+      "completionTokens": "1",
+      "cacheRead": {
+        "tokens": "0",
+        "unknownRequests": 1
+      },
+      "cacheWrite": {
+        "tokens": "0",
+        "unknownRequests": 1
+      },
+      "reasoning": {
+        "tokens": "0",
+        "unknownRequests": 1
+      }
     }
   }
 }

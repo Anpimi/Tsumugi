@@ -10,6 +10,7 @@ import { validateResponseView as validateArena } from "../generated/arena.valida
 import type { AiConfig, AiItem, AiView } from "../aiCommands";
 import type { ArenaView } from "../arenaCommands";
 import { fixtureIdentity } from "./executionFixture";
+import { unreportedTokenTotalsFixture } from "./usageFixture";
 
 export const aiAttempt = fixtureIdentity(401);
 export const aiTask = fixtureIdentity(402);
@@ -22,7 +23,7 @@ export function teamDiscussionLimitsForFixture(policy: NonNullable<PlanOptions["
 export function aiViewFixture(item: AiItem, config: AiConfig): AiView {
   const view: unknown = structuredClone(ai.responses.view);
   if (!validateAi(view)) throw new Error("Invalid AI fixture");
-  view.budget = {limit:config.maxRequests,dispatched:1,legacyHeld:0,unresolved:0,usageUnknown:1,promptTokens:"0",completionTokens:"0"};
+  view.budget = {limit:config.maxRequests,dispatched:1,legacyHeld:0,unresolved:0,usageUnknown:1,promptTokens:"0",completionTokens:"0",...unreportedTokenTotalsFixture(1)};
   view.config = config;
   view.detail.attemptId = aiAttempt;
   view.detail.taskId = aiTask;
@@ -41,7 +42,7 @@ export function arenaViewFixture(item: AiItem, config?: import("../arenaCommands
   view.detail.attemptId = aiAttempt;
   view.detail.taskId = aiTask;
   view.detail.recovery.attemptId = aiAttempt;
-  view.budget = {limit:config?.maxRequests ?? 40,dispatched:2,legacyHeld:0,unresolved:0,usageUnknown:2,promptTokens:"0",completionTokens:"0"};
+  view.budget = {limit:config?.maxRequests ?? 40,dispatched:2,legacyHeld:0,unresolved:0,usageUnknown:2,promptTokens:"0",completionTokens:"0",...unreportedTokenTotalsFixture(2)};
   if (config) {
     view.blind = config.blind; view.revealed = !config.blind; view.variants = config.blind ? null : structuredClone(config.variants);
     view.parentAttemptId = config.parentAttemptId ?? null;

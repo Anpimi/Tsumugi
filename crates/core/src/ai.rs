@@ -234,6 +234,69 @@ pub fn preview_digest(config: &AiConfig, items: &[AiItem]) -> Result<String, Exe
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    #[serde(deserialize_with = "required_nullable_usage_tokens")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "nullable_usage_tokens")
+    )]
+    pub cache_read_tokens: Option<UnsignedDecimal>,
+    #[serde(deserialize_with = "required_nullable_usage_tokens")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "nullable_usage_tokens")
+    )]
+    pub cache_write_tokens: Option<UnsignedDecimal>,
+    #[serde(deserialize_with = "required_nullable_usage_tokens")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "nullable_usage_tokens")
+    )]
+    pub reasoning_tokens: Option<UnsignedDecimal>,
+}
+fn required_nullable_usage_tokens<'de, D>(deserializer: D) -> Result<Option<UnsignedDecimal>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer)
+}
+#[cfg(feature = "wire-schema")]
+fn nullable_usage_tokens(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    <Option<UnsignedDecimal> as schemars::JsonSchema>::json_schema(generator)
+}
+impl Usage {
+    /// Details are reported subsets, never additional tokens or inferred zeros.
+    pub(crate) fn validate(&self) -> Result<(), ExecutionError> {
+        if self
+            .cache_read_tokens
+            .is_some_and(|n| n.get() > self.prompt_tokens)
+            || self
+                .cache_write_tokens
+                .is_some_and(|n| n.get() > self.prompt_tokens)
+            || self
+                .reasoning_tokens
+                .is_some_and(|n| n.get() > self.completion_tokens)
+        {
+            return Err(error(ErrorCode::OutputInvalid, "ai-usage"));
+        }
+        Ok(())
+    }
+    fn without_details(mut self) -> Self {
+        self.cache_read_tokens = None;
+        self.cache_write_tokens = None;
+        self.reasoning_tokens = None;
+        self
+    }
+    pub(crate) fn validate_aggregate(&self, incomplete: bool) -> Result<(), ExecutionError> {
+        self.validate()?;
+        if incomplete
+            && (self.cache_read_tokens.is_some()
+                || self.cache_write_tokens.is_some()
+                || self.reasoning_tokens.is_some())
+        {
+            return Err(error(ErrorCode::OutputInvalid, "ai-usage-incomplete"));
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -418,6 +481,9 @@ pub(super) fn validate_item_output(
     Ok(out)
 }
 fn validate_output_scope(item: &AiItem, out: &AiOutput) -> Result<(), ExecutionError> {
+    if let Some(usage) = &out.usage {
+        usage.validate_aggregate(out.usage_incomplete)?;
+    }
     if out.unit_id != item.unit_id
         || out.target_locale != item.target_locale
         || out.text.len() > 16384
@@ -573,20 +639,7 @@ pub(super) fn execute_completion(
             budget.settle(reservation, None, cancel)?;
             let value: Value = codec::decode(&response.body, profile.max_response_bytes)
                 .map_err(|_| error(ErrorCode::OutputInvalid, "ai-response"))?;
-            let usage = match (
-                value["usage"]["prompt_tokens"].as_u64(),
-                value["usage"]["completion_tokens"].as_u64(),
-            ) {
-                (Some(p), Some(c))
-                    if p <= i64::MAX as u64 && c <= config.max_output_tokens as u64 =>
-                {
-                    Some(Usage {
-                        prompt_tokens: p,
-                        completion_tokens: c,
-                    })
-                }
-                _ => None,
-            };
+            let usage = reported_usage(&value["usage"], config.max_output_tokens);
             budget.settle(reservation, usage.clone(), cancel)?;
             let choices = value["choices"]
                 .as_array()
@@ -610,11 +663,50 @@ pub(super) fn execute_completion(
             return Ok(ProviderCompletion {
                 content: content.into(),
                 usage_incomplete: retry > 0 || usage.is_none(),
-                usage,
+                // Earlier retry responses remain unknown in the original ledger.
+                usage: usage.map(|usage| {
+                    if retry > 0 { usage.without_details() } else { usage }
+                }),
                 requests: retry + 1,
             });
         }
         Err(error(ErrorCode::LimitExceeded, "ai-budget"))
+}
+
+fn reported_usage(value: &Value, max_output_tokens: u32) -> Option<Usage> {
+    let prompt_tokens = value["prompt_tokens"].as_u64()?;
+    let completion_tokens = value["completion_tokens"].as_u64()?;
+    if prompt_tokens > i64::MAX as u64 || completion_tokens > u64::from(max_output_tokens) {
+        return None;
+    }
+    let reported = |value: &Value, total| {
+        value
+            .as_u64()
+            .filter(|n| *n <= total)
+            .map(UnsignedDecimal::from)
+    };
+    // The first non-null report wins; malformed high-priority values are unknown.
+    let cache_read = [
+        &value["prompt_tokens_details"]["cached_tokens"],
+        &value["prompt_cache_hit_tokens"],
+        &value["cached_tokens"],
+    ]
+    .into_iter()
+    .find(|value| !value.is_null())
+    .unwrap_or(&Value::Null);
+    Some(Usage {
+        prompt_tokens,
+        completion_tokens,
+        cache_read_tokens: reported(cache_read, prompt_tokens),
+        cache_write_tokens: reported(
+            &value["prompt_tokens_details"]["cache_write_tokens"],
+            prompt_tokens,
+        ),
+        reasoning_tokens: reported(
+            &value["completion_tokens_details"]["reasoning_tokens"],
+            completion_tokens,
+        ),
+    })
 }
 impl Runner for AiRunner {
     fn capability_id(&self) -> &str {

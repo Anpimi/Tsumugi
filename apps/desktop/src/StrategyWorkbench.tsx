@@ -5,6 +5,7 @@ import { useOptionalStrategyDraftSession, useStrategyDraftSession } from "./Stra
 import { strategyCommands, strategyKeys, type StrategyEvaluationView } from "./strategyCommands";
 import { SourceContextChoice, SourceContextPreview, SourceContextSelectionSummary, ProjectFactPreview } from "./SourceContextPreparation";
 import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnectionPicker";
+import { AiOutputUsage, AiProviderBudget } from "./AiUsage";
 import { ReviewCheckerDetails, checkerIdentity, ruleIdentity } from "./ReviewCheckers";
 import { CommandFailureDetails, commandFailure, failureReason } from "./CommandFailure";
 import { sourceReads } from "./sourceQueries";
@@ -200,7 +201,7 @@ export function StrategyEvaluationResults({ view, arena, disabled }: { view: Str
   const locked = disabled || owner.reserved() || !owner.evaluationCurrent(view);
   const groups = [...new Set(arena.rows.map(row => row.sourceOrder))];
   const active = arena.detail.progress.queued > 0 || arena.detail.progress.running > 0;
-  return <><p>{t("ai.costUnknown")}</p>{arena.budget ? <><p>{t("ai.budgetSummary", { ...arena.budget, defaultValue: enUS.ai.budgetSummary })}</p><p>{t("ai.budgetUsage", { ...arena.budget, defaultValue: enUS.ai.budgetUsage })}</p></> : <p>{t("ai.usageUnknown")}</p>}{active ? <p role="status">{t("strategy.running")}</p> : null}
+  return <><p>{t("ai.costUnknown")}</p>{arena.budget ? <AiProviderBudget budget={arena.budget}/> : <p>{t("ai.usageUnknown")}</p>}{active ? <p role="status">{t("strategy.running")}</p> : null}
     <p>{t("strategy.qaHelp")}</p>
     {groups.map(order => {
       const rows = arena.rows.filter(row => row.sourceOrder === order), first = rows[0];
@@ -215,7 +216,7 @@ export function StrategyEvaluationResults({ view, arena, disabled }: { view: Str
           const complete = receipt && mandatoryChecksClean(receipt);
           return <article key={row.itemId}><h5>{original ? t(original.slot === 0 ? "strategy.baseline" : "strategy.candidateSlot") : t("arena.candidate", { label: String.fromCharCode(65 + row.label) })}</h5><p>{t(`ai.states.${status?.execution}`, { defaultValue: status?.execution ?? "" })}</p>
             {status?.diagnostic ? <p role="alert">{status.diagnostic}</p> : null}
-            {row.output ? <><pre className="ai-text">{row.output.text}</pre><p>{row.output.usage ? t("ai.usage", { ...row.output.usage, defaultValue: enUS.ai.usage }) : t("ai.usageUnknown")}</p>
+            {row.output ? <><pre className="ai-text">{row.output.text}</pre><AiOutputUsage usage={row.output.usage} incomplete={row.output.usageIncomplete}/>
               {status?.adoption === "committed" ? <button type="button" className="secondary-button" disabled={locked || active || !resultMatches || !!state.check || !!complete} onClick={() => void owner.prepareCheck(view, row)}>{t("strategy.prepareCheck")}</button>
                 : <button type="button" className="secondary-button" disabled={locked || active || !resultMatches || status?.validation !== "valid"} onClick={() => void owner.saveCandidate(view, row, arena)}>{t("ai.saveCandidate")}</button>}
             </> : null}

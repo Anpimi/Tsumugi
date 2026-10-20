@@ -2,6 +2,14 @@
 use super::*;
 use crate::ai::{Usage, provider::ProviderRequestCapture};
 
+fn decode_usage(bytes: &[u8]) -> Result<Usage, ExecutionError> {
+    let usage: Usage = codec::decode(bytes, 1024)?;
+    usage
+        .validate()
+        .map_err(|_| error(ErrorCode::CorruptLedger, "provider-usage"))?;
+    Ok(usage)
+}
+
 fn captured_member_config(input: &FixedInput) -> Result<crate::ai::AiConfig, ExecutionError> {
     if input.envelope().operation == crate::ai::team::OPERATION {
         return Ok(crate::ai::team::settings(input)?.config);
@@ -157,7 +165,7 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         let item = parse_id(item)?;
         parse_id(id)?;
         if let Some(bytes) = bytes {
-            let _: Usage = codec::decode(&bytes, 1024)?;
+            decode_usage(&bytes)?;
         }
         match (capture, digest) {
             (Some(bytes), Some(digest)) => {
@@ -384,6 +392,20 @@ fn inherits_configuration(child: &FixedInput, parent: &FixedInput) -> bool {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReportedTokenTotal {
+    /// Sum of the reliably reported portion; unknown requests are not zeros.
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(regex(pattern = "^(0|[1-9][0-9]{0,21})$"))
+    )]
+    pub tokens: String,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 300)))]
+    pub unknown_requests: u32,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ProviderBudget {
     #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 300)))]
     pub limit: u32,
@@ -405,6 +427,9 @@ pub struct ProviderBudget {
         schemars(regex(pattern = "^(0|[1-9][0-9]{0,21})$"))
     )]
     pub completion_tokens: String,
+    pub cache_read: ReportedTokenTotal,
+    pub cache_write: ReportedTokenTotal,
+    pub reasoning: ReportedTokenTotal,
 }
 pub(crate) fn provider_budget_in(
     c: &Connection,
@@ -427,9 +452,23 @@ pub(crate) fn provider_budget_in(
         usage_unknown: 0,
         prompt_tokens: "0".into(),
         completion_tokens: "0".into(),
+        cache_read: ReportedTokenTotal {
+            tokens: "0".into(),
+            unknown_requests: 0,
+        },
+        cache_write: ReportedTokenTotal {
+            tokens: "0".into(),
+            unknown_requests: 0,
+        },
+        reasoning: ReportedTokenTotal {
+            tokens: "0".into(),
+            unknown_requests: 0,
+        },
     };
     budget.legacy_held=c.query_row("SELECT COALESCE(SUM(b.legacy_held),0) FROM execution_budgets b JOIN execution_budget_ancestry x ON b.task_id=x.task_id WHERE x.ancestor_id=?1",[task.to_string()],|r|r.get(0)).map_err(sql_error)?;
     let (mut prompt, mut completion) = (0u128, 0u128);
+    // The original budget permits at most 300 u64 reports, all fitting in u128.
+    let mut details = [0u128; 3];
     let mut stmt=c.prepare("SELECT p.state,p.usage FROM execution_provider_requests p JOIN execution_budget_ancestry x ON p.task_id=x.task_id WHERE x.ancestor_id=?1").map_err(sql_error)?;
     for row in stmt
         .query_map([task.to_string()], |r| {
@@ -438,20 +477,51 @@ pub(crate) fn provider_budget_in(
         .map_err(sql_error)?
     {
         let (state, bytes) = row.map_err(sql_error)?;
+        if budget.dispatched >= limit {
+            return Err(error(ErrorCode::CorruptLedger, "provider-budget"));
+        }
         budget.dispatched += 1;
         if state == "unknown" {
             budget.unresolved += 1;
         }
-        if let Some(bytes) = bytes {
-            let usage: Usage = codec::decode(&bytes, 1024)?;
+        let reported = if let Some(bytes) = bytes {
+            let usage = decode_usage(&bytes)?;
             prompt += u128::from(usage.prompt_tokens);
             completion += u128::from(usage.completion_tokens);
+            [
+                usage.cache_read_tokens,
+                usage.cache_write_tokens,
+                usage.reasoning_tokens,
+            ]
         } else {
             budget.usage_unknown += 1;
+            [None; 3]
+        };
+        for ((sum, total), reported) in details
+            .iter_mut()
+            .zip([
+                &mut budget.cache_read,
+                &mut budget.cache_write,
+                &mut budget.reasoning,
+            ])
+            .zip(reported)
+        {
+            if let Some(reported) = reported {
+                *sum += u128::from(reported.get());
+            } else {
+                total.unknown_requests += 1;
+            }
         }
     }
     budget.prompt_tokens = prompt.to_string();
     budget.completion_tokens = completion.to_string();
+    for (sum, total) in details.into_iter().zip([
+        &mut budget.cache_read,
+        &mut budget.cache_write,
+        &mut budget.reasoning,
+    ]) {
+        total.tokens = sum.to_string();
+    }
     Ok(Some(budget))
 }
 impl ProjectStore {
@@ -559,6 +629,9 @@ impl ProjectStore {
         id: ExecutionId,
         usage: Option<Usage>,
     ) -> Result<(), ExecutionError> {
+        if let Some(usage) = &usage {
+            usage.validate()?;
+        }
         let tx = self.execution_write()?;
         let bytes = usage.map(|u| codec::encode(&u, 1024)).transpose()?;
         let previous: Option<Vec<u8>> = tx.query_row(

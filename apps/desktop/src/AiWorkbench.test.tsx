@@ -11,6 +11,7 @@ import {useEffect,type Ref} from "react";
 import {AiPreparationSession,useAiPreparation} from "./AiPreparationSession";
 import { workPlanCommands } from "./workPlanCommands";
 import { teamStatusFixture } from "./testSupport/teamDiscussionFixture";
+import { unreportedTokenTotalsFixture } from "./testSupport/usageFixture";
 import {useSessionReads} from "./SessionReadProvider";
 import type {SessionReads} from "./sessionReads";
 import type {AiConfig} from "./aiCommands";
@@ -530,10 +531,11 @@ it("uses a committed receipt to reconcile adoption without repeating the mutatio
 
 it("shows durable unknown and legacy exposure without replaying when refreshed",async()=>{
  const user=await preview();const original=invoke.getMockImplementation()!;
- invoke.mockImplementation((command:string,args:unknown)=>{if(command==="read_ai_translation"){const view=workPlanAiView();view.budget={limit:20,dispatched:2,legacyHeld:3,unresolved:1,usageUnknown:2,promptTokens:"9007199254740993",completionTokens:"0"};return Promise.resolve(view);}return original(command,args);});
+ invoke.mockImplementation((command:string,args:unknown)=>{if(command==="read_ai_translation"){const view=workPlanAiView();view.budget={limit:20,dispatched:2,legacyHeld:3,unresolved:1,usageUnknown:2,promptTokens:"9007199254740993",completionTokens:"0",...unreportedTokenTotalsFixture(2)};return Promise.resolve(view);}return original(command,args);});
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
  await screen.findByText(/reserved requests 2 · awaiting confirmation 1 · unknown usage 2/);expect(screen.getByText(/up to 3 possible requests held/)).toBeInTheDocument();expect(screen.getByText(/9007199254740993 input/)).toBeInTheDocument();
- await i18n.changeLanguage("zh-CN");expect(await screen.findByText(/已占请求额度 2.*待核对 1.*用量未知 2/)).toBeInTheDocument();await user.click(screen.getAllByRole("button",{name:"刷新"})[0]);expect(invoke.mock.calls.filter(([c])=>c==="start_work_plan")).toHaveLength(1);
+ await user.click(screen.getByText(i18n.t("ai.usageDetails.title")));expect(screen.getAllByText(i18n.t("ai.usageDetails.partial",{tokens:"0",requests:"2"}))).toHaveLength(3);
+ await i18n.changeLanguage("zh-CN");expect(await screen.findByText(/已占请求额度 2.*待核对 1.*用量未知 2/)).toBeInTheDocument();expect(screen.getAllByText(i18n.t("ai.usageDetails.partial",{tokens:"0",requests:"2"}))).toHaveLength(3);await user.click(screen.getAllByRole("button",{name:"刷新"})[0]);expect(invoke.mock.calls.filter(([c])=>c==="start_work_plan")).toHaveLength(1);
 });
 it("explains queue rejection and preserves preview without sending another task",async()=>{
  const user=await preview();const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="start_work_plan"?Promise.reject({code:"limit-exceeded",stage:"execution-recover",outcome:"rejected",recoveryRequired:false,reason:"execution-queue"}):original(c,a));

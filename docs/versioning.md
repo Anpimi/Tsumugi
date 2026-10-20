@@ -1,5 +1,22 @@
 # Application versioning and changelog maintenance
 
+Physical model-request usage now retains separately reported cache read, cache
+write and reasoning details in its original receipt and budget owners. Unknown
+reports remain distinct from reported zero and known portions. These categories
+do not increase original prompt/completion totals or establish actual charges.
+New detail counters use canonical decimal strings across member and display
+contracts, while existing total-counter representations retain their semantics.
+
+Required nullable fields change persisted usage and the internal member frame.
+The current-only project format advances to schema 59; schema 58 and earlier
+development directories are preserved and refused, requiring a new project and
+source reimport. Member protocol 3 requires freshly generated contracts and a
+matching captured runtime artifact. SDK/Process3, WorkPlan3, dependencies and the
+single package-version sources remain unchanged. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs synchronized bilingual
+Unreleased entries and regenerated experimental consumers, with no extra package
+version bump. Earlier assessments below retain their feature baselines.
+
 Directed human guidance reuses the original team message, author, request capture
 and consumption owners. New plan preparation and destination-specific sharing
 approval explicitly include each human-submitted message; recording one does

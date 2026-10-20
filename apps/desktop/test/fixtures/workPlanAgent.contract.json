@@ -101,7 +101,20 @@
         "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
         "nativeKey": "barrel", "selectionId": null
       }],
-      "budget": { "limit": 2, "dispatched": 1, "legacyHeld": 0, "unresolved": 0, "usageUnknown": 0, "promptTokens": "1", "completionTokens": "1" }
+      "budget": { "limit": 2, "dispatched": 1, "legacyHeld": 0, "unresolved": 0, "usageUnknown": 0, "promptTokens": "1", "completionTokens": "1",
+        "cacheRead": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "cacheWrite": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "reasoning": {
+          "tokens": "0",
+          "unknownRequests": 1
+        }
+      }
     },
     "generationAttempt": {
       "taskId": "60000000-0000-4000-8000-000000000013",
@@ -157,7 +170,19 @@
         "unresolved": 0,
         "usageUnknown": 0,
         "promptTokens": "1",
-        "completionTokens": "1"
+        "completionTokens": "1",
+        "cacheRead": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "cacheWrite": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "reasoning": {
+          "tokens": "0",
+          "unknownRequests": 1
+        }
       }
     },
     "generation": {
@@ -182,7 +207,19 @@
         "unresolved": 0,
         "usageUnknown": 0,
         "promptTokens": "1",
-        "completionTokens": "1"
+        "completionTokens": "1",
+        "cacheRead": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "cacheWrite": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "reasoning": {
+          "tokens": "0",
+          "unknownRequests": 1
+        }
       }
     }
   }

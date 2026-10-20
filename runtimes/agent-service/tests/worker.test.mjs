@@ -17,13 +17,14 @@ function start(overrides = {}) {
     input: "Translate current source 👩🏽‍💻", tools: [], maxTurns: 4, timeoutMs: 10000,
     profile: { endpoint: "https://controlled.invalid/v1/chat/completions", model: "synthetic-model", tokenField: "max_completion_tokens", maxOutputTokens: 64, contextTokens: 8192 }, ...overrides };
 }
-function sse({ tool = false, usage, text = "Captured candidate" } = {}) {
-  const delta = tool ? { role: "assistant", tool_calls: [{ index: 0, id: "query-1", type: "function", function: { name: "query_reference", arguments: '{"query":"original"}' } }] }
+function sse({ tool = false, toolArguments = { query: "original" }, usage, usageEvents = [], text = "Captured candidate" } = {}) {
+  const delta = tool ? { role: "assistant", tool_calls: [{ index: 0, id: "query-1", type: "function", function: { name: "query_reference", arguments: JSON.stringify(toolArguments) } }] }
     : { role: "assistant", content: text };
   const chunks = [
     { id: "synthetic", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: null }] },
     { id: "synthetic", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: tool ? "tool_calls" : "stop" }] },
     ...(usage ? (Array.isArray(usage) ? usage : [usage]).map(value => ({ id: "synthetic", object: "chat.completion.chunk", choices: [], usage: value })) : []),
+    ...usageEvents,
   ];
   return chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n";
 }
@@ -74,8 +75,80 @@ function ordinaryReply(frame, reply, state) {
   else throw new Error(`Unexpected controlled call: ${call.method}`);
 }
 
+const usageReport = usage => ({ id: "synthetic", object: "chat.completion.chunk", choices: [], usage });
+const usageInChoice = (usage, top = {}) => ({ id: "synthetic", object: "chat.completion.chunk", ...top,
+  choices: [{ index: 0, delta: {}, finish_reason: null, usage }] });
+const knownUsage = (promptTokens, completionTokens, cacheReadTokens = null, cacheWriteTokens = null, reasoningTokens = null) => ({
+  promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens,
+});
+function assertNoNormalizedAssistantUsage(frames) {
+  let assistants = 0;
+  const message = value => {
+    if (value?.role !== "assistant") return;
+    assistants++;
+    assert.equal(Object.hasOwn(value, "usage"), false);
+  };
+  for (const { body } of frames) {
+    if (body.kind === "result") body.messages.forEach(message);
+    if (body.kind !== "request") continue;
+    if (body.call.method === "prepare") body.call.messages.forEach(message);
+    if (body.call.method !== "event") continue;
+    const event = body.call.event;
+    if (["message_start", "message_update", "message_end", "turn_end"].includes(event.type)) message(event.message);
+    if (event.type === "agent_end") event.messages.forEach(message);
+    if (event.type === "message_update") {
+      message(event.assistantMessageEvent.partial);
+      message(event.assistantMessageEvent.message);
+      message(event.assistantMessageEvent.error);
+    }
+  }
+  assert.ok(assistants > 0);
+}
+async function observedChildUsage(t, usageEvents, toolRoundTrip = false) {
+  const state = { requests: [], http: [], usage: [] };
+  const toolDetails = { usage: { source: "Original tool evidence" } };
+  const parent = fixture(t, async (frame, { reply }) => {
+    if (frame.body.kind !== "request") return;
+    const call = frame.body.call;
+    if (call.method === "http") {
+      state.http.push(call);
+      reply(frame, { kind: "http", requestId: call.requestId, status: 200,
+        contentType: "text/event-stream", body: sse({ tool: toolRoundTrip && state.http.length === 1,
+          usageEvents: !toolRoundTrip || state.http.length === 1 ? usageEvents : [] }) });
+    } else if (call.method === "before-tool") reply(frame, { kind: "tool-admission", block: false, reason: null });
+    else if (call.method === "execute-tool") reply(frame, { kind: "tool-result", content: [{ type: "text", text: "Original tool evidence" }], details: toolDetails, isError: false });
+    else if (call.method === "after-tool") reply(frame, { kind: "tool-finalized", content: null, isError: null });
+    else {
+      if (call.method === "usage") state.usage.push(call);
+      ordinaryReply(frame, reply, state);
+    }
+  });
+  parent.send(start({ tools: toolRoundTrip ? [{ name: "query_reference", description: "Read captured evidence.", parameters: {
+    type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false,
+  } }] : [] }));
+  await parent.wait(frames => frames.some(frame => frame.body.kind === "result"));
+  assert.equal(state.http.length, toolRoundTrip ? 2 : 1);
+  assert.equal(state.usage.length, state.http.length);
+  assert.deepEqual(state.usage.map(call => call.requestId), state.requests);
+  assertNoNormalizedAssistantUsage(parent.frames);
+  if (toolRoundTrip) {
+    assert.equal(state.usage[1].usage, null);
+    const prepared = parent.frames.filter(frame => frame.body.kind === "request" && frame.body.call.method === "prepare").at(-1).body.call;
+    const assistant = prepared.messages.find(message => message.role === "assistant");
+    const tool = prepared.messages.find(message => message.role === "toolResult");
+    assert.equal(assistant.content.find(content => content.type === "toolCall").id, tool.toolCallId);
+    assert.deepEqual(tool.details, toolDetails);
+    assert.ok(prepared.messages.some(message => message.role === "user" && message.content === "Translate current source 👩🏽‍💻"));
+    const after = parent.frames.find(frame => frame.body.kind === "request" && frame.body.call.method === "after-tool").body.call;
+    assert.deepEqual(after.result.details, toolDetails);
+  }
+  parent.send({ kind: "close" });
+  assert.deepEqual(await parent.ended, { code: 0, signal: null });
+  return state.usage[0].usage;
+}
+
 test("child Pi loop preserves tool pairs and reports observed zero separately from missing provider usage", async t => {
-  const state = { requests: [], http: [], usage: [], order: [], executions: [] };
+  const heldUsage = deferred(), state = { requests: [], http: [], usage: [], order: [], executions: [] };
   const views = ["Original objection with real author/source 👩🏽‍💻", "New evidence for the same candidate"].map((body, index) => ({
     viewId: randomUUID(), utf8: JSON.stringify({ kind: "untrusted-team-discussions", author: "member-B", source: "candidate-1", revision: index + 1, body }),
   }));
@@ -89,20 +162,30 @@ test("child Pi loop preserves tool pairs and reports observed zero separately fr
     } else if (call.method === "http") {
       state.http.push(call);
       reply(frame, { kind: "http", requestId: call.requestId, status: 200, contentType: "text/event-stream",
-        body: sse(state.http.length === 1 ? { tool: true, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } } : {}) });
+        body: sse(state.http.length === 1 ? { tool: true, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0,
+          prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0 } } } : {}) });
     } else if (call.method === "before-tool") reply(frame, { kind: "tool-admission", block: false, reason: null });
     else if (call.method === "execute-tool") {
       state.executions.push(call); reply(frame, { kind: "tool-result", content: [{ type: "text", text: "Original evidence; rejected alternative X" }], details: { reference: "captured-1" }, isError: false });
     } else if (call.method === "after-tool") reply(frame, { kind: "tool-finalized", content: null, isError: null });
     else {
-      if (call.method === "usage") state.usage.push(call);
+      if (call.method === "usage") {
+        state.usage.push(call);
+        if (state.usage.length === 1) { heldUsage.resolve(frame); return; }
+      }
       ordinaryReply(frame, reply, state);
     }
   });
   parent.send(start({ tools: [{ name: "query_reference", description: "Read only captured references.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false } }] }));
+  const firstUsage = await parent.until(heldUsage.promise);
+  await delay(30);
+  assert.equal(state.requests.length, 1);
+  assert.equal(state.http.length, 1);
+  assert.equal(parent.frames.some(frame => frame.body.kind === "result"), false);
+  parent.reply(firstUsage, { kind: "recorded" });
   await parent.wait(frames => frames.some(frame => frame.body.kind === "result"));
   assert.equal(state.http.length, 2); assert.equal(state.executions.length, 1);
-  assert.deepEqual(state.usage.map(call => call.usage), [{ promptTokens: 0, completionTokens: 0 }, null]);
+  assert.deepEqual(state.usage.map(call => call.usage), [knownUsage(0, 0, "0", "0", "0"), null]);
   assert.deepEqual(state.usage.map(call => call.requestId), state.requests);
   assert.equal(state.order.indexOf("usage") < state.order.lastIndexOf("prepare"), true);
   const [first, second] = state.http.map(call => JSON.parse(call.body));
@@ -119,6 +202,93 @@ test("child Pi loop preserves tool pairs and reports observed zero separately fr
   const result = parent.frames.find(frame => frame.body.kind === "result").body;
   assert.ok(!result.messages.some(message => views.some(view => message.content === view.utf8)));
   parent.send({ kind: "close" }); assert.deepEqual(await parent.ended, { code: 0, signal: null });
+});
+
+test("child usage preserves raw totals and the pinned carrier and cache alias priorities", async t => {
+  const base = { prompt_tokens: 10, completion_tokens: 6 };
+  const details = { ...base, prompt_tokens_details: { cached_tokens: 4, cache_write_tokens: 5 }, completion_tokens_details: { reasoning_tokens: 2 } };
+  const cases = [
+    ["reported zero totals do not imply reported zero details", [usageReport({ prompt_tokens: 0, completion_tokens: 0 })], knownUsage(0, 0)],
+    ["details are already included in their original totals", [usageReport(details)], knownUsage(10, 6, "4", "5", "2")],
+    ["cache read and write may overlap", [usageReport({ ...base, prompt_tokens_details: { cached_tokens: 9, cache_write_tokens: 8 }, completion_tokens_details: { reasoning_tokens: 6 } })], knownUsage(10, 6, "9", "8", "6")],
+    ["explicit canonical zero precedes nonzero aliases", [usageReport({ ...base, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+      prompt_cache_hit_tokens: 7, cached_tokens: 8, completion_tokens_details: { reasoning_tokens: 0 } })], knownUsage(10, 6, "0", "0", "0")],
+    ["null canonical cache count falls through to the first alias", [usageReport({ ...base, prompt_tokens_details: { cached_tokens: null }, prompt_cache_hit_tokens: 4, cached_tokens: 8 })], knownUsage(10, 6, "4")],
+    ["explicit first-alias zero precedes the final alias", [usageReport({ ...base, prompt_cache_hit_tokens: 0, cached_tokens: 8 })], knownUsage(10, 6, "0")],
+    ["null first alias permits the final reported alias", [usageReport({ ...base, prompt_cache_hit_tokens: null, cached_tokens: 3 })], knownUsage(10, 6, "3")],
+    ["safe integer detail remains an exact decimal string", [usageReport({ prompt_tokens: Number.MAX_SAFE_INTEGER, completion_tokens: 0,
+      prompt_tokens_details: { cached_tokens: Number.MAX_SAFE_INTEGER } })], knownUsage(Number.MAX_SAFE_INTEGER, 0, "9007199254740991")],
+    ["overlapping safe details do not expose Pi's unsafe normalized sum", [usageReport({ prompt_tokens: Number.MAX_SAFE_INTEGER, completion_tokens: 0,
+      prompt_tokens_details: { cached_tokens: Number.MAX_SAFE_INTEGER, cache_write_tokens: Number.MAX_SAFE_INTEGER } })], knownUsage(Number.MAX_SAFE_INTEGER, 0, "9007199254740991", "9007199254740991")],
+    ["first choice is a supported raw usage carrier", [usageInChoice(details)], knownUsage(10, 6, "4", "5", "2")],
+    ["truthy top carrier precedes the choice carrier", [usageInChoice({ prompt_tokens: 1, completion_tokens: 1 }, { usage: details })], knownUsage(10, 6, "4", "5", "2")],
+    ["null top carrier permits the choice report", [usageInChoice(details, { usage: null })], knownUsage(10, 6, "4", "5", "2")],
+  ];
+  for (const [name, events, expected] of cases) await t.test(name, async t => {
+    assert.deepEqual(await observedChildUsage(t, events), expected);
+  });
+});
+
+test("child usage keeps unreliable details unknown without discarding reliable totals", async t => {
+  const base = { prompt_tokens: 6, completion_tokens: 4 };
+  const preliminary = usageReport({ ...base, prompt_tokens_details: { cached_tokens: 1, cache_write_tokens: 1 }, completion_tokens_details: { reasoning_tokens: 1 } });
+  for (const [name, value] of [["negative", -1], ["fraction", 0.5], ["unsafe integer", Number.MAX_SAFE_INTEGER + 1], ["numeric string", "2"], ["null", null]]) {
+    await t.test(name, async t => {
+      const report = { ...base, prompt_tokens_details: { cached_tokens: value, cache_write_tokens: value }, completion_tokens_details: { reasoning_tokens: value } };
+      assert.deepEqual(await observedChildUsage(t, [preliminary, usageReport(report)], name === "unsafe integer"), knownUsage(6, 4));
+    });
+  }
+  await t.test("each detail is bounded by its own total independently", async t => {
+    assert.deepEqual(await observedChildUsage(t, [preliminary, usageReport({ ...base,
+      prompt_tokens_details: { cached_tokens: 7, cache_write_tokens: 6 }, completion_tokens_details: { reasoning_tokens: 5 } })]), knownUsage(6, 4, null, "6"));
+  });
+  await t.test("a malformed first alias does not select a lower-priority valid value", async t => {
+    assert.deepEqual(await observedChildUsage(t, [usageReport({ ...base,
+      prompt_tokens_details: { cached_tokens: "1" }, prompt_cache_hit_tokens: 2, cached_tokens: 3 })]), knownUsage(6, 4));
+  });
+  await t.test("non-object detail containers do not report zero", async t => {
+    assert.deepEqual(await observedChildUsage(t, [usageReport({ ...base, prompt_tokens_details: [], completion_tokens_details: 0 })]), knownUsage(6, 4));
+  });
+});
+
+test("child usage replaces complete reports without filling later missing fields from older observations", async t => {
+  const preliminary = usageReport({ prompt_tokens: 6, completion_tokens: 4,
+    prompt_tokens_details: { cached_tokens: 2, cache_write_tokens: 3 }, completion_tokens_details: { reasoning_tokens: 1 } });
+  await t.test("later reliable totals with missing details clear all earlier details", async t => {
+    assert.deepEqual(await observedChildUsage(t, [preliminary, usageReport({ prompt_tokens: 13, completion_tokens: 7 })]), knownUsage(13, 7));
+  });
+  await t.test("an ordinary delta without either usage carrier preserves the report", async t => {
+    const delta = { id: "synthetic", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: null }] };
+    assert.deepEqual(await observedChildUsage(t, [preliminary, delta]), knownUsage(6, 4, "2", "3", "1"));
+  });
+  await t.test("an explicit null choice report invalidates the previous report", async t => {
+    assert.equal(await observedChildUsage(t, [preliminary, usageInChoice(null)]), null);
+  });
+  for (const [name, report] of [
+    ["missing base total", { completion_tokens: 4 }],
+    ["negative base total", { prompt_tokens: -1, completion_tokens: 4 }],
+    ["unsafe base total", { prompt_tokens: Number.MAX_SAFE_INTEGER + 1, completion_tokens: 4 }],
+    ["numeric string base total", { prompt_tokens: 6, completion_tokens: "4" }],
+  ]) await t.test(name, async t => {
+    assert.equal(await observedChildUsage(t, [preliminary, usageReport(report)], name === "unsafe base total"), null);
+  });
+});
+
+test("an unsafe tool payload faults immediately without waiting behind an unencoded request", async t => {
+  const state = { requests: [], http: [] };
+  const parent = fixture(t, async (frame, { reply }) => {
+    if (frame.body.kind !== "request") return;
+    if (frame.body.call.method === "http") {
+      state.http.push(frame.body.call);
+      reply(frame, { kind: "http", requestId: frame.body.call.requestId, status: 200, contentType: "text/event-stream",
+        body: sse({ tool: true, toolArguments: { query: "original", unsafe: Number.MAX_SAFE_INTEGER + 1 } }) });
+    } else ordinaryReply(frame, reply, state);
+  });
+  parent.send(start());
+  assert.deepEqual(await parent.ended, { code: 1, signal: null });
+  assert.deepEqual(parent.frames.at(-1).body, { kind: "fault", code: "member-output-failed" });
+  assert.equal(state.http.length, 1);
+  assert.equal(parent.frames.some(frame => frame.body.kind === "result"), false);
 });
 
 test("final event acknowledgement is required before a child result can be emitted", async t => {
@@ -219,6 +389,15 @@ test("member codec rejects duplicate keys, invalid Unicode, unsafe identities, o
   assert.throws(() => decodeFrame(Buffer.from(JSON.stringify({ ...frame, sessionId: "not-a-uuid" }))));
   assert.throws(() => decodeFrame(Buffer.from(JSON.stringify({ ...frame,
     body: { kind: "reply", request: 1, reply: { kind: "prepared", requestId: "not-a-uuid", sharedView: null } } }))));
+  const usage = { ...frame, body: { kind: "request", request: 1,
+    call: { method: "usage", requestId: randomUUID(), usage: knownUsage(0, 0, "0", null, null) } } };
+  assert.deepEqual(decodeFrame(Buffer.from(JSON.stringify(usage))), usage);
+  const incomplete = structuredClone(usage); delete incomplete.body.call.usage.cacheReadTokens;
+  assert.throws(() => decodeFrame(Buffer.from(JSON.stringify(incomplete))));
+  for (const value of [0, "01"]) {
+    const invalid = structuredClone(usage); invalid.body.call.usage.cacheReadTokens = value;
+    assert.throws(() => decodeFrame(Buffer.from(JSON.stringify(invalid))));
+  }
   const large = Buffer.alloc(4); large.writeUInt32BE(MEMBER_PROFILE.maxFrameBytes + 1);
   assert.throws(() => new FrameDecoder().push(large, () => {}));
   const decoder = new FrameDecoder(); decoder.push(Buffer.from([0, 0]), () => {}); assert.throws(() => decoder.finish());

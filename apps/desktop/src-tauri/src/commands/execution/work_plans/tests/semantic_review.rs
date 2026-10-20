@@ -97,7 +97,8 @@ fn registered_semantic_review_records_advisory_evidence_through_original_task_an
     wire.join().unwrap();
     assert_eq!(
         view["rows"][0]["output"]["usage"],
-        json!({"promptTokens":"1","completionTokens":"1"})
+        json!({"promptTokens":"1","completionTokens":"1",
+            "cacheReadTokens":null,"cacheWriteTokens":null,"reasoningTokens":null})
     );
     assert!(
         view["rows"][0]["run"].is_null(),

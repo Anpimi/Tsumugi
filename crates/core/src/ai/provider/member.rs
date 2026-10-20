@@ -250,6 +250,7 @@ impl MemberProviderSession {
         if usage.as_ref().is_some_and(|usage| {
             usage.prompt_tokens > i64::MAX as u64
                 || usage.completion_tokens > self.config.max_output_tokens.into()
+                || usage.validate().is_err()
         }) {
             return Err(error(ErrorCode::OutputInvalid, "member-usage"));
         }

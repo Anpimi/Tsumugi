@@ -45,8 +45,8 @@ pub use arena::{
     ArenaRevealTarget, ArenaRevealTargetKind, ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
 };
 pub use ledger::{
-    AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskActivity, TaskActivityPhase,
-    TaskActivityRow, TaskView,
+    AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, ReportedTokenTotal, TaskActivity,
+    TaskActivityPhase, TaskActivityRow, TaskView,
 };
 #[cfg(any(test, feature = "execution-test-host"))]
 pub use release::BuildLocaleChoice;
@@ -114,7 +114,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 58;
+pub(crate) const SCHEMA_VERSION: i64 = 59;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,

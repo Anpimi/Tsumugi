@@ -138,6 +138,7 @@ impl TeamWorkSeed {
             || usage.as_ref().is_some_and(|u| {
                 u.completion_tokens
                     > u64::from(self.config().max_output_tokens) * u64::from(requests)
+                    || u.validate_aggregate(usage_incomplete).is_err()
             })
         {
             return Err(error(ErrorCode::OutputInvalid, "team-work-usage"));

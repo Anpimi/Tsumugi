@@ -30,6 +30,16 @@ carry that association. Event listeners are awaited through `agent_end`; their
 completion indicates local execution settlement, while business results still
 require application receipts. Missing provider usage must retain unknown budget
 occupancy: a normalized zero count alone is insufficient evidence of known usage.
+Usage retains the provider's prompt and completion totals. Cache read, cache write
+and reasoning details are decimal strings when explicitly reported as safe
+nonnegative integers within their corresponding total, otherwise null. Explicit
+zero remains `"0"`; missing details remain unknown. Prompt totals already include
+cache counts and completion totals already include reasoning, so details never
+increase either total. Cache read and write counts need not be disjoint.
+The worker's event, request-preparation and result projections omit Pi assistant
+messages' normalized usage and synthetic prices. Pi's internal transcript stays
+intact; the raw usage receipt remains the only accounting evidence sent to Host.
+User data, tool arguments and tool results retain their original fields.
 
 Tool implementations use the application's existing mutation and sharing
 boundaries. `beforeToolCall` checks admission, and `afterToolCall` controls the

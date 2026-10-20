@@ -12,6 +12,7 @@ import type {AdoptionAction,PrepareRequest} from "./executionCommands";
 import {fixtureIdentity} from "./testSupport/executionFixture";
 import {aiAttempt,aiTask,arenaViewFixture} from "./testSupport/aiFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
+import { unreportedTokenTotalsFixture, unreportedUsageDetailsFixture } from "./testSupport/usageFixture";
 const invoke=vi.hoisted(()=>vi.fn());vi.mock("@tauri-apps/api/core",()=>({invoke}));
 const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:fixtureIdentity(500),displayName:"Arena test",sourceLocale:"en",targetLocales:["zh-CN","ja"],metadataRevision:"1"}};
 const item={unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302),sourceSnapshotId:fixtureIdentity(300),nativeKey:"first",sourceLocale:"en",sourceText:"Hello {name}",targetLocale:"zh-CN",terms:[],context:null,sourceContext:{kind:"not-selected" as const}, projectContext: {kind:"not-selected" as const},omissions:["terms-not-shared","context-not-shared"],resourceBaseline:"0"};
@@ -81,7 +82,7 @@ it("shows exact token totals beyond JavaScript and u64 aggregate limits",async()
  const original=invoke.getMockImplementation()!;
  invoke.mockImplementation(async(c:string,a:unknown)=>{
   const value=await original(c,a);
-  if(c==="read_arena_translation")return {...value,rows:value.rows.map((row:typeof value.rows[number])=>({...row,output:{...row.output,usage:{promptTokens:"9007199254740993",completionTokens:"18446744073709551615"},usageIncomplete:false}}))};
+  if(c==="read_arena_translation")return {...value,rows:value.rows.map((row:typeof value.rows[number])=>({...row,output:{...row.output,usage:{promptTokens:"9007199254740993",completionTokens:"18446744073709551615",...unreportedUsageDetailsFixture()},usageIncomplete:false}}))};
   return value;
  });
  const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
@@ -255,7 +256,7 @@ it("drops a late preview after the project session is replaced",async()=>{const 
 
 it("shows shared durable request exposure and known usage in both languages",async()=>{
  const user=await open();const original=invoke.getMockImplementation()!;
- invoke.mockImplementation((c:string,a:unknown)=>{if(c==="read_arena_translation"){const view=arenaViewFixture(item,prepared.preview.config);view.budget={limit:40,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"9007199254740993",completionTokens:"2"};return Promise.resolve(view);}return original(c,a);});
+ invoke.mockImplementation((c:string,a:unknown)=>{if(c==="read_arena_translation"){const view=arenaViewFixture(item,prepared.preview.config);view.budget={limit:40,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"9007199254740993",completionTokens:"2",...unreportedTokenTotalsFixture(2)};return Promise.resolve(view);}return original(c,a);});
  await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await screen.findByText(/Request limit 40.*awaiting confirmation 1/);expect(screen.getByText(/Saved reported portion: 9007199254740993 input/)).toBeInTheDocument();await i18n.changeLanguage("zh-CN");expect(await screen.findByText(/请求上限 40.*用量未知 1/)).toBeInTheDocument();expect(invoke.mock.calls.filter(([c])=>c==="start_arena_translation")).toHaveLength(1);
 });
 

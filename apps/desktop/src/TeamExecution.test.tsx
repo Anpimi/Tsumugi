@@ -155,6 +155,9 @@ it.each(["en-US", "zh-CN"])("shows separately captured destination material and 
   expect(screen.getByText(i18n.t("ai.team.requestedBy", { member: "Translator A" }))).toBeVisible();
   expect(screen.getByText(i18n.t("ai.team.included", { count: 1 }))).toBeVisible();
   expect(screen.getByText(i18n.t("ai.team.stops.needs-reconciliation"))).toBeVisible();
+  await user.click(screen.getByText(i18n.t("ai.usageDetails.title")));
+  expect(screen.getAllByText(i18n.t("ai.usageDetails.partial", { tokens: "0", requests: "2" }))).toHaveLength(3);
+  for (const notice of screen.getAllByText(i18n.t("ai.usageDetails.billingUnknown"))) expect(notice).toBeVisible();
   const original = invoke.getMockImplementation()!, stopped = teamExecutionViewFixture(); stopped.stopReason = "no-progress";
   invoke.mockImplementation((command, payload) => command === "read_work_plan_team_execution" ? structuredClone(stopped) : original(command, payload));
   await user.click(screen.getByRole("button", { name: i18n.t("ai.team.refresh") }));

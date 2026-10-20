@@ -210,6 +210,9 @@ fn member_provider_persists_exact_sse_requests_and_shares_original_budget_on_reo
                             Some(crate::ai::Usage {
                                 prompt_tokens: 10,
                                 completion_tokens: 3,
+                                cache_read_tokens: None,
+                                cache_write_tokens: None,
+                                reasoning_tokens: None,
                             })
                         },
                     )
@@ -221,7 +224,10 @@ fn member_provider_persists_exact_sse_requests_and_shares_original_budget_on_reo
                                 id,
                                 Some(crate::ai::Usage {
                                     prompt_tokens: 11,
-                                    completion_tokens: 3
+                                    completion_tokens: 3,
+                                    cache_read_tokens: None,
+                                    cache_write_tokens: None,
+                                    reasoning_tokens: None,
                                 })
                             )
                             .err()

@@ -451,7 +451,7 @@ impl MemberFactory {
         if receipt.turn_limit_reached {
             return Err(fail(ErrorCode::LimitExceeded, "member-turn-limit"));
         }
-        let (usage, incomplete) = handler.total_usage()?;
+        let (usage, incomplete) = Handler::total_usage(&handler.usage)?;
         Ok(ProcessOutput {
             messages: receipt.messages,
             usage,
@@ -945,15 +945,17 @@ impl Handler {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
-    fn total_usage(&self) -> Result<(Option<Usage>, bool), ExecutionError> {
-        let mut total = None;
+    fn total_usage(
+        reports: &BTreeMap<ExecutionId, Option<Usage>>,
+    ) -> Result<(Option<Usage>, bool), ExecutionError> {
+        let mut total: Option<Usage> = None;
         let mut incomplete = false;
-        for usage in self.usage.values() {
+        for usage in reports.values() {
             if let Some(usage) = usage {
-                let accumulated = total.get_or_insert(Usage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                });
+                let Some(accumulated) = total.as_mut() else {
+                    total = Some(usage.clone());
+                    continue;
+                };
                 accumulated.prompt_tokens = accumulated
                     .prompt_tokens
                     .checked_add(usage.prompt_tokens)
@@ -962,9 +964,33 @@ impl Handler {
                     .completion_tokens
                     .checked_add(usage.completion_tokens)
                     .ok_or_else(|| fail(ErrorCode::LimitExceeded, "member-usage"))?;
+                for (sum, next) in [
+                    (&mut accumulated.cache_read_tokens, usage.cache_read_tokens),
+                    (
+                        &mut accumulated.cache_write_tokens,
+                        usage.cache_write_tokens,
+                    ),
+                    (&mut accumulated.reasoning_tokens, usage.reasoning_tokens),
+                ] {
+                    *sum = match (*sum, next) {
+                        (Some(sum), Some(next)) => Some(
+                            sum.get()
+                                .checked_add(next.get())
+                                .ok_or_else(|| fail(ErrorCode::LimitExceeded, "member-usage"))?
+                                .into(),
+                        ),
+                        _ => None,
+                    };
+                }
             } else {
                 incomplete = true;
             }
+        }
+        if incomplete && let Some(total) = total.as_mut() {
+            // A known subset cannot stand in for every original request.
+            total.cache_read_tokens = None;
+            total.cache_write_tokens = None;
+            total.reasoning_tokens = None;
         }
         Ok((total, incomplete))
     }
@@ -1386,6 +1412,82 @@ impl MemberHandler for Handler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_usage_totals_preserve_reported_zero_and_per_dimension_unknown() {
+        let first = Usage {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            cache_read_tokens: Some(50.into()),
+            cache_write_tokens: Some(0.into()),
+            reasoning_tokens: Some(5.into()),
+        };
+        let second = Usage {
+            prompt_tokens: 80,
+            completion_tokens: 10,
+            cache_read_tokens: None,
+            cache_write_tokens: Some(2.into()),
+            reasoning_tokens: Some(0.into()),
+        };
+        let mut reports = BTreeMap::from([
+            (ExecutionId::new(), Some(first.clone())),
+            (ExecutionId::new(), Some(second)),
+        ]);
+        let (sum, incomplete) = Handler::total_usage(&reports).unwrap();
+        let sum = sum.unwrap();
+        assert!(!incomplete);
+        assert_eq!((sum.prompt_tokens, sum.completion_tokens), (180, 30));
+        assert_eq!(sum.cache_read_tokens, None);
+        assert_eq!(sum.cache_write_tokens, Some(2.into()));
+        assert_eq!(sum.reasoning_tokens, Some(5.into()));
+
+        reports.insert(ExecutionId::new(), None);
+        let (sum, incomplete) = Handler::total_usage(&reports).unwrap();
+        let sum = sum.unwrap();
+        assert!(incomplete);
+        assert_eq!((sum.prompt_tokens, sum.completion_tokens), (180, 30));
+        assert_eq!(sum.cache_read_tokens, None);
+        assert_eq!(sum.cache_write_tokens, None);
+        assert_eq!(sum.reasoning_tokens, None);
+
+        reports = BTreeMap::from([(
+            ExecutionId::new(),
+            Some(Usage {
+                cache_read_tokens: Some(0.into()),
+                cache_write_tokens: Some(0.into()),
+                reasoning_tokens: Some(0.into()),
+                ..first.clone()
+            }),
+        )]);
+        let (sum, incomplete) = Handler::total_usage(&reports).unwrap();
+        assert!(!incomplete);
+        assert_eq!(sum.unwrap().cache_read_tokens, Some(0.into()));
+
+        reports = BTreeMap::from([
+            (
+                ExecutionId::new(),
+                Some(Usage {
+                    prompt_tokens: i64::MAX as u64,
+                    ..first.clone()
+                }),
+            ),
+            (
+                ExecutionId::new(),
+                Some(Usage {
+                    prompt_tokens: i64::MAX as u64,
+                    ..first.clone()
+                }),
+            ),
+            (ExecutionId::new(), Some(first)),
+        ]);
+        let error = Handler::total_usage(&reports).unwrap_err();
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+        assert_eq!(error.stage, "member-usage");
+        assert_eq!(
+            Handler::total_usage(&BTreeMap::from([(ExecutionId::new(), None)])).unwrap(),
+            (None, true)
+        );
+    }
 
     #[test]
     fn member_cleanup_unconfirmed_producer_takes_precedence_over_process_cancellation() {

@@ -114,6 +114,11 @@ export type MemberCall =
     };
 /**
  * This interface was referenced by `MemberFrame`'s JSON-Schema
+ * via the `definition` "UnsignedDecimal".
+ */
+export type UnsignedDecimal = string;
+/**
+ * This interface was referenced by `MemberFrame`'s JSON-Schema
  * via the `definition` "MemberReply".
  */
 export type MemberReply =
@@ -286,8 +291,11 @@ export interface MemberTool {
  * via the `definition` "Usage".
  */
 export interface Usage {
+  cacheReadTokens: UnsignedDecimal | null;
+  cacheWriteTokens: UnsignedDecimal | null;
   completionTokens: number;
   promptTokens: number;
+  reasoningTokens: UnsignedDecimal | null;
 }
 /**
  * This interface was referenced by `MemberFrame`'s JSON-Schema

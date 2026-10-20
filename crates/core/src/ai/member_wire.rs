@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 pub const MAX_FRAME_BYTES: usize = tsumugi_plugin_sdk::MAX_PROCESS_FRAME_BYTES;
 pub const MAX_SESSION_BYTES: usize = 64 * 1024 * 1024;
 
@@ -20,7 +20,7 @@ macro_rules! wire {
 wire! {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct MemberFrame {
-        #[cfg_attr(feature = "wire-schema", schemars(range(min = 2, max = 2)))]
+        #[cfg_attr(feature = "wire-schema", schemars(range(min = 3, max = 3)))]
         pub protocol_version: u32,
         pub session_id: ExecutionId,
         pub sequence: u32,

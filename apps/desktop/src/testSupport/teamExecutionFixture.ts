@@ -1,5 +1,6 @@
 import { teamStatusFixture, teamPostFixture } from "./teamDiscussionFixture";
 import { fixtureIdentity } from "./executionFixture";
+import { unreportedTokenTotalsFixture } from "./usageFixture";
 import * as validators from "../generated/ai.validators";
 import type { WorkPlanStatusView, TeamExecutionView } from "../workPlanCommands";
 import type { ValidationState } from "../generated/ai.responses";
@@ -46,7 +47,7 @@ export function teamExecutionViewFixture(validation: ValidationState = "valid"):
     messages: [{ messageId, sequence: "1", planId: status.plan.planId, sender: { kind: "member", author: sender }, recipientMemberId: second.memberId, recipientRoleVersionId: second.roleVersionId, target,
       body: "The earlier rejection remains unresolved. Read its original reason.", postIds: [post.publication.postId], causeMessageId: null }],
     consumptions: [{ messageId, taskId: receipt.taskId, providerRequestId: fixtureIdentity(9314) }],
-    budget: { limit: 20, dispatched: 2, legacyHeld: 0, unresolved: 1, usageUnknown: 1, promptTokens: "17", completionTokens: "5" },
+    budget: { limit: 20, dispatched: 2, legacyHeld: 0, unresolved: 1, usageUnknown: 1, promptTokens: "17", completionTokens: "5", ...unreportedTokenTotalsFixture(2) },
     stopReason: "needs-reconciliation", nextWorkAfter: null, nextMessageAfter: null };
   if (!validators.validateResponseWorkPlanTeamExecution(value)) throw new Error("Invalid synthetic team execution view");
   return value;

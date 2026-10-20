@@ -456,6 +456,7 @@ pub fn validate_output(
         || output.usage.as_ref().is_some_and(|usage| {
             usage.prompt_tokens > i64::MAX as u64
                 || usage.completion_tokens > settings.config.max_output_tokens as u64
+                || usage.validate_aggregate(output.usage_incomplete).is_err()
         })
         || (!output.usage_incomplete && (output.usage.is_none() || output.requests > 1))
     {

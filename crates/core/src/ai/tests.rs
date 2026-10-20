@@ -7,6 +7,8 @@ mod arena_tests;
 mod provider_tests;
 #[path = "connection_tests.rs"]
 mod connection_tests;
+#[path = "usage_tests.rs"]
+mod usage_tests;
 use crate::{ProjectMetadata, ProjectStore, content::*};
 use std::{
     io::{Read, Write},
@@ -148,11 +150,11 @@ fn server(mode: &'static str) -> (String, Arc<AtomicUsize>, thread::JoinHandle<V
             if mode == "timeout" {
                 thread::sleep(Duration::from_millis(1300));
             }
-            let (status, mut response) = if (mode == "retry" || mode == "unavailable")
+            let (status, mut response) = if (mode == "retry" || mode == "unavailable" || mode == "usage-retry")
                 && number == 0
             {
                 (
-                    if mode == "retry" {
+                    if mode == "retry" || mode == "usage-retry" {
                         "429 Too Many Requests"
                     } else {
                         "503 Service Unavailable"
@@ -209,6 +211,10 @@ fn server(mode: &'static str) -> (String, Arc<AtomicUsize>, thread::JoinHandle<V
             }
             if mode == "no-usage" {
                 response.as_object_mut().unwrap().remove("usage");
+            }
+            if mode == "usage-retry" && number > 0 {
+                response["usage"]["prompt_tokens_details"] = json!({"cached_tokens":0,"cache_write_tokens":7});
+                response["usage"]["completion_tokens_details"] = json!({"reasoning_tokens":3});
             }
             let body = if mode == "malformed" {
                 "{broken".into()

@@ -850,13 +850,23 @@ export interface AiView {
   rows: AiRow[];
 }
 export interface ProviderBudget {
+  cacheRead: ReportedTokenTotal;
+  cacheWrite: ReportedTokenTotal;
   completionTokens: string;
   dispatched: number;
   legacyHeld: number;
   limit: number;
   promptTokens: string;
+  reasoning: ReportedTokenTotal;
   unresolved: number;
   usageUnknown: number;
+}
+export interface ReportedTokenTotal {
+  /**
+   * Sum of the reliably reported portion; unknown requests are not zeros.
+   */
+  tokens: string;
+  unknownRequests: number;
 }
 export interface AttemptDetail {
   attemptId: ExecutionId;
@@ -1304,8 +1314,11 @@ export interface AiOutputView {
   usageIncomplete: boolean;
 }
 export interface AiUsageView {
+  cacheReadTokens: UnsignedDecimal | null;
+  cacheWriteTokens: UnsignedDecimal | null;
   completionTokens: UnsignedDecimal;
   promptTokens: UnsignedDecimal;
+  reasoningTokens: UnsignedDecimal | null;
 }
 export interface WorkPlanView {
   attemptId: ExecutionId | null;
@@ -2155,8 +2168,11 @@ export interface TeamWorkOutput {
   usageIncomplete: boolean;
 }
 export interface Usage {
+  cacheReadTokens: UnsignedDecimal | null;
+  cacheWriteTokens: UnsignedDecimal | null;
   completionTokens: number;
   promptTokens: number;
+  reasoningTokens: UnsignedDecimal | null;
 }
 export interface TeamWorkReceipt {
   attemptId: ExecutionId;

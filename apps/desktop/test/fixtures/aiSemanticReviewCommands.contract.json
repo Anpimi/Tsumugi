@@ -388,7 +388,10 @@
               ],
               "usage": {
                 "promptTokens": "18446744073709551615",
-                "completionTokens": "9007199254740993"
+                "completionTokens": "9007199254740993",
+                "cacheReadTokens": null,
+                "cacheWriteTokens": null,
+                "reasoningTokens": null
               },
               "requests": 1,
               "usageIncomplete": false
@@ -630,7 +633,10 @@
               ],
               "usage": {
                 "promptTokens": "18446744073709551615",
-                "completionTokens": "9007199254740993"
+                "completionTokens": "9007199254740993",
+                "cacheReadTokens": null,
+                "cacheWriteTokens": null,
+                "reasoningTokens": null
               },
               "requests": 1,
               "usageIncomplete": false

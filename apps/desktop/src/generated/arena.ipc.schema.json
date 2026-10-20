@@ -775,16 +775,49 @@
       "AiUsageView": {
         "additionalProperties": false,
         "properties": {
+          "cacheReadTokens": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cacheWriteTokens": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "completionTokens": {
             "$ref": "#/definitions/UnsignedDecimal"
           },
           "promptTokens": {
             "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "reasoningTokens": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "promptTokens",
-          "completionTokens"
+          "completionTokens",
+          "cacheReadTokens",
+          "cacheWriteTokens",
+          "reasoningTokens"
         ],
         "type": "object"
       },
@@ -1726,6 +1759,12 @@
       "ProviderBudget": {
         "additionalProperties": false,
         "properties": {
+          "cacheRead": {
+            "$ref": "#/definitions/ReportedTokenTotal"
+          },
+          "cacheWrite": {
+            "$ref": "#/definitions/ReportedTokenTotal"
+          },
           "completionTokens": {
             "pattern": "^(0|[1-9][0-9]{0,21})$",
             "type": "string"
@@ -1752,6 +1791,9 @@
             "pattern": "^(0|[1-9][0-9]{0,21})$",
             "type": "string"
           },
+          "reasoning": {
+            "$ref": "#/definitions/ReportedTokenTotal"
+          },
           "unresolved": {
             "format": "uint32",
             "maximum": 300,
@@ -1772,7 +1814,10 @@
           "unresolved",
           "usageUnknown",
           "promptTokens",
-          "completionTokens"
+          "completionTokens",
+          "cacheRead",
+          "cacheWrite",
+          "reasoning"
         ],
         "type": "object"
       },
@@ -1868,6 +1913,27 @@
           "actions",
           "blockedReason",
           "receiptId"
+        ],
+        "type": "object"
+      },
+      "ReportedTokenTotal": {
+        "additionalProperties": false,
+        "properties": {
+          "tokens": {
+            "description": "Sum of the reliably reported portion; unknown requests are not zeros.",
+            "pattern": "^(0|[1-9][0-9]{0,21})$",
+            "type": "string"
+          },
+          "unknownRequests": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tokens",
+          "unknownRequests"
         ],
         "type": "object"
       },

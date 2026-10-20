@@ -1,6 +1,7 @@
 import { useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AiConnectionFields } from "./AiConnectionFields";
+import { AiOutputUsage } from "./AiUsage";
 import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
 import { semanticReviewRead } from "./aiSemanticReviewQueries";
 import { CommandFailureDetails, commandFailure, failureReason } from "./CommandFailure";
@@ -132,7 +133,7 @@ export function AiSemanticReview({ project, active, disabled, currentTarget, onO
             {item?.status.diagnostic ? <p>{failureMessage(item.status.diagnostic)}</p> : null}
             {!row.current ? <p>{t("semanticReview.staleResult")}</p> : null}{row.run ? <p>{t("semanticReview.recorded")}</p> : null}
             {row.output ? <>{row.output.rules.map(rule => <section key={rule.rule}><h5>{t(`semanticReview.rule.${rule.rule}`)}</h5>{rule.findings.length ? rule.findings.map((finding, index) => <article key={`${finding.code}:${index}`}><p>{finding.detail}</p>{finding.suggestion ? <pre className="ai-text">{finding.suggestion}</pre> : null}</article>) : <p>{t("semanticReview.noFindings")}</p>}</section>)}
-              <p>{t("semanticReview.usage", { requests: row.output.requests, input: row.output.usage?.promptTokens ?? "—", output: row.output.usage?.completionTokens ?? "—", defaultValue: enUS.semanticReview.usage })}</p>{row.output.usageIncomplete ? <p>{t("ai.usageUnknown")}</p> : null}
+              <p>{t("ai.usageDetails.requests", { count: row.output.requests })}</p><AiOutputUsage usage={row.output.usage} incomplete={row.output.usageIncomplete}/>
               {!row.run ? <button type="button" className="secondary-button" disabled={blocked || !active || !currentView() || !row.current || !unit || !tasks.canBegin(view.detail.taskId)} onClick={() => record(row)}>{t("semanticReview.record")}</button> : null}</> : null}
           </article>;
         })}

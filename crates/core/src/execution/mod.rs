@@ -208,7 +208,7 @@ fn parse_decimal(value: &str) -> Option<u64> {
     (parsed.to_string() == value).then_some(parsed)
 }
 
-/// Full unsigned counters on display IPC, without changing stored AI payloads.
+/// Full unsigned counters encoded without JavaScript precision loss.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct UnsignedDecimal(u64);

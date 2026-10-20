@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, TextContent, TSchema } from "@earendil-works/pi-ai";
 import { MemberKernel } from "./member.js";
 import { FrameDecoder, encodeFrame } from "./codec.js";
@@ -20,6 +20,60 @@ interface Pending {
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const abortError = () => new DOMException("Controlled member operation cancelled", "AbortError");
 const recording = (call: MemberCall) => call.method === "event" || call.method === "usage";
+const field = (value: Record<string, unknown> | undefined, key: string) => value && Object.hasOwn(value, key) ? value[key] : undefined;
+const tokens = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+function wireMessage(message: AgentMessage) {
+  if (message.role !== "assistant") return message;
+  // Pi's normalized counts and synthetic prices are not application receipts.
+  // Keep them in Pi's history, without adding a second accounting projection.
+  const { usage: _usage, ...projected } = message;
+  return projected;
+}
+
+function wireEvent(event: AgentEvent) {
+  switch (event.type) {
+    case "message_start":
+    case "message_end":
+    case "turn_end":
+      return { ...event, message: wireMessage(event.message) };
+    case "message_update": {
+      const update = event.assistantMessageEvent;
+      const assistantMessageEvent = "partial" in update ? { ...update, partial: wireMessage(update.partial) }
+        : "message" in update ? { ...update, message: wireMessage(update.message) }
+        : { ...update, error: wireMessage(update.error) };
+      return { ...event, message: wireMessage(event.message), assistantMessageEvent };
+    }
+    case "agent_end":
+      return { ...event, messages: event.messages.map(wireMessage) };
+    default:
+      return event;
+  }
+}
+
+function observedUsage(event: unknown): Usage | null | undefined {
+  if (!object(event)) return undefined;
+  const choice = Array.isArray(event.choices) && object(event.choices[0]) ? event.choices[0] : undefined;
+  if (!Object.hasOwn(event, "usage") && !(choice && Object.hasOwn(choice, "usage"))) return undefined;
+  // Follow Pi's current Chat Completions carrier priority, before its usage
+  // normalization turns missing provider fields into zeroes.
+  const top = field(event, "usage"), raw = top || field(choice, "usage");
+  if (!object(raw)) return null;
+  const input = field(raw, "prompt_tokens"), output = field(raw, "completion_tokens");
+  if (!tokens(input) || !tokens(output)) return null;
+  const prompt = field(raw, "prompt_tokens_details"), completion = field(raw, "completion_tokens_details");
+  const promptDetails = object(prompt) ? prompt : undefined;
+  const outputDetails = object(completion) ? completion : undefined;
+  const detail = (value: unknown, total: number) => tokens(value) && value <= total ? value.toString(10) : null;
+  return {
+    // Raw prompt includes cache counts; raw completion includes reasoning.
+    // Detail counts may overlap and never increase these original totals.
+    promptTokens: input, completionTokens: output,
+    cacheReadTokens: detail(field(promptDetails, "cached_tokens") ?? field(raw, "prompt_cache_hit_tokens") ?? field(raw, "cached_tokens"), input),
+    cacheWriteTokens: detail(field(promptDetails, "cache_write_tokens"), input),
+    reasoningTokens: detail(field(outputDetails, "reasoning_tokens"), output),
+  };
+}
 
 function content(value: unknown): (TextContent | ImageContent)[] {
   if (!Array.isArray(value) || !value.every(block => object(block)
@@ -138,7 +192,13 @@ class Worker {
     if (this.nextRequest > 0xffffffff) { pending.reject(new Error("Member operation identity limit")); void this.fault("member-request-limit"); return; }
     pending.request = this.nextRequest++;
     this.active = pending;
-    void this.send({ kind: "request", request: pending.request, call: pending.call }).catch(() => this.fault("member-output-failed"));
+    try {
+      void this.send({ kind: "request", request: pending.request, call: pending.call }).catch(() => this.fault("member-output-failed"));
+    } catch {
+      // Encoding can reject before returning a promise. The admitted slot must
+      // fail immediately instead of stranding later records behind it.
+      void this.fault("member-output-failed");
+    }
   }
 
   private flushUsage(): Promise<void> {
@@ -187,7 +247,7 @@ class Worker {
       ports: {
         prepare: async (request, signal) => {
           await this.flushUsage();
-          const reply = await this.rpc({ method: "prepare", messages: request.messages }, "prepared", signal);
+          const reply = await this.rpc({ method: "prepare", messages: request.messages.map(wireMessage) }, "prepared", signal);
           this.currentRequest = reply.requestId;
           this.usage.set(reply.requestId, { value: null, reported: false, response: false });
           return { requestId: reply.requestId, sharedView: reply.sharedView };
@@ -201,12 +261,8 @@ class Worker {
         providerEvent: async (identity, event) => {
           const usage = this.usage.get(identity.requestId);
           if (!usage || !usage.response || usage.reported) throw new Error("Provider event has no active request");
-          if (object(event) && Object.hasOwn(event, "usage")) {
-            const input = object(event.usage) ? event.usage.prompt_tokens : undefined;
-            const output = object(event.usage) ? event.usage.completion_tokens : undefined;
-            usage.value = Number.isSafeInteger(input) && Number(input) >= 0 && Number.isSafeInteger(output) && Number(output) >= 0
-              ? { promptTokens: Number(input), completionTokens: Number(output) } : null;
-          }
+          const observed = observedUsage(event);
+          if (observed !== undefined) usage.value = observed;
         },
         beforeToolCall: async (identity, context, signal) => {
           const reply = await this.rpc({ method: "before-tool", requestId: identity.requestId,
@@ -227,7 +283,7 @@ class Worker {
           if (event.type === "message_end" && event.message.role === "assistant") await this.flushUsage();
           // Event records remain required while an aborted loop drains. An
           // aborted Pi signal cannot be used to skip application acknowledgments.
-          await this.rpc({ method: "event", requestId: identity?.requestId ?? null, event }, "recorded");
+          await this.rpc({ method: "event", requestId: identity?.requestId ?? null, event: wireEvent(event) }, "recorded");
         },
       },
     });
@@ -237,7 +293,7 @@ class Worker {
     await this.flushUsage();
     if (this.state !== "running") return;
     this.state = "result";
-    await this.send({ kind: "result", messages: result.messages, turnLimitReached: result.turnLimitReached });
+    await this.send({ kind: "result", messages: result.messages.map(wireMessage), turnLimitReached: result.turnLimitReached });
   }
 
   private cancelOperations(): void {
@@ -277,6 +333,7 @@ class Worker {
       this.detach(pending);
       pending.reject(abortError());
     }
+    this.active = undefined;
     this.queue.length = 0;
     // The fault is the parent's cue to revoke and drain its original request.
     // Never write raw provider errors, request bodies or ambient data to stderr.
