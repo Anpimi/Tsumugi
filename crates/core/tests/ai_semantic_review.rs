@@ -865,7 +865,7 @@ fn reopen_refuses_forged_model_provenance_purpose_or_projection_without_reset() 
 }
 
 #[test]
-fn current_review_layout_is_schema_52_and_schema_51_is_preserved_and_refused() {
+fn current_review_layout_preserves_and_refuses_schema_51() {
     let (directory, store, _) = support::source_fixture();
     let path = directory.path().join("project");
     store.close().unwrap();
@@ -873,7 +873,7 @@ fn current_review_layout_is_schema_52_and_schema_51_is_preserved_and_refused() {
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        52
+        61
     );
     let before: u32 = c
         .query_row("SELECT COUNT(*) FROM execution_results", [], |r| r.get(0))
