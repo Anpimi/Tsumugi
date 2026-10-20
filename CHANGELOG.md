@@ -273,8 +273,9 @@ within this same undistributed batch.
   the optional bundled-runtime build profile.
 
 - Refresh the bundled WebVTT and SMAPI snapshots to the current pinned SDK
-  artifact. Package approval and existing project bindings remain separate
-  from the default bundle selection.
+  artifact. The selected WebVTT package also imports existing translated captions
+  through independent semantic checking and explicit per-entry adoption. Package
+  approval and existing project bindings remain separate from bundle selection.
 
 - Let explicitly selected Attempt JavaScript generation components call the
   work plan's prepared read-only tools. Service facades retain the caller's

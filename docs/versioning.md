@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+The optional macOS bundle now selects the reviewed WebVTT package with translated
+caption import and independent semantic checking. Its exact source, transport and
+complete package pins change together; the selected SDK artifact, plugin identity,
+source/build profiles, installation approvals and existing project bindings retain
+their current boundaries. There is no SDK, protocol, project/Store format,
+dependency or version-source change. This remains the same undistributed
+application `0.2.0-alpha.1` / SDK and plugin `0.1.0-alpha.1` batch, with synchronized
+bilingual Unreleased entries and no additional version bump. Selecting or preparing
+these resources does not establish a new built application or native acceptance.
+
 Captured Node runtime descriptors now admit the explicit Windows platform, and
 read-only archive capture can retain the corresponding approved bytes on that
 platform. This adds an experimental Rust enum variant: downstream exhaustive

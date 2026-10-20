@@ -25,7 +25,11 @@ a different runtime profile/protocol rather than infer compatibility from the
 unchanged alpha version.
 
 The current candidates retain source-extraction context facts and their exact
-source revision through the pinned SDK helpers. Updating a candidate requires
+source revision through the pinned SDK helpers. The selected WebVTT package also
+imports existing translated captions from a captured target-language file, with
+independent semantic checking and explicit per-entry adoption. This selection
+changes neither installed package approvals nor existing project bindings.
+Updating a candidate requires
 refreshing its source commit, SDK artifact, transport and complete Host package
 digests together; selecting an older archive by the same alpha version can lose
 these capabilities.
