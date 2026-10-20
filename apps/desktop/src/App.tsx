@@ -1350,6 +1350,11 @@ function AppWorkbench() {
       || compositionActive.current || navigationIntent || restorePromptOpen || document.querySelector('[role="dialog"]')) return;
     await projectSession.current?.navigate({ kind: "translation-find" });
   }
+  function revealTaskDock() {
+    if (!project || busy || stopping || coordinating || currentRetiredSession.current || areaNavigation.current || lifecycleFlight.current
+      || compositionActive.current || navigationIntent || restorePromptOpen || document.querySelector('[role="dialog"]')) return;
+    projectSession.current?.revealTaskDock();
+  }
   const viewOwner = { area, memory, activate: (next: WorkspaceArea) => { void navigateArea(next); },
     deactivate: (closing: WorkspaceArea) => { if (currentExitPresentation.current.area === closing) void navigateArea("overview"); } };
   const sessionPresentation = retiredSession?.project ?? project;
@@ -1433,6 +1438,8 @@ function AppWorkbench() {
                 onClick={() => void findContent()}>{t("workbench.findContent")}</button>
               {!project.metadata.targetLocales.length ? <small id="workspace-find-unavailable">{t("workbench.findNeedsTarget")}</small> : null}
             </div> : null}
+            {project ? <button type="button" className="secondary-button" disabled={busy || stopping || coordinating}
+              onClick={revealTaskDock}>{t("execution.dock.reveal")}</button> : null}
             <PluginManager ref={pluginManager} disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
             <ConnectionManager ref={connectionManager} disabled={operation !== "idle" || stopping || stopIntent !== null || pluginsBusy}/>
             <label className="language-control">

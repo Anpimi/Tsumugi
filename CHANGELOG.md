@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Open the original background task dock from the fixed header while keeping
+  the current workspace, draft and uncertain work in place. Task status, refresh
+  and navigation continue to use the original dock.
+
 - Avoid a repeated source-size scan when qualifying saved review checks while
   retaining complete source validation and the full review-input size limit.
 

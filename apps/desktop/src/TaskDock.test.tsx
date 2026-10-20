@@ -2,12 +2,12 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SessionReadProvider, useSessionReads } from "./SessionReadProvider";
-import { TaskDock } from "./TaskDock";
+import { TaskDock, type TaskDockHandle } from "./TaskDock";
 import { executionContext, type TaskActivity, type TaskActivityRow } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { i18n } from "./i18n";
-import { useLayoutEffect } from "react";
+import { createRef, useLayoutEffect, type Ref } from "react";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -18,14 +18,74 @@ const row: TaskActivityRow = { taskId: fixtureIdentity(951), attemptId: fixtureI
 const activity: TaskActivity = { total: "100", active: "2", attention: "3", saved: "95", rows: [row] };
 let reads: ReturnType<typeof useSessionReads>;
 function Probe() { const value = useSessionReads(); useLayoutEffect(() => { reads = value; }); return null; }
-function Harness({ value = project, disabled = false, onOpen = vi.fn() }: { value?: ProjectView; disabled?: boolean; onOpen?: (row?: TaskActivityRow) => void }) {
+function Harness({ value = project, disabled = false, onOpen = vi.fn(), dockRef }: { value?: ProjectView; disabled?: boolean; onOpen?: (row?: TaskActivityRow) => void; dockRef?: Ref<TaskDockHandle> }) {
   return <SessionReadProvider key={value.sessionToken} context={executionContext(value)} bridge={false}>
-    <Probe/><TaskDock project={value} disabled={disabled} onOpen={onOpen}/>
+    <Probe/><TaskDock ref={dockRef} project={value} disabled={disabled} onOpen={onOpen}/>
   </SessionReadProvider>;
 }
 beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset(); invoke.mockResolvedValue(activity); });
 afterEach(cleanup);
 async function expand() { await userEvent.click(screen.getByText("Background tasks", { exact: false, selector: "summary" })); }
+
+it.each(["loading", "empty", "failure"] as const)("reveals the original %s dock synchronously without reading or routing again", async state => {
+  const ref = createRef<TaskDockHandle>(), onOpen = vi.fn(), user = userEvent.setup();
+  const empty: TaskActivity = { total: "0", active: "0", attention: "0", saved: "0", rows: [] };
+  let complete!: (value: TaskActivity) => void;
+  if (state === "loading") invoke.mockImplementationOnce(() => new Promise<TaskActivity>(resolve => { complete = resolve; }));
+  else if (state === "failure") invoke.mockRejectedValueOnce(new Error("Synthetic activity read unavailable"));
+  else invoke.mockResolvedValueOnce(empty);
+  render(<><button type="button">Other work</button><Harness dockRef={ref} onOpen={onOpen}/></>);
+  const summary = screen.getByText("Background tasks", { exact: false, selector: "summary" }), details = summary.closest("details")!;
+  await within(summary).findByText(state === "loading" ? "Loading tasks…" : state === "failure" ? "Status unavailable" : "No tasks yet");
+  expect(details).not.toHaveAttribute("open");
+  const before = invoke.mock.calls.length, scroll = vi.spyOn(summary, "scrollIntoView");
+  act(() => { expect(ref.current!.reveal()).toBe(true); });
+  expect(details).toHaveAttribute("open"); expect(summary).toHaveFocus();
+  expect(scroll).toHaveBeenLastCalledWith({ block: "nearest" });
+  act(() => { expect(ref.current!.reveal()).toBe(true); });
+  expect(details).toHaveAttribute("open"); expect(summary).toHaveFocus();
+  expect(invoke.mock.calls).toHaveLength(before); expect(onOpen).not.toHaveBeenCalled();
+  if (state === "failure") {
+    expect(screen.getByRole("alert")).toHaveTextContent("Your current work is kept");
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText(/Showing 1 of 100 tasks/);
+    expect(invoke.mock.calls).toHaveLength(before + 1);
+    expect(invoke.mock.calls.every(([command]) => command === "read_execution_task_activity")).toBe(true);
+  }
+  await user.click(summary); expect(details).not.toHaveAttribute("open");
+  const outside = screen.getByRole("button", { name: "Other work" }); outside.focus();
+  if (state === "loading") { await act(async () => { complete(empty); }); await screen.findByText("No tasks yet"); }
+  expect(details).not.toHaveAttribute("open"); expect(outside).toHaveFocus(); expect(onOpen).not.toHaveBeenCalled();
+});
+
+it("rejects disabled, retired and disconnected presentation handles", async () => {
+  const ref = createRef<TaskDockHandle>(), user = userEvent.setup();
+  const view = render(<Harness dockRef={ref} disabled/>);
+  await screen.findByText(/2 active or queued/);
+  const summary = screen.getByText("Background tasks", { exact: false, selector: "summary" }), details = summary.closest("details")!;
+  act(() => { expect(ref.current!.reveal()).toBe(false); }); expect(details).not.toHaveAttribute("open");
+  view.rerender(<Harness dockRef={ref}/>);
+  const retained = ref.current!;
+  act(() => { expect(retained.reveal()).toBe(true); }); expect(summary).toHaveFocus();
+  await user.click(summary); expect(details).not.toHaveAttribute("open");
+  act(() => { reads.retire(); expect(retained.reveal()).toBe(false); }); expect(details).not.toHaveAttribute("open");
+  view.unmount(); expect(retained.reveal()).toBe(false);
+  expect(invoke.mock.calls).toHaveLength(1);
+});
+
+it("does not reveal the replacement dock through a retained old-session handle", async () => {
+  const ref = createRef<TaskDockHandle>(), user = userEvent.setup();
+  const view = render(<Harness dockRef={ref}/>);
+  await screen.findByText(/2 active or queued/); const original = ref.current!;
+  invoke.mockResolvedValue({ total: "0", active: "0", attention: "0", saved: "0", rows: [] });
+  view.rerender(<Harness dockRef={ref} value={{ ...project, sessionToken: "new-session" }}/>);
+  await screen.findByText("No tasks yet");
+  const summary = screen.getByText("Background tasks", { exact: false, selector: "summary" }), details = summary.closest("details")!;
+  act(() => { expect(original.reveal()).toBe(false); }); expect(details).not.toHaveAttribute("open");
+  act(() => { expect(ref.current!.reveal()).toBe(true); }); expect(summary).toHaveFocus();
+  await user.click(summary); expect(details).not.toHaveAttribute("open");
+  expect(invoke.mock.calls).toHaveLength(2);
+});
 
 it("shows ledger totals independently of its bounded rows and opens the exact task without executing it", async () => {
   const onOpen = vi.fn(); render(<Harness onOpen={onOpen}/>);

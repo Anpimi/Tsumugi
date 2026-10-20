@@ -349,6 +349,79 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it.each(["en-US", "zh-CN"] as const)("reveals the unique background dock without leaving an unknown save or rebinding newer input (%s)", async language => {
+    const user = userEvent.setup(); await renderApp();
+    expect(screen.queryByRole("button", { name: "View background tasks" })).not.toBeInTheDocument();
+    await createProject(user); const fixture = installTranslationEditor();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(await editableDraft(), "A");
+    fixture.setSave(async () => { throw new Error("Original save acknowledgement lost"); });
+    await user.click(screen.getByRole("button", { name: "Save revision" }));
+    await waitFor(() => expect(mocks.drafts.get("session-1")?.current()?.outcomeUnknown).toBe(true));
+    const editor = screen.getByRole("textbox", { name: "Your draft" }) as HTMLTextAreaElement;
+    await user.type(editor, " newer B 👩🏽‍💻 é");
+    fireEvent.change(editor, { target: { value: `${editor.value}\n{name}` } }); editor.setSelectionRange(1, 4);
+    const draft = mocks.drafts.get("session-1")!.current()!, memory = mocks.memories.get("session-1")!;
+    const before = { text: draft.text, editSeq: draft.editSeq, request: structuredClone(draft.pending!.request),
+      locale: memory.read("translation", "targetLocale"), query: memory.read("translation", "query"),
+      applied: memory.read("translation", "appliedQuery"), selection: memory.read("translation", "contentSelection") };
+    await act(async () => { await i18n.changeLanguage(language); });
+    const dock = screen.getByRole("complementary", { name: i18n.t("execution.dock.title") });
+    const summary = within(dock).getByText(i18n.t("execution.dock.title"), { selector: "summary", exact: false }), details = summary.closest("details")!;
+    const trigger = screen.getByRole("button", { name: i18n.t("execution.dock.reveal") });
+    trigger.focus(); const calls = mocks.invoke.mock.calls.length;
+    await user.keyboard("{Enter}");
+    expect(details).toHaveAttribute("open"); expect(summary).toHaveFocus();
+    expect(screen.getAllByRole("complementary", { name: i18n.t("execution.dock.title") })).toHaveLength(1);
+    fireEvent.click(trigger); expect(details).toHaveAttribute("open"); expect(summary).toHaveFocus();
+    expect(mocks.invoke.mock.calls).toHaveLength(calls);
+    expect(screen.getByRole("region", { name: i18n.t("translation.title") })).toBeVisible();
+    expect(screen.getByRole("button", { name: i18n.t("translation.title") })).toHaveAttribute("aria-current", "page");
+    expect(editor).toHaveValue(before.text); expect(editor.selectionStart).toBe(1); expect(editor.selectionEnd).toBe(4);
+    expect(mocks.drafts.get("session-1")?.current()).toMatchObject({ text: before.text, editSeq: before.editSeq, pending: { request: before.request } });
+    expect(memory.read("translation", "targetLocale")).toBe(before.locale); expect(memory.read("translation", "query")).toBe(before.query);
+    expect(memory.read("translation", "appliedQuery")).toBe(before.applied); expect(memory.read("translation", "contentSelection")).toBe(before.selection);
+    expect(fixture.saves()).toHaveLength(1);
+    await user.click(summary); expect(details).not.toHaveAttribute("open");
+    expect(editor).toHaveValue(before.text);
+  });
+  it("reveals the empty background dock without a target language or another IPC call", async () => {
+    const user = userEvent.setup(), original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => command === "create_project"
+      ? Promise.resolve({ ...projectView(), metadata: { ...metadata(), targetLocales: [] } }) : original(command, args));
+    await renderApp(); await createProject(user); await screen.findByText("No tasks yet");
+    const trigger = screen.getByRole("button", { name: "View background tasks" }); expect(trigger).toBeEnabled();
+    const calls = mocks.invoke.mock.calls.length; fireEvent.click(trigger);
+    const summary = screen.getByText("Background tasks", { selector: "summary", exact: false });
+    expect(summary.closest("details")).toHaveAttribute("open"); expect(summary).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "Demo" })).toBeVisible(); expect(mocks.invoke.mock.calls).toHaveLength(calls);
+    expect(screen.getByRole("button", { name: "Find content" })).toBeDisabled();
+  });
+  it.each(["loading", "failure"] as const)("opens the original background %s and leaves its recovery with the Dock", async state => {
+    const user = userEvent.setup(), original = mocks.invoke.getMockImplementation()!;
+    let complete!: (value: ReturnType<typeof emptyTaskActivity>) => void, unavailable = true;
+    mocks.invoke.mockImplementation((command: string, args) => {
+      if (command !== "read_execution_task_activity") return original(command, args);
+      if (state === "loading") return new Promise<ReturnType<typeof emptyTaskActivity>>(resolve => { complete = resolve; });
+      return unavailable ? Promise.reject(new Error("Synthetic activity read unavailable")) : Promise.resolve(emptyTaskActivity(args.request));
+    });
+    await renderApp(); await createProject(user);
+    await within(screen.getByText("Background tasks", { selector: "summary", exact: false })).findByText(state === "loading" ? "Loading tasks…" : "Status unavailable");
+    const calls = mocks.invoke.mock.calls.length; fireEvent.click(screen.getByRole("button", { name: "View background tasks" }));
+    const dock = screen.getByRole("complementary", { name: "Background tasks" });
+    const summary = within(dock).getByText("Background tasks", { selector: "summary", exact: false });
+    expect(summary.closest("details")).toHaveAttribute("open"); expect(summary).toHaveFocus(); expect(mocks.invoke.mock.calls).toHaveLength(calls);
+    if (state === "loading") {
+      await act(async () => { complete({ total: "0", active: "0", attention: "0", saved: "0", rows: [] }); });
+    } else {
+      expect(within(dock).getByRole("alert")).toHaveTextContent("Your current work is kept"); unavailable = false;
+      await user.click(within(dock).getByRole("button", { name: "Refresh" }));
+    }
+    await screen.findByText("No tasks yet");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_execution_task_activity")).toHaveLength(state === "loading" ? 1 : 2);
+    expect(screen.getByRole("heading", { name: "Demo" })).toBeVisible();
+  });
   it.each(["en-US", "zh-CN"] as const)("opens the original content find from Tasks without rebinding an unknown save or its newer draft (%s)", async language => {
     const user = userEvent.setup(); await renderApp();
     expect(screen.queryByRole("button", { name: "Find content" })).not.toBeInTheDocument();
@@ -1100,8 +1173,13 @@ describe("project lifecycle workbench", () => {
     await screen.findByRole("heading", { name: kind === "open" ? "Other" : "No project open" });
     const recovery = screen.getByRole("textbox", { name: i18n.t("workbench.retiredDraftData") });
     expect(recovery).toHaveAttribute("readonly");
-    if (kind === "open") expect(screen.getByRole("button", { name: "Find content" })).toBeDisabled();
-    else expect(screen.queryByRole("button", { name: "Find content" })).not.toBeInTheDocument();
+    if (kind === "open") {
+      expect(screen.getByRole("button", { name: "Find content" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "View background tasks" })).toBeDisabled();
+    } else {
+      expect(screen.queryByRole("button", { name: "Find content" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "View background tasks" })).not.toBeInTheDocument();
+    }
     if (!(recovery instanceof HTMLTextAreaElement)) throw new Error("Recovery details must be copyable text");
     const preserved = JSON.parse(recovery.value);
     expect(preserved.translation).toEqual(originalDraft);
@@ -1960,8 +2038,11 @@ describe("project lifecycle workbench", () => {
     const editor = await editableDraft();
     await user.type(editor, "A");
     await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+    const activityTrigger = screen.getByRole("button", { name: "View background tasks" });
+    const dock = screen.getByText("Background tasks", { selector: "summary", exact: false }).closest("details")!;
 
     fireEvent.compositionStart(editor);
+    fireEvent.click(activityTrigger); expect(dock).not.toHaveAttribute("open"); expect(editor).toHaveFocus();
     fireEvent.keyDown(editor, { key: "s", ctrlKey: true, isComposing: false });
     await act(async () => {});
     expect(fixture.saves()).toHaveLength(0);
@@ -1977,6 +2058,7 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Close project" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Leave with an unsaved translation?");
+    fireEvent.click(activityTrigger); expect(dock).not.toHaveAttribute("open"); expect(dialog).toBeVisible();
     await user.keyboard("{Control>}s{/Control}");
     expect(fixture.saves()).toHaveLength(0);
     await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));

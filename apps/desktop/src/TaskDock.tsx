@@ -4,13 +4,23 @@ import { executionCommands, executionContext, type TaskActivity, type TaskActivi
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import type { ProjectView } from "./projectCommands";
 import { enUS } from "./i18n/en-US";
+import { useImperativeHandle, useRef, type Ref } from "react";
 import "./TaskDock.css";
 
 const phases = ["active", "attention", "saved"] as const;
-export function TaskDock({ project, disabled, onOpen }: {
-  project: ProjectView; disabled: boolean; onOpen: (row?: TaskActivityRow) => void;
+export interface TaskDockHandle { reveal: () => boolean }
+export function TaskDock({ project, disabled, onOpen, ref }: {
+  project: ProjectView; disabled: boolean; onOpen: (row?: TaskActivityRow) => void; ref?: Ref<TaskDockHandle>;
 }) {
   const { t } = useTranslation(), reads = useSessionReads();
+  const details = useRef<HTMLDetailsElement>(null), summary = useRef<HTMLElement>(null);
+  useImperativeHandle(ref, () => ({ reveal() {
+    const container = details.current, trigger = summary.current;
+    if (disabled || reads.retired || !container?.isConnected || !trigger?.isConnected) return false;
+    container.open = true;
+    trigger.focus({ preventScroll: true }); trigger.scrollIntoView({ block: "nearest" });
+    return true;
+  } }), [disabled, reads]);
   const activity = useSessionQuery<TaskActivity>({ key: ["task-activity", 12], scopes: ["execution"],
     enabled: !reads.retired,
     read: () => executionCommands.activity({ ...executionContext(project), limit: 12 }),
@@ -18,8 +28,8 @@ export function TaskDock({ project, disabled, onOpen }: {
   const value = !activity.error ? activity.data : undefined;
   const unavailable = disabled || reads.retired || activity.isFetching || activity.isStale;
   return <aside className="task-dock" aria-label={t("execution.dock.title")}>
-    <details>
-      <summary>{t("execution.dock.title")}
+    <details ref={details}>
+      <summary ref={summary}>{t("execution.dock.title")}
         <span>{activity.error ? t("execution.dock.unavailable") : !value || activity.isFetching ? t("execution.loading")
           : value.total === "0" ? t("execution.dock.empty")
           : t("execution.dock.counts", { active: value.active, attention: value.attention, saved: value.saved })}</span>

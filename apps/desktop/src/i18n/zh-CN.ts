@@ -2406,6 +2406,7 @@ ai: {
       retryPluginStart: "重试完全相同的原启动",
       pluginStartMissing: "未查到原启动的已存输入；这不会停止仍在途的请求。可以明确使用原许可重试同一请求，许可过期时后端可能拒绝。",
       dock: {
+        reveal: "查看后台任务",
         title: "后台任务", unavailable: "状态暂不可用", empty: "暂无任务",
         counts: "运行或排队 {{active}} 项 · 待检查 {{attention}} 项 · 已保存输出 {{saved}} 项",
         active: "运行或排队", attention: "待检查", saved: "已保存输出",

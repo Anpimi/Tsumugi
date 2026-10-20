@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+The fixed header opens and focuses the original background task dock without
+leaving the current workspace or changing local and uncertain work. The original
+dock retains its task query, loading, empty and failure states, refresh and guarded
+navigation. This adds no task store, Core/IPC/SDK API, protocol, persisted format,
+dependency or version source. It stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and
+no additional bump.
+
 Review-check input validation relies on the complete content validator for its
 captured source size limit, avoiding a second encoding of the same immutable
 source at the same limit. Full source semantics and the outer review-input limit

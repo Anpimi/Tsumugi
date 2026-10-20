@@ -21,7 +21,7 @@ import { ReleaseWorkbench } from "./ReleaseWorkbench";
 import { AiWorkbench } from "./AiWorkbench";
 import { ArenaWorkbench } from "./ArenaWorkbench";
 import { ExecutionTasks } from "./ExecutionTasks";
-import { TaskDock } from "./TaskDock";
+import { TaskDock, type TaskDockHandle } from "./TaskDock";
 import { useWorkspaceView, useWorkspaceViewChanges, useWorkbenchValue, type WorkspaceArea, type WorkbenchContextPresentation, type WorkbenchContextScope } from "./WorkbenchFrame";
 import { executionContext } from "./executionCommands";
 import { isCommandError, type ProjectView } from "./projectCommands";
@@ -63,6 +63,7 @@ function ProjectAiPreparation({ project, children }: { project: ProjectView; chi
 }
 export interface ProjectSessionHandle {
   navigate: (destination: WorkspaceDestination) => Promise<boolean>;
+  revealTaskDock: () => boolean;
   prepareExit: () => Promise<SessionExitPermit | null>;
   retire: () => void;
 }
@@ -208,6 +209,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   });
   const mounted = useRef(false), handles = useRef(new Map<WorkspaceArea, SessionConsumer>());
   const findFocus = useRef<TranslationFindFocusRequest | null>(null);
+  const taskDock = useRef<TaskDockHandle>(null);
   const deliverFindFocus = useRef<(() => void) | null>(null);
   const waiting = useRef(new Map<WorkspaceArea, ((handle: SessionConsumer | null) => void)[]>());
   const [failure, setFailure] = useState<CommandFailure | null>(null);
@@ -808,7 +810,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     return () => { mounted.current = false; cancelFindFocus(); navigation.dispose(); waiting.current.forEach(resolvers => resolvers.forEach(resolve => resolve(null))); waiting.current.clear(); handles.current.clear(); };
   }, [navigation]);
   useImperativeHandle(ref, () => ({ navigate,
-    prepareExit: () => { cancelFindFocus(); return navigation.prepareExit(); }, retire: () => { cancelFindFocus(); reads.retire(); navigation.dispose(); } }), [navigation, disabled, reads]);
+    revealTaskDock: () => live() && !retired && !disabled && !navigating && (taskDock.current?.reveal() ?? false),
+    prepareExit: () => { cancelFindFocus(); return navigation.prepareExit(); }, retire: () => { cancelFindFocus(); reads.retire(); navigation.dispose(); } }), [navigation, disabled, reads, retired, navigating]);
   const openTranslation = (target: import("./TranslationWorkbench").EditorTarget, locale: string, suggestedText?: string) =>
     navigation.navigate({ kind: "translation", target, locale, ...(suggestedText === undefined ? {} : { suggestedText }) });
   const openAiTranslation = (target: import("./TranslationWorkbench").EditorTarget, locale: string, suggestedText?: string) =>
@@ -875,7 +878,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     {view.area === "tasks" ? <ExecutionTasks ref={handle => register("tasks", handle)} project={project} disabled={locked}
       onSavedBuild={attemptId => navigation.navigate({ kind: "saved-build", attemptId })}
       onSourcePreview={id => attempt("source", id)} onTranslationPreview={id => attempt("translation", id)} onAiPreview={id => attempt("ai", id)} onArenaPreview={id => attempt("arena", id)} /> : null}
-    <TaskDock project={project} disabled={locked} onOpen={row => {
+    <TaskDock ref={taskDock} project={project} disabled={locked} onOpen={row => {
       void navigation.navigate(row ? { kind: "task", taskId: row.taskId, attemptId: row.attemptId } : { kind: "task-list" });
     }} />
   </>;
