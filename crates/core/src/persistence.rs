@@ -1068,8 +1068,13 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
         review::prepare_open(connection).map_err(|_| PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         })?;
+    let mut application_open =
+        application::prepare_open(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
     ledger::validate_for_open(connection, |connection, input| {
-        review_open.validate_input(connection, input)
+        review_open.validate_input(connection, input)?;
+        application_open.validate_input(input)
     })
     .map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
@@ -1097,8 +1102,10 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
     plugin_execution::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    application::validate(connection).map_err(|_| PersistenceError::CorruptProject {
-        stage: PersistenceStage::Open,
+    application::validate_after_open(connection, application_open).map_err(|_| {
+        PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        }
     })?;
     Ok(())
 }

@@ -33,15 +33,9 @@ struct SetupProfile {
 
 impl SetupProfile {
     fn row(&mut self, sql: &str, statement: *mut ffi::sqlite3_stmt) {
-        // Both original ledger readers return the reconstructed input in column
-        // one. Count returned BLOBs, not Rust decodes or SQL-internal work.
-        if sql.contains("tsumugi_input_chunks(")
-            && (sql.contains("FROM execution_attempts a WHERE a.attempt_id=?1")
-                || sql.contains("FROM wanted w JOIN execution_attempts"))
-            && unsafe { ffi::sqlite3_column_type(statement, 1) } == ffi::SQLITE_BLOB
-        {
+        if let Some(bytes) = returned_input_bytes(sql, statement) {
             self.returned_input_frames += 1;
-            self.returned_input_bytes += unsafe { ffi::sqlite3_column_bytes(statement, 1) } as u64;
+            self.returned_input_bytes += bytes;
         }
         // This is snapshot_rows' complete occurrence/projection validation
         // query, not a COUNT or a selected-unit target lookup.
@@ -58,10 +52,10 @@ impl SetupProfile {
 // These windows begin at each validation loop's first query and end at the
 // next identifiable query. They include intervening validation work, so their
 // elapsed times are diagnostic windows rather than exclusive CPU timings.
-const REOPEN_WINDOWS: [(&str, &str, &str); 3] = [
+const REOPEN_WINDOWS: [(&str, &str, &str); 4] = [
     (
         "review-index",
-        "SELECT project_id,action_id FROM review_checks",
+        "SELECT project_id,action_id FROM review_checks WHERE purpose='qa'",
         "SELECT attempt_id FROM execution_attempts ORDER BY sequence",
     ),
     (
@@ -71,10 +65,36 @@ const REOPEN_WINDOWS: [(&str, &str, &str); 3] = [
     ),
     (
         "plugin-grants",
-        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked FROM plugin_execution_grants",
+        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked,delegation FROM plugin_execution_grants",
         "SELECT plan_id FROM application_plans",
     ),
+    (
+        "application-control",
+        "SELECT plan_id FROM application_plans",
+        "SELECT unit_id,locale,revision,protected FROM application_protections",
+    ),
 ];
+
+// Count actual returned BLOBs, including the original control scan whose input
+// frame is column four. Statement counts alone cannot expose repeated decoding.
+fn returned_input_bytes(sql: &str, statement: *mut ffi::sqlite3_stmt) -> Option<u64> {
+    if !sql.contains("tsumugi_input_chunks(") {
+        return None;
+    }
+    let column = if sql
+        .contains("FROM execution_attempts a LEFT JOIN application_executions x USING(attempt_id)")
+    {
+        4
+    } else if sql.contains("FROM execution_attempts a WHERE a.attempt_id=?1")
+        || sql.contains("FROM wanted w JOIN execution_attempts")
+    {
+        1
+    } else {
+        return None;
+    };
+    (unsafe { ffi::sqlite3_column_type(statement, column) } == ffi::SQLITE_BLOB)
+        .then(|| unsafe { ffi::sqlite3_column_bytes(statement, column) } as u64)
+}
 
 struct ActiveReopenWindow {
     started: Instant,
@@ -126,12 +146,9 @@ impl ReopenProfile {
         let Some(active) = &mut self.active else {
             return;
         };
-        if sql.contains("tsumugi_input_chunks(")
-            && sql.contains("FROM execution_attempts a WHERE a.attempt_id=?1")
-            && unsafe { ffi::sqlite3_column_type(statement, 1) } == ffi::SQLITE_BLOB
-        {
+        if let Some(bytes) = returned_input_bytes(sql, statement) {
             active.frames += 1;
-            active.frame_bytes += unsafe { ffi::sqlite3_column_bytes(statement, 1) } as u64;
+            active.frame_bytes += bytes;
         }
     }
 }
@@ -452,6 +469,94 @@ fn bounded_2000_source_eight_qa_setup_profiles_real_stages() {
     println!(
         "REVIEW_SETUP_COMPLETE {}",
         serde_json::json!({"sourceUnits": 2000, "actualChecks": checks})
+    );
+}
+
+#[test]
+fn normal_reopen_streams_control_associations_without_a_second_frame_scan() {
+    let _trace = TraceRegistration::new();
+    let (directory, mut store, rows) = support::source_fixture_with_scope(2, &["zh-CN"]);
+    let mut runtime = prepare_runtime(&store, rows[0].unit_id.unwrap(), "zh-CN");
+    for row in &rows {
+        let unit = row.unit_id.unwrap();
+        save(&mut store, unit, "zh-CN", "译文 🧵");
+        approve(&mut store, unit, "zh-CN");
+        let run = support::review_check(&mut store, &mut runtime, unit, "zh-CN");
+        assert!(run.evidence.is_some());
+        assert!(run.rules.iter().all(|rule| rule.status == "passed"));
+    }
+    drop(runtime);
+    store.close().unwrap();
+    REOPEN_PROFILE.with(|profile| {
+        assert!(
+            profile
+                .borrow_mut()
+                .replace(ReopenProfile::default())
+                .is_none()
+        );
+    });
+    let (reopened, statements) = measured("reopen-control-streaming", || {
+        ProjectStore::open(&directory.path().join("project")).unwrap()
+    });
+    let profile = REOPEN_PROFILE.with(|profile| profile.borrow_mut().take().unwrap());
+    assert_eq!(profile.next, REOPEN_WINDOWS.len());
+    assert!(profile.active.is_none());
+    let ledger = profile
+        .completed
+        .iter()
+        .find(|window| window["name"] == "ledger-attempts")
+        .unwrap();
+    assert!(ledger["reconstructedFrames"].as_u64().unwrap() >= 2);
+    let control = profile
+        .completed
+        .iter()
+        .find(|window| window["name"] == "application-control")
+        .unwrap();
+    assert_eq!(control["reconstructedFrames"], 0);
+    assert_eq!(control["reconstructedBytes"], 0);
+    let full_control_scan = |sql: &&String| {
+        sql.contains("tsumugi_input_chunks(")
+            && sql.contains(
+                "FROM execution_attempts a LEFT JOIN application_executions x USING(attempt_id)",
+            )
+    };
+    assert_eq!(statements.iter().filter(full_control_scan).count(), 0);
+    println!(
+        "REVIEW_SCOPE_REOPEN_WINDOWS {}",
+        serde_json::json!(profile.completed)
+    );
+    // Ordinary reconciliation still performs its complete scan. It must not
+    // inherit a witness from an earlier open or a different mutable epoch.
+    REOPEN_PROFILE.with(|profile| {
+        assert!(
+            profile
+                .borrow_mut()
+                .replace(ReopenProfile {
+                    next: REOPEN_WINDOWS.len() - 1,
+                    ..ReopenProfile::default()
+                })
+                .is_none()
+        );
+    });
+    let (_, statements) = measured("reconcile-control-complete", || {
+        reopened.reconcile_execution().unwrap()
+    });
+    assert_eq!(statements.iter().filter(full_control_scan).count(), 1);
+    let profile = REOPEN_PROFILE.with(|profile| profile.borrow_mut().take().unwrap());
+    assert_eq!(profile.next, REOPEN_WINDOWS.len());
+    assert!(profile.active.is_none());
+    assert_eq!(profile.completed.len(), 1);
+    assert_eq!(profile.completed[0]["name"], "application-control");
+    assert!(
+        profile.completed[0]["reconstructedFrames"]
+            .as_u64()
+            .unwrap()
+            >= 2
+    );
+    assert!(profile.completed[0]["reconstructedBytes"].as_u64().unwrap() > 0);
+    println!(
+        "REVIEW_SCOPE_RECONCILE_CONTROL_WINDOW {}",
+        serde_json::json!(profile.completed[0])
     );
 }
 

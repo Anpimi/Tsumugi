@@ -21,8 +21,8 @@ pub(in crate::persistence) use agents::{
     binding as agent_binding, check_prepared as check_prepared_agent,
 };
 pub(super) use control::{
-    allows_cancelled_ancestor, check_enqueue, check_input, protect_manual_in, record_input,
-    stop_execution_plan_in,
+    OpenControlValidation, allows_cancelled_ancestor, check_enqueue, check_input, prepare_open,
+    protect_manual_in, record_input, stop_execution_plan_in,
 };
 
 pub(super) fn initialize(c: &rusqlite::Connection) -> rusqlite::Result<()> {
@@ -37,6 +37,14 @@ pub(super) fn table_names() -> impl Iterator<Item = String> {
 }
 pub(super) fn validate(c: &rusqlite::Connection) -> Result<(), ExecutionError> {
     control::validate(c)?;
+    team::validate(c)?;
+    coordination::validate(c)
+}
+pub(super) fn validate_after_open(
+    c: &rusqlite::Connection,
+    inputs: OpenControlValidation<'_>,
+) -> Result<(), ExecutionError> {
+    control::validate_after_open(c, inputs)?;
     team::validate(c)?;
     coordination::validate(c)
 }

@@ -17,6 +17,10 @@ within this same undistributed batch.
   to the existing single-pane mode for larger text. Shared light surfaces,
   controls and focus indicators use a consistent accent.
 
+- Avoid reconstructing every complete execution input a second time when opening
+  a project. Validate the same application associations within the original read
+  snapshot, preserving complete integrity checks and ordinary reconciliation.
+
 - Present build readiness, blocking requirements and saved releases in a clearer
   delivery workspace. Keep original export recovery and access to older releases
   when a new build is blocked, and report approved exceptions accurately.

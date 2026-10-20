@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+Normal project open now validates application execution associations against the
+complete input already restored by the ledger in the same read-only snapshot.
+Only small pending row identities are retained; all original frame, authority,
+history and coverage checks remain required. Ordinary reconciliation retains its
+complete input scan. This changes no Core API, protocol, persistent format,
+dependency or version source. It remains in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch with bilingual Unreleased entries and
+no additional bump.
+
 The delivery workspace separates current build readiness from immutable saved
 releases and their export results, while preserving the existing release owner,
 command gates and uncertain-action recovery. The ready summary now reports the

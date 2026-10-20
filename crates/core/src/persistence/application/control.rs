@@ -1291,7 +1291,7 @@ fn validate_history(c: &Connection, stored: &StoredPlan) -> Result<(), Execution
     }
     Ok(())
 }
-pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionError> {
+fn validate_authority(c: &Connection) -> Result<(), ExecutionError> {
     for (name, expected) in TABLES {
         let actual: String = c
             .query_row("SELECT sql FROM sqlite_master WHERE name=?1", [name], |r| {
@@ -1347,6 +1347,86 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
         }
         validate_receipt(&request, &receipt, &load(c, request.plan())?)?;
     }
+    Ok(())
+}
+
+// Only small row associations survive between the open-time metadata read and
+// the ledger visit in the caller's single read snapshot. No complete input
+// frame or execution authority is retained, and the witness borrows that read.
+pub(in crate::persistence) struct OpenControlValidation<'a> {
+    connection: &'a Connection,
+    pending: std::collections::BTreeMap<ExecutionId, (Option<String>, Option<i64>)>,
+}
+
+pub(in crate::persistence) fn prepare_open(
+    c: &Connection,
+) -> Result<OpenControlValidation<'_>, ExecutionError> {
+    let mut statement = c.prepare("SELECT a.attempt_id,x.plan_id,x.generation FROM execution_attempts a LEFT JOIN application_executions x USING(attempt_id)").map_err(sql)?;
+    let mut pending = std::collections::BTreeMap::new();
+    for row in statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
+        })
+        .map_err(sql)?
+    {
+        let (attempt, plan, generation) = row.map_err(sql)?;
+        let attempt = ExecutionId::parse(&attempt)
+            .map_err(|_| err(ErrorCode::CorruptLedger, "work-plan-execution"))?;
+        if pending.insert(attempt, (plan, generation)).is_some() {
+            return Err(err(
+                ErrorCode::CorruptLedger,
+                "work-plan-execution-coverage",
+            ));
+        }
+    }
+    Ok(OpenControlValidation {
+        connection: c,
+        pending,
+    })
+}
+
+impl OpenControlValidation<'_> {
+    pub(in crate::persistence) fn validate_input(
+        &mut self,
+        input: &FixedInput,
+    ) -> Result<(), ExecutionError> {
+        let (plan, generation) = self
+            .pending
+            .get(&input.envelope().attempt_id)
+            .cloned()
+            .ok_or_else(|| err(ErrorCode::CorruptLedger, "work-plan-execution-coverage"))?;
+        validate_execution_input(self.connection, input, plan, generation)?;
+        self.pending.remove(&input.envelope().attempt_id);
+        Ok(())
+    }
+
+    fn finish(self) -> Result<(), ExecutionError> {
+        if self.pending.is_empty() {
+            Ok(())
+        } else {
+            Err(err(
+                ErrorCode::CorruptLedger,
+                "work-plan-execution-coverage",
+            ))
+        }
+    }
+}
+
+pub(in crate::persistence) fn validate_after_open(
+    c: &Connection,
+    inputs: OpenControlValidation<'_>,
+) -> Result<(), ExecutionError> {
+    inputs.finish()?;
+    validate_authority(c)?;
+    validate_remaining(c)
+}
+
+pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionError> {
+    validate_authority(c)?;
     let mut attempts=c.prepare(&format!("SELECT a.attempt_id,x.plan_id,x.generation,{} FROM execution_attempts a LEFT JOIN application_executions x USING(attempt_id)", ledger::input_columns_sql())).map_err(sql)?;
     for row in attempts
         .query_map([], |r| {
@@ -1364,45 +1444,58 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
             ExecutionId::parse(&attempt)
                 .map_err(|_| err(ErrorCode::CorruptLedger, "work-plan-execution"))?,
         )?;
-        if input.envelope().operation == MCP_TERM_QUERY_OPERATION && plan.is_some() {
-            super::member_mcp::validate_input(c, &input)?;
-            continue;
-        }
-        match (input.envelope().automation, plan, generation) {
-            (None, None, None) => {}
-            (Some(lease), Some(id), Some(generation))
-                if lease.plan_id.to_string() == id
-                    && lease.generation.get() as i64 == generation =>
-            {
-                let stored = load(c, lease.plan_id)?;
-                let (kind, delegation, root): (String, Option<Vec<u8>>, String) = c.query_row("SELECT kind,delegation,root_task FROM application_executions WHERE attempt_id=?1", [&attempt], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).map_err(sql)?;
-                let valid_scope = if kind == "tool" {
-                    let bytes = delegation.ok_or_else(|| {
-                        err(ErrorCode::CorruptLedger, "work-plan-tool-association")
-                    })?;
-                    let delegation: WorkPlanToolDelegation =
-                        codec::decode(&bytes, MAX_AGENT_DELEGATION_BYTES)?;
-                    super::tools::validate_tool_input(c, &input, &delegation)?;
-                    true
-                } else {
-                    if kind == "model" {
-                        super::agents::validate_model_input(c, &input)?;
-                    }
-                    kind == "model"
-                        && (input.envelope().operation == crate::ai::team::OPERATION
-                            || matches_scope(input.envelope(), stored.plan.execution_input()?))
-                };
-                if generation == 0
-                    || generation as u64 > stored.lease.generation.get()
-                    || root != stored.plan.execution_input()?.task_id.to_string()
-                    || !valid_scope
-                {
-                    return Err(err(ErrorCode::CorruptLedger, "work-plan-execution"));
-                }
-            }
-            _ => return Err(err(ErrorCode::CorruptLedger, "work-plan-execution")),
-        }
+        validate_execution_input(c, &input, plan, generation)?;
     }
+    validate_remaining(c)
+}
+
+fn validate_execution_input(
+    c: &Connection,
+    input: &FixedInput,
+    plan: Option<String>,
+    generation: Option<i64>,
+) -> Result<(), ExecutionError> {
+    let attempt = input.envelope().attempt_id.to_string();
+    if input.envelope().operation == MCP_TERM_QUERY_OPERATION && plan.is_some() {
+        super::member_mcp::validate_input(c, input)?;
+        return Ok(());
+    }
+    match (input.envelope().automation, plan, generation) {
+        (None, None, None) => {}
+        (Some(lease), Some(id), Some(generation))
+            if lease.plan_id.to_string() == id && lease.generation.get() as i64 == generation =>
+        {
+            let stored = load(c, lease.plan_id)?;
+            let (kind, delegation, root): (String, Option<Vec<u8>>, String) = c.query_row("SELECT kind,delegation,root_task FROM application_executions WHERE attempt_id=?1", [&attempt], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).map_err(sql)?;
+            let valid_scope = if kind == "tool" {
+                let bytes = delegation
+                    .ok_or_else(|| err(ErrorCode::CorruptLedger, "work-plan-tool-association"))?;
+                let delegation: WorkPlanToolDelegation =
+                    codec::decode(&bytes, MAX_AGENT_DELEGATION_BYTES)?;
+                super::tools::validate_tool_input(c, input, &delegation)?;
+                true
+            } else {
+                if kind == "model" {
+                    super::agents::validate_model_input(c, input)?;
+                }
+                kind == "model"
+                    && (input.envelope().operation == crate::ai::team::OPERATION
+                        || matches_scope(input.envelope(), stored.plan.execution_input()?))
+            };
+            if generation == 0
+                || generation as u64 > stored.lease.generation.get()
+                || root != stored.plan.execution_input()?.task_id.to_string()
+                || !valid_scope
+            {
+                return Err(err(ErrorCode::CorruptLedger, "work-plan-execution"));
+            }
+        }
+        _ => return Err(err(ErrorCode::CorruptLedger, "work-plan-execution")),
+    }
+    Ok(())
+}
+
+fn validate_remaining(c: &Connection) -> Result<(), ExecutionError> {
     let mut unreconciled_releases = std::collections::BTreeSet::new();
     let mut protections = c
         .prepare("SELECT unit_id,locale,revision,protected FROM application_protections")
