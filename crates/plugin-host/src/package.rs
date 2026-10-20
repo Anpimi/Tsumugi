@@ -5,17 +5,11 @@ use tsumugi_plugin_sdk::*;
 
 const MAX_FILES: usize = 256;
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
-pub(crate) const MAX_DIRECTORIES: usize = 256;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-pub(crate) const MAX_DEPTH: usize = 16;
+pub(crate) use crate::package_profile::{MAX_DEPTH, MAX_DIRECTORIES, portable_path};
 
 mod directory;
 pub(crate) mod installation;
 pub use directory::{PackageCompatibilityInspection, PackageInspection};
-
-pub(crate) fn portable_path(path: &str) -> HostResult<()> {
-    validate_portable_package_path(path).map_err(|_| HostError::PackagePath)
-}
 
 pub use tsumugi_plugin_sdk::RuntimeArtifactFile as PackageFile;
 

@@ -6,19 +6,23 @@ pub mod catalog;
 mod child;
 #[cfg(feature = "core-adapter")]
 pub mod core;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod filesystem;
+mod host_error;
 #[cfg(feature = "core-adapter")]
 pub mod member;
 mod native_runtime;
 mod pack;
 mod package;
+mod package_profile;
 pub mod repository;
 mod runtime;
 mod service;
 mod session;
 mod staging;
 mod tree;
+#[cfg(windows)]
+mod windows_security;
 pub use native_runtime::CapturedNativeRuntime;
 pub use pack::{
     CapturedOfflinePack, MAX_PACK_BYTES, MAX_PACK_MEMBERS, OfflinePackDescriptor, OfflinePackMember,
@@ -39,40 +43,4 @@ pub use runtime::{
 pub use service::*;
 pub use session::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum HostError {
-    InvalidContract,
-    PackageLimit,
-    PackagePath,
-    PackageMismatch,
-    RuntimeMismatch,
-    PackageChanged,
-    CaptureFailed,
-    MissingArtifact,
-    StageFailed,
-    ExecutionNotAuthorized,
-    UnsupportedPlatform,
-    UnsupportedRuntime,
-    DependencyUnavailable,
-    InvalidLimits,
-    SpawnFailed,
-    ChannelFailed,
-    OutputLimit,
-    InvalidFrame,
-    HandshakeMismatch,
-    RequestMismatch,
-    ResultMismatch,
-    UnexpectedFrame,
-    Timeout,
-    Cancelled,
-    AuthorityRevoked,
-    Crashed,
-    Closed,
-}
-pub type HostResult<T> = Result<T, HostError>;
-impl std::fmt::Display for HostError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for HostError {}
+pub use host_error::{HostError, HostResult};

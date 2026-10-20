@@ -1,7 +1,7 @@
 //! A suspended leader is admitted to its private Job at process creation.
 //! Job ownership controls lifetime; it does not restrict the user's OS access.
 use std::{
-    ffi::{OsStr, c_void},
+    ffi::OsStr,
     io,
     mem::size_of,
     os::windows::{
@@ -18,15 +18,8 @@ use std::{
 use tokio::net::windows::named_pipe::NamedPipeServer;
 use windows_sys::Win32::{
     Foundation::{
-        ERROR_INSUFFICIENT_BUFFER, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GENERIC_READ,
-        GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
-    },
-    Security::{
-        Authorization::{
-            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-            SDDL_REVISION_1,
-        },
-        GetTokenInformation, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE, HANDLE,
+        INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
     Storage::FileSystem::{
         CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
@@ -46,16 +39,17 @@ use windows_sys::Win32::{
         },
         Threading::{
             CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateEventW, CreateProcessW,
-            DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
-            GetCurrentProcessId, GetExitCodeProcess, InitializeProcThreadAttributeList,
-            LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-            PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION, ResumeThread,
-            STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+            DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcessId,
+            GetExitCodeProcess, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION,
+            ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute,
+            WaitForSingleObject,
         },
     },
 };
 
 use super::{ChildCommand, ChildReader, ChildWriter, OwnedChild};
+use crate::windows_security::PrivateSecurity;
 
 pub(super) struct Process {
     process: OwnedHandle,
@@ -149,76 +143,6 @@ fn command_line(command: &ChildCommand) -> io::Result<Vec<u16>> {
         return Err(invalid("process command line exceeds the Windows limit"));
     }
     Ok(output)
-}
-
-struct LocalAllocation(*mut c_void);
-impl Drop for LocalAllocation {
-    fn drop(&mut self) {
-        unsafe { LocalFree(self.0) };
-    }
-}
-
-/// Only this process token's user can open the unnamed Job and named pipes.
-/// The protected DACL prevents inheritance from broad directory/object defaults.
-struct PrivateSecurity(LocalAllocation);
-impl PrivateSecurity {
-    fn new() -> io::Result<Self> {
-        let mut token = null_mut();
-        checked(unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) })?;
-        let token = handle(token)?;
-        let mut needed = 0;
-        let initial =
-            unsafe { GetTokenInformation(raw(&token), TokenUser, null_mut(), 0, &mut needed) };
-        if initial != 0
-            || io::Error::last_os_error().raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32)
-            || needed == 0
-            || needed > 1024 * 1024
-        {
-            return Err(invalid("invalid process token user information"));
-        }
-        // TOKEN_USER contains pointers, so its storage must be pointer-aligned.
-        let mut storage = vec![0usize; (needed as usize).div_ceil(size_of::<usize>())];
-        checked(unsafe {
-            GetTokenInformation(
-                raw(&token),
-                TokenUser,
-                storage.as_mut_ptr().cast(),
-                needed,
-                &mut needed,
-            )
-        })?;
-        let user = unsafe { &*storage.as_ptr().cast::<TOKEN_USER>() };
-        let mut sid = null_mut();
-        checked(unsafe { ConvertSidToStringSidW(user.User.Sid, &mut sid) })?;
-        let sid_memory = LocalAllocation(sid.cast());
-        // ConvertSidToStringSidW guarantees a NUL-terminated SID string. A SID
-        // has at most 15 subauthorities, comfortably within this bound.
-        let length = (0..256)
-            .find(|index| unsafe { *sid.add(*index) == 0 })
-            .ok_or_else(|| invalid("invalid process token SID"))?;
-        let sid = String::from_utf16(unsafe { std::slice::from_raw_parts(sid, length) })
-            .map_err(|_| invalid("invalid process token SID"))?;
-        drop(sid_memory);
-        let descriptor = wide(OsStr::new(&format!("D:P(A;;GA;;;{sid})")))?;
-        let mut security = null_mut();
-        checked(unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                descriptor.as_ptr(),
-                SDDL_REVISION_1,
-                &mut security,
-                null_mut(),
-            )
-        })?;
-        Ok(Self(LocalAllocation(security)))
-    }
-
-    fn attributes(&self, inherit: bool) -> SECURITY_ATTRIBUTES {
-        SECURITY_ATTRIBUTES {
-            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: self.0.0,
-            bInheritHandle: i32::from(inherit),
-        }
-    }
 }
 
 fn pipe(security: &PrivateSecurity, input: bool) -> io::Result<(NamedPipeServer, OwnedHandle)> {

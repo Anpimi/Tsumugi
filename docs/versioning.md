@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Held-parent Windows filesystem operations now support owned materialization of
+already captured memory artifacts. Explicit artifact flags control file access;
+complete file identities and protected current-user ACLs guard staging and
+cleanup. Process and file objects share one security-descriptor owner. Directory
+capture, Store, runtime identity and shipping support remain gated. This changes
+no public protocol, SDK artifact representation, persistent format, dependency
+version or version source. Application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` remain
+the same undistributed batch, with aligned bilingual Unreleased entries and no
+additional bump. Windows metadata checks do not establish target execution.
+
 Plugin sessions and application members now share the actual child-process
 owner. Launch admission is rechecked before starting the channel, attached pipe
 tasks are aborted on failed admission, and unconfirmed cleanup retains its

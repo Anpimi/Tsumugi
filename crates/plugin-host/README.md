@@ -561,8 +561,8 @@ The Windows backend creates a suspended process with an explicit inherited
 handle list inside a private kill-on-close Job before its initial thread runs.
 Only an explicit start resumes that thread. Successful wait requires both the
 leader's exit and an empty Job; unknown state cannot release staging. This is a
-process backend, not available Windows package loading or Desktop support:
-the filesystem, staging, runtime identity and distribution gates remain closed.
+process backend, not available Windows package loading or Desktop support.
+Directory capture, installation, runtime identity and distribution gates remain closed.
 It requires the Windows 10 Job-list process attribute and does not fall back to
 assigning an already running process.
 
@@ -577,6 +577,29 @@ cargo check --manifest-path crates/plugin-host/process-conformance/Cargo.toml --
 Cross-compilation checks API and type consistency. It does not execute Windows
 Job admission, pipe access controls, descendants or teardown; target execution
 must be checked separately before claiming that platform is supported.
+
+The filesystem backend also supports held-parent-relative Windows operations
+for materializing already captured in-memory artifacts. It uses complete volume
+and file identities, rejects reparse points and multiply linked files, and
+creates protected current-user access controls. Read-only and executable access
+come from each captured artifact's explicit flag, never from a filename or an
+inferred NTFS executable bit. Process pipes, Jobs and files share the same
+current-token security-descriptor implementation.
+
+Cleanup verifies recorded identities and deletes the held Windows object;
+replacement objects and unknown contents are retained. Unix keeps its original
+descriptor-relative operations and observed-binding cleanup policy. These are
+lifecycle and integrity controls, not an OS sandbox against the same user.
+The separate `filesystem-conformance` workspace compiles the actual filesystem,
+runtime and staging sources without the repository/database C libraries:
+
+```sh
+cargo check --manifest-path crates/plugin-host/filesystem-conformance/Cargo.toml --target x86_64-pc-windows-msvc --tests --locked
+```
+
+This does not enable Windows directory capture or package installation: their
+portable executable-flag source still needs a complete artifact contract.
+Actual Windows file behavior must be checked separately from compilation.
 
 `invoke` checks the captured project/scope, package/instance, exact capability,
 input/output/error/profile identities and limits. The SDK correlates the result

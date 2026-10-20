@@ -14,7 +14,7 @@ use crate::{CapturedRuntime, HostError, HostResult};
 pub(crate) struct StagedDirectory {
     path: PathBuf,
     cleanup: bool,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     owned: platform::OwnedDirectory,
 }
 
@@ -32,11 +32,11 @@ impl StagedDirectory {
     /// Recheck the namespace before launch. This is observed binding, not an OS
     /// sandbox or an atomic executable-path lock against other same-user code.
     pub(crate) fn verify_binding(&self) -> HostResult<()> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             self.owned.check_binding()
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         {
             Err(HostError::UnsupportedPlatform)
         }
@@ -45,7 +45,7 @@ impl StagedDirectory {
 
 impl Drop for StagedDirectory {
     fn drop(&mut self) {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if self.cleanup {
             // Unknown entries, replaced paths and failed cleanup are retained.
             // Never recursively delete a newly observed replacement directory.
@@ -61,11 +61,11 @@ pub(crate) fn materialize(
     runtime: Option<&CapturedRuntime>,
     authorized: impl Fn() -> bool,
 ) -> HostResult<StagedDirectory> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         platform::materialize(staging_parent, manifest, package_files, runtime, authorized)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = (staging_parent, manifest, package_files, runtime, authorized);
         Err(HostError::UnsupportedPlatform)
@@ -82,7 +82,7 @@ pub(crate) fn materialize_member(
     runtime: &CapturedRuntime,
     authorized: impl Fn() -> bool,
 ) -> HostResult<StagedDirectory> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         platform::materialize_runtime(
             staging_parent,
@@ -93,14 +93,14 @@ pub(crate) fn materialize_member(
             authorized,
         )
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = (staging_parent, manifest, files, runtime, authorized);
         Err(HostError::UnsupportedPlatform)
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod platform {
     use super::*;
     use crate::{
@@ -109,13 +109,12 @@ mod platform {
     };
     use std::{
         ffi::{OsStr, OsString},
-        fs::{File, Metadata},
+        fs::File,
         io::Write,
-        os::unix::fs::MetadataExt,
         time::{Duration, Instant},
     };
 
-    type Identity = (u64, u64);
+    type Identity = filesystem::Identity;
     const STAGE_TIMEOUT: Duration = Duration::from_secs(60);
 
     #[derive(Debug)]
@@ -155,32 +154,12 @@ mod platform {
         }
     }
 
-    fn metadata(file: &File) -> HostResult<Metadata> {
-        file.metadata().map_err(|_| HostError::StageFailed)
-    }
-
     fn private_directory(file: &File, expected: Identity) -> HostResult<()> {
-        let info = metadata(file)?;
-        if !info.is_dir()
-            || info.uid() != unsafe { libc::geteuid() }
-            || info.mode() & 0o7777 != 0o700
-            || (info.dev(), info.ino()) != expected
-        {
-            return Err(HostError::StageFailed);
-        }
-        Ok(())
+        filesystem::verify_private_directory(file, expected)
     }
 
-    fn owned_file(file: &File, expected: Identity) -> HostResult<Metadata> {
-        let info = metadata(file)?;
-        if !info.is_file()
-            || info.nlink() != 1
-            || info.uid() != unsafe { libc::geteuid() }
-            || (info.dev(), info.ino()) != expected
-        {
-            return Err(HostError::StageFailed);
-        }
-        Ok(info)
+    fn owned_file(file: &File, expected: Identity) -> HostResult<u64> {
+        filesystem::verify_owned_file(file, expected, None)
     }
 
     fn split(path: &str) -> HostResult<(&str, &str)> {
@@ -360,8 +339,9 @@ mod platform {
             let parent = self.open_directory(parent)?;
             let file = filesystem::open_child(&parent, OsStr::new(name), false)
                 .map_err(|_| HostError::StageFailed)?;
-            let info = owned_file(&file, expected.identity)?;
-            if info.len() != expected.length || info.mode() & 0o7777 != expected.mode {
+            let length =
+                filesystem::verify_owned_file(&file, expected.identity, Some(expected.mode))?;
+            if length != expected.length {
                 return Err(HostError::StageFailed);
             }
             Ok(())
@@ -387,7 +367,7 @@ mod platform {
                 let held = filesystem::open_child(&parent, OsStr::new(name), false)
                     .map_err(|_| HostError::StageFailed)?;
                 owned_file(&held, file.identity)?;
-                filesystem::remove_child(&parent, OsStr::new(name), false)
+                filesystem::remove_recorded_child(&parent, OsStr::new(name), false, file.identity)
                     .map_err(|_| HostError::StageFailed)?;
             }
             let mut directories: Vec<_> = self
@@ -406,14 +386,19 @@ mod platform {
                 let child = filesystem::open_child(&held_parent, OsStr::new(name), true)
                     .map_err(|_| HostError::StageFailed)?;
                 private_directory(&child, self.directories[relative])?;
-                filesystem::remove_child(&held_parent, OsStr::new(name), true)
-                    .map_err(|_| HostError::StageFailed)?;
+                filesystem::remove_recorded_child(
+                    &held_parent,
+                    OsStr::new(name),
+                    true,
+                    self.directories[relative],
+                )
+                .map_err(|_| HostError::StageFailed)?;
             }
             if Instant::now() >= deadline {
                 return Err(HostError::Timeout);
             }
             self.check_binding()?;
-            filesystem::remove_child(&self.parent, &self.name, true)
+            filesystem::remove_recorded_child(&self.parent, &self.name, true, self.root_identity)
                 .map_err(|_| HostError::StageFailed)
         }
     }
@@ -488,12 +473,15 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use std::{fs, os::unix::fs::PermissionsExt};
+        use std::fs;
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
 
         fn parent(temporary: &tempfile::TempDir) -> PathBuf {
             let path = temporary.path().join("staging");
             fs::create_dir(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            let (_, directory) = filesystem::open_directory(&path).unwrap();
+            filesystem::set_mode(&directory, 0o700).unwrap();
             path
         }
 
@@ -520,18 +508,21 @@ mod platform {
                 fs::read(path.join("package/resource.bin")).unwrap(),
                 [0, 255, 13, 10]
             );
-            assert_eq!(fs::metadata(&path).unwrap().mode() & 0o7777, 0o700);
-            assert_eq!(
-                fs::metadata(path.join("package")).unwrap().mode() & 0o7777,
-                0o700
-            );
-            assert_eq!(
-                fs::metadata(path.join("package/resource.bin"))
-                    .unwrap()
-                    .mode()
-                    & 0o7777,
-                0o400
-            );
+            #[cfg(unix)]
+            {
+                assert_eq!(fs::metadata(&path).unwrap().mode() & 0o7777, 0o700);
+                assert_eq!(
+                    fs::metadata(path.join("package")).unwrap().mode() & 0o7777,
+                    0o700
+                );
+                assert_eq!(
+                    fs::metadata(path.join("package/resource.bin"))
+                        .unwrap()
+                        .mode()
+                        & 0o7777,
+                    0o400
+                );
+            }
             drop(directory);
             assert!(!path.exists());
             assert_eq!(fs::read(&unrelated).unwrap(), b"preserved");
@@ -592,6 +583,68 @@ mod platform {
             });
             assert!(matches!(result, Err(HostError::AuthorityRevoked)));
             assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        }
+
+        #[test]
+        fn captured_flags_control_permissions_independently_of_file_names() {
+            let temporary = tempfile::tempdir().unwrap();
+            let parent = parent(&temporary);
+            let files = BTreeMap::from([
+                (
+                    "tool.bin".into(),
+                    RuntimeArtifactFile {
+                        bytes: b"tool".to_vec(),
+                        executable: true,
+                    },
+                ),
+                (
+                    "resource.exe".into(),
+                    RuntimeArtifactFile {
+                        bytes: b"data".to_vec(),
+                        executable: false,
+                    },
+                ),
+            ]);
+            let directory = materialize(&parent, b"{}", &files, None, || true).unwrap();
+            for (name, mode) in [("tool.bin", 0o500), ("resource.exe", 0o400)] {
+                let recorded = &directory.owned.files[&format!("package/{name}")];
+                let (_, held_parent) =
+                    filesystem::open_directory(&directory.path().join("package")).unwrap();
+                let file = filesystem::open_child(&held_parent, OsStr::new(name), false).unwrap();
+                assert_eq!(
+                    filesystem::verify_owned_file(&file, recorded.identity, Some(mode)),
+                    Ok(4)
+                );
+            }
+            let path = directory.path().to_owned();
+            drop(directory);
+            assert!(!path.exists());
+        }
+
+        #[test]
+        fn an_unknown_child_prevents_removing_its_owned_namespace() {
+            let temporary = tempfile::tempdir().unwrap();
+            let parent = parent(&temporary);
+            let directory = stage(&parent);
+            let path = directory.path().to_owned();
+            fs::write(path.join("package/unrecorded.bin"), b"retain").unwrap();
+            drop(directory);
+            assert_eq!(
+                fs::read(path.join("package/unrecorded.bin")).unwrap(),
+                b"retain"
+            );
+            assert!(!path.join("package/resource.bin").exists());
+        }
+
+        #[test]
+        fn explicit_keep_preserves_the_complete_materialization() {
+            let temporary = tempfile::tempdir().unwrap();
+            let parent = parent(&temporary);
+            let path = stage(&parent).keep();
+            assert_eq!(
+                fs::read(path.join("package/resource.bin")).unwrap(),
+                [0, 255, 13, 10]
+            );
         }
     }
 }

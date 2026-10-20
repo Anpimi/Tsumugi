@@ -27,6 +27,8 @@ libc = "=0.2.189"
 [target.'cfg(windows)'.dependencies]
 tokio = { version = "=1.53.1", features = ["net"] }
 windows-sys = { version = "=0.61.2", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",

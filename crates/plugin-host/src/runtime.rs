@@ -1,4 +1,5 @@
 //! Immutable runtime bytes approved independently of any plugin or worker.
+#[path = "runtime/member_artifact.rs"]
 mod member_artifact;
 pub use member_artifact::{CapturedMemberArtifact, MemberArtifactManifest};
 

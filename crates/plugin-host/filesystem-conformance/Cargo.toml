@@ -1,0 +1,39 @@
+[package]
+name = "tsumugi-owned-filesystem-conformance"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+license = "MIT"
+description = "Direct platform checks of the Host's actual filesystem and staging implementation"
+
+[workspace]
+resolver = "2"
+
+[features]
+core-adapter = []
+
+[dependencies]
+tsumugi-plugin-sdk = { path = "../../plugin-sdk", default-features = false }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+tempfile = "=3.27.0"
+uuid = { version = "=1.26.1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
