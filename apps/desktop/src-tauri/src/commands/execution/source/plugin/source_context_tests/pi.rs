@@ -794,3 +794,194 @@ fn installed_source_context_pi_manual_share_off_keeps_corrections_without_raw_fa
     );
     peer.empty();
 }
+
+#[test]
+#[ignore = "requires independently captured SMAPI/runtime/member artifacts"]
+fn installed_source_context_pi_inflight_source_change_keeps_request_and_rejects_late_candidate() {
+    let mut fixture = Fixture::new();
+    let (scope, row, page) = fixture.current();
+    let peer = Peer::new();
+    let config = AiConfig {
+        timeout_seconds: 60,
+        ..fixture.config(&peer, true, false)
+    };
+    let plan = fixture.prepare_config(config);
+    let (agent, generation, shared, http) = fixture.start(&peer, &plan);
+    assert_eq!(shared["sourceContext"], source_projection(NAME));
+    assert_private_basis_absent(&http, &plan, &page);
+    let original = fixture.capture(&generation, &http);
+    let before = fixture
+        .ipc(
+            "read_ai_translation",
+            json!({"attemptId":generation["attemptId"]}),
+        )
+        .unwrap();
+    assert!(before["rows"][0]["output"].is_null());
+    assert!(before["rows"][0]["savedRevisionId"].is_null());
+
+    // The complete physical Pi request is the synchronization barrier. Do not
+    // answer it until S2 and the newer human choice have actually committed.
+    let next_name = "In-flight forest manifest 📝";
+    fixture.manifest = fixture.manifest.replace(NAME, next_name);
+    std::fs::write(
+        fixture.source_directory.join("manifest.json"),
+        &fixture.manifest,
+    )
+    .unwrap();
+    let (attempt, result, _) = fixture.checked_source();
+    let comparison = fixture
+        .ipc(
+            "read_source_comparison",
+            json!({"attemptId":attempt,"resultId":result,
+        "base":scope["currentSnapshot"],"filter":"","after":0,"limit":10}),
+        )
+        .unwrap();
+    assert_eq!(comparison["changed"], 2);
+    assert_eq!(comparison["unchanged"], 0);
+    let lineage: Vec<_> = comparison["rows"].as_array().unwrap().iter().map(|change| {
+        assert_eq!(change["kind"], "changed");
+        json!({"newOrdinal":change["new"]["ordinal"],"oldOccurrenceId":change["old"]["occurrenceId"],
+            "decision":"continue","reason":"Keep the same native key after its manifest context changes"})
+    }).collect();
+    let mut confirmation = comparison["confirmation"].clone();
+    confirmation["actor"] = json!("Synthetic in-flight source reviewer");
+    confirmation["lineage"] = json!(lineage);
+    adopt(
+        &fixture.window,
+        &fixture.context,
+        &attempt,
+        &result,
+        confirmation,
+    );
+    let (next_scope, next_row, next_page) = fixture.current();
+    assert_eq!(next_row["unitId"], row["unitId"]);
+    assert_ne!(next_scope["currentSnapshot"], scope["currentSnapshot"]);
+    assert_ne!(next_row["sourceRevisionId"], row["sourceRevisionId"]);
+    assert_local(&fixture, &next_scope, &next_row, &next_page, next_name);
+    let manual_request = json!({"actionId":ExecutionId::new(),"unitId":next_row["unitId"],"locale":"zh-CN",
+        "sourceRevisionId":next_row["sourceRevisionId"],"expectedSelectionId":null,"text":"Newer human translation 🧑🏽‍🚀"});
+    let manual = fixture
+        .ipc("save_translation_revision", manual_request.clone())
+        .unwrap();
+    let history_request =
+        json!({"unitId":row["unitId"],"locale":"zh-CN","afterOrdinal":"0","limit":100});
+    let history = fixture
+        .ipc("read_translation_history", history_request.clone())
+        .unwrap();
+    assert_eq!(
+        history["total"], "2",
+        "the original root candidate and newer human revision are retained"
+    );
+    assert_eq!(history["currentText"], "Newer human translation 🧑🏽‍🚀");
+    assert_eq!(
+        fixture.captures(&generation["attemptId"]),
+        vec![original.clone()]
+    );
+    assert!(!http.raw.contains(next_name));
+    peer.empty();
+
+    http.finish("Late Pi response from the original source 🧶");
+    fixture.terminal(&generation["attemptId"]);
+    let until = Instant::now() + Duration::from_secs(15);
+    let failed = loop {
+        let view = fixture
+            .ipc(
+                "read_ai_translation",
+                json!({"attemptId":generation["attemptId"]}),
+            )
+            .unwrap();
+        if view["rows"][0]["automation"]["phase"] == "failed" {
+            break view;
+        }
+        assert!(
+            view["rows"][0]["savedRevisionId"].is_null(),
+            "late source output was adopted: {view}"
+        );
+        assert!(
+            Instant::now() < until,
+            "stale automatic adoption did not settle: {view}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let late = &failed["rows"][0];
+    assert_eq!(
+        late["output"]["text"],
+        "Late Pi response from the original source 🧶"
+    );
+    assert!(late["savedRevisionId"].is_null());
+    assert_eq!(late["automation"]["error"]["code"], "dependency-conflict");
+    assert_eq!(late["automation"]["error"]["reason"], "ai-source");
+    assert_eq!(
+        fixture
+            .ipc("read_translation_history", history_request.clone())
+            .unwrap(),
+        history
+    );
+    assert_eq!(
+        fixture
+            .ipc("save_translation_revision", manual_request.clone())
+            .unwrap(),
+        manual
+    );
+    assert_eq!(
+        fixture.captures(&generation["attemptId"]),
+        vec![original.clone()]
+    );
+    let rejected = fixture.ipc("prepare_work_plan_agent_generation", json!({"scopeId":agent["scopeId"],
+        "generation":{"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[row["unitId"]]}})).unwrap_err();
+    assert_eq!(rejected["code"], "dependency-conflict");
+    assert_eq!(rejected["reason"], "work-plan-evidence");
+    peer.empty();
+
+    // A saved terminal result does not establish producer drain. Use the
+    // original public quiesce/status boundary before closing the project.
+    fixture.ipc("quiesce_execution", json!({})).unwrap();
+    let until = Instant::now() + Duration::from_secs(30);
+    loop {
+        let status = fixture.ipc("execution_status", json!({})).unwrap();
+        if status["active"] == false && status["quiescing"] == false {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "original producers did not drain: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    call(
+        &fixture.window,
+        "close_project",
+        json!({"sessionToken":fixture.context["sessionToken"]}),
+    )
+    .unwrap();
+    let reopened = call(
+        &fixture.window,
+        "open_project",
+        json!({"locator":fixture.directory.path().join("project")}),
+    )
+    .unwrap();
+    fixture.context = json!({"sessionToken":reopened["sessionToken"],"projectId":reopened["metadata"]["projectId"]});
+    assert_eq!(
+        fixture
+            .ipc("read_translation_history", history_request)
+            .unwrap(),
+        history
+    );
+    assert_eq!(
+        fixture
+            .ipc("save_translation_revision", manual_request)
+            .unwrap(),
+        manual
+    );
+    assert_eq!(fixture.captures(&generation["attemptId"]), vec![original]);
+    let retained = fixture
+        .ipc(
+            "read_ai_translation",
+            json!({"attemptId":generation["attemptId"]}),
+        )
+        .unwrap();
+    assert_eq!(retained["rows"][0]["output"], late["output"]);
+    assert_eq!(retained["rows"][0]["resultId"], late["resultId"]);
+    assert!(retained["rows"][0]["savedRevisionId"].is_null());
+    peer.empty();
+}
