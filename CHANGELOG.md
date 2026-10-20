@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Follow the system appearance with coordinated light and dark colors for the
+  workspace, forms, dialogs, execution output and feedback. Keep existing drafts,
+  permissions and recovery actions while appearance changes.
+
 - Reuse an already received execution result within the same project-open
   attempt, while rechecking its complete stored bytes, row associations, size
   limit and original permission. Keep full history and ordinary read validation.

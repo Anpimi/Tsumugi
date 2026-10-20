@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+The workspace follows the system color-scheme preference using shared light
+and dark semantic tokens. Legacy forms, dialogs and output surfaces use the
+same roles, with no theme state, preference store, command or draft-owner change.
+The page theme color follows the same media condition. Large-text editing reserves
+enough internal scrolling space for the complete draft field beside save feedback.
+Returning focus brings that field into view without changing its selection or text.
+This changes no Core, IPC, SDK, persistent format, dependency or version source. It stays in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+bilingual Unreleased entries and no additional bump.
+
 Project opening reuses one already received execution result within the exact
 input's read-snapshot visit. Every reuse rechecks complete stored bytes, digest,
 item/token/attempt associations, the input-specific size limit and original

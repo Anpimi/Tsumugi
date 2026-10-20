@@ -1300,6 +1300,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     }}>{t("toolQuery.querySelection")}</button></div> : null}
                   {queryUnavailable ? <p role="status">{t("toolQuery.editorUnavailable")}</p> : null}
                   <label className="translation-draft-field">{t("translation.draft")}<textarea ref={draftField} value={textareaDisplayText(draft)}
+                    onFocus={event => event.currentTarget.scrollIntoView({ block: "nearest" })}
                     readOnly={protectionBlocked || editingReady?.scope !== editingProtectionScope(context, displayedTarget, targetLocale) || !editingReady.ready}
                     onCompositionStart={event => {
                       setComposing(true);
