@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+The content workspace uses the pinned `react-resizable-panels` library for
+resizing and accessible separators. Product layout modes, session preferences,
+drafts and navigation keep their existing owners. The dependency and lockfile
+are updated together; Vite includes the bundled dependency licenses in
+`licenses.md`. There is no Core, IPC or project-format change. This remains in
+the same undistributed application `0.2.0-alpha.1` batch, with bilingual
+Unreleased entries and no additional package version bump.
+
 Tool guidance can now be shared with captured model destinations only through
 an explicit, default-off plan policy. The policy enters the original plan digest
 and approval; existing plans without it retain human-only reading. Members see

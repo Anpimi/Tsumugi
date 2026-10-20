@@ -2,10 +2,44 @@ import { createRef, useImperativeHandle, useRef, type ComponentProps, type Ref }
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { GroupProps, Layout, PanelProps, SeparatorProps } from "react-resizable-panels";
 import { ContentPaneLayout, useContentPaneIntent, type ContentPaneLayoutHandle } from "./ContentPaneLayout";
 import { WorkspaceViewMemory, WorkspaceViewProvider } from "./WorkbenchFrame";
-import { controlContentPaneGeometry, panePointer, pointerCaptureFor } from "./testSupport/contentPaneGeometry";
+import { controlContentPaneGeometry, panePointer } from "./testSupport/contentPaneGeometry";
 import { i18n } from "./i18n";
+
+type GroupRecord = { element: HTMLDivElement | null; props: GroupProps; layout: Layout; requested: Layout[] };
+const library = vi.hoisted(() => ({ groups: new Map<string, GroupRecord>(), panels: new Map<string, PanelProps>() }));
+
+// This double exercises only the application's adapter and stable composition.
+// Real library constraints, drag, keyboard and ARIA require browser geometry.
+vi.mock("react-resizable-panels", async () => {
+  const React = await import("react");
+  function attach<T>(ref: Ref<T> | undefined, value: T) { if (typeof ref === "function") ref(value); else if (ref) ref.current = value; }
+  return {
+    Group(props: GroupProps) {
+      const record = React.useRef<GroupRecord>({ element: null, props, layout: {}, requested: [] }).current;
+      record.props = props;
+      React.useLayoutEffect(() => {
+        library.groups.set(props.className ?? "", record);
+        return () => { library.groups.delete(props.className ?? ""); };
+      }, [record, props.className]);
+      React.useImperativeHandle(props.groupRef, () => ({ getLayout: () => record.layout, setLayout: (layout: Layout) => {
+        record.layout = structuredClone(layout); record.requested.push(structuredClone(layout));
+        record.props.onLayoutChanged?.(layout, { isUserInteraction: false, requestedLayout: layout }); return layout;
+      } }), [record]);
+      return <div data-group className={props.className} onKeyDownCapture={props.onKeyDownCapture}
+        ref={element => { record.element = element; attach(props.elementRef, element); }}>{props.children}</div>;
+    },
+    Panel(props: PanelProps) {
+      React.useLayoutEffect(() => { library.panels.set(String(props.id), props); return () => { library.panels.delete(String(props.id)); }; }, [props]);
+      return <div data-panel id={String(props.id)} ref={props.elementRef} hidden={props.hidden} tabIndex={props.tabIndex}><div className={props.className}>{props.children}</div></div>;
+    },
+    Separator(props: SeparatorProps) {
+      return <div data-separator role="separator" ref={props.elementRef} className={props.className} hidden={props.hidden} aria-label={props["aria-label"]}/>;
+    },
+  };
+});
 
 const noop = () => {};
 type TestHandle = ContentPaneLayoutHandle & { captureEditorReveal: () => () => void };
@@ -17,155 +51,168 @@ function Content({ handle, composing = false, active = true, referencesOpen = tr
     editorVisible: () => layout.current?.editorVisible() ?? false, focusVisible: () => layout.current?.focusVisible() }));
   return <ContentPaneLayout ref={layout} intent={intent} active={active} composing={composing} referencesOpen={referencesOpen} hasEditor editorFocus={field} onEditorVisibilityChange={noop}
     list={<div className="translation-entry-list"><button className="translation-entry">Earlier entry</button><button className="translation-entry" aria-current="true">Selected entry</button></div>}
-    editor={<div className="translation-editor"><textarea aria-label="Kept draft" defaultValue="Original draft 日本語" ref={field} /></div>}
-    references={<details className="editor-references" open={referencesOpen}><summary>References</summary><p>Original reference</p></details>} />;
+    editor={<div className="translation-editor"><div className="translation-editor-content"><textarea aria-label="Kept draft" defaultValue="Original draft 日本語" ref={field}/></div><div className="editor-save-bar"><button>Save kept draft</button></div></div>}
+    references={<details className="editor-references" open={referencesOpen}><summary>References</summary><p>Original reference</p></details>}/>;
 }
 function harness(overrides: Partial<ComponentProps<typeof Content>> = {}) {
   const memory = new WorkspaceViewMemory(), handle = createRef<TestHandle>(), resize = controlContentPaneGeometry();
+  const geometry = { width: 0, height: 0, detailWidth: 0, summaryHeight: 52 };
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.classList.contains("translation-columns")) return new DOMRect(0, 0, geometry.width, geometry.height);
+    if (this.classList.contains("translation-detail")) return new DOMRect(0, 0, geometry.detailWidth, geometry.height);
+    if (this.classList.contains("editor-references")) return new DOMRect(0, 0, geometry.detailWidth, geometry.summaryHeight);
+    if (this.hasAttribute("data-separator")) {
+      if (this.hidden) return new DOMRect();
+      const horizontalGroup = this.parentElement?.classList.contains("translation-columns") || library.groups.get("translation-detail")?.props.orientation === "horizontal";
+      return new DOMRect(0, 0, horizontalGroup ? 24 : geometry.detailWidth, horizontalGroup ? geometry.height : 24);
+    }
+    return originalRect.call(this);
+  });
   const tree = (visible = true, props = overrides) => <><button>Outside layout</button><WorkspaceViewProvider value={{ area: "translation", memory, activate: noop, deactivate: noop }}>
-    {visible ? <Content handle={handle} {...props} /> : null}</WorkspaceViewProvider></>;
+    {visible ? <Content handle={handle} {...props}/> : null}</WorkspaceViewProvider></>;
   const rendered = render(tree());
-  const columns = () => rendered.container.querySelector<HTMLDivElement>(".translation-columns")!;
-  return { ...rendered, memory, handle, tree, measure: (width: number, height = 600) => resize(columns(), width, height) };
+  function group(boundary: "list" | "references") {
+    const value = library.groups.get(boundary === "list" ? "translation-columns" : "translation-detail");
+    if (!value?.element) throw new Error("Expected the mounted Group contract"); return value;
+  }
+  function panelId(boundary: "list" | "references") {
+    const panel = Array.from(group(boundary).element?.children ?? []).find(child => child.hasAttribute("data-panel") && child.id.endsWith(`-${boundary}`));
+    if (!panel) throw new Error("Expected the captured panel identity"); return panel.id;
+  }
+  function measure(width: number, height = 600, detailWidth = 600) {
+    Object.assign(geometry, { width, height, detailWidth });
+    const outer = group("list").element, inner = group("references").element;
+    if (!outer || !inner) throw new Error("Expected both product groups");
+    resize(outer, width, height); resize(inner, detailWidth, height);
+  }
+  function complete(boundary: "list" | "references", pixels: number, requested = pixels, user = true) {
+    const value = group(boundary), horizontal = boundary === "list" || value.props.orientation === "horizontal";
+    const axis = horizontal ? boundary === "list" ? geometry.width : geometry.detailWidth : geometry.height;
+    const id = panelId(boundary), layout = { ...value.layout, [id]: pixels / (axis - 24) * 100 };
+    act(() => value.props.onLayoutChanged?.(layout, { isUserInteraction: user, requestedLayout: { ...layout, [id]: requested / (axis - 24) * 100 } }));
+  }
+  return { ...rendered, memory, handle, tree, group, panelId, measure, complete };
 }
-beforeEach(async () => { await i18n.changeLanguage("en-US"); });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+beforeEach(async () => { await i18n.changeLanguage("en-US"); library.groups.clear(); library.panels.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it.each(["en-US", "zh-CN"])("exposes keyboard-operable boundaries with accurate values in %s", async locale => {
-  await i18n.changeLanguage(locale);
-  const ui = harness(); ui.measure(1300);
-  const list = screen.getByRole("separator", { name: i18n.t("contentPaneLayout.resizeList") });
-  const references = screen.getByRole("separator", { name: i18n.t("contentPaneLayout.resizeReferenceWidth") });
-  expect(list).toHaveAttribute("aria-orientation", "vertical");
-  expect(document.getElementById(list.getAttribute("aria-controls")!)).toBeInTheDocument();
-  expect(list).toHaveAttribute("aria-valuenow", "288");
-  fireEvent.keyDown(list, { key: "ArrowRight" }); expect(list).toHaveAttribute("aria-valuenow", "298");
-  fireEvent.keyDown(list, { key: "ArrowLeft", shiftKey: true }); expect(list).toHaveAttribute("aria-valuenow", "258");
-  fireEvent.keyDown(list, { key: "End" }); expect(list).toHaveAttribute("aria-valuenow", "400");
-  fireEvent.keyDown(list, { key: "Home" }); expect(list).toHaveAttribute("aria-valuenow", "200");
-  fireEvent.keyDown(list, { key: "ArrowRight", ctrlKey: true }); expect(list).toHaveAttribute("aria-valuenow", "200");
-  fireEvent.keyDown(references, { key: "ArrowLeft" }); expect(references).toHaveAttribute("aria-valuenow", "298");
-  fireEvent.keyDown(references, { key: "Home" }); expect(references).toHaveAttribute("aria-valuenow", "200");
-  expect(references).toHaveAttribute("aria-valuetext", i18n.t("contentPaneLayout.pixels", { value: "200" }));
-  expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(200);
+it.each(["en-US", "zh-CN"])("labels library separators and delegates both orientations in %s", async locale => {
+  await i18n.changeLanguage(locale); const ui = harness(); ui.measure(1300, 600, 988);
+  expect(screen.getByRole("separator", { name: i18n.t("contentPaneLayout.resizeList") })).toBeInTheDocument();
+  expect(screen.getByRole("separator", { name: i18n.t("contentPaneLayout.resizeReferenceWidth") })).toBeInTheDocument();
+  expect(ui.group("references").props.orientation).toBe("horizontal"); ui.measure(900, 600, 636);
+  expect(screen.getByRole("separator", { name: i18n.t("contentPaneLayout.resizeReferenceHeight") })).toBeInTheDocument();
+  expect(ui.group("references").props.orientation).toBe("vertical");
 });
 
-it("keeps separate mode preferences, clamps the rendered width and restores the wider preference", async () => {
-  const ui = harness(), user = userEvent.setup(); ui.measure(1300);
-  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize entry list" }), { key: "End" });
-  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize reference width" }), { key: "End" });
-  ui.measure(900);
-  const compactList = screen.getByRole("separator", { name: "Resize entry list" }), compactReferences = screen.getByRole("separator", { name: "Resize reference height" });
-  expect(compactList).toHaveAttribute("aria-valuenow", "240");
-  expect(compactReferences).toHaveAttribute("aria-orientation", "horizontal");
-  fireEvent.keyDown(compactList, { key: "ArrowRight" });
-  fireEvent.keyDown(compactReferences, { key: "ArrowUp" });
-  expect(compactReferences).toHaveAttribute("aria-valuenow", "160");
-  ui.measure(600); await user.click(screen.getByRole("button", { name: "Current entry" }));
-  const narrowReferences = screen.getByRole("separator", { name: "Resize reference height" });
-  expect(narrowReferences).toHaveAttribute("aria-valuenow", "150");
-  fireEvent.keyDown(narrowReferences, { key: "ArrowUp", shiftKey: true });
-  expect(narrowReferences).toHaveAttribute("aria-valuenow", "190");
-  ui.measure(1100);
-  expect(screen.getByRole("separator", { name: "Resize entry list" })).toHaveAttribute("aria-valuenow", "400");
-  expect(screen.getByRole("separator", { name: "Resize reference width" })).toHaveAttribute("aria-valuenow", "292");
+it("persists only completed user requests in pixels, retaining requested rather than temporarily constrained sizes", () => {
+  const ui = harness(); ui.measure(1300, 600, 988);
+  ui.complete("list", 320, 400, false); expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(288);
+  ui.complete("list", 320, 400); expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(400);
+  ui.complete("references", 292, 400); expect(ui.memory.read("translation", "paneLayout.wide.referenceWidth")).toBe(400);
+});
+
+it("loads separate pixel preferences through Group APIs on mode changes without overwriting them on resize", async () => {
+  const ui = harness(), user = userEvent.setup(); ui.measure(1300, 600, 988); ui.complete("list", 400); ui.complete("references", 400);
+  ui.measure(900, 600, 636); ui.complete("list", 250); ui.complete("references", 160);
+  ui.measure(600); await user.click(screen.getByRole("button", { name: "Current entry" })); ui.complete("references", 190);
+  ui.measure(1100, 600, 676);
+  const listId = ui.panelId("list"), referenceId = ui.panelId("references");
+  expect(ui.group("list").layout[listId]).toBeCloseTo(400 / 1076 * 100);
+  expect(ui.group("references").layout[referenceId]).toBeCloseTo(400 / 652 * 100);
   expect(ui.memory.read("translation", "paneLayout.wide.referenceWidth")).toBe(400);
-  ui.measure(1300);
-  expect(screen.getByRole("separator", { name: "Resize reference width" })).toHaveAttribute("aria-valuenow", "400");
-  ui.measure(900);
-  expect(screen.getByRole("separator", { name: "Resize entry list" })).toHaveAttribute("aria-valuenow", "250");
-  expect(screen.getByRole("separator", { name: "Resize reference height" })).toHaveAttribute("aria-valuenow", "160");
+  ui.measure(900, 600, 636);
+  expect(ui.group("list").layout[listId]).toBeCloseTo(250 / 876 * 100);
+  expect(ui.group("references").layout[referenceId]).toBeCloseTo(160 / 576 * 100);
+  expect(ui.memory.read("translation", "paneLayout.narrow.referenceHeight")).toBe(190);
 });
 
-it("previews a captured pointer drag and commits its preference only on pointerup", () => {
-  const ui = harness(); ui.measure(1300);
-  const field = screen.getByRole("textbox", { name: "Kept draft" }), separator = screen.getByRole("separator", { name: "Resize entry list" });
-  const capture = pointerCaptureFor(separator);
-  panePointer(separator, "pointerdown", 300);
-  panePointer(separator, "pointermove", 350);
-  expect(capture.set).toHaveBeenCalledExactlyOnceWith(1);
-  expect(separator).toHaveAttribute("aria-valuenow", "338");
-  expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(288);
-  panePointer(separator, "pointerup", 350);
-  expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(338);
-  expect(capture.release).toHaveBeenCalledExactlyOnceWith(1);
-  panePointer(separator, "lostpointercapture", 350);
-  expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
-  expect(separator).toHaveAttribute("aria-valuenow", "338");
-});
-
-it.each(["pointercancel", "lostpointercapture", "resize", "unmount"])("rolls back temporary geometry on %s and releases the captured pointer", reason => {
-  const ui = harness(); ui.measure(1300);
-  const separator = screen.getByRole("separator", { name: "Resize entry list" }), capture = pointerCaptureFor(separator);
-  panePointer(separator, "pointerdown", 300); panePointer(separator, "pointermove", 380);
-  expect(separator).toHaveAttribute("aria-valuenow", "368");
-  if (reason === "resize") ui.measure(1200);
-  else if (reason === "unmount") ui.rerender(ui.tree(false));
+it.each(["pointercancel", "lostpointercapture", "blur", "pagehide", "resize"])("rolls back a cancelled library gesture on %s without later saving it", async reason => {
+  const ui = harness(); ui.measure(1300, 600, 988);
+  const separator = screen.getByRole("separator", { name: "Resize entry list" }), group = ui.group("list"), initial = structuredClone(group.layout);
+  panePointer(separator, "pointerdown", 300); group.layout = { ...group.layout, [ui.panelId("list")]: 40 };
+  if (reason === "resize") ui.measure(1200, 600, 888);
+  else if (reason === "blur" || reason === "pagehide") fireEvent(window, new Event(reason));
   else panePointer(separator, reason, 380);
+  ui.complete("list", 368);
   expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(288);
-  expect(capture.release).toHaveBeenCalledExactlyOnceWith(1);
-  if (reason !== "unmount") expect(separator).toHaveAttribute("aria-valuenow", "288");
+  if (reason === "resize") {
+    expect(group.props.disabled).toBe(true);
+    // A later completion cannot turn the cancelled interaction into a preference.
+    panePointer(separator, "pointerup", 410); ui.complete("list", 398);
+    expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(288);
+  } else expect(group.layout).toEqual(initial);
+  await act(async () => {});
+  if (reason === "resize") {
+    expect(group.props.disabled).toBe(false);
+    expect(group.layout[ui.panelId("list")]).toBeCloseTo(288 / 1176 * 100);
+  }
 });
 
-it("finishes the reference boundary at the released position without replacing another captured pointer", () => {
-  const ui = harness(); ui.measure(900);
-  const separator = screen.getByRole("separator", { name: "Resize reference height" }), capture = pointerCaptureFor(separator);
-  panePointer(separator, "pointerdown", 0, 400);
-  panePointer(separator, "pointermove", 0, 380);
-  panePointer(separator, "pointerdown", 0, 300, 2);
-  panePointer(separator, "pointerup", 0, 200, 2);
-  expect(capture.set).toHaveBeenCalledExactlyOnceWith(1);
-  expect(separator).toHaveAttribute("aria-valuenow", "170");
-  panePointer(separator, "pointerup", 0, 350);
-  expect(separator).toHaveAttribute("aria-valuenow", "200");
-  expect(ui.memory.read("translation", "paneLayout.compact.referenceHeight")).toBe(200);
-  expect(capture.release).toHaveBeenCalledExactlyOnceWith(1);
+it("keeps original preferences through hidden zero geometry and a consumer remount", () => {
+  const ui = harness(); ui.measure(1300, 600, 988); ui.complete("list", 400);
+  const before = structuredClone(ui.group("list").layout); ui.measure(0, 0, 0);
+  expect(ui.group("list").layout).toEqual(before); expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(400);
+  ui.rerender(ui.tree(false)); ui.rerender(ui.tree()); ui.measure(1300, 600, 988);
+  expect(ui.group("list").layout[ui.panelId("list")]).toBeCloseTo(400 / 1276 * 100);
 });
 
-it("retains geometry through consumer remount and ignores zero measurements from hidden containers", () => {
-  const ui = harness(); ui.measure(1300);
-  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize entry list" }), { key: "End" });
-  ui.measure(0, 0);
-  expect(screen.getByRole("separator", { name: "Resize entry list" })).toHaveAttribute("aria-valuenow", "400");
-  ui.rerender(ui.tree(false)); ui.rerender(ui.tree()); ui.measure(1300);
-  expect(screen.getByRole("separator", { name: "Resize entry list" })).toHaveAttribute("aria-valuenow", "400");
+it("does not cancel a library gesture for a descendant input blur", async () => {
+  const ui = harness(); ui.measure(1300, 600, 988);
+  const separator = screen.getByRole("separator", { name: "Resize entry list" });
+  panePointer(separator, "pointerdown", 300);
+  fireEvent.blur(screen.getByRole("textbox", { name: "Kept draft" }));
+  ui.complete("list", 368);
+  expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(368);
+  expect(ui.group("list").props.disabled).toBe(false);
+  panePointer(separator, "pointerup", 380);
+  await act(async () => {});
+});
+
+it("loads natural closed summary height and lowers expanded reference constraints in a short container", () => {
+  const ui = harness({ referencesOpen: false }); ui.measure(900, 200, 636);
+  const summary = screen.getByText("References", { selector: "summary" }), field = screen.getByRole("textbox", { name: "Kept draft" });
+  const referenceId = ui.panelId("references");
+  expect(library.panels.get(referenceId)?.minSize).toBe(52); expect(library.panels.get(referenceId)?.maxSize).toBe(52);
+  ui.rerender(ui.tree(true, { referencesOpen: true }));
+  expect(library.panels.get(referenceId)?.minSize).toBe(56); expect(library.panels.get(referenceId)?.maxSize).toBe(56);
+  expect(screen.getByText("References", { selector: "summary" })).toBe(summary); expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
+  expect(field.closest(".translation-editor-content")?.nextElementSibling).toHaveClass("editor-save-bar");
+  ui.rerender(ui.tree(true, { referencesOpen: false })); expect(summary).toBeVisible();
 });
 
 it("keeps one editor node and its selection while switching modes and rehomes hidden focus", async () => {
-  const ui = harness(), user = userEvent.setup(); ui.measure(1300);
-  const field = screen.getByRole("textbox", { name: "Kept draft" }) as HTMLTextAreaElement;
-  field.focus(); field.setSelectionRange(2, 8);
-  ui.measure(600);
-  expect(screen.getByRole("button", { name: "Selected entry" })).toHaveFocus();
-  expect(field).not.toBeVisible();
+  const ui = harness(), user = userEvent.setup(); ui.measure(1300, 600, 988);
+  const field = screen.getByRole("textbox", { name: "Kept draft" });
+  if (!(field instanceof HTMLTextAreaElement)) throw new Error("Expected the original editor");
+  field.focus(); field.setSelectionRange(2, 8); ui.measure(600);
+  expect(screen.getByRole("button", { name: "Selected entry" })).toHaveFocus(); expect(field).not.toBeVisible();
   await user.click(screen.getByRole("button", { name: "Current entry" }));
-  expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
-  expect(field).toHaveFocus(); expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(8);
-  expect(field).toHaveValue("Original draft 日本語");
-  ui.measure(900);
-  expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
+  expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field); expect(field).toHaveFocus();
+  expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(8); expect(field).toHaveValue("Original draft 日本語");
+  ui.measure(900); expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
 });
 
-it("keeps composition visible when narrowing and rejects pane switches and boundary input", () => {
-  const ui = harness({ composing: true }); ui.measure(1300);
-  const separator = screen.getByRole("separator", { name: "Resize entry list" }), capture = pointerCaptureFor(separator);
-  fireEvent.keyDown(separator, { key: "ArrowRight" }); panePointer(separator, "pointerdown", 300); panePointer(separator, "pointermove", 380);
-  expect(capture.set).not.toHaveBeenCalled(); expect(separator).toHaveAttribute("aria-valuenow", "288");
-  const field = screen.getByRole("textbox", { name: "Kept draft" }); ui.measure(500);
-  expect(field).toBeVisible(); expect(screen.getByRole("button", { name: "Entries" })).toBeDisabled();
+it("keeps composition visible and guards only composing separator keys, never the editor's IME keys", () => {
+  const ui = harness(); ui.measure(1300, 600, 988);
+  const separator = screen.getByRole("separator", { name: "Resize entry list" }), listener = vi.fn(); separator.addEventListener("keydown", listener);
+  fireEvent.keyDown(separator, { key: "ArrowRight", isComposing: true }); expect(listener).not.toHaveBeenCalled();
+  const field = screen.getByRole("textbox", { name: "Kept draft" }), key = new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true });
+  fireEvent(field, key); expect(key.defaultPrevented).toBe(false);
+  ui.rerender(ui.tree(true, { composing: true })); ui.complete("list", 400);
+  expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(288); expect(ui.group("list").props.disabled).toBe(true);
+  ui.measure(500); expect(field).toBeVisible(); expect(screen.getByRole("button", { name: "Entries" })).toBeDisabled();
   ui.rerender(ui.tree(true, { composing: false })); expect(field).toBeVisible();
 });
 
 it("honors a later list choice over an asynchronous reveal and consumes same-pane reveals without later focus theft", async () => {
   const ui = harness(), user = userEvent.setup(); ui.measure(600);
-  const stale = ui.handle.current!.captureEditorReveal();
-  await user.click(screen.getByRole("button", { name: "Entries" }));
-  act(() => stale());
+  const stale = ui.handle.current?.captureEditorReveal(); if (!stale) throw new Error("Expected reveal intent");
+  await user.click(screen.getByRole("button", { name: "Entries" })); act(() => stale());
   expect(screen.getByRole("button", { name: "Entries" })).toHaveAttribute("aria-pressed", "true");
-  const current = ui.handle.current!.captureEditorReveal(); act(() => current());
-  const field = screen.getByRole("textbox", { name: "Kept draft" }); expect(field).toBeVisible();
-  act(() => ui.handle.current!.captureEditorReveal()());
-  const outside = screen.getByRole("button", { name: "Outside layout" }); outside.focus();
-  ui.measure(900); expect(outside).toHaveFocus();
-  expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
+  act(() => ui.handle.current?.captureEditorReveal()()); const field = screen.getByRole("textbox", { name: "Kept draft" }); expect(field).toBeVisible();
+  act(() => ui.handle.current?.captureEditorReveal()());
+  const outside = screen.getByRole("button", { name: "Outside layout" }); outside.focus(); ui.measure(900);
+  expect(outside).toHaveFocus(); expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
 });

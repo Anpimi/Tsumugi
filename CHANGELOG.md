@@ -10,6 +10,9 @@ Current development compatibility is project schema 60 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Use shared resizable-panel controls for the content workspace, retaining
+  separate layout preferences and the current editor across width changes.
+
 - Explicitly opt in to share declared tool guidance with captured model
   destinations. Members receive a directory first and may request the linked
   Skill or reference text through the original controlled tool boundary.

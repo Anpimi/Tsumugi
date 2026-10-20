@@ -1,15 +1,24 @@
-import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref, type RefObject } from "react";
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
+import { Group, Panel, Separator, type GroupImperativeHandle, type Layout, type LayoutChangedMeta } from "react-resizable-panels";
 import { useWorkbenchState } from "./WorkbenchFrame";
 import "./ContentPaneLayout.css";
 
 type Mode = "wide" | "compact" | "narrow";
 type Pane = "list" | "editor";
-type Boundary = "list" | "references";
-type Bounds = { min: number; max: number; value: number };
-type Drag = { boundary: Boundary; mode: Mode; pointer: number; element: HTMLDivElement; start: number; initial: number; value: number; direction: number; bounds: Bounds };
+type Gesture = { group: GroupImperativeHandle; element: HTMLDivElement; layout: Layout; pointer: number; mode: Mode; cancelled: boolean };
 const gutter = 24;
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+/** Group layouts use percentages of panel space, excluding the separator. */
+function availableSize(element: HTMLDivElement | null, horizontal: boolean) {
+  if (!element) return 0;
+  const rect = element.getBoundingClientRect(), extent = horizontal ? rect.width : rect.height;
+  if (extent <= 0) return 0;
+  const separators = Array.from(element.children).filter(child => child.hasAttribute("data-separator"));
+  return extent - separators.reduce((total, child) => {
+    const rect = child.getBoundingClientRect(); return total + (horizontal ? rect.width : rect.height);
+  }, 0);
+}
 
 export interface ContentPaneLayoutHandle {
   editorVisible: () => boolean;
@@ -41,63 +50,119 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
   composing: boolean; active: boolean; editorFocus: RefObject<HTMLTextAreaElement | null>;
   onEditorVisibilityChange: (visible: boolean) => void; intent: ReturnType<typeof useContentPaneIntent>; ref?: Ref<ContentPaneLayoutHandle>;
 }) {
-  const { t, i18n } = useTranslation(), id = useId();
+  const { t } = useTranslation(), id = useId();
   const [wideList, setWideList] = useWorkbenchState("translation", "paneLayout.wide.listWidth", 288);
   const [wideReferences, setWideReferences] = useWorkbenchState("translation", "paneLayout.wide.referenceWidth", 288);
   const [compactList, setCompactList] = useWorkbenchState("translation", "paneLayout.compact.listWidth", 240);
   const [compactReferences, setCompactReferences] = useWorkbenchState<number | null>("translation", "paneLayout.compact.referenceHeight", null);
   const [narrowReferences, setNarrowReferences] = useWorkbenchState<number | null>("translation", "paneLayout.narrow.referenceHeight", null);
-  const columns = useRef<HTMLDivElement>(null), listPane = useRef<HTMLDivElement>(null), detail = useRef<HTMLDivElement>(null);
+  const columns = useRef<HTMLDivElement>(null), listPane = useRef<HTMLDivElement>(null), detail = useRef<HTMLDivElement>(null), referenceGroup = useRef<HTMLDivElement>(null);
   const editorPane = useRef<HTMLDivElement>(null), referencePane = useRef<HTMLDivElement>(null), paneButtons = useRef<HTMLDivElement>(null);
-  const listSeparator = useRef<HTMLDivElement>(null), referenceSeparator = useRef<HTMLDivElement>(null);
-  const alive = useRef(false), focusRequested = useRef(false), drag = useRef<Drag | null>(null);
+  const listSeparator = useRef<HTMLDivElement>(null), outer = useRef<GroupImperativeHandle>(null), inner = useRef<GroupImperativeHandle>(null);
+  const alive = useRef(false), focusRequested = useRef(false), gesture = useRef<Gesture | null>(null);
   const measured = useRef({ width: 0, height: 0 });
   const [size, setSize] = useState(measured.current);
-  const [preview, setPreview] = useState<{ boundary: Boundary; mode: Mode; value: number } | null>(null);
-  // An unmeasured or hidden container retains the previous valid geometry.
-  const width = size.width || 800, height = size.height || 600;
+  const [detailSize, setDetailSize] = useState({ width: 0, height: 0 }), [closedReferenceHeight, setClosedReferenceHeight] = useState(0);
+  const [gestureCancelled, setGestureCancelled] = useState(false);
   const mode: Mode = size.width >= 1100 ? "wide" : size.width > 0 && size.width < 660 ? "narrow" : "compact";
   const pane = hasEditor && (composing || intent.pane === "editor") ? "editor" : "list";
   const editorVisible = mode !== "narrow" || pane === "editor", listVisible = mode !== "narrow" || pane === "list";
   const previouslyVisible = useRef(editorVisible), seenReveal = useRef(intent.revealVersion);
   const referenceSide = mode === "wide" && hasEditor && referencesOpen;
-  const temporary = (boundary: Boundary, preferred: number) => preview?.mode === mode && preview.boundary === boundary ? preview.value : preferred;
-  const listMax = Math.max(200, Math.min(400, width - gutter - 360 - (referenceSide ? 200 + gutter : 0)));
-  const listWidth = clamp(temporary("list", mode === "wide" ? wideList : compactList), 200, listMax);
-  const referenceMax = referenceSide ? Math.max(200, Math.min(400, width - listWidth - 2 * gutter - 360))
-    : Math.max(0, Math.min(280, Math.floor(height * .4), height - gutter - Math.min(240, height * .6)));
-  const referenceMin = referenceSide ? 200 : Math.min(96, referenceMax);
-  const preferredReference = mode === "wide" ? wideReferences : (mode === "compact" ? compactReferences : narrowReferences) ?? Math.round(height * .25);
-  const referenceSize = clamp(temporary("references", preferredReference), referenceMin, referenceMax);
-  const listBounds: Bounds = { min: 200, max: Math.max(200, Math.min(400, width - gutter - 360 - (referenceSide ? referenceSize + gutter : 0))), value: listWidth };
-  const referenceBounds: Bounds = { min: referenceMin, max: referenceMax, value: referenceSize };
+  const hasReferences = hasEditor && references !== null, disabled = !active || composing || gestureCancelled;
+  const height = detailSize.height || size.height;
+  const editorMinimum = referenceSide ? 360 : Math.min(240, height * .6);
+  const referenceMaximum = referenceSide ? 400 : Math.max(0, Math.min(280, Math.floor(height * .4), height - gutter - editorMinimum));
+  const referenceMinimum = referenceSide ? 200 : Math.min(96, referenceMaximum);
+  const preferredList = mode === "wide" ? wideList : compactList;
+  const preferredReference = referenceSide ? wideReferences : (mode === "compact" ? compactReferences : narrowReferences) ?? Math.round(height * .25);
 
-  const cancelDrag = useCallback(() => {
-    const captured = drag.current;
-    drag.current = null;
-    if (captured?.element.hasPointerCapture(captured.pointer)) captured.element.releasePointerCapture(captured.pointer);
-    if (alive.current) setPreview(null);
+  // The library ends cancelled gestures at their current size. Preserve this
+  // product's rollback by restoring its starting layout, without sizing math.
+  const cancelGesture = useCallback(() => {
+    const captured = gesture.current;
+    if (!captured) return;
+    captured.cancelled = true;
+    if (alive.current && captured.element.isConnected) {
+      captured.group.setLayout(captured.layout);
+      // Disable the library interaction as well: a resize alone does not end it.
+      setGestureCancelled(true);
+    }
   }, []);
   useLayoutEffect(() => {
     alive.current = true;
-    return () => { alive.current = false; cancelDrag(); };
-  }, [cancelDrag]);
+    return () => { alive.current = false; gesture.current = null; };
+  }, []);
   useLayoutEffect(() => {
-    const element = columns.current;
-    if (!element) return;
+    const element = columns.current, nested = referenceGroup.current;
+    if (!element || !nested) return;
     const measure = (width: number, height: number) => {
       if (width <= 0 || height <= 0 || (width === measured.current.width && height === measured.current.height)) return;
-      cancelDrag(); measured.current = { width, height }; setSize(measured.current);
+      cancelGesture(); measured.current = { width, height }; setSize(measured.current);
     };
     const rect = element.getBoundingClientRect(); measure(rect.width, rect.height);
     const observer = new ResizeObserver(entries => {
       const entry = entries.find(value => value.target === element);
       if (entry) measure(entry.contentRect.width, entry.contentRect.height);
+      const inner = entries.find(value => value.target === nested)?.contentRect;
+      if (inner && inner.width > 0 && inner.height > 0) setDetailSize(before => before.width === inner.width && before.height === inner.height ? before : { width: inner.width, height: inner.height });
     });
-    observer.observe(element);
+    observer.observe(element); observer.observe(nested);
     return () => observer.disconnect();
-  }, [cancelDrag]);
-  useLayoutEffect(() => { cancelDrag(); }, [mode, active, composing, referencesOpen, cancelDrag]);
+  }, [cancelGesture]);
+  useLayoutEffect(() => { cancelGesture(); }, [mode, active, composing, referencesOpen, cancelGesture]);
+  useLayoutEffect(() => {
+    const element = referencePane.current?.querySelector<HTMLElement>(".editor-references");
+    if (!element || !hasReferences || referencesOpen) return;
+    const measure = () => { const height = element.getBoundingClientRect().height; if (height > 0) setClosedReferenceHeight(height); };
+    measure(); const observer = new ResizeObserver(measure); observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasReferences, referencesOpen]);
+  useLayoutEffect(() => {
+    const available = availableSize(columns.current, true);
+    if (available <= 0) return;
+    const list = mode === "narrow" ? listVisible ? 100 : 0 : preferredList / available * 100;
+    outer.current?.setLayout({ [`${id}-list`]: list, [`${id}-detail`]: 100 - list });
+  }, [id, mode, listVisible, preferredList, size.width, referenceSide, gestureCancelled]);
+  useLayoutEffect(() => {
+    const available = availableSize(referenceGroup.current, referenceSide);
+    if (available <= 0) return;
+    const reference = !hasReferences ? 0 : (referencesOpen ? preferredReference : closedReferenceHeight) / available * 100;
+    inner.current?.setLayout({ [`${id}-editor`]: 100 - reference, [`${id}-references`]: reference });
+  }, [id, mode, editorVisible, referenceSide, hasReferences, referencesOpen, closedReferenceHeight, preferredReference, detailSize.width, detailSize.height, size.height, gestureCancelled]);
+  useLayoutEffect(() => {
+    const element = columns.current, win = element?.ownerDocument.defaultView;
+    if (!element || !win) return;
+    const begin = (event: globalThis.PointerEvent) => {
+      if (disabled || gesture.current || event.button !== 0 || event.isPrimary === false || !(event.target instanceof Element)) return;
+      const separator = event.target.closest("[data-separator]"), groupElement = separator?.closest<HTMLDivElement>("[data-group]");
+      const group = groupElement === columns.current ? outer.current : groupElement === referenceGroup.current ? inner.current : null;
+      if (!separator || !group || !groupElement || availableSize(groupElement, groupElement === columns.current || referenceSide) <= 0) return;
+      gesture.current = { group, element: groupElement, pointer: event.pointerId, mode, layout: group.getLayout(), cancelled: false };
+    };
+    const finish = (event: globalThis.PointerEvent) => {
+      const captured = gesture.current;
+      if (!captured || captured.pointer !== event.pointerId) return;
+      if (captured.cancelled && captured.element.isConnected) captured.group.setLayout(captured.layout);
+      queueMicrotask(() => { if (gesture.current === captured) { gesture.current = null; if (alive.current) setGestureCancelled(false); } });
+    };
+    const cancel = (event: globalThis.PointerEvent) => { if (gesture.current?.pointer === event.pointerId) { cancelGesture(); finish(event); } };
+    const endWindowGesture = () => {
+      const captured = gesture.current;
+      cancelGesture();
+      queueMicrotask(() => { if (gesture.current === captured) { gesture.current = null; if (alive.current) setGestureCancelled(false); } });
+    };
+    const blur = (event: Event) => { if (event.target === event.currentTarget) endWindowGesture(); };
+    // Window capture precedes the library's document capture completion callback.
+    win.addEventListener("pointerdown", begin, true); win.addEventListener("pointerup", finish, true);
+    win.addEventListener("pointercancel", cancel, true); win.addEventListener("lostpointercapture", cancel, true);
+    win.addEventListener("blur", blur, true); win.addEventListener("pagehide", endWindowGesture, true);
+    return () => {
+      win.removeEventListener("pointerdown", begin, true); win.removeEventListener("pointerup", finish, true);
+      win.removeEventListener("pointercancel", cancel, true); win.removeEventListener("lostpointercapture", cancel, true);
+      win.removeEventListener("blur", blur, true); win.removeEventListener("pagehide", endWindowGesture, true);
+    };
+  }, [mode, disabled, referenceSide, cancelGesture]);
   // Composition already derives a visible editor. Retain that choice after the
   // workbench owner's layout effects have made its memory setter available.
   useEffect(() => { if (composing && hasEditor) intent.retainEditor(); }, [composing, hasEditor, intent.retainEditor]);
@@ -129,76 +194,51 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
   }));
   function choosePane(next: Pane) {
     if (composing || (next === "editor" && !hasEditor)) return;
-    intent.choosePane(next); cancelDrag();
+    intent.choosePane(next); cancelGesture();
     if (next === pane) { focusRequested.current = false; focusVisible(); }
     else focusRequested.current = true;
   }
-  function commit(boundary: Boundary, value: number) {
-    if (boundary === "list") (mode === "wide" ? setWideList : setCompactList)(Math.round(value));
-    else if (mode === "wide") setWideReferences(Math.round(value));
-    else (mode === "compact" ? setCompactReferences : setNarrowReferences)(Math.round(value));
+  function changed(boundary: "list" | "references", layout: Layout, meta: LayoutChangedMeta) {
+    if (!alive.current || disabled || !meta.isUserInteraction || gesture.current?.cancelled || gesture.current && gesture.current.mode !== mode) return;
+    if (boundary === "list" && mode === "narrow" || boundary === "references" && (!hasReferences || !referencesOpen)) return;
+    const available = availableSize(boundary === "list" ? columns.current : referenceGroup.current, boundary === "list" || referenceSide);
+    const percentage = (meta.requestedLayout ?? layout)[`${id}-${boundary}`];
+    if (available <= 0 || percentage === undefined) return;
+    const pixels = Math.round(percentage / 100 * available);
+    if (boundary === "list") (mode === "wide" ? setWideList : setCompactList)(pixels);
+    else if (referenceSide) setWideReferences(pixels);
+    else (mode === "compact" ? setCompactReferences : setNarrowReferences)(pixels);
   }
-  function start(event: PointerEvent<HTMLDivElement>, boundary: Boundary, bounds: Bounds) {
-    if (!active || composing || drag.current || event.button !== 0 || !event.isPrimary) return;
-    event.preventDefault();
-    const horizontal = boundary === "list" || referenceSide;
-    drag.current = { boundary, mode, pointer: event.pointerId, element: event.currentTarget, start: horizontal ? event.clientX : event.clientY,
-      initial: bounds.value, value: bounds.value, bounds, direction: boundary === "list" ? 1 : -1 };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-  function move(event: PointerEvent<HTMLDivElement>) {
-    const captured = drag.current;
-    if (!captured || captured.pointer !== event.pointerId) return;
-    const horizontal = captured.boundary === "list" || captured.mode === "wide";
-    captured.value = clamp(captured.initial + ((horizontal ? event.clientX : event.clientY) - captured.start) * captured.direction, captured.bounds.min, captured.bounds.max);
-    setPreview({ boundary: captured.boundary, mode: captured.mode, value: captured.value });
-  }
-  function finish(event: PointerEvent<HTMLDivElement>) {
-    const captured = drag.current;
-    if (!captured || captured.pointer !== event.pointerId) return;
-    move(event);
-    drag.current = null;
-    if (captured.mode === mode) commit(captured.boundary, captured.value);
-    if (captured.element.hasPointerCapture(captured.pointer)) captured.element.releasePointerCapture(captured.pointer);
-    setPreview(null);
-  }
-  function keyboard(event: KeyboardEvent<HTMLDivElement>, boundary: Boundary, bounds: Bounds) {
-    if (!active || composing || event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
-    const horizontal = boundary === "list" || referenceSide, step = event.shiftKey ? 40 : 10;
-    const direction = boundary === "list" ? 1 : -1;
-    const change = event.key === (horizontal ? "ArrowRight" : "ArrowDown") ? step * direction
-      : event.key === (horizontal ? "ArrowLeft" : "ArrowUp") ? -step * direction : null;
-    if (change === null && event.key !== "Home" && event.key !== "End") return;
-    event.preventDefault(); cancelDrag();
-    commit(boundary, event.key === "Home" ? bounds.min : event.key === "End" ? bounds.max : clamp(bounds.value + (change ?? 0), bounds.min, bounds.max));
-  }
-  function separator(boundary: Boundary, bounds: Bounds, hidden: boolean) {
-    const horizontal = boundary === "list" || referenceSide;
-    return <div ref={boundary === "list" ? listSeparator : referenceSeparator} className={`content-pane-separator content-pane-separator-${boundary}`}
-      hidden={hidden} role="separator" tabIndex={composing || !active ? -1 : 0} aria-disabled={composing || !active}
-      aria-label={t(boundary === "list" ? "contentPaneLayout.resizeList" : horizontal ? "contentPaneLayout.resizeReferenceWidth" : "contentPaneLayout.resizeReferenceHeight")}
-      aria-orientation={horizontal ? "vertical" : "horizontal"} aria-controls={`${id}-${boundary}`}
-      aria-valuemin={Math.round(bounds.min)} aria-valuemax={Math.round(bounds.max)} aria-valuenow={Math.round(bounds.value)}
-      aria-valuetext={t("contentPaneLayout.pixels", { value: new Intl.NumberFormat(i18n.language).format(Math.round(bounds.value)) })}
-      onPointerDown={event => start(event, boundary, bounds)} onPointerMove={move} onPointerUp={finish}
-      onPointerCancel={cancelDrag} onLostPointerCapture={cancelDrag} onKeyDown={event => keyboard(event, boundary, bounds)} />;
-  }
-  const hasReferences = hasEditor && references !== null;
   return <div className="content-pane-layout" data-mode={mode}>
     <div className="content-pane-modes" ref={paneButtons} hidden={mode !== "narrow"} role="group" aria-label={t("contentPaneLayout.views")}>
       <button type="button" className="secondary-button" disabled={composing} aria-pressed={pane === "list"} aria-controls={`${id}-list`} onClick={() => choosePane("list")}>{t("contentPaneLayout.list")}</button>
       <button type="button" className="secondary-button" disabled={composing || !hasEditor} aria-pressed={pane === "editor"} aria-controls={`${id}-editor`} onClick={() => choosePane("editor")}>{t("contentPaneLayout.editor")}</button>
     </div>
-    <div ref={columns} className="translation-columns" style={{ gridTemplateColumns: mode === "narrow" ? "minmax(0, 1fr)" : `${listWidth}px ${gutter}px minmax(0, 1fr)` }}>
-      <div id={`${id}-list`} ref={listPane} tabIndex={-1} className="content-pane-list" hidden={!listVisible}>{list}</div>
-      {separator("list", listBounds, mode === "narrow")}
-      <div ref={detail} className="translation-detail" hidden={!editorVisible} data-reference-side={referenceSide} data-reference-open={hasReferences && referencesOpen}
-        style={{ gridTemplateColumns: referenceSide ? `minmax(0, 1fr) ${gutter}px ${referenceSize}px` : "minmax(0, 1fr)",
-          gridTemplateRows: referenceSide || !hasReferences ? "minmax(0, 1fr)" : referencesOpen ? `minmax(0, 1fr) ${gutter}px ${referenceSize}px` : "minmax(0, 1fr) auto" }}>
-        <div id={`${id}-editor`} ref={editorPane} tabIndex={-1} className="content-pane-editor">{editor}</div>
-        {separator("references", referenceBounds, !hasReferences || !referencesOpen)}
-        <div id={`${id}-references`} ref={referencePane} className="content-pane-references" hidden={!hasReferences}>{references}</div>
-      </div>
-    </div>
+    <Group elementRef={columns} groupRef={outer} className="translation-columns" disabled={disabled || mode === "narrow"}
+      onKeyDownCapture={event => {
+        if (event.nativeEvent.isComposing && event.target instanceof Element && event.target.closest("[data-separator]")) {
+          event.preventDefault(); event.stopPropagation();
+        }
+      }}
+      onLayoutChanged={(layout, meta) => changed("list", layout, meta)}>
+      <Panel id={`${id}-list`} elementRef={listPane} tabIndex={-1} className="content-pane-list" hidden={!listVisible}
+        minSize={mode === "narrow" ? listVisible ? "100%" : 0 : 200} maxSize={mode === "narrow" ? listVisible ? "100%" : 0 : 400}
+        defaultSize={preferredList} groupResizeBehavior="preserve-pixel-size">{list}</Panel>
+      <Separator elementRef={listSeparator} className="content-pane-separator" hidden={mode === "narrow"} disabled={disabled || mode === "narrow"} disableDoubleClick
+        aria-label={t("contentPaneLayout.resizeList")}/>
+      <Panel id={`${id}-detail`} elementRef={detail} hidden={!editorVisible} className="translation-detail-panel"
+        minSize={mode === "narrow" ? editorVisible ? "100%" : 0 : referenceSide ? 360 + 200 + gutter : 360}
+        maxSize={mode === "narrow" && !editorVisible ? 0 : "100%"}>
+        <Group elementRef={referenceGroup} groupRef={inner} className="translation-detail" orientation={referenceSide ? "horizontal" : "vertical"} disabled={disabled || !hasReferences || !referencesOpen}
+          data-reference-side={referenceSide} data-reference-open={hasReferences && referencesOpen} onLayoutChanged={(layout, meta) => changed("references", layout, meta)}>
+          <Panel id={`${id}-editor`} elementRef={editorPane} tabIndex={-1} className="content-pane-editor" minSize={referencesOpen && hasReferences ? editorMinimum : 0}>{editor}</Panel>
+          <Separator className="content-pane-separator" hidden={!hasReferences || !referencesOpen} disabled={disabled || !hasReferences || !referencesOpen} disableDoubleClick
+            aria-label={t(referenceSide ? "contentPaneLayout.resizeReferenceWidth" : "contentPaneLayout.resizeReferenceHeight")}/>
+          <Panel id={`${id}-references`} elementRef={referencePane} className="content-pane-references" hidden={!hasReferences} groupResizeBehavior="preserve-pixel-size"
+            defaultSize={preferredReference} minSize={!hasReferences ? 0 : referencesOpen ? referenceMinimum : closedReferenceHeight}
+            maxSize={!hasReferences ? 0 : referencesOpen ? referenceMaximum : closedReferenceHeight}>{references}</Panel>
+        </Group>
+      </Panel>
+    </Group>
   </div>;
 }

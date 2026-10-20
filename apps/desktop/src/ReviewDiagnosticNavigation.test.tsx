@@ -144,6 +144,7 @@ beforeEach(async () => {
     if (command === "create_execution_identity") return fixtureIdentity(serial++);
     if (command === "save_translation_revision") { if (holdSave) await holdSave; if (!reviewValidation.validateResponseEditor(editor) || !validateRequestSave(request)) throw new Error("Invalid saved editor fixture");
       const receipt = saveReceipt(request); if (loseSave) throw new Error("Synthetic lost original save acknowledgement"); return receipt; }
+    if (command === "read_translation_save_action" && loseSave) throw new Error("Synthetic original save lookup unavailable");
     if (command === "write_review_finding") {
       if (!reviewValidation.validateRequestFinding(request)) throw new Error("Invalid repair request fixture");
       const value = request.finding;
@@ -328,6 +329,8 @@ it("retains the exact unknown manual save after a model location instead of savi
   const pending = manual.current()!.pending;
   await user.click(screen.getByRole("button", { name: "Return to original review queue" })); await screen.findByText(i18n.t("review.diagnosticNavigation.returnBlocked"));
   expect(manual.current()?.pending).toBe(pending); expect(calls("save_translation_revision")).toHaveLength(1);
+  expect(calls("read_translation_save_action")).toHaveLength(1);
+  expect(calls("read_translation_save_action")[0]?.[1].request).toEqual(pending?.request);
   expect(calls("start_ai_semantic_review")).toHaveLength(0); expect(calls("write_review_finding")).toHaveLength(0); expect(calls("write_review_decision")).toHaveLength(0); expect(unexpected).toEqual([]);
 });
 
@@ -464,6 +467,8 @@ it("keeps the exact unknown save recoverable when returning to the queue is bloc
   await user.click(screen.getByRole("button", { name: "Return to original review queue" }));
   await screen.findByText(i18n.t("review.diagnosticNavigation.returnBlocked"));
   expect(area).toBe("translation"); expect(manual.current()?.pending).toBe(pending); expect(calls("save_translation_revision")).toHaveLength(1);
+  expect(calls("read_translation_save_action")).toHaveLength(1);
+  expect(calls("read_translation_save_action")[0]?.[1].request).toEqual(pending?.request);
   expect(screen.getByRole("button", { name: i18n.t("translation.checkSavedAction") })).toBeVisible();
   expect(memory.read("translation", "reviewReturn")).toMatchObject({ tab: "work", workOffset: 50 }); expect(unexpected).toEqual([]);
 });
