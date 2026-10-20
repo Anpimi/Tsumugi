@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Reuse the exact format-check request already validated while reading each
+  saved QA origin. Keep complete input validation for successful, failed and
+  unknown outcomes, along with original execution and coverage checks.
+
 - Use consistent success, warning and error colors for content-save, delivery and
   extension feedback while preserving status text and recovery actions.
   Keep draft and save actions usable with large text and error feedback.

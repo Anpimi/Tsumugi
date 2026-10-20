@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Saved QA reads reuse the exact format-check request qualified within that
+origin's validation call. Complete input validation still applies to successful,
+failed and unknown outcomes; original frame, channel, result and coverage checks
+retain their owners. This changes no public API, SDK, protocol, persistent format,
+dependency or version source. It stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and
+no additional bump.
+
 Content-save, delivery and extension feedback share explicit success, warning
 and error colors. Unknown outcomes remain distinct from confirmed success,
 with existing messages, original requests, consent and recovery actions intact.

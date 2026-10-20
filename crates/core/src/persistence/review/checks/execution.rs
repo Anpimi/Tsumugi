@@ -150,6 +150,67 @@ pub struct ComputedReviewEvidence {
     pub(super) expected_check_id: Option<ExecutionId>,
 }
 
+// Pure payload qualification for one exact borrowed input and format binding.
+// Receiving through this value uses those same inputs and the binding's checker;
+// callers cannot substitute another typed payload or execution identity.
+pub(super) struct ValidatedFormatInput<'a> {
+    input: &'a FixedInput,
+    binding: &'a crate::content::SourceReviewBinding,
+    captured: sdk::ReviewCheckInput,
+}
+
+impl<'a> ValidatedFormatInput<'a> {
+    pub(super) fn capture(
+        input: &'a FixedInput,
+        binding: &'a crate::content::SourceReviewBinding,
+    ) -> Result<Self, ExecutionError> {
+        let item = input
+            .envelope()
+            .items
+            .first()
+            .ok_or_else(|| invalid("review-check-input"))?;
+        let captured: sdk::ReviewCheckInput = serde_json::from_value(item.payload.clone())
+            .map_err(|_| invalid("review-check-input"))?;
+        sdk::ReviewBinding {
+            declaration: binding.declaration.clone(),
+            checker: binding.checker.capability.clone(),
+        }
+        .validate_input(&captured)
+        .map_err(|_| invalid("review-check-input"))?;
+        Ok(Self {
+            input,
+            binding,
+            captured,
+        })
+    }
+
+    pub(super) fn requirements(&self) -> &[sdk::CheckRequirement] {
+        &self.captured.requirements
+    }
+
+    pub(super) fn receive_result(
+        &self,
+        result: &FixedResult,
+    ) -> Result<
+        (
+            ReviewInvocationOutcome,
+            Vec<sdk::CheckResult>,
+            Vec<sdk::TextReviewDiagnostic>,
+        ),
+        ExecutionError,
+    > {
+        let checker = ReviewChecker::format(self.binding);
+        receive_checker_in(
+            self.binding,
+            &[],
+            &checker.key,
+            self.input,
+            result,
+            Some(self),
+        )
+    }
+}
+
 /// Receive an actual successful/failed/unknown invocation without converting
 /// a transport failure to a check result or accepting producer Core claims.
 pub(super) fn receive_checker(
@@ -158,6 +219,24 @@ pub(super) fn receive_checker(
     key: &ReviewCheckerKey,
     input: &FixedInput,
     result: &FixedResult,
+) -> Result<
+    (
+        ReviewInvocationOutcome,
+        Vec<sdk::CheckResult>,
+        Vec<sdk::TextReviewDiagnostic>,
+    ),
+    ExecutionError,
+> {
+    receive_checker_in(source_binding, advisory_checks, key, input, result, None)
+}
+
+fn receive_checker_in(
+    source_binding: &crate::content::SourceReviewBinding,
+    advisory_checks: &[AdvisoryReviewCheck],
+    key: &ReviewCheckerKey,
+    input: &FixedInput,
+    result: &FixedResult,
+    validated_format: Option<&ValidatedFormatInput<'_>>,
 ) -> Result<
     (
         ReviewInvocationOutcome,
@@ -175,6 +254,13 @@ pub(super) fn receive_checker(
     } else {
         return Err(invalid("review-checker"));
     };
+    if validated_format.is_some_and(|captured| {
+        !std::ptr::eq(captured.input, input)
+            || !std::ptr::eq(captured.binding, source_binding)
+            || &format.key != key
+    }) {
+        return Err(invalid("review-check-input"));
+    }
     let origin = result
         .envelope()
         .plugin
@@ -190,20 +276,18 @@ pub(super) fn receive_checker(
                     if output.schema != sdk::check_results_contract() {
                         return Err(invalid("review-check-schema"));
                     }
-                    let captured: sdk::ReviewCheckInput =
-                        serde_json::from_value(input.envelope().items[0].payload.clone())
-                            .map_err(|_| invalid("review-check-input"))?;
-                    sdk::ReviewBinding {
-                        declaration: source_binding.declaration.clone(),
-                        checker: source_binding.checker.capability.clone(),
-                    }
-                    .validate_input(&captured)
-                    .map_err(|_| invalid("review-check-input"))?;
+                    let restored;
+                    let captured = if let Some(captured) = validated_format {
+                        captured
+                    } else {
+                        restored = ValidatedFormatInput::capture(input, source_binding)?;
+                        &restored
+                    };
                     let results = sdk::parse_check_results(output.utf8.as_bytes())
                         .map_err(|_| invalid("review-check-results"))?;
                     if results.iter().any(|r| {
                         !captured
-                            .requirements
+                            .requirements()
                             .iter()
                             .any(|required| required.key == r.key)
                     }) {

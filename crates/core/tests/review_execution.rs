@@ -13,6 +13,8 @@ use tsumugi_plugin_sdk as sdk;
 #[derive(Clone, Copy)]
 enum Response {
     Exact,
+    Failed,
+    Unknown,
     Finding,
     Empty,
     Missing,
@@ -84,7 +86,7 @@ impl Runner for Checker {
             })
             .collect();
         match self.response {
-            Response::Exact => {}
+            Response::Exact | Response::Failed | Response::Unknown => {}
             Response::Finding => {
                 results[0].outcome = sdk::CheckOutcome::Completed {
                     findings: vec![sdk::CheckFinding {
@@ -133,6 +135,31 @@ impl Runner for Checker {
                 }
             }
         }
+        let outcome = if matches!(self.response, Response::Failed | Response::Unknown) {
+            let error = sdk::EncodedPayload::capture(
+                invocation.error_schema.clone(),
+                serde_json::to_string(&sdk::ReviewCheckError {
+                    code: sdk::ReviewCheckErrorCode::InvalidTranslation,
+                    unit_id: None,
+                    detail: "Synthetic terminal format error".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+            if matches!(self.response, Response::Failed) {
+                sdk::InvocationOutcome::Failed { error }
+            } else {
+                sdk::InvocationOutcome::Unknown { error }
+            }
+        } else {
+            sdk::InvocationOutcome::Succeeded {
+                output: sdk::EncodedPayload::capture(
+                    invocation.output_schema.clone(),
+                    serde_json::to_string(&results).unwrap(),
+                )
+                .unwrap(),
+            }
+        };
         sender.send(FixedResult::capture_plugin(
             &request.input,
             request.item_id,
@@ -146,13 +173,7 @@ impl Runner for Checker {
                     capability: invocation.capability,
                     profile: invocation.profile,
                     result_id: ExecutionId::new().to_string(),
-                    outcome: sdk::InvocationOutcome::Succeeded {
-                        output: sdk::EncodedPayload::capture(
-                            invocation.output_schema,
-                            serde_json::to_string(&results).unwrap(),
-                        )
-                        .unwrap(),
-                    },
+                    outcome,
                 },
             },
         )?)
@@ -457,13 +478,77 @@ fn compute_actual(
     let prepared = prepare(store, unit, ExecutionId::new());
     let mut runtime = runtime(store, &prepared, response);
     let input = execution_input(&prepared);
-    let (grant, result) = support::execute(&mut runtime, store, &input);
+    let (grant, result) = match response {
+        Response::Failed => {
+            execute_terminal_format(&mut runtime, store, &input, ExecutionState::Failed)
+        }
+        Response::Unknown => {
+            execute_terminal_format(&mut runtime, store, &input, ExecutionState::Unknown)
+        }
+        _ => support::execute(&mut runtime, store, &input),
+    };
     let computed = capture_review(store, prepared, &input, &result)
         .unwrap()
         .compute(&Cancellation::default())
         .unwrap();
     (computed, runtime, grant)
 }
+
+fn execute_terminal_format(
+    runtime: &mut ExecutionRuntime,
+    store: &mut ProjectStore,
+    input: &FixedInput,
+    expected: ExecutionState,
+) -> (ExecutionId, FixedResult) {
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    assert!(matches!(
+        expected,
+        ExecutionState::Failed | ExecutionState::Unknown
+    ));
+    let grant = ExecutionId::new();
+    let expires = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 60_000;
+    runtime
+        .authorize_plugin(
+            store,
+            grant,
+            input,
+            expires,
+            PluginConsent {
+                unsandboxed_execution: true,
+                application_execution: false,
+            },
+        )
+        .unwrap();
+    runtime.submit(store, input).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        runtime.tick(store).unwrap();
+        if !runtime.is_active(input.envelope().attempt_id) {
+            let id = store
+                .execution_current_result(
+                    input.envelope().attempt_id,
+                    input.envelope().items[0].item_id,
+                )
+                .unwrap()
+                .unwrap();
+            let result = store
+                .execution_result(input.envelope().attempt_id, id)
+                .unwrap();
+            assert_eq!(result.envelope().outcome, expected);
+            return (grant, result);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "terminal format completion deadline"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 fn approve(store: &mut ProjectStore, unit: ExecutionId) {
     let project = project(store);
     let target = store.review_target(project, unit, "zh-CN").unwrap();
@@ -536,6 +621,245 @@ fn adopted_actual_union_is_current_durable_and_idempotent_after_grant_ends() {
     let prepared = prepare(&reopened, unit, action);
     assert!(prepared.plan().is_none());
     assert_eq!(prepared.recorded_run(), Some(&run));
+}
+
+#[test]
+fn saved_format_input_is_revalidated_after_terminal_or_successful_history_reads() {
+    for (response, damage, outcome) in [
+        (
+            Response::Failed,
+            "source-bytes",
+            tsumugi_core::ReviewInvocationOutcome::Failed,
+        ),
+        (
+            Response::Unknown,
+            "profile",
+            tsumugi_core::ReviewInvocationOutcome::Unknown,
+        ),
+        (
+            Response::Exact,
+            "provider",
+            tsumugi_core::ReviewInvocationOutcome::Succeeded,
+        ),
+    ] {
+        let (directory, mut store, rows) = support::source_fixture();
+        let unit = rows[0].unit_id.unwrap();
+        save(&mut store, unit, "译文");
+        approve(&mut store, unit);
+        let (computed, runtime, grant) = compute_actual(&mut store, unit, response);
+        let checker = computed.plan().checkers()[0].key.clone();
+        let original_input = computed.checker_input(&checker).unwrap().clone();
+        let original_result = computed.checker_result(&checker).unwrap().clone();
+        let run = store
+            .commit_review_evidence(computed, &Cancellation::default())
+            .unwrap();
+        let evidence = run.evidence.as_ref().unwrap();
+        assert_eq!(evidence.origins[0].outcome, outcome);
+        if outcome == tsumugi_core::ReviewInvocationOutcome::Succeeded {
+            assert!(run.rules.iter().all(|rule| rule.status == "passed"));
+        } else {
+            assert!(
+                run.rules
+                    .iter()
+                    .any(|rule| rule.mandatory && rule.status != "passed")
+            );
+            assert!(!evidence.results.iter().any(|result| matches!(
+                result.key.implementation,
+                sdk::CheckImplementation::Plugin { .. }
+            )));
+        }
+        runtime.revoke_plugin(&mut store, grant).unwrap();
+        drop(runtime);
+        store.close().unwrap();
+        let path = directory.path().join("project");
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .review_target(project(&store), unit, "zh-CN")
+                .unwrap()
+                .current_check,
+            Some(run.clone())
+        );
+        assert_eq!(
+            store
+                .review_history(project(&store), unit, "zh-CN", 0, 10)
+                .unwrap()
+                .checks,
+            [run.clone()]
+        );
+
+        let mut envelope = original_input.envelope().clone();
+        let payload = &mut envelope.items[0].payload;
+        match damage {
+            "source-bytes" => {
+                let bytes = payload["source"]["artifacts"][0]["utf8"].as_str().unwrap();
+                payload["source"]["artifacts"][0]["utf8"] =
+                    serde_json::json!(format!("{bytes}tampered"));
+            }
+            "profile" => payload["source"]["profile"]["behaviorVersion"] = serde_json::json!(2),
+            "provider" => {
+                payload["requirements"][0]["key"]["implementation"]["provider"]["packageDigest"] =
+                    serde_json::json!("e".repeat(64))
+            }
+            _ => unreachable!(),
+        }
+        let changed_input = FixedInput::capture(envelope).unwrap();
+        assert_eq!(
+            changed_input.envelope().attempt_id,
+            original_input.envelope().attempt_id
+        );
+        assert_ne!(changed_input.digest(), original_input.digest(), "{damage}");
+        let mut envelope = original_result.envelope().clone();
+        let item = envelope.item_id;
+        let token = envelope.dispatch_token;
+        let plugin = envelope.plugin.as_mut().unwrap();
+        plugin.result.context = changed_input
+            .plugin_request(item, token, &plugin.channel)
+            .unwrap()
+            .context;
+        let changed_result = FixedResult::capture(envelope, &changed_input, token).unwrap();
+        assert_ne!(
+            changed_result.digest(),
+            original_result.digest(),
+            "{damage}"
+        );
+        replace_saved_review_frames(&path, run.action_id, &changed_input, &changed_result);
+        // The normal ledger still restores these exact frames and validates
+        // their historical provenance. No live execution permit is recreated.
+        // Rejection must come from the saved Review payload qualification.
+        assert_eq!(
+            store
+                .execution_input(changed_input.envelope().attempt_id)
+                .unwrap()
+                .bytes(),
+            changed_input.bytes()
+        );
+        assert_eq!(
+            store
+                .execution_result(
+                    changed_input.envelope().attempt_id,
+                    changed_result.envelope().result_id
+                )
+                .unwrap()
+                .bytes(),
+            changed_result.bytes()
+        );
+        let database = path.join("project.sqlite3");
+        let before = std::fs::read(&database).unwrap();
+        assert_eq!(
+            store
+                .review_target(project(&store), unit, "zh-CN")
+                .unwrap_err()
+                .code,
+            ErrorCode::CorruptLedger,
+            "{damage}"
+        );
+        assert_eq!(
+            store
+                .review_history(project(&store), unit, "zh-CN", 0, 10)
+                .unwrap_err()
+                .code,
+            ErrorCode::CorruptLedger,
+            "{damage}"
+        );
+        assert_eq!(std::fs::read(&database).unwrap(), before);
+        store.close().unwrap();
+        let error = ProjectStore::open(&path).unwrap_err();
+        assert_eq!(
+            error.code(),
+            PersistenceErrorCode::CorruptProject,
+            "{damage}"
+        );
+        assert_eq!(error.stage(), PersistenceStage::Open, "{damage}");
+        assert_eq!(std::fs::read(&database).unwrap(), before);
+    }
+}
+
+// Corrupt only the semantic payload while retaining valid current storage,
+// result context and all saved digests. This avoids stopping at a broken frame
+// before the Review validator reaches the deliberately invalid original input.
+fn replace_saved_review_frames(
+    path: &std::path::Path,
+    action: ExecutionId,
+    input: &FixedInput,
+    result: &FixedResult,
+) {
+    use sha2::{Digest, Sha256};
+    let mut connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    let tx = connection.transaction().unwrap();
+    let mut chunks = Vec::new();
+    for bytes in input.bytes().chunks(16 * 1024) {
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        tx.execute("INSERT INTO execution_input_chunks(digest,bytes) VALUES (?1,?2) ON CONFLICT(digest) DO NOTHING", rusqlite::params![digest, bytes]).unwrap();
+        chunks.push(digest);
+    }
+    let manifest = format!(
+        "{{\"format\":1,\"rawBytes\":{},\"chunks\":{}}}",
+        input.bytes().len(),
+        serde_json::to_string(&chunks).unwrap()
+    )
+    .into_bytes();
+    assert_eq!(
+        tx.execute(
+            "UPDATE execution_attempts SET input=?2,digest=?3 WHERE attempt_id=?1",
+            rusqlite::params![
+                input.envelope().attempt_id.to_string(),
+                manifest,
+                input.digest()
+            ]
+        )
+        .unwrap(),
+        1
+    );
+    assert!(
+        tx.execute(
+            "UPDATE plugin_execution_grants SET input_digest=?2 WHERE attempt_id=?1",
+            rusqlite::params![input.envelope().attempt_id.to_string(), input.digest()]
+        )
+        .unwrap()
+            > 0
+    );
+    assert_eq!(
+        tx.execute(
+            "UPDATE execution_results SET bytes=?2,digest=?3 WHERE result_id=?1",
+            rusqlite::params![
+                result.envelope().result_id.to_string(),
+                result.bytes(),
+                result.digest()
+            ]
+        )
+        .unwrap(),
+        1
+    );
+    let raw: String = tx
+        .query_row(
+            "SELECT evidence_json FROM review_checks WHERE action_id=?1",
+            [action.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut evidence: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let origins = evidence["origins"].as_array_mut().unwrap();
+    assert_eq!(origins.len(), 1);
+    assert_eq!(
+        origins[0]["attemptId"],
+        input.envelope().attempt_id.to_string()
+    );
+    assert_eq!(
+        origins[0]["resultId"],
+        result.envelope().result_id.to_string()
+    );
+    origins[0]["inputDigest"] = serde_json::json!(input.digest());
+    origins[0]["resultDigest"] = serde_json::json!(result.digest());
+    assert_eq!(
+        tx.execute(
+            "UPDATE review_checks SET evidence_json=?2 WHERE action_id=?1",
+            rusqlite::params![action.to_string(), evidence.to_string()]
+        )
+        .unwrap(),
+        1
+    );
+    tx.commit().unwrap();
 }
 
 #[test]
@@ -645,6 +969,8 @@ fn open_rejects_missing_or_changed_original_review_origin() {
         "result-digest",
         "qa-basis",
         "scope-locale",
+        "result-token",
+        "result-attempt",
     ] {
         let (directory, mut store, rows) = support::source_fixture();
         let unit = rows[0].unit_id.unwrap();
@@ -657,6 +983,7 @@ fn open_rejects_missing_or_changed_original_review_origin() {
 
         let database_path = directory.path().join("project/project.sqlite3");
         let db = rusqlite::Connection::open(&database_path).unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
         let (raw, original_locale): (String, String) = db
             .query_row(
                 "SELECT evidence_json,locale FROM review_checks",
@@ -708,6 +1035,57 @@ fn open_rejects_missing_or_changed_original_review_origin() {
                 locale = "ja-JP".into();
                 assert_ne!(locale, original_locale);
             }
+            "result-token" => {
+                let tx = db.unchecked_transaction().unwrap();
+                tx.pragma_update(None, "defer_foreign_keys", true).unwrap();
+                let result = original["origins"][0]["resultId"].as_str().unwrap();
+                let (attempt, item): (String, String) = tx
+                    .query_row(
+                        "SELECT attempt_id,item_id FROM execution_results WHERE result_id=?1",
+                        [result],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap();
+                let token = ExecutionId::new().to_string();
+                // Keep the composite FK valid at commit while the immutable
+                // result frame still carries its original dispatch identity.
+                assert_eq!(
+                    tx.execute(
+                        "UPDATE execution_items SET dispatch_token=?3 WHERE attempt_id=?1 AND item_id=?2",
+                        rusqlite::params![attempt, item, token],
+                    ).unwrap(),
+                    1
+                );
+                assert_eq!(
+                    tx.execute(
+                        "UPDATE execution_results SET dispatch_token=?2 WHERE result_id=?1",
+                        rusqlite::params![result, token]
+                    )
+                    .unwrap(),
+                    1
+                );
+                tx.commit().unwrap();
+            }
+            "result-attempt" => {
+                let (attempt, item, token): (String, String, String) = db.query_row(
+                    "SELECT attempt_id,item_id,dispatch_token FROM execution_items WHERE attempt_id<>?1 AND dispatch_token IS NOT NULL ORDER BY attempt_id,item_id LIMIT 1",
+                    [original["origins"][0]["attemptId"].as_str().unwrap()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                ).unwrap();
+                assert_eq!(
+                    db.execute(
+                        "UPDATE execution_results SET attempt_id=?2,item_id=?3,dispatch_token=?4 WHERE result_id=?1",
+                        rusqlite::params![
+                            original["origins"][0]["resultId"].as_str().unwrap(),
+                            attempt,
+                            item,
+                            token,
+                        ]
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
             _ => unreachable!(),
         }
         db.execute(
@@ -715,6 +1093,13 @@ fn open_rejects_missing_or_changed_original_review_origin() {
             rusqlite::params![evidence.to_string(), evidence["qaBasis"].as_str(), locale],
         )
         .unwrap();
+        assert!(
+            !db.prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .exists([])
+                .unwrap(),
+            "{alteration} must reach semantic association validation with valid foreign keys"
+        );
         drop(db);
         let before_open = std::fs::read(&database_path).unwrap();
         let error = ProjectStore::open(&directory.path().join("project"))

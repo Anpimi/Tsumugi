@@ -423,30 +423,26 @@ pub(in crate::persistence::review) fn validate_saved_frames(
         return Err(corrupt());
     }
     let keys: BTreeSet<sdk::CheckKey>;
+    let received;
     if saved.checker == ReviewChecker::format(&evidence.source_binding).key {
         if envelope.plugin.as_ref() != Some(&evidence.source_binding.checker) {
             return Err(corrupt());
         }
-        let captured: sdk::ReviewCheckInput =
-            serde_json::from_value(item.payload.clone()).map_err(|_| corrupt())?;
-        sdk::ReviewBinding {
-            declaration: evidence.source_binding.declaration.clone(),
-            checker: evidence.source_binding.checker.capability.clone(),
-        }
-        .validate_input(&captured)
-        .map_err(|_| corrupt())?;
+        let captured = execution::ValidatedFormatInput::capture(input, &evidence.source_binding)
+            .map_err(|_| corrupt())?;
         keys = captured
-            .requirements
+            .requirements()
             .iter()
             .map(|r| r.key.clone())
             .collect();
         if captured
-            .requirements
+            .requirements()
             .iter()
             .any(|r| !evidence.required_checks.requirements.contains(r))
         {
             return Err(corrupt());
         }
+        received = captured.receive_result(result)?;
     } else {
         let choice = evidence
             .advisory_checks
@@ -481,14 +477,15 @@ pub(in crate::persistence::review) fn validate_saved_frames(
         {
             return Err(corrupt());
         }
+        received = execution::receive_checker(
+            &evidence.source_binding,
+            &evidence.advisory_checks,
+            &saved.checker,
+            input,
+            result,
+        )?;
     }
-    let (outcome, results, diagnostics) = execution::receive_checker(
-        &evidence.source_binding,
-        &evidence.advisory_checks,
-        &saved.checker,
-        input,
-        result,
-    )?;
+    let (outcome, results, diagnostics) = received;
     let projected: Vec<_> = evidence
         .results
         .iter()
