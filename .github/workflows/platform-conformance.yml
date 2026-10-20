@@ -1,0 +1,56 @@
+name: Windows platform conformance
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/platform-conformance.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/plugin-host/**'
+      - 'crates/plugin-sdk/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/platform-conformance.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/plugin-host/**'
+      - 'crates/plugin-sdk/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-backends:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      RUSTUP_TOOLCHAIN: '1.98.0'
+      RUSTUP_AUTO_INSTALL: '0'
+      CARGO_TARGET_DIR: target/platform-conformance
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Prepare exact Rust in the disposable runner
+        run: rustup toolchain install 1.98.0 --profile minimal --no-self-update
+      - name: Record compiler and Cargo identities
+        run: |
+          rustc --version --verbose
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo --version
+      - name: Exercise the actual owned process source
+        run: cargo test --manifest-path crates/plugin-host/process-conformance/Cargo.toml --lib --target x86_64-pc-windows-msvc --locked -- --test-threads=1
+      - name: Exercise the actual filesystem and staging sources
+        run: cargo test --manifest-path crates/plugin-host/filesystem-conformance/Cargo.toml --features core-adapter --lib --target x86_64-pc-windows-msvc --locked -- --test-threads=1

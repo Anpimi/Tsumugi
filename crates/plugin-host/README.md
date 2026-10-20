@@ -660,6 +660,32 @@ This does not enable Windows directory capture or package installation: their
 portable executable-flag source still needs a complete artifact contract.
 Actual Windows file behavior must be checked separately from compilation.
 
+### Windows backend conformance
+
+The [platform conformance workflow](../../.github/workflows/platform-conformance.yml)
+is configured to execute these existing source-by-path libraries on a disposable
+`windows-2025` x64 runner with Rust `1.98.0`. It uses locked dependencies,
+read-only repository permissions and a pinned checkout without retained
+credentials. It does not publish packages or upload artifacts. From a Windows
+checkout with that toolchain, the same focused commands are:
+
+```sh
+cargo test --manifest-path crates/plugin-host/process-conformance/Cargo.toml --lib --target x86_64-pc-windows-msvc --locked -- --test-threads=1
+cargo test --manifest-path crates/plugin-host/filesystem-conformance/Cargo.toml --features core-adapter --lib --target x86_64-pc-windows-msvc --locked -- --test-threads=1
+```
+
+The tests own their synthetic temporary files and child processes. The explicitly
+ignored symbolic-link privilege case remains opt-in; ignored subprocess fixture
+entry points are helpers launched by their owning tests, not separate passing
+cases. The `core-adapter` feature here compiles the actual member-materialization
+helper, without importing Core or testing an integrated member session.
+
+Workflow configuration and cross-compilation are not successful Windows runs.
+Check the actual target execution, counts and logs before using a run as evidence.
+These libraries do not cover Store durability or recovery, native Host executable
+identity, complete plugin/Member lifecycles, Desktop or distribution. Their
+existing product gates remain closed.
+
 `invoke` checks the captured project/scope, package/instance, exact capability,
 input/output/error/profile identities and limits. The SDK correlates the result
 with both the captured request and this actual channel. Dispatch IDs cannot be
