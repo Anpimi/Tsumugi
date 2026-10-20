@@ -619,7 +619,13 @@ fn valid_digest(value: &str) -> bool {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod platform {
     mod repository;
+    mod store_io;
     mod uninstall;
+    use self::store_io::{
+        Identity, Stamp, check_provision_directory, chmod, lock_exclusive, mkdir, new_file,
+        permission_mode, private, promote, replace_file, same_file, same_root, same_volume,
+        settings_read_error, sync, unchanged,
+    };
     use super::*;
     use crate::{
         candidate_archive::{self, ArchiveIndex, Profile},
@@ -629,13 +635,9 @@ mod platform {
     use std::{
         cell::Cell,
         collections::{BTreeMap, BTreeSet},
-        ffi::{CString, OsStr},
-        fs::{File, Metadata},
+        ffi::OsStr,
+        fs::File,
         io::{Read, Write},
-        os::{
-            fd::AsRawFd,
-            unix::{ffi::OsStrExt, fs::MetadataExt},
-        },
         path::PathBuf,
         time::{Duration, Instant},
     };
@@ -694,13 +696,13 @@ mod platform {
     pub(super) struct Store {
         path: PathBuf,
         root: File,
-        root_id: (u64, u64),
+        root_id: Identity,
         lock: File,
-        lock_id: (u64, u64),
+        lock_id: Identity,
         objects: File,
-        objects_id: (u64, u64),
+        objects_id: Identity,
         runtimes: File,
-        runtimes_id: (u64, u64),
+        runtimes_id: Identity,
         repository_confirmed: BTreeMap<String, String>,
         #[cfg(test)]
         fail_commit_checkpoint: Option<CommitCheckpoint>,
@@ -714,10 +716,10 @@ mod platform {
 
     struct Object {
         directory: File,
-        directory_id: (u64, u64),
+        directory_id: Identity,
         directory_mode: u32,
         package: File,
-        package_id: (u64, u64),
+        package_id: Identity,
         package_stamp: Stamp,
         receipt_file: File,
         receipt_bytes: Vec<u8>,
@@ -726,117 +728,26 @@ mod platform {
 
     struct RuntimeObject {
         directory: File,
-        directory_id: (u64, u64),
+        directory_id: Identity,
         directory_mode: u32,
         tool: File,
-        tool_id: (u64, u64),
+        tool_id: Identity,
         tool_stamp: Stamp,
         host: File,
-        host_id: (u64, u64),
+        host_id: Identity,
         host_stamp: Stamp,
         receipt_file: File,
         receipt_bytes: Vec<u8>,
         receipt: RuntimeInstallReceipt,
     }
 
-    #[derive(Clone, PartialEq, Eq)]
-    struct Stamp {
-        device: u64,
-        inode: u64,
-        uid: u32,
-        mode: u32,
-        links: u64,
-        length: u64,
-        modified: (i64, i64),
-        changed: (i64, i64),
-    }
-    impl From<&Metadata> for Stamp {
-        fn from(value: &Metadata) -> Self {
-            Self {
-                device: value.dev(),
-                inode: value.ino(),
-                uid: value.uid(),
-                mode: value.mode(),
-                links: value.nlink(),
-                length: value.len(),
-                modified: (value.mtime(), value.mtime_nsec()),
-                changed: (value.ctime(), value.ctime_nsec()),
-            }
-        }
-    }
-
-    fn metadata(file: &File) -> InstallResult<Metadata> {
-        file.metadata().map_err(|_| InstallError::Io)
-    }
-    fn private(file: &File, directory: bool, mode: u32) -> InstallResult<()> {
-        let info = metadata(file)?;
-        if info.uid() != unsafe { libc::geteuid() }
-            || info.mode() & 0o7777 != mode
-            || (directory && !info.is_dir())
-            || (!directory && (!info.is_file() || info.nlink() != 1))
-        {
-            return Err(InstallError::CorruptStore);
-        }
-        Ok(())
-    }
-    fn name(value: &OsStr) -> InstallResult<CString> {
-        CString::new(value.as_bytes()).map_err(|_| InstallError::CorruptStore)
-    }
-    fn sync(file: &File) -> InstallResult<()> {
-        file.sync_all().map_err(|_| InstallError::Io)
-    }
-    fn unchanged(file: &File, expected: &Stamp) -> InstallResult<()> {
-        if Stamp::from(&metadata(file)?) != *expected {
-            return Err(InstallError::StoreChanged);
-        }
-        Ok(())
-    }
-    fn chmod(file: &File, mode: u32) -> InstallResult<()> {
-        filesystem::set_mode(file, mode).map_err(|_| InstallError::Io)
-    }
-    fn mkdir(parent: &File, child: &OsStr) -> InstallResult<File> {
-        name(child)?;
-        filesystem::create_directory(parent, child).map_err(|_| InstallError::Io)?;
-        let file = filesystem::open_child(parent, child, true)?;
-        chmod(&file, 0o700)?;
-        private(&file, true, 0o700)?;
-        Ok(file)
-    }
-    fn new_file(parent: &File, child: &OsStr) -> InstallResult<File> {
-        name(child)?;
-        let file = filesystem::create_file(parent, child).map_err(|_| InstallError::Io)?;
-        chmod(&file, 0o600)?;
-        private(&file, false, 0o600)?;
-        Ok(file)
-    }
-    fn same_file(
-        parent: &File,
-        child: &OsStr,
-        directory: bool,
-        expected: (u64, u64),
-    ) -> InstallResult<()> {
-        let reopened = filesystem::open_child(parent, child, directory)
-            .map_err(|_| InstallError::StoreChanged)?;
-        if filesystem::identity(&reopened)? != expected {
-            return Err(InstallError::StoreChanged);
-        }
-        Ok(())
-    }
-    fn same_root(path: &Path, expected: (u64, u64)) -> InstallResult<()> {
-        let (_, reopened) =
-            filesystem::open_directory(path).map_err(|_| InstallError::StoreChanged)?;
-        if filesystem::identity(&reopened)? != expected {
-            return Err(InstallError::StoreChanged);
-        }
-        Ok(())
-    }
     fn read_immutable(
         file: &File,
         limit: usize,
         oversized: InstallError,
     ) -> InstallResult<Vec<u8>> {
         private(file, false, 0o400)?;
-        let before = Stamp::from(&metadata(file)?);
+        let before = Stamp::read(file)?;
         if before.length > limit as u64 {
             return Err(oversized);
         }
@@ -890,7 +801,7 @@ mod platform {
         }
     }
 
-    fn open_namespace(root: &File, child: &str, root_id: (u64, u64)) -> InstallResult<File> {
+    fn open_namespace(root: &File, child: &str, root_id: Identity) -> InstallResult<File> {
         let directory = match filesystem::open_child(root, OsStr::new(child), true) {
             Ok(file) => file,
             Err(_) => match mkdir(root, OsStr::new(child)) {
@@ -900,7 +811,7 @@ mod platform {
             },
         };
         private(&directory, true, 0o700)?;
-        if filesystem::identity(&directory)?.0 != root_id.0 {
+        if !same_volume(filesystem::identity(&directory)?, root_id) {
             return Err(InstallError::CorruptStore);
         }
         Ok(directory)
@@ -909,7 +820,7 @@ mod platform {
     struct ProvisionDirectory {
         path: PathBuf,
         file: File,
-        identity: (u64, u64),
+        identity: Identity,
     }
 
     fn check_provision_chain(
@@ -920,14 +831,7 @@ mod platform {
             return Err(InstallError::AuthorityRevoked);
         }
         for (index, directory) in directories.iter().enumerate() {
-            let info = metadata(&directory.file)?;
-            if !info.is_dir()
-                || info.uid() != unsafe { libc::geteuid() }
-                || (index == 0 && info.mode() & 0o7022 != 0)
-                || (index > 0 && info.mode() & 0o7777 != 0o700)
-            {
-                return Err(InstallError::InvalidRoot);
-            }
+            check_provision_directory(&directory.file, index == 0)?;
             same_root(&directory.path, directory.identity)?;
             if index > 0 {
                 same_file(
@@ -951,12 +855,8 @@ mod platform {
         const SETTINGS_FILE: &'static str = "settings.json";
 
         fn optional_settings_file(&self) -> InstallResult<Option<File>> {
-            filesystem::open_optional_file(&self.root, OsStr::new(Self::SETTINGS_FILE)).map_err(
-                |error| match error.raw_os_error() {
-                    Some(libc::EIO) | Some(libc::EMFILE) | Some(libc::ENFILE) => InstallError::Io,
-                    _ => InstallError::CorruptSettings,
-                },
-            )
+            filesystem::open_optional_file(&self.root, OsStr::new(Self::SETTINGS_FILE))
+                .map_err(settings_read_error)
         }
 
         fn settings_snapshot(
@@ -964,10 +864,10 @@ mod platform {
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<SettingsSnapshot> {
             self.check(authorized)?;
-            let root_before = Stamp::from(&metadata(&self.root)?);
+            let root_before = Stamp::read(&self.root)?;
             let file = self.optional_settings_file()?;
             let (settings, stamp) = if let Some(file) = &file {
-                let stamp = Stamp::from(&metadata(file)?);
+                let stamp = Stamp::read(file)?;
                 let bytes = read_immutable(file, MAX_SETTINGS_BYTES, InstallError::CorruptSettings)
                     .map_err(|error| {
                         if error == InstallError::CorruptStore {
@@ -1093,7 +993,7 @@ mod platform {
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
             self.check(authorized)?;
-            let before = Stamp::from(&metadata(&self.objects)?);
+            let before = Stamp::read(&self.objects)?;
             let mut index = PackageReceiptIndex {
                 approvals: self.retained_package_origins(authorized)?,
                 ..PackageReceiptIndex::default()
@@ -1165,11 +1065,11 @@ mod platform {
                 private(&file, false, 0o600)?;
                 (&file).write_all(chunk).map_err(|_| InstallError::Io)?;
             }
-            let written_stamp = Stamp::from(&metadata(&file)?);
+            let written_stamp = Stamp::read(&file)?;
             check_candidate(0o600)?;
             unchanged(&file, &written_stamp)?;
             chmod(&file, 0o400)?;
-            let stamp = Stamp::from(&metadata(&file)?);
+            let stamp = Stamp::read(&file)?;
             #[cfg(test)]
             if self.fail_commit_checkpoint == Some(CommitCheckpoint::SettingsCandidateSync) {
                 return Err(InstallError::Io);
@@ -1193,18 +1093,11 @@ mod platform {
             same_file(&self.root, OsStr::new(&candidate), false, candidate_id)?;
             unchanged(&file, &stamp)?;
             if current.file.is_some() {
-                filesystem::replace_file(
+                replace_file(
                     &self.root,
                     OsStr::new(&candidate),
                     OsStr::new(Self::SETTINGS_FILE),
-                )
-                .map_err(|error| {
-                    if error.raw_os_error() == Some(libc::EIO) {
-                        InstallError::UnknownCommit
-                    } else {
-                        InstallError::Io
-                    }
-                })?;
+                )?;
             } else {
                 promote(
                     &self.root,
@@ -1230,7 +1123,7 @@ mod platform {
                     candidate_id,
                 )?;
                 private(&file, false, 0o400)?;
-                let stamp = Stamp::from(&metadata(&file)?);
+                let stamp = Stamp::read(&file)?;
                 let reopened = self
                     .optional_settings_file()?
                     .ok_or(InstallError::StoreChanged)?;
@@ -1265,8 +1158,8 @@ mod platform {
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<InstalledInventory> {
             self.check(authorized)?;
-            let objects_before = Stamp::from(&metadata(&self.objects)?);
-            let runtimes_before = Stamp::from(&metadata(&self.runtimes)?);
+            let objects_before = Stamp::read(&self.objects)?;
+            let runtimes_before = Stamp::read(&self.runtimes)?;
             let mut index = PackageReceiptIndex::default();
             let mut packages = Vec::new();
             for digest in self.names(authorized)? {
@@ -1363,7 +1256,7 @@ mod platform {
                 };
                 private(&file, true, 0o700).map_err(|_| InstallError::InvalidRoot)?;
                 let identity = filesystem::identity(&file)?;
-                if identity.0 != directories[0].identity.0 {
+                if !same_volume(identity, directories[0].identity) {
                     return Err(InstallError::InvalidRoot);
                 }
                 same_file(&parent.file, child_name, true, identity)?;
@@ -1410,16 +1303,7 @@ mod platform {
                 },
             };
             private(&lock, false, 0o600).map_err(|_| InstallError::InvalidRoot)?;
-            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-                let error = std::io::Error::last_os_error().raw_os_error();
-                return Err(
-                    if error == Some(libc::EWOULDBLOCK) || error == Some(libc::EAGAIN) {
-                        InstallError::Busy
-                    } else {
-                        InstallError::Io
-                    },
-                );
-            }
+            lock_exclusive(&lock)?;
             let lock_id = filesystem::identity(&lock)?;
             same_root(&path, root_id)?;
             same_file(&root, OsStr::new(".lock"), false, lock_id)?;
@@ -1488,7 +1372,7 @@ mod platform {
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<Vec<String>> {
             self.check(authorized)?;
-            let before = Stamp::from(&metadata(parent)?);
+            let before = Stamp::read(parent)?;
             let failure = Cell::new(None);
             let result = filesystem::directory_names(
                 parent,
@@ -1523,11 +1407,11 @@ mod platform {
             digest: &str,
             expected_names: &[&str],
             authorized: &impl Fn() -> bool,
-        ) -> InstallResult<(File, (u64, u64), u32, File, Vec<u8>)> {
+        ) -> InstallResult<(File, Identity, u32, File, Vec<u8>)> {
             self.check(authorized)?;
             let directory = filesystem::open_child(parent, OsStr::new(digest), true)
                 .map_err(|_| InstallError::CorruptStore)?;
-            let mode = metadata(&directory)?.mode() & 0o7777;
+            let mode = permission_mode(&directory)?;
             if mode != 0o500 && mode != 0o700 {
                 return Err(InstallError::CorruptStore);
             }
@@ -1571,7 +1455,7 @@ mod platform {
             parent: &File,
             digest: &str,
             directory: &File,
-            id: (u64, u64),
+            id: Identity,
             mode: u32,
             receipt: &File,
             authorized: &impl Fn() -> bool,
@@ -1623,7 +1507,7 @@ mod platform {
                 )?;
             let package = filesystem::open_child(&directory, OsStr::new("package.tar"), false)?;
             private(&package, false, 0o400)?;
-            let package_stamp = Stamp::from(&metadata(&package)?);
+            let package_stamp = Stamp::read(&package)?;
             let package_id = filesystem::identity(&package)?;
             let receipt: InstallReceipt =
                 serde_json::from_slice(&receipt_bytes).map_err(|_| InstallError::CorruptReceipt)?;
@@ -1684,7 +1568,7 @@ mod platform {
         ) -> InstallResult<PackageImage> {
             check()?;
             private(file, false, 0o400)?;
-            let before = Stamp::from(&metadata(file)?);
+            let before = Stamp::read(file)?;
             let failure = Cell::new(None);
             let image =
                 PackageImage::read_archive_reader(&mut &*file, Some(digest), || {
@@ -1712,7 +1596,7 @@ mod platform {
         ) -> InstallResult<ArchiveIndex> {
             check()?;
             private(file, false, 0o400)?;
-            let before = Stamp::from(&metadata(file)?);
+            let before = Stamp::read(file)?;
             let failure = Cell::new(None);
             let guard = || {
                 // Complete namespace/receipt checks bracket this held-file
@@ -1847,8 +1731,8 @@ mod platform {
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<InstallReceipt> {
             self.check(authorized)?;
-            let objects_before = Stamp::from(&metadata(&self.objects)?);
-            let runtimes_before = Stamp::from(&metadata(&self.runtimes)?);
+            let objects_before = Stamp::read(&self.objects)?;
+            let runtimes_before = Stamp::read(&self.runtimes)?;
             let mut index = PackageReceiptIndex {
                 actions: self.runtime_actions(action_id, authorized)?,
                 approvals: self.retained_package_origins(authorized)?,
@@ -1937,7 +1821,7 @@ mod platform {
             let held_package =
                 filesystem::open_child(&candidate, OsStr::new("package.tar"), false)?;
             let package_id = filesystem::identity(&held_package)?;
-            let package_stamp = Stamp::from(&metadata(&held_package)?);
+            let package_stamp = Stamp::read(&held_package)?;
             let receipt_bytes =
                 serde_json::to_vec(&receipt).map_err(|_| InstallError::CorruptReceipt)?;
             if receipt_bytes.len() > MAX_RECEIPT_BYTES {
@@ -2066,9 +1950,9 @@ mod platform {
                 directory_id,
                 directory_mode,
                 tool_id: filesystem::identity(&tool)?,
-                tool_stamp: Stamp::from(&metadata(&tool)?),
+                tool_stamp: Stamp::read(&tool)?,
                 host_id: filesystem::identity(&host)?,
-                host_stamp: Stamp::from(&metadata(&host)?),
+                host_stamp: Stamp::read(&host)?,
                 tool,
                 host,
                 receipt_file,
@@ -2290,8 +2174,8 @@ mod platform {
             {
                 return Err(InstallError::ApprovalMismatch);
             }
-            let objects_before = Stamp::from(&metadata(&self.objects)?);
-            let runtimes_before = Stamp::from(&metadata(&self.runtimes)?);
+            let objects_before = Stamp::read(&self.objects)?;
+            let runtimes_before = Stamp::read(&self.runtimes)?;
             let mut seen_actions = self.package_actions(action_id, authorized)?;
             let names = self.names_in(&self.runtimes, MAX_INSTALLED_RUNTIMES, authorized)?;
             let receipt = RuntimeInstallReceipt {
@@ -2382,8 +2266,8 @@ mod platform {
             let held_host = filesystem::open_child(&candidate, OsStr::new("host.tar"), false)?;
             let tool_id = filesystem::identity(&held_tool)?;
             let host_id = filesystem::identity(&held_host)?;
-            let tool_stamp = Stamp::from(&metadata(&held_tool)?);
-            let host_stamp = Stamp::from(&metadata(&held_host)?);
+            let tool_stamp = Stamp::read(&held_tool)?;
+            let host_stamp = Stamp::read(&held_host)?;
             let receipt_bytes =
                 serde_json::to_vec(&receipt).map_err(|_| InstallError::CorruptReceipt)?;
             if receipt_bytes.len() > MAX_RECEIPT_BYTES {
@@ -2503,7 +2387,7 @@ mod platform {
         fn check_candidate(
             &self,
             candidate: &str,
-            expected: (u64, u64),
+            expected: Identity,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
             self.check(authorized)?;
@@ -2520,7 +2404,7 @@ mod platform {
             child: &str,
             bytes: &[u8],
             candidate: &str,
-            candidate_id: (u64, u64),
+            candidate_id: Identity,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
             self.check_candidate(candidate, candidate_id, authorized)?;
@@ -2581,46 +2465,6 @@ mod platform {
             sync(&self.root)?;
             self.check(authorized)
         }
-    }
-
-    fn promote(
-        source_parent: &File,
-        source: &OsStr,
-        destination_parent: &File,
-        destination: &OsStr,
-    ) -> InstallResult<()> {
-        let source = name(source)?;
-        let destination = name(destination)?;
-        #[cfg(target_os = "macos")]
-        let result = unsafe {
-            libc::renameatx_np(
-                source_parent.as_raw_fd(),
-                source.as_ptr(),
-                destination_parent.as_raw_fd(),
-                destination.as_ptr(),
-                libc::RENAME_EXCL,
-            )
-        };
-        #[cfg(target_os = "linux")]
-        let result = unsafe {
-            libc::renameat2(
-                source_parent.as_raw_fd(),
-                source.as_ptr(),
-                destination_parent.as_raw_fd(),
-                destination.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        };
-        if result != 0 {
-            return Err(match std::io::Error::last_os_error().raw_os_error() {
-                Some(libc::EEXIST) => InstallError::ActionConflict,
-                // POSIX does not promise an unchanged namespace after EIO.
-                // Retain the candidate/object and recover by the same action.
-                Some(libc::EIO) => InstallError::UnknownCommit,
-                _ => InstallError::Io,
-            });
-        }
-        Ok(())
     }
 
     #[cfg(test)]

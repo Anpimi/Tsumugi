@@ -118,7 +118,7 @@ fn names(
     check: &impl Fn() -> InstallResult<()>,
 ) -> InstallResult<Vec<String>> {
     check()?;
-    let before = Stamp::from(&metadata(parent)?);
+    let before = Stamp::read(parent)?;
     let failure = Cell::new(None);
     let result = filesystem::directory_names(
         parent,
@@ -162,7 +162,7 @@ fn read_action(directory: File, name: String, candidate: bool) -> InstallResult<
             Err(InstallError::CorruptStore)
         };
     };
-    if candidate && metadata(&state_file)?.mode() & 0o7777 == 0o600 {
+    if candidate && permission_mode(&state_file)? == 0o600 {
         private(&state_file, false, 0o600)?;
         return Ok(None);
     }
@@ -185,7 +185,7 @@ fn read_action(directory: File, name: String, candidate: bool) -> InstallResult<
     state.validate(&request)?;
     let input = optional_file(&directory, INPUT)?.ok_or(InstallError::CorruptStore)?;
     private(&input, false, 0o400)?;
-    if metadata(&input)?.len() > MAX_INPUT_BYTES as u64 {
+    if Stamp::read(&input)?.length > MAX_INPUT_BYTES as u64 {
         return Err(InstallError::CorruptStore);
     }
     let next = optional_file(&directory, NEXT)?.is_some();
@@ -587,7 +587,7 @@ impl Store {
                 return Err(InstallError::CorruptStore);
             }
             let file = optional_file(candidate, &name)?.ok_or(InstallError::StoreChanged)?;
-            let mode = metadata(&file)?.mode() & 0o7777;
+            let mode = permission_mode(&file)?;
             if mode != 0o400 && mode != 0o600 {
                 return Err(InstallError::CorruptStore);
             }
@@ -762,19 +762,19 @@ struct Working {
 struct Capability {
     path: PathBuf,
     root: File,
-    root_id: (u64, u64),
+    root_id: Identity,
     lock: File,
-    lock_id: (u64, u64),
+    lock_id: Identity,
     namespace: File,
-    namespace_id: (u64, u64),
+    namespace_id: Identity,
     source: File,
-    source_id: (u64, u64),
+    source_id: Identity,
     source_name: String,
     action: File,
-    action_id: (u64, u64),
+    action_id: Identity,
     action_name: String,
     input: File,
-    input_id: (u64, u64),
+    input_id: Identity,
     input_stamp: Stamp,
     request: StoredRequest,
     request_bytes: Vec<u8>,
@@ -795,7 +795,7 @@ impl Capability {
         let input = optional_file(&action.directory, INPUT)?.ok_or(InstallError::CorruptStore)?;
         private(&input, false, 0o400)?;
         let input_id = filesystem::identity(&input)?;
-        let input_stamp = Stamp::from(&metadata(&input)?);
+        let input_stamp = Stamp::read(&input)?;
         Ok(Self {
             path: store.path.clone(),
             root: clone_file(&store.root)?,
@@ -900,7 +900,7 @@ impl Capability {
             ] {
                 let file = optional_file(&self.action, name)?.ok_or(InstallError::CorruptStore)?;
                 private(&file, false, 0o400)?;
-                if metadata(&file)?.len() > limit as u64 {
+                if Stamp::read(&file)?.length > limit as u64 {
                     return Err(InstallError::CorruptStore);
                 }
                 sync(&file)?;
@@ -939,7 +939,7 @@ impl Capability {
             .map_err(|_| InstallError::CorruptStore)?;
         self.check_state(&working)?;
         if let Some(next) = optional_file(&self.action, NEXT)? {
-            let mode = metadata(&next)?.mode() & 0o7777;
+            let mode = permission_mode(&next)?;
             if mode == 0o600 {
                 // The candidate was never handed to rename. No trusted state
                 // could have been acknowledged from its incomplete bytes.
@@ -986,14 +986,7 @@ impl Capability {
         state: TrustState,
         bytes: Vec<u8>,
     ) -> InstallResult<()> {
-        if let Err(error) =
-            filesystem::replace_file(&self.action, OsStr::new(NEXT), OsStr::new(STATE))
-        {
-            let error = if error.raw_os_error() == Some(libc::EIO) {
-                InstallError::UnknownCommit
-            } else {
-                InstallError::Io
-            };
+        if let Err(error) = replace_file(&self.action, OsStr::new(NEXT), OsStr::new(STATE)) {
             working.failure = Some(error);
             return Err(error);
         }

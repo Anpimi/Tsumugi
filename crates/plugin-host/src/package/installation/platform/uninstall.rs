@@ -5,7 +5,7 @@ const NAMESPACE: &str = "uninstalls";
 
 struct Transaction {
     directory: File,
-    id: (u64, u64),
+    id: Identity,
     mode: u32,
     receipt_file: File,
     bytes: Vec<u8>,
@@ -14,7 +14,7 @@ struct Transaction {
 
 struct Journal {
     directory: File,
-    id: (u64, u64),
+    id: Identity,
     entries: Vec<Transaction>,
 }
 
@@ -63,10 +63,10 @@ impl Store {
         };
         private(&directory, true, 0o700)?;
         let id = filesystem::identity(&directory)?;
-        if id.0 != self.root_id.0 {
+        if !same_volume(id, self.root_id) {
             return Err(InstallError::CorruptStore);
         }
-        let before = Stamp::from(&metadata(&directory)?);
+        let before = Stamp::read(&directory)?;
         let mut journal = Journal {
             directory,
             id,
@@ -167,7 +167,7 @@ impl Store {
         }
         let package = filesystem::open_child(&object, OsStr::new("package.tar"), false)?;
         private(&package, false, 0o400)?;
-        let package_stamp = Stamp::from(&metadata(&package)?);
+        let package_stamp = Stamp::read(&package)?;
         let package_id = filesystem::identity(&package)?;
         let check = || -> InstallResult<()> {
             self.check_transaction(journal, tx, authorized)?;
