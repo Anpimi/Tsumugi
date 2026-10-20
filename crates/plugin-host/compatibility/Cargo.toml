@@ -41,3 +41,7 @@ path = "../tests/native_catalog.rs"
 [[test]]
 name = "source_maintenance"
 path = "tests/source_maintenance.rs"
+
+[[test]]
+name = "version_compatibility"
+path = "../tests/knowledge/version_compatibility.rs"

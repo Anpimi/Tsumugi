@@ -878,38 +878,59 @@ features `[]` can use this same test file to exclude legacy execution fixtures.
 This does not establish rendered editor/batch/Agent workflows, behavior-version
 upgrade compatibility or complete release acceptance.
 
-The `knowledge` test's `version_compatibility` module uses the original reviewed
-philosophy package as `TSUMUGI_TEST_PLUGIN_PACKAGE`/`TSUMUGI_TEST_PLUGIN_DIGEST`.
-Prepare three additional controlled copies in the same public example/SDK-cache
+The `version_compatibility` test uses the original reviewed philosophy package
+as `TSUMUGI_TEST_PLUGIN_PACKAGE`/`TSUMUGI_TEST_PLUGIN_DIGEST`. Its source is also
+reused by the original `knowledge` test's `version_compatibility` module.
+Prepare four additional controlled copies in the same public example/SDK-cache
 layout described above. Each retains the original plugin ID `philosophy`; set
 its `package.json` version before running the original public preparer:
 
-| Fixture variables | Controlled package version | Independent change |
+| Fixture variables | Controlled package version | Controlled change |
 | --- | --- | --- |
 | `TSUMUGI_TEST_BEHAVIOR_PACKAGE`/`TSUMUGI_TEST_BEHAVIOR_DIGEST` | `0.1.0-alpha.2` | Set only the query capability's `behaviorVersion` to 2. In the engine's **query** branch, use case-sensitive `row.text.includes(form)` instead of Unicode word-boundary occurrence; describe literal substring matching in that query's `basis.coverage`. Keep the check branch, query input/output schemas and Profile unchanged. |
 | `TSUMUGI_TEST_PROFILE_PACKAGE`/`TSUMUGI_TEST_PROFILE_DIGEST` | `0.1.0-alpha.3` | Set `PROFILE.behaviorVersion` to 2, retaining the original capability/data identities and engine. |
 | `TSUMUGI_TEST_SCHEMA_PACKAGE`/`TSUMUGI_TEST_SCHEMA_DIGEST` | `0.1.0-alpha.4` | Set `schemaVersion` to 2 on the query capability, its input/output schemas and `RESOURCE_SCHEMA`; retain behavior/Profile identities and original JSON field types and engine. |
+| `TSUMUGI_TEST_DATA_PACKAGE`/`TSUMUGI_TEST_DATA_DIGEST` | `0.1.0-alpha.5` | Set only `RESOURCE_SCHEMA.schemaVersion` to 2. Keep the original query contract, Profile, input/output/error schemas, JSON field types, engine and exact terminology payload bytes. This isolates the Resource data-schema axis from the combined schema fixture. |
 
 Make the declaration changes in the copy's `components/definition.mjs`; change
 the query implementation only in the behavior fixture. Regenerate each copy's
 manifest/tool/review Resources using `tooling/prepare.mjs`, materialize it with
 the public package recipe and independently inspect its exact directory/digest.
 These versions identify controlled conformance fixtures, not published releases.
-With all reviewed package and runtime variables set, run:
+With all five reviewed package/digest pairs and the approved
+`TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST` and
+`TSUMUGI_TEST_RUNTIME_APPROVAL` set, use the isolated consumer workspace:
 
 ```sh
-cargo test -p tsumugi-plugin-host --features javascript-conformance --test knowledge --locked -- --test-threads=1
+cargo test --manifest-path crates/plugin-host/compatibility/Cargo.toml --features javascript-conformance --test version_compatibility --locked -- --nocapture --test-threads=1
 ```
+
+With a prepared dependency cache, add `--offline`. All four selected tests must
+execute; an empty, filtered-only or ignored-only result does not establish
+conformance. This workspace uses normal Core and SDK features `[]`, with the
+Host's `core-adapter`, and does not compile the unrelated WorkPlan fixtures in
+the original `knowledge` test. It reuses the same public package installation,
+runtime capture and real-worker helpers.
 
 Actual installed/reopened package bytes and real query channels distinguish
 `soundtrack` under the two behaviors despite identical payload field types.
 Old and new versions coexist; explicit contract/Profile selection follows exact
 identities in either registration order. Wrong contract, Profile or input/output
 data versions are refused on the original channel before dispatch, after which
-an exact request still succeeds. Resource schema versions are also exact.
+an exact request still succeeds. Resource schema versions are also exact. The
+data-only fixture refuses the old Resource schema and exposes unchanged literal
+bytes through schema 2. Both query declarations remain compatible, so an
+unselected single-provider resolution is ambiguous in either registration order;
+an explicit exact provider selects the requested package and digest. Its real
+query output retains the original literal entries, resource pin, input digest,
+coverage and Unicode word-boundary behavior. Resource reads and declaration
+selection provide no execution permission.
 SDK identity and process protocol are checked separately on the actual captured
-runtime descriptor: a structurally valid unsupported SDK identity or retained
-process-1 identity is diagnosed and refused, without a package-version fallback.
+runtime descriptor: the current Process3 descriptor is retained, while a
+structurally valid unsupported SDK label or retained process-1 identity is
+diagnosed and refused before directory capture, without a package-version
+fallback. Changing the descriptor's SDK label does not upgrade or execute an SDK
+artifact.
 This proves the current bounded selection/dispatch policy, not execution of an
 arbitrary future SDK artifact, automatic project environment adoption or a
 permanent promise to freeze all future contracts.
