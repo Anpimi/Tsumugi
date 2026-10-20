@@ -2,6 +2,7 @@
 //! crate owns captured package bytes and the actual child/pipe identity. It has
 //! no domain implementation or adoption authority. The optional Core adapter
 //! implements the trusted Runner port without giving a child a store.
+mod candidate_archive;
 pub mod catalog;
 mod child;
 #[cfg(feature = "core-adapter")]
@@ -43,4 +44,5 @@ pub use runtime::{
 pub use service::*;
 pub use session::*;
 
+pub use candidate_archive::MAX_PACKAGE_ARCHIVE_BYTES;
 pub use host_error::{HostError, HostResult};

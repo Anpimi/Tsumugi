@@ -7,6 +7,8 @@ pub use host_error::{HostError, HostResult};
 #[path = "../../src/package_profile.rs"]
 mod package_profile;
 use package_profile as package;
+#[path = "../../src/candidate_archive.rs"]
+mod candidate_archive;
 #[path = "../../src/runtime.rs"]
 mod runtime;
 pub use runtime::{CapturedMemberArtifact, CapturedRuntime, MemberArtifactManifest};

@@ -10,6 +10,9 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Inspect existing uncompressed plugin candidate archives directly, retaining
+  their file access flags without extracting or executing their contents.
+
 - Add an experimental Windows filesystem backend for already captured plugin
   materializations, with explicit artifact access flags and identity-checked
   cleanup. Windows installation and application support remain unavailable.

@@ -200,6 +200,29 @@ component loading, download, build or installation script. Independent plugins
 can materialize their declared runtime files and use this public tool instead of
 copying the Host's package digest algorithm.
 
+`PackageImage::capture_archive` accepts already read bytes of the existing
+uncompressed candidate tar and the independently approved package digest.
+`inspect_archive` provides the same five-field inspection without approval.
+Member modes retain executable flags across operating systems; no files are
+extracted or executed. The payload keeps the original 64 MiB total limit and
+256 files plus the manifest, with at most 1 MiB of encoded transport overhead.
+Only regular USTAR members and a single local PAX `path` for the following file
+are accepted. Links, sparse entries, path aliases, other extensions, executable
+manifests, incomplete terminators and nonzero trailing input are refused.
+The parser checks the live read guard and an observed ten-second deadline.
+
+The read-only CLI consumes a bounded archive from standard input:
+
+```sh
+cargo run -p tsumugi-plugin-host --bin tsumugi-plugin-package --locked -- inspect-archive < candidate.tar
+```
+
+The transport archive SHA-256 and captured package digest remain separate
+identities. This entry does not install a package, verify its publisher, enable
+Windows Store/runtime support or grant execution permission. Generic packages
+need their original manifest and resources; bundled-only SDK recipe policies
+remain in their distribution tooling.
+
 The explicit `diagnose <prebuilt-directory> <request-json>` operation adds
 [capability declaration/profile diagnostics](../../docs/capability-compatibility.md)
 from that same immutable capture. It compares independently supplied expected

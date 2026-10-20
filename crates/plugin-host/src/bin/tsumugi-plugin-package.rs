@@ -1,6 +1,9 @@
 //! Public, read-only fingerprints and declaration diagnostics for prebuilt packages.
-use std::{io::Write, path::PathBuf};
-use tsumugi_plugin_host::PackageImage;
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
+};
+use tsumugi_plugin_host::{MAX_PACKAGE_ARCHIVE_BYTES, PackageImage};
 use tsumugi_plugin_sdk::parse_capability_compatibility_request;
 
 fn print(value: &impl serde::Serialize) -> Result<(), Box<dyn std::error::Error>> {
@@ -12,6 +15,15 @@ fn print(value: &impl serde::Serialize) -> Result<(), Box<dyn std::error::Error>
 
 fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if matches!(args.as_slice(), [command] if command.as_os_str() == "inspect-archive") {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .lock()
+            .take((MAX_PACKAGE_ARCHIVE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        print(&PackageImage::inspect_archive(&bytes, || true)?)?;
+        return Ok(0);
+    }
     let (directory, request) = match args.as_slice() {
         [command, directory] if command.as_os_str() == "inspect" => (directory, None),
         [command, directory, request] if command.as_os_str() == "diagnose" => {
@@ -26,7 +38,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             )
         }
         _ => {
-            return Err("usage: tsumugi-plugin-package inspect <prebuilt-directory> | diagnose <prebuilt-directory> <request-json>".into());
+            return Err("usage: tsumugi-plugin-package inspect <prebuilt-directory> | inspect-archive < <candidate.tar> | diagnose <prebuilt-directory> <request-json>".into());
         }
     };
     // Canonicalizing would hide selected symlink ancestors. Make a relative

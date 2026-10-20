@@ -1,5 +1,16 @@
 # Application versioning and changelog maintenance
 
+Direct candidate-archive capture reads the existing uncompressed tar transport
+into the original package image and digest, including explicit member access
+flags. It adds a bounded read-only inspection CLI, without changing the SDK,
+manifest, Process/Member protocol, Store or project format. The parser uses
+pinned `tar 0.4.46` with default features disabled and never invokes extraction;
+Cargo adds its required
+`filetime 0.2.29` dependency and preserves existing dependency versions. No
+Windows installation/runtime support is enabled. This remains in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+bilingual Unreleased entries and no additional bump.
+
 Held-parent Windows filesystem operations now support owned materialization of
 already captured memory artifacts. Explicit artifact flags control file access;
 complete file identities and protected current-user ACLs guard staging and

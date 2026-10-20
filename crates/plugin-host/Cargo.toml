@@ -20,6 +20,7 @@ tough = { version = "=0.24.0", default-features = false }
 url = "=2.5.8"
 jiff = { version = "=0.2.37", features = ["serde"] }
 futures-util = { version = "=0.3.34", features = ["io"] }
+tar = { version = "=0.4.46", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

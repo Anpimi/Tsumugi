@@ -3,10 +3,11 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 use tsumugi_plugin_sdk::*;
 
-const MAX_FILES: usize = 256;
-const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
-pub(crate) use crate::package_profile::{MAX_DEPTH, MAX_DIRECTORIES, portable_path};
+pub(crate) use crate::package_profile::{
+    MAX_DEPTH, MAX_DIRECTORIES, MAX_FILES, MAX_PACKAGE_BYTES, portable_path,
+};
 
+mod archive;
 mod directory;
 pub(crate) mod installation;
 pub use directory::{PackageCompatibilityInspection, PackageInspection};
