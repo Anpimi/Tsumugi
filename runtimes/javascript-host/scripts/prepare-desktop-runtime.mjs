@@ -169,8 +169,12 @@ export async function prepare(args) {
   const host = join(output, 'host');
   await fs.mkdir(tool, { mode: 0o700 });
   await fs.mkdir(join(tool, 'bin'), { mode: 0o700 });
-  await fs.writeFile(join(tool, 'bin/node'), node, { mode: 0o700, flag: 'wx' });
-  await fs.writeFile(join(tool, 'LICENSE'), license, { mode: 0o600, flag: 'wx' });
+  await fs.writeFile(join(tool, 'bin/node'), node, { mode: 0o755, flag: 'wx' });
+  await fs.writeFile(join(tool, 'LICENSE'), license, { mode: 0o644, flag: 'wx' });
+  // These files become installed application resources. Normalize their modes
+  // even when the builder uses a restrictive umask; staging stays private.
+  await fs.chmod(join(tool, 'bin/node'), 0o755);
+  await fs.chmod(join(tool, 'LICENSE'), 0o644);
   await command(process.execPath, [join(HERE, 'package-runtime.mjs'),
     '--source', source, '--output', host,
     '--cordis-license', config['--cordis-license']], undefined, 4096);

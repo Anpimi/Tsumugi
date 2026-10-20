@@ -10,6 +10,9 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Keep bundled Node and member resource files readable when the application
+  is installed by another account, including builds with a restrictive umask.
+
 - Let an ordinary Pi member request one explicitly approved, fixed MCP terminology
   query and receive its original result, retaining the original service deadline
   and tool limits. This is separate from manual lookup permission.

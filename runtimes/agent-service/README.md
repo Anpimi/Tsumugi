@@ -110,7 +110,11 @@ resolution. The build uses ESM package entry points so UMD relative imports are
 not left unresolved. Existing output directories are refused. Runtime packaging
 does not install or approve Node or any domain tool; those keep their original
 installation, selection and consent requirements. The runtime profile maps this
-artifact to `member-runtime/` beside the application resources. With
+artifact to `member-runtime/` beside the application resources. Artifact files
+use non-executable `0644` permissions even under a restrictive builder umask,
+so installed resources remain readable across installation users. Owned staging
+directories stay private; the application bundler supplies its final directory
+permissions. With
 `bundled-runtime` enabled, the desktop build captures this complete bounded
 tree through the same Host owner used at runtime. A missing entrypoint or a
 protocol different from Core's generated profile fails the build. Preparation

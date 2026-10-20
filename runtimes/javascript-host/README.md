@@ -213,6 +213,11 @@ including dependency metadata and licenses. Actual Node imports require **macOS
 application's base macOS minimum or establish Intel/Linux runtime availability.
 A desktop installer must check this requirement before offering that artifact.
 
+Prepared Node files use distribution permissions (`0755` for `bin/node`, `0644`
+for `LICENSE`) even under a restrictive builder umask. Preparation directories
+remain private; the final application must also provide readable and traversable
+resource directories for its installation users.
+
 Fixed archive/file pins are build inputs, not a publisher update policy or a
 user execution decision. Inspection records the installer-supplied version;
 the verified distribution supplies that claim. Neither output JSON nor an

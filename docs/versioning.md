@@ -9,6 +9,13 @@ Their existing Unreleased entries remain separate user changes. The application
 and SDK remain in the same undistributed alpha batch with no additional bump. The
 assessments below describe each change at its introduction baseline.
 
+Bundled Node and member resource files now receive explicit distribution
+permissions independently of the builder's umask. This fixes cross-user
+installation readability without changing artifact bytes, executable flags,
+runtime pins, protocols, project formats, dependencies or the version source.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
+batch without another bump; both Unreleased changelogs describe the correction.
+
 An ordinary Pi member may use one explicitly captured MCP terminology query.
 The default-off plan policy binds the original fixed preview and both service
 and model data sharing; manual lookup permission does not enable it. The

@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
 import { builtinModules } from 'node:module';
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -90,7 +90,10 @@ try {
     const path = join(staging, name);
     if (relative(staging, path).startsWith('..')) throw new Error('Invalid output member');
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(path, bytes, { flag: 'wx', mode: 0o600 });
+    await writeFile(path, bytes, { flag: 'wx', mode: 0o644 });
+    // Installed resource files must remain readable across installation users,
+    // independently of the builder's umask. The owned staging stays private.
+    await chmod(path, 0o644);
   }
   await rename(staging, output);
 } catch (error) { await rm(staging, { recursive: true, force: true }); throw error; }
