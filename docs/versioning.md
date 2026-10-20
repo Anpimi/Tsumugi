@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+The Extensions manager presents installation review, declared package and
+capability permissions, installed records and original-action recovery in
+separate, readable regions. Installed details now expose the capability-level
+permissions already present in the saved manifest. Failed operations bring
+their recovery region into view, including when reopening a retained request.
+Repository trust, package
+approval, installation/enabling, runtime and Native Host identity approval, and
+per-execution consent retain their original owners and remain independent.
+No Core, IPC, SDK, persistent format, dependency or version-source change is
+introduced. This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch with bilingual Unreleased entries and no additional bump.
+
 Normal project open now validates application execution associations against the
 complete input already restored by the ledger in the same read-only snapshot.
 Only small pending row identities are retained; all original frame, authority,

@@ -17,6 +17,11 @@ within this same undistributed batch.
   to the existing single-pane mode for larger text. Shared light surfaces,
   controls and focus indicators use a consistent accent.
 
+- Make extension installation review, declared permissions, installed records and
+  original-action recovery easier to scan. Installed package details now show
+  each capability's declared permissions without changing execution consent.
+  Bring failed operations and their original-request recovery into view.
+
 - Avoid reconstructing every complete execution input a second time when opening
   a project. Validate the same application associations within the original read
   snapshot, preserving complete integrity checks and ordinary reconciliation.

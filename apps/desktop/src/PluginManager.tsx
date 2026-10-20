@@ -72,6 +72,21 @@ function failureMessage(failure: CommandFailure, unknown: boolean, trust = false
   return "plugins.failed";
 }
 
+/** Declarations describe requested access, independently of recorded approval. */
+function PackagePermissionReview({ manifest }: { manifest: PluginPackageDetailsView["manifest"] }) {
+  const { t } = useTranslation();
+  return <section className="plugin-permission-review" aria-label={t("plugins.permissionsTitle")}>
+    <h4>{t("plugins.permissionsTitle")}</h4>
+    <div className="plugin-permission-group" role="group" aria-label={t("plugins.packagePermissions")}>
+      <h5>{t("plugins.packagePermissions")}</h5><PluginPermissions permissions={manifest.permissions}/>
+    </div>
+    {manifest.contributions.map(contribution => contribution.contribution.kind === "capability"
+      ? <div className="plugin-permission-group" key={contribution.id} role="group" aria-label={t("plugins.capability", { name: contribution.id })}>
+        <h5>{t("plugins.capability", { name: contribution.id })}</h5><PluginPermissions permissions={contribution.contribution.declaration.permissions}/>
+      </div> : null)}
+  </section>;
+}
+
 
 /** Application configuration stays mounted across project switches and panel
  * close. A rejected/unknown mutation retains its original request for recovery. */
@@ -117,6 +132,7 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   const cleanupTrigger = useRef<HTMLButtonElement | null>(null);
   const returnCleanupFocus = useRef(false);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const failureFocus = useRef<HTMLDivElement>(null);
   const focusAfterSuccess = useRef(false);
   const query = useQuery({ queryKey: inventoryKey, enabled: open, queryFn: async ({ signal }) => {
     const result = await pluginCommands.inventory();
@@ -131,6 +147,9 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   usePluginReadVisibility(client, inventoryKey, open);
   usePluginReadVisibility(client, repositoriesKey, open && repositoriesVisible);
   useEffect(() => { onBusyChange(busy || originalRequired); }, [busy, originalRequired, onBusyChange]);
+  useEffect(() => {
+    if (open && failure) failureFocus.current?.focus();
+  }, [open, failure]);
   const cleanupIntent = cleanupSelection?.intent;
   useEffect(() => {
     if (cleanupIntent) cleanupFocus.current?.focus();
@@ -267,10 +286,13 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   return <Dialog open={open} onOpenChange={next => { if (!running.current) setOpen(next); }}>
     <DialogTrigger asChild><button type="button" className="secondary-button" disabled={disabled}>{t("plugins.open")}</button></DialogTrigger>
     <DialogPortal><DialogOverlay className="dialog-backdrop"/><DialogContent className="execution-dialog plugin-manager" aria-busy={busy}
+      onOpenAutoFocus={event => { if (failure && failureFocus.current) { event.preventDefault(); failureFocus.current.focus(); } }}
       onEscapeKeyDown={event => { if (running.current) event.preventDefault(); }} onInteractOutside={event => { if (running.current) event.preventDefault(); }}>
       <div className="execution-heading"><div><DialogTitle>{t("plugins.title")}</DialogTitle><DialogDescription>{t("plugins.description")}</DialogDescription></div>
         <button type="button" ref={closeButton} className="secondary-button" disabled={busy} onClick={() => setOpen(false)}>{t("plugins.close")}</button></div>
-      <div className="execution-actions"><button type="button" className="primary-button" disabled={blocked} onClick={() => void operation(async () => {
+      <div className="plugin-manager-body">
+      <p className="plugin-boundaries">{t("plugins.permissionBoundary")}</p>
+      <div className="execution-actions plugin-entry-actions"><button type="button" className="primary-button" disabled={blocked} onClick={() => void operation(async () => {
         setConsent(false);
         const selected = await pluginCommands.select();
         if (mounted.current && selected) { setCandidate(selected); setConsent(false); setPack(null); setPackMembers([]); clearRepositoryReview(); setIntent(null); }
@@ -283,9 +305,9 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         <button type="button" className="secondary-button" disabled={busy} aria-expanded={repositoriesVisible} aria-controls="plugin-repositories" onClick={() => setRepositoriesVisible(true)}>{t("plugins.repositoryTitle")}</button>
         <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void query.refetch()}>{t("plugins.refresh")}</button></div>
       {busy || query.isFetching ? <p role="status">{t("plugins.loading")}</p> : null}
-      {query.isError ? <div role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
-      {saved ? <p role="status">{t(saved)}</p> : null}
-      {failure ? <div role="alert"><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown, trustIntent))}</p>
+      {query.isError ? <div className="plugin-feedback" role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
+      {saved ? <p className="plugin-feedback" role="status">{t(saved)}</p> : null}
+      {failure ? <div className="plugin-feedback" role="alert" ref={failureFocus} tabIndex={-1}><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown, trustIntent))}</p>
         <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching || repositoriesQuery.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
         {!originalRequired && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCleanupSelection(null); setCandidate(null); setPack(null); setPackMembers([]); clearRepositoryReview(); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); if (repositoriesVisible) void repositoriesQuery.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
       </div> : null}
@@ -326,22 +348,22 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         onSelect={(digest, checked) => setPackMembers(current => checked ? [...current, digest] : current.filter(member => member !== digest))}
         onDiscard={() => { setPack(null); setPackMembers([]); packTrigger.current?.focus(); }}
         onInstall={installSelectedPack}/> : null}
-      {candidate ? <section className="plugin-section" aria-label={t("plugins.candidate")}><h3>{t("plugins.candidate")}</h3>
-        <p><strong>{candidate.manifest.plugin.id}</strong> · {candidate.manifest.plugin.version}</p>
+      {candidate ? <section className="plugin-section plugin-install-review" aria-label={t("plugins.candidate")}><h3>{t("plugins.candidate")}</h3>
+        <div className="plugin-review-layout"><div className="plugin-package-plan">
+        <p className="plugin-package-name"><strong>{candidate.manifest.plugin.id}</strong> · {candidate.manifest.plugin.version}</p>
         <p>{t("plugins.declaredPublisher", { publisher: candidate.manifest.plugin.publisher })}</p>
         <p>{t("plugins.manualTrust")}</p>
         <h4>{t("plugins.runtime")}</h4><ul>{candidate.manifest.components.map(component => <li key={component.id}>{component.id}: {t(`plugins.runtimes.${component.runtime}`)}</li>)}</ul>
-        <h4>{t("plugins.permissionsTitle")}</h4><PluginPermissions permissions={candidate.manifest.permissions}/>
-        {candidate.manifest.contributions.map(contribution => contribution.contribution.kind === "capability" ? <div key={contribution.id}><p>{t("plugins.capability", { name: contribution.id })}</p><PluginPermissions permissions={contribution.contribution.declaration.permissions}/></div> : null)}
+        </div><PackagePermissionReview manifest={candidate.manifest}/></div>
         <details><summary>{t("plugins.fingerprint")}</summary><p><code>{candidate.packageDigest}</code></p><p>{t("plugins.files", { count: candidate.fileCount, bytes: candidate.byteCount })}</p></details>
         <p>{t("plugins.installEffect")}</p>
         <label className="plugin-consent"><input type="checkbox" checked={consent} disabled={busy || originalRequired} onChange={event => setConsent(event.target.checked)}/>{t("plugins.consent")}</label>
-        <div className="execution-actions"><button type="button" className="primary-button" disabled={blocked || !consent || intent !== null} onClick={() => {
+        <div className="execution-actions plugin-install-actions"><button type="button" className="primary-button" disabled={blocked || !consent || intent !== null} onClick={() => {
           if (query.data) void submit({ kind: "install", request: { ticket: candidate.ticket, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } });
         }}>{t("plugins.install")}</button>
           <button type="button" className="secondary-button" disabled={busy || originalRequired} onClick={() => { setCandidate(null); setConsent(false); }}>{t("plugins.discard")}</button></div>
       </section> : null}
-      {cleanupSelection ? <section className="plugin-section" aria-labelledby="plugin-cleanup-title">
+      {cleanupSelection ? <section className="plugin-section plugin-cleanup-review" aria-labelledby="plugin-cleanup-title">
         <h3 id="plugin-cleanup-title" tabIndex={-1} ref={cleanupFocus}>{t(cleanupSelection.original ? "plugins.originalRemovalTitle" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.revokeTitle" : "plugins.uninstallTitle", {
           name: cleanupSelection.intent.request.package.plugin.id, version: cleanupSelection.intent.request.package.plugin.version,
         })}</h3>
@@ -459,9 +481,10 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         {inventory.runtimeDecisions.map(decision => decision.environment.profile === "node-system-libraries-v1" && !inventory.runtimes.some(record => record.environmentDigest === decision.environmentDigest)
           ? <p key={decision.environmentDigest}>{t("plugins.runtimeApprovedMissing", { version: decision.environment.toolVersion })}</p> : null)}
       </section> : null}
-      {details ? <section className="plugin-section" aria-label={t("plugins.details")}><h3>{details.manifest.plugin.id} · {details.manifest.plugin.version}</h3><PluginPermissions permissions={details.manifest.permissions}/>
+      {details ? <section className="plugin-section plugin-installed-details" aria-label={t("plugins.details")}><h3>{details.manifest.plugin.id} · {details.manifest.plugin.version}</h3><PackagePermissionReview manifest={details.manifest}/>
         <ul>{details.manifest.contributions.map(contribution => <li key={contribution.id}>{contribution.id} · {t(`plugins.contributions.${contribution.contribution.kind}`)}</li>)}</ul>
       </section> : null}
+      </div>
     </DialogContent></DialogPortal>
   </Dialog>;
 }
