@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+The combined development candidate retains current-only project schema 61,
+Member3, WorkPlan3 and SDK/Process3. It includes the fixed Pi MCP query and
+pinned resizable-panel dependency together; their existing Unreleased entries
+remain separate user changes. The application and SDK remain in the same
+undistributed alpha batch with no additional package version bump. The
+assessments below describe each change at its introduction baseline.
+
 An ordinary Pi member may use one explicitly captured MCP terminology query.
 The default-off plan policy binds the original fixed preview and both service
 and model data sharing; manual lookup permission does not enable it. The
@@ -19,6 +26,14 @@ only the wall-clock permission expires. Definitive absence still requires an
 irreversible original-scope control; live admission keeps its existing expiry
 checks. This correction changes no persisted shape or protocol and shares this
 batch's bilingual Unreleased entries without an additional version bump.
+
+The content workspace uses the pinned `react-resizable-panels` library for
+resizing and accessible separators. Product layout modes, session preferences,
+drafts and navigation keep their existing owners. The dependency and lockfile
+are updated together; Vite includes the bundled dependency licenses in
+`licenses.md`. There is no Core, IPC or project-format change. This remains in
+the same undistributed application `0.2.0-alpha.1` batch, with bilingual
+Unreleased entries and no additional package version bump.
 
 Tool guidance can now be shared with captured model destinations only through
 an explicit, default-off plan policy. The policy enters the original plan digest

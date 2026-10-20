@@ -18,6 +18,9 @@ within this same undistributed batch.
   Confirming that it did not start requires the original scope to be stopped
   or otherwise irreversibly replaced; checking history does not renew permission.
 
+- Use shared resizable-panel controls for the content workspace, retaining
+  separate layout preferences and the current editor across width changes.
+
 - Explicitly opt in to share declared tool guidance with captured model
   destinations. Members receive a directory first and may request the linked
   Skill or reference text through the original controlled tool boundary.
