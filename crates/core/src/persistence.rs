@@ -1072,8 +1072,8 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
         application::prepare_open(connection).map_err(|_| PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         })?;
-    ledger::validate_for_open(connection, |connection, input| {
-        review_open.validate_input(connection, input)?;
+    ledger::validate_for_open(connection, |connection, input, results| {
+        review_open.validate_input(connection, input, results)?;
         application_open.validate_input(input)
     })
     .map_err(|_| PersistenceError::CorruptProject {

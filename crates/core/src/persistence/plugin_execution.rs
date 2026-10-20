@@ -322,6 +322,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
 pub(super) fn validate_associated_input(
     connection: &Connection,
     input: &FixedInput,
+    results: &mut ledger::OpenResultReader<'_>,
 ) -> Result<(), ExecutionError> {
     if let Some(record) = for_attempt(connection, input.envelope().attempt_id)? {
         check_record(&record, input)?;
@@ -338,17 +339,17 @@ pub(super) fn validate_associated_input(
             }
             None => {}
         }
-        let mut results = connection
+        let mut statement = connection
             .prepare("SELECT result_id FROM execution_results WHERE attempt_id=?1")
             .map_err(sql)?;
-        let ids = results
+        let ids = statement
             .query_map([record.attempt_id.to_string()], |row| {
                 row.get::<_, String>(0)
             })
             .map_err(sql)?;
         for id in ids {
             let id = ExecutionId::parse(&id.map_err(sql)?)?;
-            ledger::load_result(connection, input, id)?;
+            results.load(id)?;
         }
     }
     Ok(())

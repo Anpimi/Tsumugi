@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Reuse an already received execution result within the same project-open
+  attempt, while rechecking its complete stored bytes, row associations, size
+  limit and original permission. Keep full history and ordinary read validation.
+
 - Keep work-plan Pause, Stop and Take over available when ordinary background
   I/O capacity is full. Continue retains its existing environment preparation
   and limits; original authorization, control receipts and drain checks remain.

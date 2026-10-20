@@ -1784,6 +1784,426 @@ fn cancellation_preserves_committed_failed_and_undispatched_items_and_late_evide
 }
 
 #[test]
+fn open_result_slot_reuses_one_frame_then_releases_it_on_replacement() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let first = produce(&mut store, &input, input.envelope().items[0].item_id);
+    let second = produce(&mut store, &input, input.envelope().items[1].item_id);
+    store.save_execution_result(&first).unwrap();
+    store.save_execution_result(&second).unwrap();
+    let other_input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&other_input).unwrap();
+    let connection = store.execution_connection().unwrap();
+    let mut results = OpenResultReader::new(connection, &input);
+    let cold = results.load(first.envelope().result_id).unwrap();
+    let hot = results.load(first.envelope().result_id).unwrap();
+    assert!(std::ptr::eq(cold.envelope(), hot.envelope()));
+    assert!(std::ptr::eq(cold.bytes().as_ptr(), hot.bytes().as_ptr()));
+    results.load(second.envelope().result_id).unwrap();
+    let replaced = results.load(first.envelope().result_id).unwrap();
+    assert!(!std::ptr::eq(cold.envelope(), replaced.envelope()));
+    assert_eq!(cold.bytes(), replaced.bytes());
+    let fresh = OpenResultReader::new(connection, &input)
+        .load(first.envelope().result_id)
+        .unwrap();
+    assert!(!std::ptr::eq(replaced.envelope(), fresh.envelope()));
+    assert!(
+        OpenResultReader::new(connection, &other_input)
+            .load(first.envelope().result_id)
+            .is_err()
+    );
+    let mut bounded = input.envelope().clone();
+    bounded.limits.max_result_bytes = first.bytes().len() as u32 - 1;
+    let bounded = FixedInput::capture(bounded).unwrap();
+    assert!(
+        OpenResultReader::new(connection, &bounded)
+            .load(first.envelope().result_id)
+            .is_err(),
+        "the original per-input SQL frame limit still applies"
+    );
+}
+
+#[test]
+fn open_result_slot_rechecks_bytes_digest_and_legal_row_associations() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let first = produce(&mut store, &input, input.envelope().items[0].item_id);
+    let second = produce(&mut store, &input, input.envelope().items[1].item_id);
+    store.save_execution_result(&first).unwrap();
+    store.save_execution_result(&second).unwrap();
+    let other_input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&other_input).unwrap();
+    let other = produce(
+        &mut store,
+        &other_input,
+        other_input.envelope().items[0].item_id,
+    );
+    store.save_execution_result(&other).unwrap();
+    let connection = store.execution_connection().unwrap();
+    let mut results = OpenResultReader::new(connection, &input);
+    for change in 0..5 {
+        results.load(first.envelope().result_id).unwrap();
+        connection
+            .execute_batch("SAVEPOINT result_corruption")
+            .unwrap();
+        match change {
+            0 => {
+                let mut bytes = first.bytes().to_vec();
+                bytes[0] ^= 1;
+                connection
+                    .execute(
+                        "UPDATE execution_results SET bytes=?2 WHERE result_id=?1",
+                        params![first.envelope().result_id.to_string(), bytes],
+                    )
+                    .unwrap();
+            }
+            1 => {
+                connection
+                    .execute(
+                        "UPDATE execution_results SET digest=?2 WHERE result_id=?1",
+                        params![first.envelope().result_id.to_string(), "0".repeat(64)],
+                    )
+                    .unwrap();
+            }
+            2 => {
+                connection
+                    .pragma_update(None, "defer_foreign_keys", true)
+                    .unwrap();
+                let token = ExecutionId::new().to_string();
+                connection.execute(
+                    "UPDATE execution_items SET dispatch_token=?3 WHERE attempt_id=?1 AND item_id=?2",
+                    params![input.envelope().attempt_id.to_string(), first.envelope().item_id.to_string(), &token],
+                ).unwrap();
+                connection
+                    .execute(
+                        "UPDATE execution_results SET dispatch_token=?2 WHERE result_id=?1",
+                        params![first.envelope().result_id.to_string(), token],
+                    )
+                    .unwrap();
+            }
+            3 => {
+                connection.execute(
+                    "UPDATE execution_results SET item_id=?2,dispatch_token=?3 WHERE result_id=?1",
+                    params![first.envelope().result_id.to_string(), second.envelope().item_id.to_string(), second.envelope().dispatch_token.to_string()],
+                ).unwrap();
+            }
+            _ => {
+                connection.execute(
+                    "UPDATE execution_results SET attempt_id=?2,item_id=?3,dispatch_token=?4 WHERE result_id=?1",
+                    params![first.envelope().result_id.to_string(), other.envelope().attempt_id.to_string(), other.envelope().item_id.to_string(), other.envelope().dispatch_token.to_string()],
+                ).unwrap();
+            }
+        }
+        assert!(
+            !connection
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .exists([])
+                .unwrap()
+        );
+        assert!(
+            results.load(first.envelope().result_id).is_err(),
+            "case {change}"
+        );
+        assert!(results.verified.is_none());
+        connection
+            .execute_batch("ROLLBACK TO result_corruption; RELEASE result_corruption")
+            .unwrap();
+    }
+}
+
+#[test]
+fn open_result_projection_keeps_terminal_unknown_and_invalid_read_semantics() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let mut saved = Vec::new();
+    for (item, state) in input.envelope().items.iter().zip([
+        ExecutionState::Succeeded,
+        ExecutionState::Failed,
+        ExecutionState::Unknown,
+    ]) {
+        let produced = produce(&mut store, &input, item.item_id);
+        let mut envelope = produced.envelope().clone();
+        envelope.outcome = state;
+        if state != ExecutionState::Succeeded {
+            envelope.output = None;
+            envelope.diagnostic = Some(Diagnostic {
+                code: "terminal".into(),
+                retry_safe: false,
+            });
+        }
+        let result =
+            FixedResult::capture(envelope, &input, produced.envelope().dispatch_token).unwrap();
+        store.save_execution_result(&result).unwrap();
+        saved.push(result);
+    }
+    let connection = store.execution_connection().unwrap();
+    connection
+        .execute(
+            "UPDATE execution_items SET execution='dispatched' WHERE attempt_id=?1 AND item_id=?2",
+            params![
+                input.envelope().attempt_id.to_string(),
+                saved[2].envelope().item_id.to_string()
+            ],
+        )
+        .unwrap();
+    let mut results = OpenResultReader::new(connection, &input);
+    let opened =
+        read_attempt_with_results(connection, &input, false, |id| results.load(id)).unwrap();
+    for result in &saved {
+        let actual = opened
+            .items
+            .iter()
+            .find(|item| item.item_id == result.envelope().item_id)
+            .unwrap();
+        assert_eq!(actual.execution, result.envelope().outcome);
+        results.load(result.envelope().result_id).unwrap();
+    }
+    connection
+        .execute(
+            "UPDATE execution_results SET digest=?2 WHERE result_id=?1",
+            params![saved[2].envelope().result_id.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+    let opened =
+        read_attempt_with_results(connection, &input, false, |id| results.load(id)).unwrap();
+    let ordinary = read_attempt_in(connection, &input, false).unwrap();
+    for view in [opened, ordinary] {
+        let item = view
+            .items
+            .iter()
+            .find(|item| item.item_id == saved[2].envelope().item_id)
+            .unwrap();
+        assert_eq!(item.execution, ExecutionState::Unknown);
+        assert_eq!(item.validation, ValidationState::Invalid);
+    }
+}
+
+#[test]
+fn open_result_reused_frames_always_restore_their_original_input() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let input = fixture_input(&store, true);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let result = produce(&mut store, &input, input.envelope().items[0].item_id);
+    store.save_execution_result(&result).unwrap();
+    let retry = input
+        .retry_with_reused(
+            &[
+                input.envelope().items[1].item_id,
+                input.envelope().items[2].item_id,
+            ],
+            vec![ReusedResult {
+                item_id: result.envelope().item_id,
+                source_attempt_id: input.envelope().attempt_id,
+                result_id: result.envelope().result_id,
+            }],
+        )
+        .unwrap();
+    let connection = store.execution_connection().unwrap();
+    let mut results = OpenResultReader::new(connection, &retry);
+    let first = results.load(result.envelope().result_id).unwrap();
+    let second = results.load(result.envelope().result_id).unwrap();
+    assert!(!std::ptr::eq(first.envelope(), second.envelope()));
+    assert!(results.verified.is_none());
+    let mut changed = input.envelope().clone();
+    changed.items[0].payload = json!({"text":"changed"});
+    replace_test_input(connection, &FixedInput::capture(changed).unwrap()).unwrap();
+    assert!(results.load(result.envelope().result_id).is_err());
+}
+
+#[test]
+fn open_result_hits_recheck_historical_grants_and_scan_noncurrent_results() {
+    use tsumugi_plugin_sdk as sdk;
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let manifest = sdk::parse_manifest(include_bytes!(
+        "../../../../plugin-sdk/tests/fixtures/review.manifest.json"
+    ))
+    .unwrap();
+    let review = sdk::parse_review_declaration(include_bytes!(
+        "../../../../plugin-sdk/tests/fixtures/review.declaration.json"
+    ))
+    .unwrap()
+    .bind(&manifest, &"a".repeat(64))
+    .unwrap();
+    let binding = PluginExecutionBinding {
+        component_scope: sdk::ComponentScope::Project,
+        application_scope: None,
+        capability: review.checker,
+        profile: Some(review.declaration.profile),
+        environment: sdk::RuntimeEnvironmentDescriptor {
+            protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+            platform: sdk::RuntimePlatform {
+                operating_system: sdk::RuntimeOperatingSystem::Macos,
+                architecture: sdk::RuntimeArchitecture::Aarch64,
+            },
+            sdk_version: "0.1.0-alpha.1".into(),
+            process_protocol: sdk::PROCESS_PROTOCOL,
+            profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+            tool_version: "26.10.0".into(),
+            tool: sdk::RuntimeArtifactBinding {
+                tree_digest: "b".repeat(64),
+                entrypoint: "bin/node".into(),
+            },
+            host: sdk::RuntimeArtifactBinding {
+                tree_digest: "c".repeat(64),
+                entrypoint: "dist/main.js".into(),
+            },
+        }
+        .into(),
+    };
+    let mut envelope = InputEnvelope::new(
+        store.metadata().unwrap().project_id(),
+        "fixture",
+        &binding.capability.declaration.contract.id,
+        &binding.capability_version(),
+        vec![InputItem::new(
+            Scope {
+                kind: "fixture".into(),
+                id: "a".into(),
+                locale: None,
+            },
+            json!("captured"),
+            vec![],
+        )],
+    )
+    .unwrap();
+    envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms;
+    envelope.plugin = Some(binding.clone());
+    let input = FixedInput::capture(envelope).unwrap();
+    let generation = ExecutionId::new();
+    let grant = ExecutionId::new();
+    store.begin_plugin_epoch(generation).unwrap();
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 60_000;
+    store
+        .authorize_plugin_input(
+            generation,
+            grant,
+            &input,
+            expires,
+            PluginConsent {
+                unsandboxed_execution: true,
+                application_execution: false,
+            },
+            None,
+        )
+        .unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
+    let item = input.envelope().items[0].item_id;
+    let dispatched = store
+        .dispatch_execution_item(input.envelope().attempt_id, item)
+        .unwrap();
+    let provider = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: provider.plugin.clone(),
+        component_id: provider.component_id.clone(),
+        contribution_id: provider.contribution_id.clone(),
+        package_digest: provider.package_digest.clone(),
+        instance_id: ExecutionId::new().to_string(),
+        activation_generation: 1,
+    };
+    let invocation = input
+        .plugin_request(item, dispatched.dispatch_token, &channel)
+        .unwrap();
+    let result = FixedResult::capture_plugin(
+        &input,
+        item,
+        dispatched.dispatch_token,
+        PluginResultEvidence {
+            authorization_id: grant,
+            channel: channel.clone(),
+            result: sdk::InvocationResult {
+                context: invocation.context,
+                provider: channel,
+                capability: invocation.capability,
+                profile: invocation.profile,
+                result_id: ExecutionId::new().to_string(),
+                outcome: sdk::InvocationOutcome::Succeeded {
+                    output: sdk::EncodedPayload::capture(invocation.output_schema, "[]".into())
+                        .unwrap(),
+                },
+            },
+        },
+    )
+    .unwrap();
+    store.save_execution_result(&result).unwrap();
+    let connection = store.execution_connection().unwrap();
+    connection
+        .execute(
+            "UPDATE plugin_execution_grants SET revoked=1,expires_at_ms=1 WHERE grant_id=?1",
+            [grant.to_string()],
+        )
+        .unwrap();
+    let mut results = OpenResultReader::new(connection, &input);
+    let cold = results.load(result.envelope().result_id).unwrap();
+    let hot = results.load(result.envelope().result_id).unwrap();
+    assert!(
+        std::ptr::eq(cold.envelope(), hot.envelope()),
+        "historical reads require no live permit"
+    );
+    for change in 0..2 {
+        connection
+            .execute_batch("SAVEPOINT grant_corruption")
+            .unwrap();
+        if change == 0 {
+            connection
+                .execute(
+                    "UPDATE plugin_execution_grants SET grant_id=?1",
+                    [ExecutionId::new().to_string()],
+                )
+                .unwrap();
+        } else {
+            connection
+                .execute(
+                    "UPDATE plugin_execution_grants SET input_digest=?1",
+                    ["0".repeat(64)],
+                )
+                .unwrap();
+        }
+        assert!(
+            results.load(result.envelope().result_id).is_err(),
+            "grant case {change}"
+        );
+        connection
+            .execute_batch("ROLLBACK TO grant_corruption; RELEASE grant_corruption")
+            .unwrap();
+        results.load(result.envelope().result_id).unwrap();
+    }
+    let mut historical = result.envelope().clone();
+    historical.result_id = ExecutionId::new();
+    let historical = FixedResult::capture(historical, &input, dispatched.dispatch_token).unwrap();
+    connection.execute(
+        "INSERT INTO execution_results(result_id,attempt_id,item_id,dispatch_token,bytes,digest) VALUES (?1,?2,?3,?4,?5,?6)",
+        params![historical.envelope().result_id.to_string(), input.envelope().attempt_id.to_string(), item.to_string(), dispatched.dispatch_token.to_string(), historical.bytes(), historical.digest()],
+    ).unwrap();
+    super::super::plugin_execution::validate_associated_input(connection, &input, &mut results)
+        .unwrap();
+    results.load(result.envelope().result_id).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_results SET digest=?2 WHERE result_id=?1",
+            params![historical.envelope().result_id.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+    assert!(read_attempt_in(connection, &input, false).is_ok());
+    assert!(
+        super::super::plugin_execution::validate_associated_input(connection, &input, &mut results)
+            .is_err()
+    );
+}
+
+#[test]
 fn verified_decoding_cache_rejects_changed_bytes_and_row_associations() {
     let _schema = TestSchema::enable();
     let temp = tempfile::tempdir().unwrap();

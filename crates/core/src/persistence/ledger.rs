@@ -85,17 +85,41 @@ pub(super) fn table_names(_connection: &Connection) -> Vec<String> {
 thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
-    validate_schema(connection, |_, _| Ok(()))
+    validate_schema(connection, |connection, input| {
+        validate_attempt_input(connection, input, |result| {
+            load_result(connection, input, result)
+        })
+    })
 }
 
 pub(super) fn validate_for_open(
     connection: &Connection,
-    mut validate_review: impl FnMut(&Connection, &FixedInput) -> Result<(), ExecutionError>,
+    mut validate_review: impl FnMut(
+        &Connection,
+        &FixedInput,
+        &mut OpenResultReader<'_>,
+    ) -> Result<(), ExecutionError>,
 ) -> Result<(), ExecutionError> {
     validate_schema(connection, |connection, input| {
-        super::plugin_execution::validate_associated_input(connection, input)?;
-        validate_review(connection, input)
+        let mut results = OpenResultReader::new(connection, input);
+        validate_attempt_input(connection, input, |result| results.load(result))?;
+        super::plugin_execution::validate_associated_input(connection, input, &mut results)?;
+        validate_review(connection, input, &mut results)
     })
+}
+
+fn validate_attempt_input(
+    connection: &Connection,
+    input: &FixedInput,
+    load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
+) -> Result<(), ExecutionError> {
+    let _ = read_attempt_with_results(connection, input, false, load_result)?;
+    if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
+        || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY
+    {
+        super::mcp::validate_ledger_input(connection, input)?;
+    }
+    Ok(())
 }
 
 fn validate_schema(
@@ -155,12 +179,6 @@ fn validate_schema(
         let input = load_input(connection, id)?;
         if input.envelope().project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::CorruptLedger, "project"));
-        }
-        let _ = read_attempt_in(connection, &input, false)?;
-        if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
-            || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY
-        {
-            super::mcp::validate_ledger_input(connection, &input)?;
         }
         validate_input(connection, &input)?;
     }
@@ -742,6 +760,17 @@ pub(super) fn load_result(
     input: &FixedInput,
     result: ExecutionId,
 ) -> Result<FixedResult, ExecutionError> {
+    load_result_with_verified(connection, input, result, None)
+}
+
+// Only the open-time attempt owner can supply this already received frame.
+// Every call still reads the original bounded row and checks provenance.
+fn load_result_with_verified(
+    connection: &Connection,
+    input: &FixedInput,
+    result: ExecutionId,
+    verified: Option<&FixedResult>,
+) -> Result<FixedResult, ExecutionError> {
     let reused = input
         .envelope()
         .reused_results
@@ -751,7 +780,20 @@ pub(super) fn load_result(
     let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
         "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
         params![result.to_string(),result_input.envelope().attempt_id.to_string(),i64::from(result_input.envelope().limits.max_result_bytes)], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
-    let result_value = FixedResult::restore(&bytes, &digest, &result_input, parse_id(token)?)?;
+    let token = parse_id(token)?;
+    let result_value = match verified {
+        Some(verified)
+            if verified.envelope().result_id == result
+                && verified.envelope().attempt_id == result_input.envelope().attempt_id
+                && verified.envelope().dispatch_token == token
+                && verified.envelope().item_id.to_string() == item
+                && verified.digest() == digest.as_str()
+                && verified.bytes() == bytes.as_slice() =>
+        {
+            verified.clone()
+        }
+        _ => FixedResult::restore(&bytes, &digest, &result_input, token)?,
+    };
     if reused.is_some_and(|reference| {
         reference.item_id != result_value.envelope().item_id
             || result_value.envelope().outcome != ExecutionState::Succeeded
@@ -765,6 +807,46 @@ pub(super) fn load_result(
     }
     super::plugin_execution::validate_result_in(connection, &result_input, &result_value)?;
     Ok(result_value)
+}
+
+/// One strictly received result for the exact input in the current open snapshot.
+/// A different result replaces the slot; the entire slot dies with this attempt.
+/// Mutable rows and original grants are checked on every load, including hits.
+pub(super) struct OpenResultReader<'a> {
+    connection: &'a Connection,
+    input: &'a FixedInput,
+    verified: Option<FixedResult>,
+}
+
+impl<'a> OpenResultReader<'a> {
+    fn new(connection: &'a Connection, input: &'a FixedInput) -> Self {
+        Self {
+            connection,
+            input,
+            verified: None,
+        }
+    }
+
+    pub(super) fn load(&mut self, result: ExecutionId) -> Result<FixedResult, ExecutionError> {
+        let previous = self.verified.take();
+        // Reused results retain their original input and permission owner. Do
+        // not reuse qualification under the retry attempt's different input.
+        if self
+            .input
+            .envelope()
+            .reused_results
+            .iter()
+            .any(|reference| reference.result_id == result)
+        {
+            drop(previous);
+            return load_result(self.connection, self.input, result);
+        }
+        let previous = previous.filter(|fixed| fixed.envelope().result_id == result);
+        let fixed =
+            load_result_with_verified(self.connection, self.input, result, previous.as_ref())?;
+        self.verified = Some(fixed.clone());
+        Ok(fixed)
+    }
 }
 
 /// Restores associated immutable result pairs in one bounded history read.
@@ -894,12 +976,23 @@ fn read_attempt(
     read_attempt_in(connection, &input, active)
 }
 
-// Opening has already restored this exact frame in its read snapshot. Reuse
-// that capture rather than decoding the complete input a second time.
+// Reuse the caller's exact input capture while ordinary reads still receive
+// every result independently. Open supplies its own attempt-local result reader.
 fn read_attempt_in(
     connection: &Connection,
     input: &FixedInput,
     active: bool,
+) -> Result<AttemptView, ExecutionError> {
+    read_attempt_with_results(connection, input, active, |result| {
+        load_result(connection, input, result)
+    })
+}
+
+fn read_attempt_with_results(
+    connection: &Connection,
+    input: &FixedInput,
+    active: bool,
+    mut load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
 ) -> Result<AttemptView, ExecutionError> {
     let attempt = input.envelope().attempt_id;
     check_translation_projection(connection, input, None)?;
@@ -959,7 +1052,7 @@ fn read_attempt_in(
             state = ExecutionState::Unknown;
         }
         if let Some(result) = result {
-            match load_result(connection, input, parse_id(result)?) {
+            match load_result(parse_id(result)?) {
                 Ok(output)
                     if output.envelope().item_id == item_id
                         && output.envelope().outcome == state

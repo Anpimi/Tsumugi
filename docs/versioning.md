@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+Project opening reuses one already received execution result within the exact
+input's read-snapshot visit. Every reuse rechecks complete stored bytes, digest,
+item/token/attempt associations, the input-specific size limit and original
+permission. Reused-result provenance, complete history and ordinary read paths
+retain their original validation. This changes no public API, SDK, protocol,
+persistent format, dependency or version source. It stays in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+bilingual Unreleased entries and no additional bump.
+
 Work-plan Pause, Stop and Take over no longer acquire ordinary blocking I/O
 capacity for empty checker preparation. Continue keeps its original I/O and
 environment checks; authorization, generation, exact receipts, consent cleanup

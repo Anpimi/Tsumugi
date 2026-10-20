@@ -516,6 +516,7 @@ impl OpenReviewValidation {
         &mut self,
         connection: &Connection,
         input: &crate::execution::FixedInput,
+        results: &mut super::ledger::OpenResultReader<'_>,
     ) -> Result<(), ExecutionError> {
         let Some(origins) = self.pending.remove(&input.envelope().attempt_id) else {
             return Ok(());
@@ -530,7 +531,7 @@ impl OpenReviewValidation {
                 .and_then(|evidence| evidence.origins.get(origin.index))
                 .filter(|saved| saved.attempt_id == input.envelope().attempt_id)
                 .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-evidence"))?;
-            let result = super::ledger::load_result(connection, input, saved.result_id)?;
+            let result = results.load(saved.result_id)?;
             checks::validate_saved_frames(
                 origin.project_id,
                 &run,
