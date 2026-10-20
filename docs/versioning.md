@@ -1,5 +1,25 @@
 # Application versioning and changelog maintenance
 
+An ordinary Pi member may use one explicitly captured MCP terminology query.
+The default-off plan policy binds the original fixed preview and both service
+and model data sharing; manual lookup permission does not enable it. The
+original MCP execution, unknown state and tool accounting retain their owners.
+This first profile excludes dynamic teams and delegated members.
+
+The persisted policy and typed tool association advance the current-only
+project format to schema 61. Earlier development projects are preserved and
+refused; create a new project and reimport sources. WorkPlan3, Member3,
+SDK/Process3 and dependencies remain unchanged. Regenerate Desktop contracts.
+This remains in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with bilingual Unreleased entries and no additional
+package version bump. Earlier assessments retain their introduction baselines.
+
+Uncertain Agent-start reconciliation also preserves an unresolved absence when
+only the wall-clock permission expires. Definitive absence still requires an
+irreversible original-scope control; live admission keeps its existing expiry
+checks. This correction changes no persisted shape or protocol and shares this
+batch's bilingual Unreleased entries without an additional version bump.
+
 Tool guidance can now be shared with captured model destinations only through
 an explicit, default-off plan policy. The policy enters the original plan digest
 and approval; existing plans without it retain human-only reading. Members see

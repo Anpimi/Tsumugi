@@ -644,6 +644,9 @@ pub struct PlanOptions {
     /// Absent means that tool guidance is available only to the human reader.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_guidance: Option<ToolGuidancePolicy>,
+    /// Absent keeps the original MCP preparation exclusively human-controlled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_term_query: Option<McpTermQueryPolicy>,
 }
 
 impl Default for PlanOptions {
@@ -678,6 +681,7 @@ impl Default for PlanOptions {
             team_discussions: None,
             team_execution: None,
             tool_guidance: None,
+            mcp_term_query: None,
         }
     }
 }
@@ -700,6 +704,8 @@ impl PlanOptions {
             || (self.team_discussions.is_some() && !self.assisted(WorkStage::Generation))
             || (self.team_execution.is_some() && self.team_discussions.is_none())
             || (self.tool_guidance.is_some() && !self.assisted(WorkStage::Generation))
+            || (self.mcp_term_query.is_some()
+                && (!self.assisted(WorkStage::Generation) || self.team_execution.is_some()))
         {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
@@ -997,7 +1003,7 @@ impl WorkPlan {
     pub fn authorization_effects(&self) -> Result<Vec<AutomationEffect>, ExecutionError> {
         self.validate()?;
         let mut effects = self.options.authorization_effects()?;
-        if self.tools.is_some() {
+        if self.tools.is_some() || self.options.mcp_term_query.is_some() {
             effects.push(AutomationEffect::QueryTools);
         }
         Ok(effects)
@@ -1017,6 +1023,19 @@ impl WorkPlan {
                 ErrorCode::InvalidInput,
                 "work-plan-guidance-tools",
             ));
+        }
+        if let Some(policy) = &self.options.mcp_term_query {
+            let preview = policy.preview();
+            crate::persistence::validate_mcp_term_query_preview(preview)?;
+            if self.input.is_none() || self.selection_basis.len() != 1
+                || preview.request.project_id != self.project_id
+                || preview.request.locale != self.locale
+                || preview.basis.unit_id != self.selection_basis[0].unit_id
+                || preview.basis.source_snapshot_id != self.selection_basis[0].source_snapshot_id
+                || preview.basis.source_revision_id != self.selection_basis[0].source_revision_id
+            {
+                return Err(ExecutionError::new(ErrorCode::InvalidInput, "work-plan-mcp-scope"));
+            }
         }
         if let Some(basis) = &self.maintenance {
             let units = basis.repair_units()?;

@@ -410,7 +410,7 @@ pub(in crate::persistence) fn check_prepared_tool(
         return Err(fail(ErrorCode::Unauthorized, "work-plan-tool-budget-owner"));
     }
     check_source(c, &stored.plan, &prepared.input)?;
-    let occupied: u32 = c.query_row("SELECT COUNT(*) FROM execution_items i JOIN application_executions x USING(attempt_id) WHERE x.plan_id=?1 AND x.kind='tool' AND x.attempt_id<>?2", params![stored.plan.plan_id.to_string(), prepared.input.envelope().attempt_id.to_string()], |row| row.get(0)).map_err(sql)?;
+    let (occupied, _) = super::member_mcp::counts(c, stored.plan.plan_id, Some(prepared.input.envelope().attempt_id))?;
     if occupied.saturating_add(prepared.input.envelope().items.len() as u32) > tools.max_invocations
     {
         return Err(fail(ErrorCode::LimitExceeded, "work-plan-tool-invocations"));
@@ -504,7 +504,7 @@ pub(in crate::persistence) fn validate_tool_input(
     {
         return Err(fail(ErrorCode::CorruptLedger, "work-plan-tool-grant"));
     }
-    let count: u32 = c.query_row("SELECT COUNT(*) FROM execution_items i JOIN application_executions x USING(attempt_id) WHERE x.plan_id=?1 AND x.kind='tool'", [stored.plan.plan_id.to_string()], |row| row.get(0)).map_err(sql)?;
+    let (count, _) = super::member_mcp::counts(c, stored.plan.plan_id, None)?;
     if count
         > stored
             .plan
@@ -537,7 +537,7 @@ pub(in crate::persistence) fn check_tool_delegation(
     check_source(c, &stored.plan, input)
 }
 
-fn check_source(c: &Connection, plan: &WorkPlan, input: &FixedInput) -> Result<(), ExecutionError> {
+pub(super) fn check_source(c: &Connection, plan: &WorkPlan, input: &FixedInput) -> Result<(), ExecutionError> {
     let units = input
         .envelope()
         .items

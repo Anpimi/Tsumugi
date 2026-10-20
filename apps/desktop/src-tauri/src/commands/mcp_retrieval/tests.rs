@@ -16,6 +16,11 @@ use tauri::{
     webview::InvokeRequest,
 };
 use tsumugi_core::{content, execution::*};
+// The currently prepared built-in member distribution is macOS arm64. These
+// scenarios use its actual approved bytes, not a synthetic member executor.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[path = "tests/pi_member.rs"]
+mod pi_member;
 
 fn call(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
@@ -47,6 +52,7 @@ enum Mode {
     HugeFrame,
     Flood,
     Redirect,
+    ModelOversize,
 }
 struct Server {
     endpoint: String,
@@ -176,7 +182,12 @@ impl Server {
                                         "test did not release accepted call: {wait:?}"
                                     );
                                 }
-                                let output = if matches!(mode, Mode::Invalid) {
+                                let output = if matches!(mode, Mode::ModelOversize) {
+                                    json!({"entries":[
+                                        {"id":"a","source":"Copper","target":"x".repeat(16384),"reason":"Large valid proposal"},
+                                        {"id":"b","source":"Copper","target":"y".repeat(16384),"reason":"Large valid proposal"}
+                                    ]})
+                                } else if matches!(mode, Mode::Invalid) {
                                     json!({"entries":[],"uri":"file:///untrusted"})
                                 } else {
                                     json!({"entries":[{"id":"copper","source":"Copper","target":"铜","reason":"Synthetic external suggestion"}]})

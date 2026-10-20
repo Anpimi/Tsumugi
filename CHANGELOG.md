@@ -6,9 +6,17 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
-Current development compatibility is project schema 60 and internal member
+Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
+
+- Let an ordinary Pi member request one explicitly approved, fixed MCP terminology
+  query and receive its original result, retaining the original service deadline
+  and tool limits. This is separate from manual lookup permission.
+
+- Keep an uncertain Agent start unresolved when only its permission expires.
+  Confirming that it did not start requires the original scope to be stopped
+  or otherwise irreversibly replaced; checking history does not renew permission.
 
 - Explicitly opt in to share declared tool guidance with captured model
   destinations. Members receive a directory first and may request the linked

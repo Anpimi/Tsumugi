@@ -52,6 +52,7 @@ impl Owner {
             .work_plan(scope.lease().plan_id)
             .map_err(map_recover)?;
         Ok(CapturedScope {
+            mcp: None,
             scope_id: scope.caller_id(),
             scope,
             consent,

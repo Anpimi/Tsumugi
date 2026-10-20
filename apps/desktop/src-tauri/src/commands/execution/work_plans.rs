@@ -776,7 +776,8 @@ pub async fn prepare_work_plan(
                     } else {
                         plan
                     };
-                    with_plan_environment_revision(&plugins, &plan, checker_revision, || {
+                    let binding_plan = plan.clone();
+                    let view = with_plan_environment_revision(&plugins, &plan, checker_revision, || {
                         verify_plan_connections(connection_store.as_ref(), &plan)?;
                         let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
                         view.checkers = views;
@@ -792,7 +793,11 @@ pub async fn prepare_work_plan(
                         }
                         host.work_plans.prepared = Some(plan.clone());
                         Ok(view)
-                    })
+                    })?;
+                    sessions.mcp_retrieval.bind_plan(
+                        &request.session_token, request.project_id, &binding_plan,
+                    )?;
+                    Ok(view)
                 },
             )
             .await
@@ -815,6 +820,20 @@ pub async fn authorize_work_plan(
         "authorize_work_plan.capture",
         CommandStage::ExecutionRecover,
         move |sessions| {
+            let claim = {
+                let active = authorized(sessions, &initial.session_token, initial.project_id,
+                    CommandStage::ExecutionRecover)?;
+                if active.store.work_plan_receipt(initial.action_id).map_err(map_recover)?.is_some() {
+                    None
+                } else {
+                    active.execution.as_ref().and_then(|host| host.work_plans.prepared.as_ref())
+                        .filter(|plan| plan.plan_id == initial.plan_id && plan.digest == initial.digest)
+                        .cloned()
+                }
+            };
+            if let Some(plan) = &claim {
+                sessions.mcp_retrieval.claim_plan(&initial.session_token, initial.project_id, plan)?;
+            }
             let active = authorized(
                 sessions,
                 &initial.session_token,
@@ -935,6 +954,14 @@ pub async fn authorize_work_plan(
                 "authorize_work_plan.finish",
                 CommandStage::ExecutionRecover,
                 move |sessions| {
+                    let accepted = authorized(sessions, &request.session_token, request.project_id,
+                        CommandStage::ExecutionRecover)?.store.work_plan_receipt(request.action_id)
+                        .map_err(map_recover)?.is_some();
+                    if !accepted {
+                        sessions.mcp_retrieval.claim_plan(
+                            &request.session_token, request.project_id, &plan,
+                        )?;
+                    }
                     let active = authorized(
                         sessions,
                         &request.session_token,
@@ -1341,7 +1368,7 @@ pub async fn control_work_plan(
                         }
                         Ok(receipt.into())
                     };
-                    match &plan {
+                    let outcome = match &plan {
                         Some(plan) => with_plan_environment_revision(
                             &plugins,
                             plan,
@@ -1349,7 +1376,12 @@ pub async fn control_work_plan(
                             finish,
                         ),
                         None => finish(),
+                    };
+                    if outcome.is_ok() && request.command != WorkPlanCommand::Continue {
+                        sessions.mcp_retrieval.stop_plan(&request.session_token,
+                            request.project_id, request.plan_id);
                     }
+                    outcome
                 },
             )
             .await
@@ -1430,12 +1462,10 @@ pub async fn read_work_plan_status(
                     work.check()?;
                     let status = store.work_plan_status(request.plan_id).map_err(map_read)?;
                     let mut view = WorkPlanStatusView::capture(&plan, status).map_err(map_read)?;
-                    if let Some(tools) = &plan.tools {
+                    if plan.tools.is_some() || plan.options.mcp_term_query.is_some() {
+                        let (reserved, limit) = store.work_plan_tool_usage(plan.plan_id).map_err(map_read)?;
                         view.tool_invocations = Some(broker::WorkPlanToolUsage {
-                            reserved: store
-                                .work_plan_tool_invocations(plan.plan_id)
-                                .map_err(map_read)?,
-                            limit: tools.max_invocations,
+                            reserved, limit,
                         });
                     }
                     view.plan.checkers = views;

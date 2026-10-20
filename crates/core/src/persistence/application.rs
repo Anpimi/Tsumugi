@@ -4,6 +4,7 @@ mod control;
 pub(crate) mod coordination;
 pub(crate) mod recovery;
 mod guidance;
+pub(crate) mod member_mcp;
 pub(in crate::persistence) mod maintenance;
 mod selection;
 mod services;
@@ -253,6 +254,9 @@ impl ProjectStore {
                 ));
             }
             maintenance::check_protection(connection, plan)?;
+            if let Some(policy) = &plan.options.mcp_term_query {
+                super::mcp::check_preview_in(connection, policy.preview())?;
+            }
             if plan.input.is_some() {
                 let input = plan.fixed_input()?;
                 let settings = ai::settings(&input)?;
@@ -798,6 +802,7 @@ mod tests {
             team_discussions: None,
             team_execution: None,
             tool_guidance: None,
+            mcp_term_query: None,
         };
         let manual = store
             .prepare_work_plan(None, "zh-CN", &[units[0]], options)

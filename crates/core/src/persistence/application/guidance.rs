@@ -41,7 +41,7 @@ fn capture_in(
     ))
 }
 
-fn deadline(request: &DispatchRequest) -> Result<std::time::Instant, ExecutionError> {
+pub(super) fn deadline(request: &DispatchRequest) -> Result<std::time::Instant, ExecutionError> {
     request.check_service_dispatch()?;
     let deadline = request
         .deadline()
@@ -55,7 +55,7 @@ fn deadline(request: &DispatchRequest) -> Result<std::time::Instant, ExecutionEr
     Ok(deadline)
 }
 
-fn check_dispatch_in(
+pub(super) fn check_dispatch_in(
     connection: &Connection,
     scope: &WorkPlanAgentScope,
     request: &DispatchRequest,

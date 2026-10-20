@@ -44,8 +44,8 @@ import {useWorkbenchCommands,type CommandAvailability,type AiPreparationCommandP
   type ExecutionCancellationCommandPayload,type ExecutionCancellationRetryCommandPayload} from "./workbenchCommands";
 export interface AiHandle extends AttemptWorkbenchHandle {allowNavigate:(destination?: WorkspaceDestination)=>Promise<boolean>}
 const stage=(e:unknown)=>commandFailure(e,"outcome-unknown");
-export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtensions,onOpenConnections,onOpenManual,onOpenComparison,onOpenReview,onOpenTask}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string,suggestedText?:string)=>Promise<boolean>;onOpenExtensions?:()=>void;onOpenConnections?:()=>void;onOpenManual?:(area:WorkspaceArea)=>Promise<boolean>;onOpenComparison?:(target:EditorTarget,locale:string,revision:Pick<TranslationRevision,"revisionId"|"ordinal">)=>Promise<boolean>;onOpenReview?:(target:EditorTarget,locale:string,origin:AiReviewOrigin)=>Promise<boolean>;onOpenTask?:(taskId:string,attemptId:string)=>Promise<boolean>}) {
-  const {t}=useTranslation();const context=executionContext(project),reads=useSessionReads(),registry=useWorkbenchCommands();
+export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtensions,onOpenConnections,onOpenManual,onOpenMcpQuery,onOpenComparison,onOpenReview,onOpenTask}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string,suggestedText?:string)=>Promise<boolean>;onOpenExtensions?:()=>void;onOpenConnections?:()=>void;onOpenManual?:(area:WorkspaceArea)=>Promise<boolean>;onOpenMcpQuery?:()=>Promise<boolean>;onOpenComparison?:(target:EditorTarget,locale:string,revision:Pick<TranslationRevision,"revisionId"|"ordinal">)=>Promise<boolean>;onOpenReview?:(target:EditorTarget,locale:string,origin:AiReviewOrigin)=>Promise<boolean>;onOpenTask?:(taskId:string,attemptId:string)=>Promise<boolean>}) {
+  const {t,i18n}=useTranslation();const context=executionContext(project),reads=useSessionReads(),registry=useWorkbenchCommands();
   const [connectionOpen,setConnectionOpen]=useWorkbenchState("ai", "connectionOpen", false);
   const preparation=useAiPreparation(), tasks=useExecutionTaskSession(), translationDraft=useTranslationDraftSession();
   const strategy = useOptionalStrategyDraftSession();
@@ -93,6 +93,9 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     : preparation.planControl.state.ready?.prepared.preview ? preparation.planControl.state.ready.prepared
     : preparation.planControl.state.pending?.prepared;
   const sharing = sharingPlan?.preview;
+  const mcpDraft = preparation.mcpDraft, mcpOriginal = preparation.mcpOriginal, mcpState = mcpOriginal?.state;
+  const originalMcpView = mcpOriginal?.status();
+  const capturedMcp = sharingPlan?.options.mcpTermQuery?.preview;
   const assisted = options.stages.some(choice=>choice.stage==="generation"&&choice.mode==="assisted");
   const perform = (work: Parameters<typeof preparation.runWorkPlan>[0]) => preparation.runWorkPlan(work,planId,contentOptions.key);
   const refreshPlan = preparation.readPlanForAction;
@@ -392,6 +395,25 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     {options.selectionPolicy!=="candidates-only"?<p>{t("ai.plan.checkedSelection")}</p>:null}</>:null}
 {assisted?<><ModelConnectionPicker config={config} label={t("connections.choose")} active={open} disabled={locked} editSeq={preparation.editSeq} onSelect={preparation.selectConnection} onOpenSettings={onOpenConnections}/><PreparationBudgetSummary config={config} policy={options.teamDiscussions} team={!!preparation.teamDraft}/><AiConnectionFields config={config} setConfig={setConfig} presetName={presetName} setPresetName={setPresetName} connectionOpen={connectionOpen} setConnectionOpen={setConnectionOpen} failure={failure}/></>:null}
     {assisted?<WorkPlanToolChoice ref={toolChoice} open={open} disabled={locked} value={toolDraft} onChange={setToolDraft}/>:null}
+    {assisted&&mcpOriginal?<section aria-label={t("ai.mcpTermQuery.title")}><h3>{t("ai.mcpTermQuery.title")}</h3>
+      {onOpenMcpQuery?<button type="button" className="secondary-button" disabled={locked} onClick={()=>{void onOpenMcpQuery();}}>{t("ai.mcpTermQuery.prepare")}</button>:null}
+      {mcpDraft?<><p>{t("ai.mcpTermQuery.scope",{entry:mcpDraft.label,locale:mcpDraft.preview.basis.locale})}</p>
+        <p className="ai-text">{mcpDraft.preview.request.tool.endpoint}</p>
+        <p className="ai-text">{mcpDraft.preview.request.tool.serverName} · {mcpDraft.preview.request.tool.serverVersion} · {mcpDraft.preview.request.tool.toolName}</p>
+        <label>{t("mcpRetrieval.fixedQuery")}<textarea readOnly rows={3} value={mcpDraft.preview.arguments.query}/></label>
+        <p>{t("mcpRetrieval.sourceLocale")} · {mcpDraft.preview.arguments.sourceLocale}</p>
+        <p>{t("ai.mcpTermQuery.expiry",{expiry:new Intl.DateTimeFormat(i18n.resolvedLanguage,{dateStyle:"medium",timeStyle:"medium"}).format(mcpDraft.preview.request.expiresAtMs)})}</p>
+        <p className="ai-text">{t("ai.mcpTermQuery.destination",{endpoint:config.endpoint,model:config.model})}</p>
+        <p>{t("ai.mcpTermQuery.limits",{sdk:toolDraft?.maxInvocations??0,total:(toolDraft?.maxInvocations??0)+1})}</p>
+        <p>{t("ai.mcpTermQuery.plainText")}</p>
+        {originalMcpView?.task?<p role="status">{t("mcpRetrieval.status",{phase:t(`mcpRetrieval.phases.${originalMcpView.phase}`)})}</p>:!preparation.mcpScopeCurrent()?<p role="status">{t(mcpDraft.preview.request.expiresAtMs<=Date.now()?"ai.mcpTermQuery.expired":preparation.teamDraft?"ai.mcpTermQuery.unsupported":"ai.mcpTermQuery.changed")}</p>:null}
+        <label className="source-check"><input type="checkbox" checked={mcpDraft.serviceConsent} disabled={locked||!preparation.mcpScopeCurrent()||!preparation.connectionCurrent()}
+          onChange={event=>preparation.setMcpConsent("serviceConsent",event.target.checked)}/>{t("ai.mcpTermQuery.serviceConsent")}</label>
+        <label className="source-check"><input type="checkbox" checked={mcpDraft.modelConsent} disabled={locked||!preparation.mcpScopeCurrent()||!preparation.connectionCurrent()}
+          onChange={event=>preparation.setMcpConsent("modelConsent",event.target.checked)}/>{t("ai.mcpTermQuery.modelConsent")}</label>
+        <button type="button" className="secondary-button" disabled={locked} onClick={()=>preparation.clearMcpQuery()}>{t("ai.mcpTermQuery.clear")}</button>
+      </>:<p>{t("ai.mcpTermQuery.empty")}</p>}
+    </section>:null}
     {assisted?<><label className="source-check"><input type="checkbox" checked={!!options.toolGuidance} disabled={locked||!toolDraft?.entries.length}
       onChange={event=>{
         const enabled=event.target.checked;
@@ -423,18 +445,33 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
       onConnection={preparation.selectTeamConnection} onOpenSettings={onOpenConnections}/>:null}
     {options.stages.some(choice=>choice.stage==="checks"&&choice.mode==="assisted")?<><p>{t("review.formatChecksRequired")}</p><TextReviewSelections value={advisoryChecks} active={open} scopeKey={JSON.stringify([context,locale])} disabled={locked} onOpenExtensions={onOpenExtensions} onSnapshotRevision={revision=>{if(prepared?.checkers.some(checker=>checker.kind==="ready"&&checker.plugin.plugin.settingsRevision!==revision))preparation.invalidatePreview();}} onChange={setAdvisoryChecks}/></>:null}
     <button className="primary-button" disabled={!previewAvailability(preparationPayload()).enabled} onClick={()=>{registry.dispatch("ai.preview",commandScope,preparationPayload());}}>{t(assisted?"ai.preview":"ai.plan.prepareManual")}</button></fieldset>
+    {mcpOriginal&&mcpState?.operation?.handedToAi?<section aria-label={t("mcpRetrieval.original")}><p>{t("ai.mcpTermQuery.stopHelp")}</p>
+      <div className="execution-actions"><button type="button" disabled={disabled} onClick={()=>{void mcpOriginal.retryRead();}}>{t("ai.mcpTermQuery.read")}</button>
+        <button type="button" disabled={disabled||mcpState.operation.closed&&mcpState.operation.drained&&!mcpState.stop?.pending&&!mcpState.stop?.unknown}
+          onClick={()=>{void(mcpState.stopping?mcpOriginal.retryStop():mcpOriginal.stop());}}>{t("ai.mcpTermQuery.stop")}</button>
+        {mcpOriginal.canEndWait()?<button type="button" onClick={()=>mcpOriginal.endWait()}>{t("mcpRetrieval.endWait")}</button>:null}</div>
+      {mcpState.operation.closed?<p role="status">{t(mcpState.operation.drained?"mcpRetrieval.closed":"mcpRetrieval.draining")}</p>:null}
+      {mcpState.stop?.unknown?<p role="status">{t("mcpRetrieval.stopUnknown")}</p>:null}
+      {[mcpState.readFailure,mcpState.stopFailure].map((error,index)=>error?<div role="alert" key={index}><CommandFailureDetails failure={error}/></div>:null)}
+    </section>:null}
     {sharing&&targetAvailable?<section><h3>{t("ai.previewTitle")}</h3>
       {!sharingPlan?.options.teamExecution?<p>{sharing.config.endpoint} · {sharing.config.model}</p>:null}
       <p>{t("ai.limits",{defaultValue:enUS.ai.limits,requests:sharing.config.maxRequests,concurrency:sharing.config.concurrency,tokens:sharing.config.maxOutputTokens,retries:sharing.config.maxRetries})}</p>
       <p>{t(sharingPlan?.options.teamExecution?sharingPlan.options.teamDiscussions?.profile==="current-plan-2"?"ai.team.artifactCostUnknown":"ai.team.costUnknown":sharingPlan?.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactCostUnknown":sharingPlan?.options.teamDiscussions?"ai.discussions.costUnknown":"ai.costUnknown")}</p><p>{t("ai.rateLimit")}</p>
       {sharingPlan?.options.teamExecution?<TeamExecutionDisclosure plan={sharingPlan}/>:<><AiPreviewItems items={sharing.items}/>{sharingPlan?<><TeamDiscussionDisclosure plan={sharingPlan}/><ToolGuidanceSharing plan={sharingPlan} config={sharing.config}/></>:null}</>}
+      {capturedMcp?<section aria-label={t("ai.mcpTermQuery.confirmation")}><h4>{t("ai.mcpTermQuery.title")}</h4><p>{t("ai.mcpTermQuery.confirmation")}</p>
+        <p>{t("ai.mcpTermQuery.scope",{entry:sharingPlan?.scope.find(unit=>unit.unitId===capturedMcp.basis.unitId)?.nativeKey??"",locale:capturedMcp.basis.locale})}</p>
+        <p className="ai-text">{capturedMcp.request.tool.endpoint} · {capturedMcp.request.tool.toolName}</p><pre className="ai-text">{capturedMcp.arguments.query}</pre>
+        <p className="ai-text">{t("ai.mcpTermQuery.destination",{endpoint:sharing.config.endpoint,model:sharing.config.model})}</p>
+        <p>{t("ai.mcpTermQuery.limits",{sdk:sharingPlan?.tools?.maxInvocations??0,total:(sharingPlan?.tools?.maxInvocations??0)+1})}</p>
+      </section>:null}
       {prepared?.options.toolGuidance&&!status?<p>{t("ai.toolGuidanceSharing.confirmation")}</p>:null}
       {prepared?.preview&&!status?<label className="source-check"><input type="checkbox" checked={consent} disabled={locked||!preparation.connectionCurrent()} onChange={e=>setConsent(e.target.checked)}/>{t(prepared.options.teamExecution?prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.team.artifactConsent":"ai.team.consent":prepared.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactConsent":prepared.options.teamDiscussions?"ai.discussions.consent":"ai.consent")}</label>:null}
     </section>:null}
     <WorkPlanControls context={context} prepared={prepared} status={status} busy={busy} disabled={disabled||!!pendingAdopt||preparation.guidance.blocked()} consent={consent}
       revocationDisabled={disabled||!!pendingAdopt} runRevocation={work=>preparation.runWorkPlan(work,planId,contentOptions.key,true)}
       session={preparation.planControl} editSeq={preparation.editSeq} run={perform} refresh={refreshPlan} onPlan={preparation.recordPlan}
-      open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())}
+      open={open} ownerBusy={()=>preparation.current().busy} canFresh={()=>sourceReady()&&selectionCurrent()&&preparedSourceCurrent()&&preparation.current().preparedPlan===prepared&&preparation.current().consent&&targetAvailable&&!cancelUnresolved&&(!prepared?.preview||preparation.connectionCurrent())&&(!prepared?.options.mcpTermQuery||preparation.mcpScopeCurrent())}
       onStarted={(id,idPlan,taskId)=>{const original=preparation.planControl.current().pending;if(original?.kind==="start")preparation.recordPlanStart(id,idPlan,original.prepared,original.request.expectedGeneration,original.editSeq,taskId??null);}}
       onBlockedChange={()=>{}} onOpenExtensions={onOpenExtensions} onOpenTranslation={onOpenTranslation}/>
     {status?.plan.options.teamExecution?<TeamRecoveryControls key={`team-recovery:${status.plan.planId}`} context={context} status={status} open={open}

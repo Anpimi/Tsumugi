@@ -21,6 +21,35 @@ an operation or prove that the external service has no side effects. The
 recipient may retain or forward the data you send, and its own usage charges
 and permissions apply.
 
+## Optional fixed query for an ordinary Pi member
+
+After preparing the original query in Resources, you can hand its fixed preview
+to AI preparation. This handoff does not execute or authorize the query. Review
+the original service, tool, text, entry, language and deadline again, separately
+allow the service to receive that query once, and allow its returned text to be
+sent to the displayed model destination. The final work-plan approval captures
+both disclosures. Manual query consent alone does not enable a model tool.
+
+This default-off profile supports one entry and an ordinary, non-delegated Pi
+member. It does not enable teams, arbitrary MCP tools or model-written queries.
+The member can request only `lookup_captured_terms` for the captured entry; it
+cannot replace the service, tool, arguments or credential reference. The MCP
+query adds at most one tool invocation to the original SDK allowance. Accepted
+and unknown invocations remain counted. Subsequent model requests still use
+the original model-request budget.
+
+The original discovery deadline is retained, including time spent preparing the
+plan. A stopped, expired or reopened query cannot regain permission from a plan
+or historical acknowledgement. Continuing requires a newly prepared and approved
+plan. Stop the original service session through its recovery controls; removing
+an AI draft alone does not stop an accepted external operation.
+
+A successful original result can be returned as untrusted model tool output
+without adopting terms or changing translations. The original MCP result limit
+and the complete model-request limit apply separately. Oversized output is
+refused rather than truncated. A missing or uncertain result is not replayed;
+reopening reads history without reconnecting the service.
+
 ## Service identity and credentials
 
 Use an exact HTTPS URL, or an explicitly selected literal loopback HTTP endpoint
@@ -98,7 +127,9 @@ provenance. It makes no verified license claim on the server's behalf.
 Adoption checks the original source and current term revision. Manual overrides
 retain their existing protection. Keeping or ignoring a proposal leaves adopted
 terms unchanged, and unadopted results are not included in normal term
-resolution or AI inputs. Adopting a term does not rewrite translations.
+resolution. The separate fixed-query model policy above is required to share
+the original result directly with a Pi member. Adopting a term does not rewrite
+translations.
 
 A query is a set of proposals, not a complete glossary revision. Terms absent
 from a later query are not removals. Repeated proposals for the same service,

@@ -268,7 +268,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         [plan.options.selectionPolicy==="missing-only"?"select-missing":"replace-captured-selection"] as const),
       ...(plan.options.teamDiscussions?["publish-discussion"] as const:[]),
       ...(plan.options.teamExecution?["dispatch-team-work","send-team-message"] as const:[]),
-      ...(toolsRequired?["query-tools"] as const:[])];
+      ...(toolsRequired||plan?.options.mcpTermQuery?["query-tools"] as const:[])];
   }
   function startPayload():AiStartCommandPayload|undefined {
     return prepared?.preview&&prepared.attemptId?{kind:"ai-start",planId:prepared.planId,digest:prepared.digest,attemptId:prepared.attemptId,
@@ -298,7 +298,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   function controlAvailability(payload?:AiPlanControlCommandPayload):CommandAvailability {
     const allowed=gate(false,payload?.command!=="continue");if(!allowed.enabled)return allowed;
     if(!payload||!status||!statusCurrent()||jsonIdentity(payload)!==jsonIdentity(controlPayload(payload.command)))return unavailable;
-    if(payload.command==="continue")return !status.plan.options.teamExecution&&!session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent&&checkerConfirmed&&toolsConfirmed
+    if(payload.command==="continue")return !status.plan.options.teamExecution&&!status.plan.options.mcpTermQuery&&!session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent&&checkerConfirmed&&toolsConfirmed
       &&applicationsConfirmed&&applicationTools.current()&&validMinutes?{enabled:true}:unavailable;
     return (payload.command==="pause"?status.state==="active":payload.command==="stop"?status.state!=="stopped":status.state!=="taken-over"&&status.state!=="stopped")?{enabled:true}:unavailable;
   }
@@ -461,7 +461,8 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
           onClick={() => dispatchControl("take-over")}>{t("ai.plan.takeOver")}</button> : null}
       </> : null}
       {status.plan.options.teamExecution && (status.state === "stopped" || BigInt(status.expiresAt) <= BigInt(Math.floor(Date.now() / 1000))) ? <p>{t("ai.team.reprepare")}</p> : null}
-      {(status.state === "paused" || status.state === "taken-over") && !status.plan.options.teamExecution ? <>
+      {status.plan.options.mcpTermQuery && status.state !== "active" ? <p>{t("ai.mcpTermQuery.reprepare")}</p> : null}
+      {(status.state === "paused" || status.state === "taken-over") && !status.plan.options.teamExecution && !status.plan.options.mcpTermQuery ? <>
         <p>{t("ai.plan.continueHelp")}</p>{duration}
         <label className="source-check"><input type="checkbox" checked={renewConsent} disabled={blocked || Boolean(ready)}
           onChange={event => setRenewConsent(event.target.checked)} />{t("ai.plan.renewConsent")}</label>

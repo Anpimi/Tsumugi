@@ -7,6 +7,7 @@ use crate::commands::mcp_retrieval::{
 };
 use tsumugi_core::application::{
     MCP_TERM_QUERY_CAPABILITY, MCP_TERM_QUERY_PROFILE, McpTermQueryPermit, PreparedMcpTermQuery,
+    PreparedMemberMcpTermQuery,
 };
 
 pub(in crate::commands) struct Call {
@@ -14,6 +15,7 @@ pub(in crate::commands) struct Call {
     pub permit: McpTermQueryPermit,
     pub connection: Arc<Connection>,
     _work: Work,
+    member: Option<PreparedMemberMcpTermQuery>,
 }
 impl Call {
     pub(in crate::commands) fn new(
@@ -27,7 +29,13 @@ impl Call {
             permit,
             connection,
             _work: work,
+            member: None,
         }
+    }
+    fn member(prepared: PreparedMemberMcpTermQuery, connection: Arc<Connection>) -> Self {
+        let mut call = Self::new(prepared.prepared().clone(), prepared.permit().clone(), connection);
+        call.member = Some(prepared);
+        call
     }
 }
 impl Drop for Call {
@@ -207,6 +215,7 @@ pub(in crate::commands) fn start(
 ) -> Result<McpRetrievalTask, CommandError> {
     let prepared = call.prepared.clone();
     let permit = call.permit.clone();
+    let member = call.member.clone();
     let input = prepared.input();
     let task = McpRetrievalTask {
         task_id: input.envelope().task_id,
@@ -219,14 +228,35 @@ pub(in crate::commands) fn start(
         .reap(store, &host.runtime)
         .map_err(map_recover)?;
     host.mcp_runner.install(call)?;
-    if let Err(error) = host
-        .runtime
-        .submit_mcp_term_query(store, &prepared, &permit)
-    {
+    let submitted = match member {
+        Some(member) => host.runtime.submit_member_mcp_term_query(store, &member),
+        None => host.runtime.submit_mcp_term_query(store, &prepared, &permit),
+    };
+    if let Err(error) = submitted {
         host.mcp_runner.remove(task.attempt_id);
         return Err(map_recover(error));
     }
     Ok(task)
+}
+pub(in crate::commands) fn start_member(
+    active: &mut ActiveSession,
+    prepared: &PreparedMemberMcpTermQuery,
+    connection: Arc<Connection>,
+) -> Result<McpRetrievalTask, CommandError> {
+    let input = prepared.prepared().input();
+    let task = McpRetrievalTask {
+        task_id: input.envelope().task_id,
+        attempt_id: input.envelope().attempt_id,
+        input_digest: input.digest().into(),
+    };
+    // Reconcile an accepted identity before installing any second transport
+    // Call. A saved task never recreates permission to send its request.
+    if active.store.execution_input_if_present(task.attempt_id).map_err(map_recover)?.is_some() {
+        let (host, store) = active.execution_parts()?;
+        host.runtime.submit_member_mcp_term_query(store, prepared).map_err(map_recover)?;
+        return Ok(task);
+    }
+    start(active, Call::member(prepared.clone(), connection))
 }
 pub(in crate::commands) fn owned(active: &ActiveSession, attempt: ExecutionId) -> bool {
     active
@@ -244,4 +274,24 @@ pub(in crate::commands) fn owned(active: &ActiveSession, attempt: ExecutionId) -
                     )
                 })
             })
+}
+
+#[cfg(test)]
+pub(in crate::commands) fn active_for_test(active: &ActiveSession, attempt: ExecutionId) -> bool {
+    active
+        .execution
+        .as_ref()
+        .is_some_and(|host| host.runtime.is_active(attempt))
+}
+
+#[cfg(test)]
+pub(in crate::commands) fn submit_read_only_for_test(
+    active: &mut ActiveSession,
+    runner: Arc<dyn Runner>,
+    input: &FixedInput,
+) -> Result<(), CommandError> {
+    let (host, store) = active.execution_parts()?;
+    host.allow_mutation()?;
+    host.runtime.register_read_only(runner).map_err(map_read)?;
+    host.runtime.submit(store, input).map_err(map_recover)
 }

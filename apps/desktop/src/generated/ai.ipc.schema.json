@@ -825,6 +825,220 @@
         ],
         "type": "object"
       },
+      "McpTermQueryArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "sourceLocale",
+          "targetLocale"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceLocale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryPolicy": {
+        "description": "Explicit model sharing of one original, human-previewed terminology query.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "preview": {
+                "$ref": "#/definitions/McpTermQueryPreview"
+              },
+              "profile": {
+                "const": "fixed-term-query-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile",
+              "preview"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "McpTermQueryPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "$ref": "#/definitions/McpTermQueryArguments"
+          },
+          "basis": {
+            "$ref": "#/definitions/McpTermQueryBasis"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/definitions/McpTermQueryRequest"
+          },
+          "toolDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "request",
+          "basis",
+          "arguments",
+          "toolDigest",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tool": {
+            "$ref": "#/definitions/McpTermTool"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "taskId",
+          "attemptId",
+          "unitId",
+          "locale",
+          "query",
+          "expiresAtMs",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "McpTermTool": {
+        "additionalProperties": false,
+        "properties": {
+          "credentialEnv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discoveryExpiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "discoveryGeneration": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "discoveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "inputSchema": true,
+          "outputSchema": true,
+          "profileVersion": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "discoveryId",
+          "discoveryGeneration",
+          "discoveryExpiresAtMs",
+          "endpoint",
+          "credentialEnv",
+          "serverName",
+          "serverVersion",
+          "protocolVersion",
+          "toolName",
+          "description",
+          "profileVersion",
+          "inputSchema",
+          "outputSchema"
+        ],
+        "type": "object"
+      },
       "ModelConnectionReference": {
         "additionalProperties": false,
         "description": "A persistent data identity, never a credential, execution grant or consent.",
@@ -1034,6 +1248,17 @@
           },
           "deliver": {
             "type": "boolean"
+          },
+          "mcpTermQuery": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpTermQueryPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent keeps the original MCP preparation exclusively human-controlled."
           },
           "selectionPolicy": {
             "$ref": "#/definitions/SelectionPolicy"
@@ -6316,6 +6541,220 @@
         ],
         "type": "object"
       },
+      "McpTermQueryArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "sourceLocale",
+          "targetLocale"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceLocale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryPolicy": {
+        "description": "Explicit model sharing of one original, human-previewed terminology query.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "preview": {
+                "$ref": "#/definitions/McpTermQueryPreview"
+              },
+              "profile": {
+                "const": "fixed-term-query-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile",
+              "preview"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "McpTermQueryPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "$ref": "#/definitions/McpTermQueryArguments"
+          },
+          "basis": {
+            "$ref": "#/definitions/McpTermQueryBasis"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/definitions/McpTermQueryRequest"
+          },
+          "toolDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "request",
+          "basis",
+          "arguments",
+          "toolDigest",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tool": {
+            "$ref": "#/definitions/McpTermTool"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "taskId",
+          "attemptId",
+          "unitId",
+          "locale",
+          "query",
+          "expiresAtMs",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "McpTermTool": {
+        "additionalProperties": false,
+        "properties": {
+          "credentialEnv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discoveryExpiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "discoveryGeneration": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "discoveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "inputSchema": true,
+          "outputSchema": true,
+          "profileVersion": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "discoveryId",
+          "discoveryGeneration",
+          "discoveryExpiresAtMs",
+          "endpoint",
+          "credentialEnv",
+          "serverName",
+          "serverVersion",
+          "protocolVersion",
+          "toolName",
+          "description",
+          "profileVersion",
+          "inputSchema",
+          "outputSchema"
+        ],
+        "type": "object"
+      },
       "ModelConnectionReference": {
         "additionalProperties": false,
         "description": "A persistent data identity, never a credential, execution grant or consent.",
@@ -6542,6 +6981,17 @@
           },
           "deliver": {
             "type": "boolean"
+          },
+          "mcpTermQuery": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpTermQueryPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent keeps the original MCP preparation exclusively human-controlled."
           },
           "selectionPolicy": {
             "$ref": "#/definitions/SelectionPolicy"

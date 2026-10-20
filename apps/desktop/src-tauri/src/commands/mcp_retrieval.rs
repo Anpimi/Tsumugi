@@ -12,6 +12,7 @@ use tsumugi_core::{
 #[cfg(test)]
 mod tests;
 pub(in crate::commands) mod transport;
+pub(in crate::commands) mod member;
 
 fn required<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
@@ -229,9 +230,16 @@ struct Intent {
     connection: Option<Arc<transport::Connection>>,
     prepared: Option<PreparedMcpTermQuery>,
     permit: Option<McpTermQueryPermit>,
+    member_binding: Option<member::Binding>,
 }
 impl Intent {
     fn close(&mut self) {
+        if let Some(binding) = &self.member_binding {
+            binding.stop();
+        }
+        self.close_transport();
+    }
+    fn close_transport(&mut self) {
         self.control.close();
         if let Some(permit) = &self.permit {
             permit.revoke();
@@ -248,7 +256,10 @@ impl Intent {
     }
     fn view(&mut self, active: &ActiveSession) -> McpRetrievalView {
         if self.control.closed() || self.connection.as_ref().is_some_and(|c| !c.live()) {
-            self.close();
+            // A successful one-shot call consumes its transport permission.
+            // Only an explicit Stop/session closure revokes its separate
+            // original member result-sharing guard.
+            self.close_transport();
         }
         let mut view = self.view.clone();
         view.callbacks_drained = self.control.drained()
@@ -419,6 +430,7 @@ impl Retrievals {
             connection: None,
             prepared: None,
             permit: None,
+            member_binding: None,
             view: McpRetrievalView {
                 identity: discovery.identity.clone(),
                 discovery: discovery.clone(),
@@ -777,6 +789,9 @@ pub async fn start_mcp_term_query(
                     .preview
                     .as_ref()
                     .ok_or_else(|| failure(CommandErrorCode::ResultMismatch))?;
+                if intent.member_binding.is_some() {
+                    return Err(failure(CommandErrorCode::PermissionDenied));
+                }
                 if request.consent.action_id != preview.request.action_id
                     || request.consent.input_digest != preview.input_digest
                     || request.consent.expires_at_ms != preview.request.expires_at_ms

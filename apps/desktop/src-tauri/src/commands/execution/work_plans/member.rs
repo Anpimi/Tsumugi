@@ -5,6 +5,8 @@ mod coordination;
 pub(super) mod environment;
 #[path = "member_guidance.rs"]
 mod tool_guidance;
+#[path = "member_mcp.rs"]
+mod mcp;
 #[cfg(test)]
 pub(super) use tool_guidance::GuidanceReadProbe;
 use environment::{EnvironmentAdmission, EnvironmentAttempt};
@@ -151,6 +153,13 @@ impl Owner {
         } else {
             None
         };
+        let mcp = if plan.options.mcp_term_query.is_some() {
+            let original = sessions.mcp_retrieval.capture_member(&self.token, self.project, &plan)?;
+            let (_, store) = self.original(sessions)?;
+            let proof = store.capture_member_mcp_term_query(&scope, request, &original.prepared)
+                .map_err(map_recover)?;
+            Some(mcp::Query { original, proof, dispatch: request.clone(), cancel_id: ExecutionId::new() })
+        } else { None };
         Ok(CapturedScope {
             scope_id,
             scope,
@@ -161,6 +170,7 @@ impl Owner {
             team_policy,
             tool_guidance: plan.options.tool_guidance,
             team_work: false,
+            mcp,
         })
     }
     fn check_scope(
@@ -192,6 +202,10 @@ impl Owner {
             {
                 return Err(map_recover(fail(ErrorCode::Unauthorized, "member-scope")));
             }
+        }
+        if let Some(query) = &captured.mcp {
+            query.original.check()?;
+            store.check_member_mcp_term_query(&query.dispatch, &query.proof).map_err(map_recover)?;
         }
         Ok(())
     }
@@ -231,6 +245,7 @@ struct CapturedScope {
     team_policy: Option<TeamDiscussionPolicy>,
     tool_guidance: Option<ToolGuidancePolicy>,
     team_work: bool,
+    mcp: Option<mcp::Query>,
 }
 
 pub(in crate::commands::execution) struct MemberFactory {
@@ -320,6 +335,7 @@ impl MemberFactory {
             .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-deadline"))?;
         let deadline = captured.consent.as_ref()
             .map_or(deadline, |consent| deadline.min(consent.deadline()));
+        let deadline = captured.mcp.as_ref().map_or(deadline, |query| deadline.min(query.proof.deadline()));
         let admission = EnvironmentAdmission::new(deadline, vec![cancellation.clone(), local_stop.clone()]);
         let revision = captured.tool_revision;
         let environment = admission.wait(|| request.check_service_dispatch(), || {
@@ -388,6 +404,9 @@ impl MemberFactory {
                 name: tool.name, description: tool.description, parameters: tool.input_schema,
             }));
         }
+        if let Some(query) = &captured.mcp {
+            roster.push(query.tool());
+        }
         let start = MemberFrame {
             protocol_version: wire::PROTOCOL,
             session_id: ExecutionId::new(),
@@ -429,6 +448,7 @@ impl MemberFactory {
             settings_stop: settings_stop.clone(),
             runtime_revision,
             endpoint: prompt.config.endpoint.clone(),
+            max_prompt_bytes: profile.max_prompt_bytes,
             provider: Arc::new(Mutex::new(provider)),
             pending: None,
             pending_provider: false,
@@ -443,6 +463,7 @@ impl MemberFactory {
         let live_request = request.clone();
         let live_cancel = cancellation.clone();
         let live_settings = settings_stop;
+        let live_mcp = handler.captured.mcp.as_ref().map(|query| query.original.stop.clone());
         let result = host_member::run_member(
             &environment.artifact,
             &environment.runtime,
@@ -457,6 +478,7 @@ impl MemberFactory {
             Arc::new(move || {
                 !live_cancel.is_requested()
                     && !live_settings.is_requested()
+                    && live_mcp.as_ref().is_none_or(|stop| !stop.is_requested())
                     && live_request.check_service_dispatch().is_ok()
             }),
         )
@@ -600,6 +622,7 @@ struct Handler {
     settings_stop: Cancellation,
     runtime_revision: UnsignedDecimal,
     endpoint: String,
+    max_prompt_bytes: usize,
     provider: Arc<Mutex<MemberProviderSession>>,
     pending: Option<tokio::task::JoinHandle<Result<MemberReply, ExecutionError>>>,
     pending_provider: bool,
@@ -617,6 +640,7 @@ impl Handler {
             .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-deadline"))?;
         let deadline = self.captured.consent.as_ref()
             .map_or(deadline, |consent| deadline.min(consent.deadline()));
+        let deadline = self.captured.mcp.as_ref().map_or(deadline, |query| deadline.min(query.proof.deadline()));
         Ok(EnvironmentAdmission::new(deadline, vec![self.cancellation.clone(),
             self.local_stop.clone(), self.settings_stop.clone()]))
     }
@@ -626,6 +650,9 @@ impl Handler {
             || self.settings_stop.is_requested()
         {
             return Err(fail(ErrorCode::Cancelled, "member-cancelled"));
+        }
+        if let Some(query) = &self.captured.mcp {
+            query.original.check().map_err(command_error)?;
         }
         self.request.check_service_dispatch()
     }
@@ -880,6 +907,9 @@ impl Handler {
         arguments: Value,
     ) -> Result<MemberReply, ExecutionError> {
         self.live()?;
+        if self.mcp_tool(&name, &arguments)? {
+            return self.execute_mcp().await;
+        }
         if let Some(read) = self.guidance_tool(&name, &arguments)? {
             return self.read_guidance(&read).await;
         }
@@ -918,6 +948,7 @@ impl Handler {
                 self.record_provider_failure(&result);
             }
         }
+        self.drain_mcp().await?;
         let tools = self
             .tools
             .lock()
@@ -1379,7 +1410,8 @@ impl MemberHandler for Handler {
                 MemberCall::BeforeTool {
                     name, arguments, ..
                 } => {
-                    if self.guidance_tool(&name, &arguments)?.is_none()
+                    if !self.mcp_tool(&name, &arguments)?
+                        && self.guidance_tool(&name, &arguments)?.is_none()
                         && self.team_tool(&name, &arguments)?.is_none()
                     {
                         self.selected_tool(&name, &arguments)?;

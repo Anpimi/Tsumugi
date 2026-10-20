@@ -12,7 +12,7 @@ mod package_lifecycle;
 use package_lifecycle::{PackageControl, PackageWork, PackageWorkState, RetiredQuery};
 
 #[cfg(all(test, target_os = "macos"))]
-mod test_fixtures;
+pub(super) mod test_fixtures;
 
 macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![

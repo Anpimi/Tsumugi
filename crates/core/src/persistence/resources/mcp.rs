@@ -205,6 +205,38 @@ pub(crate) fn validate_query_output(
     }
     Ok(output)
 }
+pub fn validate_mcp_term_query_preview(preview: &McpTermQueryPreview) -> Result<(), ExecutionError> {
+    let r = &preview.request;
+    r.tool.validate()?;
+    validate_text(&r.query, false)?;
+    let digest = |value: &str| value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if r.query.trim().is_empty() || r.query.len() > MAX_MCP_QUERY_BYTES
+        || r.expires_at_ms > r.tool.discovery_expires_at_ms
+        || preview.basis.project_id != r.project_id || preview.basis.unit_id != r.unit_id
+        || preview.basis.locale != r.locale || preview.tool_digest != r.tool.digest()?
+        || !digest(&preview.input_digest)
+        || preview.arguments != (McpTermQueryArguments { query: r.query.clone(), source_locale: preview.basis.source_locale.clone(), target_locale: r.locale.clone() })
+    {
+        return Err(failure(ErrorCode::InvalidInput, "mcp-query-preview"));
+    }
+    crate::Locale::parse(&r.locale).map_err(|_| failure(ErrorCode::InvalidInput, "mcp-query-locale"))?;
+    crate::Locale::parse(&preview.basis.source_locale).map_err(|_| failure(ErrorCode::InvalidInput, "mcp-query-locale"))?;
+    Ok(())
+}
+
+pub(crate) fn check_preview_in(c: &Connection, preview: &McpTermQueryPreview) -> Result<(), ExecutionError> {
+    validate_mcp_term_query_preview(preview)?;
+    if source_in(c, &preview.request, true)?.0 != preview.basis {
+        return Err(failure(ErrorCode::DependencyConflict, "mcp-query-source"));
+    }
+    Ok(())
+}
+
+pub(crate) fn preview_for_input(input: &FixedInput) -> Result<McpTermQueryPreview, ExecutionError> {
+    let s = settings(input)?;
+    Ok(McpTermQueryPreview { request: s.request.clone(), basis: s.basis.clone(), arguments: arguments(&s), tool_digest: s.tool_digest, input_digest: input.digest().into() })
+}
+
 pub fn validate_mcp_term_query_result(
     input: &FixedInput,
     result: &FixedResult,
@@ -364,6 +396,8 @@ impl ProjectStore {
             deadline,
             store_live: self.mcp_query_liveness.clone(),
             authorization: Arc::default(),
+            member_binding: Arc::default(),
+            member_deadline: Arc::default(),
             active: Arc::new(AtomicBool::new(true)),
         })
     }
@@ -373,6 +407,9 @@ impl ProjectStore {
         consent: &McpTermQueryConsent,
     ) -> Result<McpTermQueryPermit, ExecutionError> {
         self.check_mcp_term_query(prepared)?;
+        if prepared.member_binding.get().is_some() {
+            return Err(failure(ErrorCode::Unauthorized, "mcp-query-member-bound"));
+        }
         let r = &prepared.preview.request;
         if consent.action_id != r.action_id
             || consent.input_digest != prepared.input.digest()

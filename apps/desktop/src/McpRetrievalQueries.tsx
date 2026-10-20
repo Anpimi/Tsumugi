@@ -5,7 +5,7 @@ import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { executionCommands, executionContext } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
 import { retrievalKey } from "./McpRetrievalSession";
-import { retrievalOutput, type McpRetrievalView } from "./mcpRetrievalCommands";
+import { retrievalOutput, type McpRetrievalView, type McpTermQueryPreview } from "./mcpRetrievalCommands";
 import { CommandFailureDetails, commandFailure, failureReason, type CommandFailure } from "./CommandFailure";
 import type { PluginToolQuerySession } from "./PluginToolQuerySession";
 import type { ContentPage } from "./sourceCommands";
@@ -18,12 +18,19 @@ export function validRetrievalEndpoint(value: string) { try { const url = new UR
       && (url.hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(url.hostname)));
 } catch { return false; } }
 /** All automatic reads below address local records. Only explicit commands contact the service. */
-export function McpRetrievalQueries({ project, session, open, disabled, sourcePage, sourceCurrent, onSourcePage, onOpenCapture }: {
+export interface McpAiPreparationHandoff {
+  editSeq: number;
+  canReceive: (preview: McpTermQueryPreview) => boolean;
+  receive: (preview: McpTermQueryPreview, querySequence: number, expectedEditSeq: number) => Promise<boolean>;
+}
+export function McpRetrievalQueries({ project, session, open, disabled, sourcePage, sourceCurrent, onSourcePage, onOpenCapture, aiPreparation }: {
   project: ProjectView; session: PluginToolQuerySession; open: boolean; disabled: boolean; sourcePage: ContentPage | null; sourceCurrent: () => boolean;
   onSourcePage: (after: number) => void; onOpenCapture: (capture: GlossaryCapture) => Promise<boolean>;
+  aiPreparation?: McpAiPreparationHandoff;
 }) {
   const { t, i18n } = useTranslation(), reads = useSessionReads(), owner = session.mcp, state = owner.state, raw = session.state, context = executionContext(project);
   const [discoveryConsent, setDiscoveryConsent] = useState(false), [handoffBlocked, setHandoffBlocked] = useState(false), heading = useRef<HTMLHeadingElement>(null);
+  const [aiHandoffBlocked, setAiHandoffBlocked] = useState(false);
   const operation = state.operation, identity = operation?.discovery.discovery.identity;
   const [visible, setVisible] = useState(document.visibilityState !== "hidden"), polls = useRef(0);
   const snapshot = useCallback(() => identity ? reads.client.getQueryData<McpRetrievalView>(reads.key(retrievalKey(identity))) : undefined, [reads, identity?.generation, identity?.actionId]);
@@ -148,9 +155,15 @@ export function McpRetrievalQueries({ project, session, open, disabled, sourcePa
         <p>{preview.request.tool.serverName} · {preview.request.tool.serverVersion} · {preview.request.tool.protocolVersion} · {preview.request.tool.toolName}</p>
         <label>{t("mcpRetrieval.fixedQuery")}<textarea readOnly rows={4} value={preview.arguments.query}/></label>
         <p>{t("mcpRetrieval.sourceLocale")} · {preview.arguments.sourceLocale}</p><p>{t("mcpRetrieval.locale")} · {preview.arguments.targetLocale}</p>
-        <p>{t("mcpRetrieval.disclosure")}</p><label className="source-check"><input type="checkbox" checked={state.consent} disabled={disabled || !!state.busy || changed || expired || !!operation.start || operation.closed || !inputCurrent()}
+        {aiPreparation ? <><p>{t("mcpRetrieval.aiPlan.help")}</p><button type="button" disabled={disabled || !inputCurrent() || !owner.canUseInAi(preview) || !aiPreparation.canReceive(preview)}
+          onClick={() => { const sequence = operation.seq, aiSequence = aiPreparation.editSeq;
+            void aiPreparation.receive(preview, sequence, aiSequence).then(accepted => { if (!accepted) setAiHandoffBlocked(true); });
+          }}>{t("mcpRetrieval.aiPlan.use")}</button></> : null}
+        {aiHandoffBlocked?<p role="alert">{t("mcpRetrieval.aiPlan.blocked")}</p>:null}
+        {operation.handedToAi ? <p role="status">{t("mcpRetrieval.aiPlan.attached")}</p> : null}
+        <p>{t("mcpRetrieval.disclosure")}</p><label className="source-check"><input type="checkbox" checked={state.consent} disabled={disabled || !!state.busy || changed || expired || !!operation.start || operation.closed || operation.handedToAi || !inputCurrent()}
           onChange={event => owner.setConsent(event.target.checked)}/>{t("mcpRetrieval.consent")}</label>
-        <button type="button" className="primary-button" disabled={disabled || !!state.busy || !state.consent || changed || expired || !!operation.start || operation.closed || !inputCurrent()}
+        <button type="button" className="primary-button" disabled={disabled || !!state.busy || !state.consent || changed || expired || !!operation.start || operation.closed || operation.handedToAi || !inputCurrent()}
           onClick={() => { setHistorical(null); void owner.start(inputCurrent); }}>{t("mcpRetrieval.start")}</button>
       </section> : null}
       {state.reading ? <p role="status">{t("mcpRetrieval.reading")}</p> : null}{state.stopping ? <p role="status">{t("mcpRetrieval.stopping")}</p> : null}

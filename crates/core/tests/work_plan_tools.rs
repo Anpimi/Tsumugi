@@ -5,6 +5,8 @@ mod application;
 mod guidance;
 #[path = "work_plan_tools/member_guidance.rs"]
 mod member_guidance;
+#[path = "work_plan_tools/member_mcp.rs"]
+mod member_mcp;
 #[path = "work_plan_tools/subsets.rs"]
 mod subsets;
 #[path = "work_plan_tools/team_history.rs"]

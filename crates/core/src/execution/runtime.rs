@@ -572,6 +572,34 @@ impl ExecutionRuntime {
             .insert(prepared.input().envelope().attempt_id, permit.clone());
         store.enqueue_mcp_term_query(prepared, permit)
     }
+    /// Admit the fixed leaf only through its original model-dispatch witness.
+    pub fn submit_member_mcp_term_query(
+        &mut self,
+        store: &mut ProjectStore,
+        sealed: &crate::application::PreparedMemberMcpTermQuery,
+    ) -> Result<(), ExecutionError> {
+        let input = sealed.prepared().input();
+        if let Some(prior) = store.execution_input_if_present(input.envelope().attempt_id)? {
+            if prior.bytes() != input.bytes() {
+                return Err(ExecutionError::new(ErrorCode::ResultMismatch, "member-mcp-start"));
+            }
+            // A prior admission never installs another permit or requeues work.
+            store.validate_member_mcp_term_query_admission(sealed)?;
+            return Ok(());
+        }
+        store.check_prepared_member_mcp_term_query(sealed)?;
+        sealed.permit().bind_runtime(self.generation)?;
+        if self.submission_policy(store, input, None)? != RecoveryPolicy::ExternalUnknown {
+            return Err(ExecutionError::new(ErrorCode::Unauthorized, "mcp-query-recovery-policy"));
+        }
+        self.mcp_permits.retain(|_, p| p.check_input(&p.input).is_ok());
+        if !self.mcp_permits.contains_key(&input.envelope().attempt_id) && self.mcp_permits.len() >= 128 {
+            return Err(ExecutionError::new(ErrorCode::LimitExceeded, "mcp-query-permits"));
+        }
+        store.enqueue_member_mcp_term_query(sealed)?;
+        self.mcp_permits.insert(input.envelope().attempt_id, sealed.permit().clone());
+        Ok(())
+    }
     /// Child requests inherit parent scope, cancellation and every ancestor budget.
     pub fn submit_child(
         &mut self,

@@ -28,6 +28,8 @@ import type { ChangeScope } from "./sessionReads";
 import { sourceReads } from "./sourceQueries";
 import { contentSelectionIds, validContentSelection, type ContentSelection } from "./contentSelection";
 import { strategyCommands, strategyKeys } from "./strategyCommands";
+import type { McpTermQueryPreview } from "./mcpRetrievalCommands";
+import type { McpRetrievalSession } from "./McpRetrievalSession";
 
 export const defaultPlanOptions: PlanOptions = { stages: (["understanding", "resources", "generation", "checks", "delivery"] as const).map(stage => ({ stage, mode: stage === "generation" || stage === "checks" ? "assisted" : "manual" })), selectionPolicy: "candidates-only", adoptResources: false, deliver: false, advisoryChecks: [] };
 export type WorkPlanContinuation = (() => boolean) & { fresh: () => boolean; acceptPlan: (status: WorkPlanStatusView) => boolean };
@@ -37,11 +39,13 @@ type PreparationCapture = { kind: "direct"; value: AiPrepared } | { kind: "plan"
 type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; uncertain: boolean };
 type Candidate = { taskId: string; item: AiItem; resultId: string; unitId: string; text: string };
 type AdoptCapture = { request: PrepareRequest; candidate: Candidate; editSeq: number; action: AdoptionAction | null; receipt: Receipt | null; uncertain: boolean; retryAllowed: boolean; checking: boolean };
+type McpDraft = { preview: McpTermQueryPreview; label: string; serviceConsent: boolean; modelConsent: boolean };
 interface State {
   maintenance: MaintenancePlanBasis | null;
   presetName: string; config: AiConfig; locale: string; selected: string[]; selectedSnapshotId: string | null; capture: PreparationCapture | null; consent: boolean;
   options: PlanOptions; toolDraft: PlanToolDraft | null; advisoryChecks: PluginTextReviewSelection[]; planId: string | null;
   teamDraft: TeamExecutionDraft | null;
+  mcpDraft: McpDraft | null;
   startedPlan: { prepared: WorkPlanView; attemptId: string; taskId: string | null; generation: string; unitIds: string[] } | null;
   staleReason: "source" | "preview" | "connection" | null; dirty: boolean; editSeq: number; sourceGeneration: number; busy: boolean;
   checkedTask: { attemptId: string; taskId: string } | null;
@@ -108,12 +112,12 @@ export function confirmPlanStartView(view: AiView, plan: WorkPlanView, attemptId
     || view.rows.length !== items.size || view.rows.some(row => items.get(row.item.unitId) !== itemProof(row.item))) invalidAck();
 }
 
-function usePreparation(initialLocale: string, targetLocales: readonly string[]) {
+function usePreparation(initialLocale: string, targetLocales: readonly string[], mcp?: McpRetrievalSession) {
   const reads = useSessionReads(), tasks = useExecutionTaskSession();
   const connections = useConnectionFacts();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state,setState] = useState<PreparationState>(() => preparationState({ maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,
-    options:fixed(defaultPlanOptions),toolDraft:null,teamDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
+    options:fixed(defaultPlanOptions),toolDraft:null,teamDraft:null,mcpDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
     staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,checkedTask:null,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null,strategyDefault:"loading",strategyDefaultFailure:null }));
   const stateRef = useRef(state), mounted = useSessionAlive(), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
   const candidateReadCleanup = useRef<(() => void) | null>(null);
@@ -206,15 +210,71 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     edit("config", { ...before.config, ...profile.connection, connectionProfile: reference }); update(value => ({ ...value, presetName: "custom" })); return true;
   }
   function invalidatePreview(reason: State["staleReason"] = null) {
-    basis.current++; update(before => ({ ...before,capture:null,consent:false,staleReason:reason }));
+    basis.current++; update(before => ({ ...before,capture:null,consent:false,staleReason:reason,
+      mcpDraft: before.mcpDraft ? { ...before.mcpDraft, serviceConsent: false, modelConsent: false } : null }));
   }
   function edit<K extends "config" | "presetName" | "locale" | "selected" | "options" | "toolDraft" | "teamDraft" | "advisoryChecks">(key: K, value: State[K]) {
     basis.current++;
     update(before => ({ ...before,[key]:fixed(value),...(key==="selected"||key==="locale"?{maintenance:null}:{}),...(key==="locale"&&value!==before.locale?{
       config:fixed({...before.config,contextStrategy:null}),teamDraft:before.teamDraft?fixed({...before.teamDraft,members:before.teamDraft.members.map(member=>({...member,config:{...member.config,contextStrategy:null}}))}):null
     }:{}),capture:null,consent:false,staleReason:null,
+      mcpDraft: before.mcpDraft ? { ...before.mcpDraft, serviceConsent: false, modelConsent: false } : null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
   }
+  function canReceiveMcpQuery(preview: McpTermQueryPreview, expectedEditSeq: number) {
+    const before = current(), request = preview.request;
+    return live() && !reads.retired && !reserved() && before.editSeq === expectedEditSeq && !before.teamDraft && !before.options.teamExecution
+      && (!before.mcpDraft || jsonIdentity(before.mcpDraft.preview) === jsonIdentity(preview))
+      && before.options.stages.some(choice => choice.stage === "generation" && choice.mode === "assisted")
+      && request.projectId === session.projectId && preview.basis.projectId === session.projectId
+      && available(request.locale) && before.locale === request.locale && request.expiresAtMs > Date.now()
+      && (before.selected.length === 0 || before.selected.length === 1 && before.selected[0] === request.unitId)
+      && !!mcp && mcp.aiPreviewCurrent(preview);
+  }
+  function receiveMcpQuery(preview: McpTermQueryPreview, expectedEditSeq: number, label: string) {
+    if (!canReceiveMcpQuery(preview, expectedEditSeq)) return false;
+    basis.current++;
+    update(before => ({ ...before, maintenance: null, selected: [preview.basis.unitId], selectedSnapshotId: preview.basis.sourceSnapshotId,
+      mcpDraft: { preview: fixed(preview), label, serviceConsent: false, modelConsent: false }, capture: null, consent: false,
+      dirty: true, editSeq: before.editSeq + 1, staleReason: null, failure: null, notice: null }));
+    return true;
+  }
+  function mcpScopeCurrent() {
+    const before = current(), preview = before.mcpDraft?.preview;
+    const source = reads.client.getQueryState(reads.key(["source-scope"]));
+    return !!preview && !before.teamDraft && !before.options.teamExecution && before.selected.length === 1 && before.selected[0] === preview.basis.unitId
+      && before.locale === preview.basis.locale && available(preview.basis.locale)
+      && source?.status === "success" && source.fetchStatus === "idle" && !source.isInvalidated && source.error === null
+      && validateResponseScope(source.data) && source.data.currentSnapshot === preview.basis.sourceSnapshotId
+      && before.options.stages.some(choice => choice.stage === "generation" && choice.mode === "assisted")
+      && !!mcp && mcp.aiPreviewCurrent(preview);
+  }
+  function setMcpConsent(key: "serviceConsent" | "modelConsent", value: boolean) {
+    if (!live() || reserved() || !current().mcpDraft || value && (!mcpScopeCurrent() || !connectionCurrent())) return;
+    basis.current++;
+    update(before => ({ ...before, mcpDraft: before.mcpDraft ? { ...before.mcpDraft, [key]: value } : null,
+      capture: null, consent: false, dirty: true, editSeq: before.editSeq + 1, failure: null }));
+  }
+  function clearMcpQuery() {
+    if (!live() || reserved()) return false;
+    basis.current++;
+    update(before => ({ ...before, mcpDraft: null, capture: null, consent: false, dirty: true, editSeq: before.editSeq + 1 }));
+    return true;
+  }
+  useEffect(() => {
+    const preview = state.mcpDraft?.preview;
+    if (!preview) return;
+    const expire = () => { if (current().mcpDraft?.preview === preview) invalidatePreview("preview"); };
+    const remaining = preview.request.expiresAtMs - Date.now();
+    if (remaining <= 0) { expire(); return; }
+    const timer = window.setTimeout(expire, remaining + 1); return () => window.clearTimeout(timer);
+  }, [state.mcpDraft?.preview]);
+  useLayoutEffect(() => {
+    const before = current(), draft = before.mcpDraft, original = mcp?.current();
+    if (draft && (draft.serviceConsent || draft.modelConsent || before.capture?.kind === "plan" && before.capture.value.options.mcpTermQuery)
+      && (!original || original.operation?.closed || original.operation?.unknown || original.stop?.pending || original.stop?.unknown
+        || jsonIdentity(original.operation?.preview) !== jsonIdentity(draft.preview))) invalidatePreview("preview");
+  }, [mcp?.state]);
   function editTeamConfig(key: number, change: SetStateAction<AiConfig>) {
     const draft = current().teamDraft;
     if (!live() || !draft) return;
@@ -234,8 +294,8 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     const view = connections.current(), before = current();
     // Pending actions/checked grants keep their original continuation proof.
     // A focus reread which confirms the same reference keeps preview/consent.
-    if (view && !reserved() && (before.prepared || before.preparedPlan?.preview || before.consent) && !connectionCurrent()) invalidatePreview("connection");
-  }, [connections.state, state.busy, state.config, state.teamDraft, state.capture, state.consent, planControl.state.pending, planControl.state.ready]);
+    if (view && !reserved() && (before.prepared || before.preparedPlan?.preview || before.consent || before.mcpDraft?.serviceConsent || before.mcpDraft?.modelConsent) && !connectionCurrent()) invalidatePreview("connection");
+  }, [connections.state, state.busy, state.config, state.teamDraft, state.capture, state.consent, state.mcpDraft, planControl.state.pending, planControl.state.ready]);
   function receiveContentSelection(selection: ContentSelection, expectedEditSeq: number) {
     if (!canReceiveContentSelection() || current().editSeq !== expectedEditSeq
       || selection.projectId !== session.projectId || selection.sessionToken !== session.sessionToken
@@ -246,6 +306,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     // authority cannot accompany it; the next explicit preview reads Core facts.
     basis.current++;
     update(before => ({ ...before,maintenance:null,locale:selection.capture.locale,...(before.locale!==selection.capture.locale?{config:fixed({...before.config,contextStrategy:null})}:{}),selected:fixed(selected),selectedSnapshotId:selection.capture.sourceSnapshotId,capture:null,consent:false,staleReason:null,
+      mcpDraft: before.mcpDraft ? { ...before.mcpDraft, serviceConsent: false, modelConsent: false } : null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
     return true;
   }
@@ -306,10 +367,12 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   useLayoutEffect(() => { if (!targetAvailable) invalidatePreview(); }, [targetAvailable]);
   function canPreview(model = true) {
     const before = current();
+    const mcpEnabled = before.mcpDraft && (before.mcpDraft.serviceConsent || before.mcpDraft.modelConsent);
     // Presentation follows this render's props. Mutation entry points below
     // separately require the committed locale ref before any dispatch.
     return live() && !reserved() && before.strategyDefault === "ready" && before.locale !== "" && targetLocales.includes(before.locale)
-      && validateResponseIdentity(session.projectId) && !!session.sessionToken && before.selected.length > 0 && (!model || connectionCurrent());
+      && validateResponseIdentity(session.projectId) && !!session.sessionToken && before.selected.length > 0 && (!model || connectionCurrent())
+      && (!mcpEnabled || before.mcpDraft?.serviceConsent && before.mcpDraft.modelConsent && mcpScopeCurrent());
   }
   async function preview() {
     if (current().strategyDefault === "loading") await defaultWait.current;
@@ -334,8 +397,12 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     const before = current(), version = basis.current;
     const assisted = before.options.stages.some(choice => choice.stage === "generation" && choice.mode === "assisted");
     if (!canPreview(assisted) || !available()) return;
+    const mcpPreview = before.mcpDraft?.serviceConsent && before.mcpDraft.modelConsent ? before.mcpDraft.preview : null;
+    const options = { ...before.options };
+    delete options.mcpTermQuery;
+    if (mcpPreview) options.mcpTermQuery = { profile: "fixed-term-query-1", preview: mcpPreview };
     const capture = fixed({ ...session, config: assisted ? before.config : null, locale: before.locale,
-      unitIds: before.selected, options: before.options, maintenance:before.maintenance, advisoryChecks: before.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted") ? before.advisoryChecks : [] });
+      unitIds: before.selected, options, maintenance:before.maintenance, advisoryChecks: before.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted") ? before.advisoryChecks : [] });
     await run(async () => {
       const tools = captureTools(), selectedTools = tools && fixed(tools);
       const sourceWitness = reads.watchExactQuery(["source-scope"]);
@@ -352,7 +419,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
           && validateResponsePage(content.state.data) && validateResponsePage(originalContent)
           && jsonIdentity(content.state.data) === jsonIdentity(originalContent);
       };
-      const toolsCurrent = () => toolWitnesses.every(({tool,witness}) => {
+      const toolsCurrent = () => (!mcpPreview || !!mcp && mcp.aiPreviewCurrent(mcpPreview)) && toolWitnesses.every(({tool,witness}) => {
         const query = witness.current();
         return query?.state.status === "success" && query.state.error === null && jsonIdentity(query.state.data) === jsonIdentity(tool.view);
       });
@@ -735,7 +802,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     defaultCaptureSequence.current = current().editSeq + 1;
     basis.current++; planControl.reset(); agent.reset(); component.reset();
     update(before => ({ ...before,maintenance:null,presetName:"custom",config:newDraftConfig(),locale:initialLocale,selected:[],selectedSnapshotId:null,capture:null,consent:false,staleReason:null,strategyDefault:"loading",strategyDefaultFailure:null,
-      dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,teamDraft:null,advisoryChecks:[],failure:null,notice:null })); defaultWait.current = loadStrategyDefault(); return true;
+      dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,teamDraft:null,mcpDraft:null,advisoryChecks:[],failure:null,notice:null })); defaultWait.current = loadStrategyDefault(); return true;
   }
   const contentToolAttempt = agent.current().toolRun?.prepared.attemptId ?? null;
   const subscribeContentAvailability = useCallback((notify: () => void) => reads.client.getQueryCache().subscribe(event => {
@@ -745,6 +812,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   const contentRangeAvailable = useSyncExternalStore(subscribeContentAvailability, canReceiveContentSelection, canReceiveContentSelection);
   return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan, contentRangeAvailable,
     planControl, agent, component, discussions, recovery, guidance, canOpenTeamToolHistory,
+    mcpOriginal: mcp, canReceiveMcpQuery, receiveMcpQuery, mcpScopeCurrent, setMcpConsent, clearMcpQuery,
     canOpenRecoveryTask: (taskId: string, attemptId: string) => live() && !parentReserved(true) && recovery.taskReferences().some(reference => reference.taskId === taskId && reference.attemptId === attemptId), captureMaintenance, editMaintenance, discardMaintenance, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, runChildWorkPlan, canRunChild, canOpenChildHistory, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => {
@@ -768,13 +836,14 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       edit("selected",selected); update(before => ({ ...before,selectedSnapshotId }));
     },
     clearSelectedRange:() => { if (!reserved()) { edit("selected",[]); update(before => ({ ...before,selectedSnapshotId:null })); } },
-    setConsent:(consent:boolean) => { if (!reserved() && (current().prepared || current().preparedPlan?.preview) && available() && (!consent || connectionCurrent())) update(before => ({ ...before,consent })); }
+    setConsent:(consent:boolean) => { if (!reserved() && (current().prepared || current().preparedPlan?.preview) && available()
+      && (!consent || connectionCurrent() && (!current().preparedPlan?.options.mcpTermQuery || mcpScopeCurrent()))) update(before => ({ ...before,consent })); }
   };
 }
 type Preparation = ReturnType<typeof usePreparation>;
 const PreparationContext = createContext<Preparation | null>(null);
-export function AiPreparationSession({initialLocale,targetLocales,children}:{initialLocale:string;targetLocales:readonly string[];children:ReactNode}) {
-  return <PreparationContext.Provider value={usePreparation(initialLocale,targetLocales)}>{children}</PreparationContext.Provider>;
+export function AiPreparationSession({initialLocale,targetLocales,mcp,children}:{initialLocale:string;targetLocales:readonly string[];mcp?:McpRetrievalSession;children:ReactNode}) {
+  return <PreparationContext.Provider value={usePreparation(initialLocale,targetLocales,mcp)}>{children}</PreparationContext.Provider>;
 }
 export function useAiPreparation() {
   const owner = useContext(PreparationContext);

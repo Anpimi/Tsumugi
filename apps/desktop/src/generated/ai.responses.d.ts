@@ -375,6 +375,13 @@ export type ReviewCheckerView =
       kind: "advisory-text";
       plugin: PluginTextReviewView;
     };
+/**
+ * Explicit model sharing of one original, human-previewed terminology query.
+ */
+export type McpTermQueryPolicy = {
+  preview: McpTermQueryPreview;
+  profile: "fixed-term-query-1";
+};
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
 export type TeamDiscussionPolicy =
@@ -1381,6 +1388,10 @@ export interface PlanOptions {
   adoptResources: boolean;
   advisoryChecks: AdvisoryReviewCheck[];
   deliver: boolean;
+  /**
+   * Absent keeps the original MCP preparation exclusively human-controlled.
+   */
+  mcpTermQuery?: McpTermQueryPolicy | null;
   selectionPolicy: SelectionPolicy;
   stages: StageChoice[];
   /**
@@ -1392,6 +1403,52 @@ export interface PlanOptions {
    * Absent means that tool guidance is available only to the human reader.
    */
   toolGuidance?: ToolGuidancePolicy | null;
+}
+export interface McpTermQueryPreview {
+  arguments: McpTermQueryArguments;
+  basis: McpTermQueryBasis;
+  inputDigest: string;
+  request: McpTermQueryRequest;
+  toolDigest: string;
+}
+export interface McpTermQueryArguments {
+  query: string;
+  sourceLocale: string;
+  targetLocale: string;
+}
+export interface McpTermQueryBasis {
+  locale: string;
+  projectId: ExecutionId;
+  sourceLocale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface McpTermQueryRequest {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  expiresAtMs: number;
+  locale: string;
+  projectId: ExecutionId;
+  query: string;
+  taskId: ExecutionId;
+  tool: McpTermTool;
+  unitId: ExecutionId;
+}
+export interface McpTermTool {
+  credentialEnv: string | null;
+  description: string | null;
+  discoveryExpiresAtMs: number;
+  discoveryGeneration: UnsignedDecimal;
+  discoveryId: ExecutionId;
+  endpoint: string;
+  inputSchema: unknown;
+  outputSchema: unknown;
+  profileVersion: string;
+  protocolVersion: string;
+  serverName: string;
+  serverVersion: string;
+  toolName: string;
 }
 export interface StageChoice {
   mode: StageMode;

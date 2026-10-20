@@ -423,6 +423,10 @@ pub(in crate::persistence) fn check_input(
     if input.envelope().operation == crate::ai::team::OPERATION {
         return super::coordination::check_input(c, input);
     }
+    if input.envelope().operation == MCP_TERM_QUERY_OPERATION {
+        let associated: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM application_executions WHERE attempt_id=?1)", [input.envelope().attempt_id.to_string()], |r| r.get(0)).map_err(sql)?;
+        if associated { return super::member_mcp::check_input(c, input); }
+    }
     if let Some(lease) = input.envelope().automation {
         super::maintenance::check_protection(c, &load(c, lease.plan_id)?.plan)?;
     }
@@ -979,6 +983,11 @@ impl ProjectStore {
             ],
         )
         .map_err(sql)?;
+        if let Some(policy) = &plan.options.mcp_term_query {
+            super::super::mcp::check_preview_in(&tx, policy.preview())?;
+            let accepted: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM mcp_query_actions WHERE action_id=?1)", [policy.preview().request.action_id.to_string()], |r| r.get(0)).map_err(sql)?;
+            if accepted { return Err(err(ErrorCode::DependencyConflict, "mcp-query-already-enqueued")); }
+        }
         let lease = AutomationLease {
             plan_id: plan.plan_id,
             generation: Revision::new(1)?,
@@ -1016,6 +1025,9 @@ impl ProjectStore {
             return Ok(receipt);
         }
         let stored = load(&tx, control.plan_id)?;
+        if stored.plan.options.mcp_term_query.is_some() && control.command == WorkPlanCommand::Continue {
+            return Err(err(ErrorCode::Unauthorized, "mcp-continue-requires-new-plan"));
+        }
         if stored.plan.options.team_execution.is_some()
             && control.command == WorkPlanCommand::Continue
         {
@@ -1352,6 +1364,10 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
             ExecutionId::parse(&attempt)
                 .map_err(|_| err(ErrorCode::CorruptLedger, "work-plan-execution"))?,
         )?;
+        if input.envelope().operation == MCP_TERM_QUERY_OPERATION && plan.is_some() {
+            super::member_mcp::validate_input(c, &input)?;
+            continue;
+        }
         match (input.envelope().automation, plan, generation) {
             (None, None, None) => {}
             (Some(lease), Some(id), Some(generation))

@@ -565,6 +565,14 @@ impl ProjectStore {
         &self,
         input: &FixedInput,
     ) -> Result<bool, ExecutionError> {
+        if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION {
+            let connection = self.connection().map_err(|_| denied())?;
+            let associated: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM application_executions WHERE attempt_id=?1)", [input.envelope().attempt_id.to_string()], |r|r.get(0)).map_err(sql)?;
+            if associated {
+                super::application::member_mcp::validate_input(connection,input)?;
+            }
+            return Ok(associated);
+        }
         if input.envelope().plugin.is_none() {
             return Ok(false);
         }

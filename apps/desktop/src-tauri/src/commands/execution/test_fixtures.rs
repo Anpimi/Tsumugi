@@ -22,7 +22,7 @@ pub(super) use runtime_fixture::approved_runtime;
 
 /// Explicit assembly for fixtures that otherwise have no installed runtime.
 /// Keep the returned Store alive for every worker started by this fixture.
-pub(super) fn provision_member_runtime(
+pub(in crate::commands) fn provision_member_runtime(
     plugins: &ApplicationPlugins,
     resources: &Path,
 ) -> OwnedDirectory {
@@ -120,7 +120,7 @@ pub(super) fn configure_member_artifact(plugins: &ApplicationPlugins, resources:
         .unwrap();
 }
 
-pub(super) struct OwnedDirectory(pub(super) tempfile::TempDir);
+pub(in crate::commands) struct OwnedDirectory(pub(super) tempfile::TempDir);
 impl Drop for OwnedDirectory {
     fn drop(&mut self) {
         fn removable(path: &Path) {

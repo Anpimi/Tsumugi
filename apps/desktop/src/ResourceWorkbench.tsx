@@ -20,19 +20,20 @@ import { useWorkbenchCommands, type ResourceTermCommandPayload, type ResourceCon
 import type { QueryKey } from "@tanstack/react-query";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { PluginToolQueries, type ToolQueryHandle, type ToolQueryState } from "./PluginToolQueries";
-import { McpRetrievalQueries } from "./McpRetrievalQueries";
+import { McpRetrievalQueries, type McpAiPreparationHandoff } from "./McpRetrievalQueries";
 
 type Tab = "terms" | "updates" | "context" | "impact" | "queries";
 export interface ResourceHandle { allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean>; addQueryText: (text: string) => boolean }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
-export function ResourceWorkbench({ project, disabled, onOpenTranslation, contextEditorReturn, onReturnToEditor, correctionEditorReturn, onReturnFromCorrection, ref }: {
+export function ResourceWorkbench({ project, disabled, onOpenTranslation, contextEditorReturn, onReturnToEditor, correctionEditorReturn, onReturnFromCorrection, aiPreparation, ref }: {
   project: ProjectView; disabled: boolean;
   onOpenTranslation: (target: EditorTarget, locale: string, suggestedText?: string) => boolean | Promise<boolean>;
   correctionEditorReturn?: CorrectionEditorTarget | null;
   onReturnFromCorrection?: (capture: CorrectionEditorTarget) => Promise<boolean>;
   contextEditorReturn?: ContextEditorTarget | null;
   onReturnToEditor?: (capture: ContextEditorTarget) => Promise<boolean>;
+  aiPreparation?: McpAiPreparationHandoff;
   ref?: Ref<ResourceHandle>;
 }) {
   const { t } = useTranslation();
@@ -447,7 +448,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
             <option value="plugin">{t("mcpRetrieval.local")}</option><option value="mcp">{t("mcpRetrieval.external")}</option></select></label> : null}
           <PluginToolQueries ref={queryRef} project={project} session={owner.tool} disabled={disabled} open={open && tab === "queries" && owner.tool.state.mode === "plugin"} onState={setQueryState} onAttention={() => { setOpen(true); setTab("queries"); }} />
           <McpRetrievalQueries project={project} session={owner.tool} disabled={disabled} open={open && tab === "queries" && owner.tool.state.mode === "mcp"}
-            sourcePage={sourcePage} sourceCurrent={sourceReady} onSourcePage={sourcePageAt} onOpenCapture={openMcpCapture}/>
+            sourcePage={sourcePage} sourceCurrent={sourceReady} onSourcePage={sourcePageAt} onOpenCapture={openMcpCapture} aiPreparation={aiPreparation}/>
           {tab === "terms" && locale ? <section>
             <div className="execution-section-heading"><h3>{t("resource.currentTerms")}</h3><button className="secondary-button" disabled={busy || !!pending || !targetAvailable || termDirty} onClick={() => selectTerm(null)}>{t("resource.newTerm")}</button></div>
             {readStatus(termsRead.error, termsRead.isFetching, () => { void (termsRead.isFetchNextPageError ? termsRead.fetchNextPage() : termsRead.refetch()); })}{terms.length ? <ul>{terms.filter(term => !term.removed).map(term => <li key={term.termId}><button className="text-button" disabled={busy || !!pending || !targetAvailable} onClick={() => selectTerm(term)}>{term.source} → {term.target}</button> <small>{term.scopeUnitId ? t("resource.unitScope") : t("resource.projectScope")} · {term.originKind === "manual" ? t("resource.manual") : t("resource.external")}</small></li>)}</ul> : active && termsRead.isSuccess && !termsRead.isFetching && !termsRead.error ? <p>{t("resource.noTerms")}</p> : null}

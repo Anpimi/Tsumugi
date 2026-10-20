@@ -14,6 +14,12 @@ semanticReview: {
 },
 strategy: strategyEn,
 mcpRetrieval: {
+  aiPlan: {
+    use: "Use this fixed query in AI preparation",
+    help: "This does not run the query or authorize model sharing. Manual Start stays separate.",
+    blocked: "The original query or AI draft changed. Both drafts were retained.",
+    attached: "This query was handed to AI preparation. Stop it here before discarding the original service session.",
+  },
   mode: "Query provider type", local: "Installed plugin", external: "External MCP service", title: "External terminology retrieval",
   help: "Use one external service to retrieve terminology for one saved entry and target language. Results are untrusted reference material. Nothing is adopted or sent to a model automatically.",
   endpoint: "MCP service endpoint", credentialEnv: "MCP credential environment variable", credentialHelp: "Leave empty for no authentication, or enter a dedicated variable name beginning TSUMUGI_MCP_CLIENT_, using uppercase letters, digits and underscores, up to 128 characters. Never enter its secret value. Tsumugi resolves it at the service boundary. Model connection credentials are separate.",
@@ -971,6 +977,27 @@ protection: {
   "retry": "Retry same protection action"
 },
 ai: {
+  mcpTermQuery: {
+    reprepare: "To continue after pause, takeover, stop or expiry, stop the original MCP service session, prepare a new query in Resources, then approve a new plan.",
+    title: "Fixed MCP terminology query",
+    prepare: "Prepare an MCP query in Resources",
+    empty: "No fixed MCP query is attached.",
+    serviceConsent: "Allow the captured MCP service to receive this fixed query once",
+    modelConsent: "Allow the returned text to be sent to this model",
+    destination: "Model destination: {{endpoint}} · {{model}}",
+    scope: "Entry {{entry}} · {{locale}}",
+    expiry: "Original service deadline: {{expiry}}",
+    limits: "Selected reference tools: at most {{sdk, number}} calls; MCP query: at most 1; combined tool limit: {{total, number}}. Accepted and unknown calls are not refunded.",
+    plainText: "External results are untrusted text. They are not adopted as terms.",
+    clear: "Remove from this AI draft",
+    stop: "Stop the original MCP service session",
+    read: "Check the original MCP query",
+    changed: "The source, selection, model or service changed. Prepare and approve again.",
+    expired: "The original MCP query expired. Prepare a new query in Resources.",
+    unsupported: "This fixed query supports one entry and an ordinary AI member only; teams and delegated members are unavailable.",
+    confirmation: "This plan allows one fixed MCP query and shares its returned text with the displayed model destination.",
+    stopHelp: "Stopping closes new admission; accepted callbacks must still drain. Removing a draft does not stop a service.",
+  },
   maintenance: {
     basis: "Captured source, translation, review and protection evidence",
     title: "Maintain changed work", help: "Assess one finite window of current entries. Keep applicable work, request a current review, or explicitly choose a repair subset. This does not start AI or approve anything.",

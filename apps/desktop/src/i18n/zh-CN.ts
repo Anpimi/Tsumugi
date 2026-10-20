@@ -16,6 +16,12 @@ semanticReview: {
 },
 strategy: strategyZh,
 mcpRetrieval: {
+  aiPlan: {
+    use: "在 AI 准备中使用本次固定查询",
+    help: "此操作不会执行查询或授权向模型分享；人工开始查询仍需单独操作。",
+    blocked: "原查询或 AI 草稿已变化，两边的草稿均已保留。",
+    attached: "本次查询已交给 AI 准备。放弃原服务会话前，请先在这里停止它。",
+  },
   mode: "查询提供方类型", local: "已安装插件", external: "外部 MCP 服务", title: "外部术语检索",
   help: "通过一个外部服务，为一个已保存条目及目标语言检索术语。结果仅是不可信参考材料，不会自动采纳或发送给模型。",
   endpoint: "MCP 服务端点", credentialEnv: "MCP 凭证环境变量", credentialHelp: "无需认证时留空；否则填写以 TSUMUGI_MCP_CLIENT_ 开头、仅含大写字母、数字和下划线且不超过 128 字符的专用变量名。不要填写秘密值。Tsumugi 在服务边界解析凭证，模型连接凭证与此独立。",
@@ -962,6 +968,27 @@ protection: {
   "retry": "重试原保护操作"
 },
 ai: {
+  mcpTermQuery: {
+    reprepare: "暂停、接管、停止或到期后若要继续，请先停止原 MCP 服务会话，再到资源工作面准备新查询并批准新计划。",
+    title: "固定 MCP 术语查询",
+    prepare: "到资源中准备 MCP 查询",
+    empty: "尚未关联固定 MCP 查询。",
+    serviceConsent: "允许捕获的 MCP 服务接收并执行本次固定查询一次",
+    modelConsent: "允许将返回正文发送给此模型",
+    destination: "模型接收地址：{{endpoint}} · {{model}}",
+    scope: "条目 {{entry}} · {{locale}}",
+    expiry: "原服务期限：{{expiry}}",
+    limits: "已选参考工具最多调用 {{sdk, number}} 次；MCP 查询最多 1 次；工具调用合计上限 {{total, number}} 次。已受理及结果未知的调用不退还额度。",
+    plainText: "外部结果是不可信文本，不会自动采纳为术语。",
+    clear: "从本 AI 草稿移除",
+    stop: "停止原 MCP 服务会话",
+    read: "核对原 MCP 查询",
+    changed: "源、选择、模型或服务已变化，请重新准备并批准。",
+    expired: "原 MCP 查询已到期，请到资源中准备新查询。",
+    unsupported: "本固定查询只支持一个条目和普通 AI 成员，暂不支持团队或子 Agent。",
+    confirmation: "本计划允许执行一次固定 MCP 查询，并将返回正文分享给已显示的模型接收地址。",
+    stopHelp: "停止会关闭新准入；已接受的回调仍须排空。移除草稿不会停止服务。",
+  },
   maintenance: {
     basis: "已捕获的源、译文、审阅与保护依据",
     title: "维护变化后的工作", help: "评估当前条目的一个有限窗口。保留适用成果、要求当前复检，或明确选择修复子集；此操作不会启动 AI 或批准内容。",

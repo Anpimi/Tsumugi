@@ -2203,9 +2203,20 @@ impl ProjectStore {
             None,
             None,
             None,
-            Some((prepared, permit)),
+            Some((prepared, permit, None)),
             None,
             None,
+        )
+    }
+
+    pub(crate) fn enqueue_member_mcp_term_query(
+        &mut self,
+        sealed: &crate::application::PreparedMemberMcpTermQuery,
+    ) -> Result<(), ExecutionError> {
+        self.check_prepared_member_mcp_term_query(sealed)?;
+        self.enqueue_execution_with_authority(
+            sealed.prepared().input(), RecoveryPolicy::ExternalUnknown, None, None,
+            None, None, Some((sealed.prepared(), sealed.permit(), Some(sealed))), None, None,
         )
     }
 
@@ -2225,6 +2236,7 @@ impl ProjectStore {
         mcp: Option<(
             &crate::application::PreparedMcpTermQuery,
             &crate::application::McpTermQueryPermit,
+            Option<&crate::application::PreparedMemberMcpTermQuery>,
         )>,
         service_tool: Option<&crate::application::PreparedWorkPlanServiceTool>,
         team_work: Option<&crate::application::PreparedTeamWork>,
@@ -2254,7 +2266,7 @@ impl ProjectStore {
         let prepared_input = input_storage::PreparedInput::capture(input)?;
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
-        if let Some((prepared, permit)) = mcp {
+        if let Some((prepared, permit, member)) = mcp {
             if agent.is_some()
                 || service.is_some()
                 || tool.is_some()
@@ -2267,6 +2279,13 @@ impl ProjectStore {
             }
             permit.check_input(input)?;
             super::mcp::check_prepared_in(&tx, prepared)?;
+            match member {
+                Some(sealed) => super::application::member_mcp::check_prepared(&tx, sealed)?,
+                None if prepared.member_binding.get().is_some() => {
+                    return Err(error(ErrorCode::Unauthorized, "mcp-query-member-bound"));
+                }
+                None => {}
+            }
         }
         let verified_build =
             super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
@@ -2359,6 +2378,9 @@ impl ProjectStore {
             super::application::validate_tool_input(&tx, input, delegation)?;
         } else {
             super::application::record_input(&tx, input)?;
+        }
+        if let Some((_, _, Some(sealed))) = mcp {
+            super::application::member_mcp::record_input(&tx, sealed)?;
         }
         if let Some(prepared) = team_work {
             super::application::coordination::record_work(&tx, prepared)?;

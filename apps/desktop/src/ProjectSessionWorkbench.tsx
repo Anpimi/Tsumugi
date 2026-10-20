@@ -49,13 +49,17 @@ export function ProjectSessionOwners({ project, children, bridge = true }: { pro
     <TranslationDraftSession project={project}><McpSharingSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}>
       <ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>
         <ArenaDraftSession project={project}><ReleaseDraftSession project={project}>
-          <StrategyDraftSession project={project}><AiPreparationSession initialLocale={project.metadata.targetLocales[0] ?? ""} targetLocales={project.metadata.targetLocales}>
+          <StrategyDraftSession project={project}><ProjectAiPreparation project={project}>
             {children}
-          </AiPreparationSession></StrategyDraftSession>
+          </ProjectAiPreparation></StrategyDraftSession>
         </ReleaseDraftSession></ArenaDraftSession>
       </SourceDraftSession></ResourceDraftSession></ReviewDraftSession>
     </TranslationImportSession></ExecutionTaskSession></McpSharingSession></TranslationDraftSession>
   </SessionReadProvider>;
+}
+function ProjectAiPreparation({ project, children }: { project: ProjectView; children: ReactNode }) {
+  const resources = useResourceDraftSession();
+  return <AiPreparationSession initialLocale={project.metadata.targetLocales[0] ?? ""} targetLocales={project.metadata.targetLocales} mcp={resources.tool.mcp}>{children}</AiPreparationSession>;
 }
 export interface ProjectSessionHandle {
   navigate: (destination: WorkspaceDestination) => Promise<boolean>;
@@ -222,6 +226,31 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
         setFailure("navigation-edited"); return false;
       }
       return true;
+    }
+    if (destination.kind === "ai-mcp-query") {
+      const mcp = resources.tool.mcp, preview = destination.preview;
+      const unit = resources.tool.current().retrievalUnit;
+      const sourceCurrent = () => {
+        const source = reads.client.getQueryState<ContentScope>(reads.key(["resource-source-scope"]));
+        return source?.status === "success" && source.fetchStatus === "idle" && !source.isInvalidated && source.error === null
+          && source.data?.currentSnapshot === preview.basis.sourceSnapshotId
+          && committed.current.project.metadata.sourceLocale === preview.basis.sourceLocale;
+      };
+      if (!sourceCurrent() || !unit || unit.unitId !== preview.basis.unitId
+        || unit.sourceRevisionId !== preview.basis.sourceRevisionId || unit.sourceSnapshotId !== preview.basis.sourceSnapshotId
+        || !mcp.canUseInAi(preview, destination.querySequence) || !ai.canReceiveMcpQuery(preview, destination.expectedEditSeq)) {
+        setFailure("navigation-edited"); return false;
+      }
+      return () => {
+        if (!current() || !sourceCurrent() || !mcp.canUseInAi(preview, destination.querySequence)
+          || !ai.canReceiveMcpQuery(preview, destination.expectedEditSeq)) return false;
+        if (!ai.receiveMcpQuery(preview, destination.expectedEditSeq, unit.label)) return false;
+        return mcp.handToAi(preview, destination.querySequence);
+      };
+    }
+    if (destination.kind === "mcp-query") {
+      if (resources.tool.current().mode !== "mcp" && !resources.tool.blocked() && !resources.tool.hasDraft()) resources.tool.setMode("mcp");
+      committed.current.view.memory.write("resources", "tab", "queries"); return true;
     }
     if (destination.kind === "review-work") {
       const memory = committed.current.view.memory;
@@ -683,6 +712,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       aiSelection={{ count: ai.selected.length, locale: ai.locale, editSeq: ai.editSeq, available: ai.contentRangeAvailable }}
       onPrepareSelection={(selection, expectedEditSeq) => navigation.navigate({ kind: "ai-selection", selection, expectedEditSeq })} /> : null}
     {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation}
+      aiPreparation={{ editSeq: ai.editSeq, canReceive: preview => ai.canReceiveMcpQuery(preview, ai.editSeq),
+        receive: (preview, querySequence, expectedEditSeq) => navigation.navigate({ kind: "ai-mcp-query", preview, querySequence, expectedEditSeq }) }}
       correctionEditorReturn={view.memory.read<CorrectionEditorTarget | null>("resources", "correctionEditorReturn")}
       onReturnFromCorrection={capture => navigation.navigate({ kind: "resource-correction-return", capture })}
       contextEditorReturn={view.memory.read<ContextEditorTarget|null>("resources","contextEditorReturn")}
@@ -691,7 +722,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       handoff={view.memory.read<ReviewHandoffPresentation>("review", "aiHandoff")}
       onReturnToAi={view.memory.read<boolean>("review", "returnToAi") ? () => navigation.navigate({ kind: "area", area: "ai" }) : undefined} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
-    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenComparison={openComparison("ai")} onOpenTranslation={openAiTranslation} onOpenReview={openAiReview} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenTask={(taskId,attemptId)=>navigation.navigate({kind:"task",taskId,attemptId})} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
+    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenComparison={openComparison("ai")} onOpenTranslation={openAiTranslation} onOpenReview={openAiReview} onOpenManual={area => navigation.navigate({ kind: "area", area })} onOpenMcpQuery={() => navigation.navigate({ kind: "mcp-query" })} onOpenTask={(taskId,attemptId)=>navigation.navigate({kind:"task",taskId,attemptId})} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
     {view.area === "arena" ? <ArenaWorkbench ref={handle => register("arena", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenConnections={onOpenConnections}
       onReturn={comparisonReturnTo ? () => { void navigation.navigate({ kind: "area", area: comparisonReturnTo }); } : undefined} /> : null}
     {view.area === "tasks" ? <ExecutionTasks ref={handle => register("tasks", handle)} project={project} disabled={locked}

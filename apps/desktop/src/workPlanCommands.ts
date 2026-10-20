@@ -54,6 +54,17 @@ function validDiscussionDisclosure(plan: WorkPlanView): boolean {
   if (!limits || !plan.preview) return false;
   return policy.profile === "current-plan-1" ? limits.maxArtifactBytes === 0 : limits.maxArtifactBytes > 0;
 }
+function validMcpDisclosure(plan: WorkPlanView): boolean {
+  const preview = plan.options.mcpTermQuery?.preview;
+  if (!preview) return true;
+  const unit = plan.scope[0];
+  return !!plan.preview && !plan.options.teamExecution && plan.scope.length === 1 && unit.unitId === preview.basis.unitId
+    && plan.locale === preview.basis.locale && preview.request.locale === plan.locale
+    && preview.request.unitId === unit.unitId && preview.request.projectId === preview.basis.projectId
+    && unit.sourceRevisionId === preview.basis.sourceRevisionId && unit.sourceSnapshotId === preview.basis.sourceSnapshotId
+    && preview.arguments.query === preview.request.query && preview.arguments.sourceLocale === preview.basis.sourceLocale
+    && preview.arguments.targetLocale === plan.locale;
+}
 
 function validTeamExecutionDisclosure(plan: WorkPlanView): boolean {
   const policy = plan.options.teamExecution, previews = plan.memberPreviews ?? [];
@@ -305,6 +316,8 @@ export const workPlanCommands = {
       || jsonIdentity(value.options.teamDiscussions) !== jsonIdentity(request.options.teamDiscussions)
       || jsonIdentity(value.options.teamExecution) !== jsonIdentity(request.options.teamExecution)
       || jsonIdentity(value.options.toolGuidance) !== jsonIdentity(request.options.toolGuidance)
+      || jsonIdentity(value.options.mcpTermQuery) !== jsonIdentity(request.options.mcpTermQuery)
+      || !validMcpDisclosure(value)
       || !validDiscussionDisclosure(value)
       || !validTeamExecutionDisclosure(value)
       || value.options.stages.length !== stages.size

@@ -468,6 +468,9 @@ impl Connection {
     pub(in crate::commands) fn work(&self) -> Work {
         self.control.work()
     }
+    pub(in crate::commands) fn drained(&self) -> bool {
+        self.control.drained()
+    }
     pub(in crate::commands) fn accept_result(&self, authorized: impl FnOnce() -> bool) -> bool {
         self.control.accept_result(authorized)
     }

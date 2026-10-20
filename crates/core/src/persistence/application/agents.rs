@@ -225,10 +225,7 @@ impl ProjectStore {
                 if occupied {
                     return Err(fail(ErrorCode::ResultMismatch, "work-plan-agent-reconcile"));
                 }
-                if stored.lease == identity.lease
-                    && stored.state == WorkPlanState::Active
-                    && stored.expires_at > control::now()?
-                {
+                if stored.lease == identity.lease && stored.state == WorkPlanState::Active {
                     WorkPlanAgentReconciliationOutcome::Active
                 } else {
                     WorkPlanAgentReconciliationOutcome::NotEnqueued

@@ -18,6 +18,7 @@ interface Draft { endpoint: string; credentialEnv: string; query: string; toolNa
 interface Operation {
   discovery: McpRetrievalDiscoverRequest; seq: number; query: McpRetrievalPrepareRequest | null; preview: McpTermQueryPreview | null;
   start: McpRetrievalStartRequest | null; unknown: "discover" | "prepare" | "start" | null; closed: boolean; drained: boolean; ended: boolean;
+  handedToAi: boolean;
 }
 interface State {
   operation: Operation | null; busy: "discovery" | "prepare" | "start" | null; consent: boolean; stale: boolean; failure: CommandFailure | null;
@@ -72,14 +73,14 @@ export function useMcpRetrieval(project: ProjectView, ports: { live: () => boole
         if (!recovered.admissionClosed || !recovered.callbacksDrained) {
           const operation: Operation = { discovery: fixed({ ...session, discovery: recovered.discovery }), seq: draft.seq,
             query: recovered.query ? fixed({ ...session, identity: recovered.identity, query: recovered.query }) : null, preview: recovered.preview,
-            start: null, unknown: null, closed: recovered.admissionClosed, drained: recovered.callbacksDrained, ended: false };
+            start: null, unknown: null, closed: recovered.admissionClosed, drained: recovered.callbacksDrained, ended: false, handedToAi: false };
           update(value => ({ ...value, operation, consent: false, stale: true })); observe(operation, recovered); return;
         }
       }
       const actionId = await executionCommands.identity(session); if (!live() || primary.current !== ticket || portsRef.current.draft().seq !== draft.seq) return;
       const discovery: McpRetrievalDiscovery = { identity: { actionId, generation: descriptor.nextGeneration }, endpoint: draft.endpoint,
         credentialEnv: draft.credentialEnv || null, expiresAtMs: Date.now() + descriptor.lifetimeMs, allowDiscovery: true };
-      const operation: Operation = { discovery: fixed({ ...session, discovery }), seq: draft.seq, query: null, preview: null, start: null, unknown: "discover", closed: false, drained: false, ended: false };
+      const operation: Operation = { discovery: fixed({ ...session, discovery }), seq: draft.seq, query: null, preview: null, start: null, unknown: "discover", closed: false, drained: false, ended: false, handedToAi: false };
       update(value => ({ ...value, operation, stale: false, consent: false, stop: null, stopFailure: null, capture: null, captureFailure: null }));
       const result = await commands.discover(operation.discovery); if (primary.current !== ticket || !same(operation)) return;
       observe(operation, result); update(value => value.operation?.discovery === operation.discovery ? { ...value, operation: { ...value.operation, unknown: null } } : value);
@@ -124,12 +125,35 @@ export function useMcpRetrieval(project: ProjectView, ports: { live: () => boole
     finally { if (primary.current === ticket) { primary.current = null; update(value => ({ ...value, busy: null })); } }
   }
   function setConsent(consent: boolean) { const value = current(), op = value.operation;
-    if (!op?.preview || value.busy || value.stale || op.closed || op.unknown || op.start || op.seq !== portsRef.current.draft().seq || op.preview.request.expiresAtMs <= Date.now()) return;
+    if (!op?.preview || value.busy || value.stale || op.closed || op.unknown || op.start || op.handedToAi || op.seq !== portsRef.current.draft().seq || op.preview.request.expiresAtMs <= Date.now()) return;
     update(before => ({ ...before, consent }));
+  }
+  function canUseInAi(preview = current().operation?.preview, sequence = portsRef.current.draft().seq) {
+    const value = current(), op = value.operation;
+    if (!live() || !op?.query || !op.preview || !preview || value.busy || value.stale || op.start || op.unknown || op.closed
+      || sequence !== op.seq || sequence !== portsRef.current.draft().seq || preview.request.expiresAtMs <= Date.now()
+      || jsonIdentity(preview) !== jsonIdentity(op.preview)) return false;
+    return aiPreviewCurrent(preview);
+  }
+  function aiPreviewCurrent(preview: McpTermQueryPreview) {
+    const value = current(), op = value.operation;
+    if (!live() || !op || op.start || op.unknown || op.closed || value.stopping || value.stop?.pending || value.stop?.unknown || preview.request.expiresAtMs <= Date.now()
+      || jsonIdentity(op.preview) !== jsonIdentity(preview)) return false;
+    const query = reads.client.getQueryState<McpRetrievalView>(reads.key(retrievalKey(op.discovery.discovery.identity))), view = query?.data;
+    return query?.status === "success" && query.fetchStatus === "idle" && !query.isInvalidated && query.error === null
+      && !!view && view.phase === "prepared" && !view.admissionClosed && view.consent === null && view.task === null
+      && jsonIdentity(view.preview) === jsonIdentity(preview);
+  }
+  function handToAi(preview: McpTermQueryPreview, sequence: number) {
+    if (!canUseInAi(preview, sequence)) return false;
+    // This only suppresses the separate manual Start in this local draft.
+    // The Host independently binds the exact query to an approved plan.
+    update(before => ({ ...before, consent: false, operation: before.operation ? { ...before.operation, handedToAi: true } : null }));
+    return true;
   }
   async function start(currentSource: () => boolean) {
     const operation = current().operation;
-    if (!live() || !operation?.query || !operation.preview || primary.current || !current().consent || current().stale || operation.closed || operation.unknown || operation.start
+    if (!live() || !operation?.query || !operation.preview || primary.current || !current().consent || current().stale || operation.closed || operation.unknown || operation.start || operation.handedToAi
       || operation.seq !== portsRef.current.draft().seq || !currentSource() || operation.query.query.expiresAtMs <= Date.now()
       || !projectRef.current.metadata.targetLocales.includes(operation.preview.basis.locale) || operation.preview.basis.sourceLocale !== projectRef.current.metadata.sourceLocale) return;
     const ticket = {}; primary.current = ticket;
@@ -211,7 +235,8 @@ export function useMcpRetrieval(project: ProjectView, ports: { live: () => boole
   function endLocalPreparationWait() { if (!live() || current().operation || !primary.current) return false; primary.current = null;
     update(value => ({ ...value, busy: null })); return true; }
   function revision() { const value = current(); return [value.operation?.discovery, value.operation?.query, value.operation?.start, value.operation?.unknown,
-    value.operation?.closed, value.operation?.drained, value.operation?.ended, value.busy, value.stop, value.stopping, value.capture, value.capturing, value.captureReading]; }
+    value.operation?.closed, value.operation?.drained, value.operation?.ended, value.operation?.handedToAi, value.busy, value.stop, value.stopping, value.capture, value.capturing, value.captureReading]; }
   return { state, current, status, revision, discover, read, retryRead: () => read(true), prepare, setConsent, start, stop, retryStop: () => stop(true), canEndWait, endWait, endLocalPreparationWait,
-    capture, readCapture, retryCapture, blocked, close, invalidate };
+    capture, readCapture, retryCapture, blocked, close, invalidate, canUseInAi, handToAi, aiPreviewCurrent };
 }
+export type McpRetrievalSession = ReturnType<typeof useMcpRetrieval>;
