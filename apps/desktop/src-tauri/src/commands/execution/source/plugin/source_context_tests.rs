@@ -1,5 +1,8 @@
 //! Installed domain worker evidence through source checking, adoption and read IPC.
 use super::*;
+#[cfg(feature = "execution-test-host")]
+#[path = "source_context_tests/pi.rs"]
+mod pi;
 use crate::commands::execution::test_fixtures::{
     OwnedDirectory, approved_runtime, provision_packages, selected_package,
 };
@@ -270,6 +273,7 @@ fn assert_time_fact(page: &Value, source: &str, time: &str, artifact_id: &Value)
 }
 
 #[test]
+#[cfg(feature = "bundled-runtime")]
 fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_source() {
     let temporary = OwnedDirectory(tempfile::tempdir().unwrap());
     let root = temporary.0.path();
@@ -623,6 +627,7 @@ fn installed_webvtt_context_keeps_time_provenance_neighbors_and_rejects_stale_so
 }
 
 #[test]
+#[cfg(feature = "bundled-runtime")]
 fn installed_smapi_source_failure_details_survive_saved_output_read_and_reopen() {
     let temporary = OwnedDirectory(tempfile::tempdir().unwrap());
     let root = temporary.0.path();
@@ -851,6 +856,7 @@ fn assert_manifest_name_fact(page: &Value, manifest: &str, name: &str, artifact_
 }
 
 #[test]
+#[cfg(feature = "bundled-runtime")]
 fn installed_smapi_manifest_name_context_tracks_snapshot_basis_and_reopen() {
     let temporary = OwnedDirectory(tempfile::tempdir().unwrap());
     let root = temporary.0.path();

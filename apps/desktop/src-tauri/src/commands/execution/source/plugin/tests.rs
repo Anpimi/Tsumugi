@@ -889,7 +889,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
 mod native;
 
 #[cfg(all(
-    feature = "bundled-runtime",
+    any(feature = "bundled-runtime", feature = "execution-test-host"),
     target_os = "macos",
     target_arch = "aarch64"
 ))]
