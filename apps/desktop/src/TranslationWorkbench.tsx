@@ -1,3 +1,4 @@
+import "./TranslationWorkbench.css";
 import { ContextFactDecisionFields } from "./ContextFactDecisions";
 import { useResourceDraftSession } from "./ResourceDraftSession";
 import { resourceCommands } from "./resourceCommands";
@@ -124,6 +125,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const [referencesOpen, setReferencesOpen] = useWorkbenchState("translation", "referencesOpen", false);
   const paneIntent = useContentPaneIntent();
   const [editorVisible, setEditorVisible] = useState(true);
+  const [findOpen, setFindOpen] = useWorkbenchState("translation", "findOpen", false);
+  const [rangeOpen, setRangeOpen] = useWorkbenchState("translation", "rangeOpen", false);
   const [query, setQuery] = useWorkbenchState("translation", "query", "");
   const [appliedQuery, setAppliedQuery] = useWorkbenchState("translation", "appliedQuery", "");
   const [contentSelection, setContentSelection] = useWorkbenchState<ContentSelection | null>("translation", "contentSelection", null);
@@ -1182,7 +1185,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
           if (selectionAction.kind === "ai") void confirmSelectedAi(); else chooseContentSelection(selectionAction.value);
         }}>{t(selectionAction?.kind === "ai" ? "workbench.openAiPreparation" : "workbench.confirmContentSelection")}</button></div>
     </Dialog.Content></Dialog.Portal></Dialog.Root>
-    {open ? <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || resourceDrafts.factBlocked() || composing || protectionBlocked || candidates.blocked() || (localBusy && !editorDraft?.saving)}>
+    {open ? <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" descriptionDisclosure onBack={requestClose} backDisabled={disabled || resourceDrafts.factBlocked() || composing || protectionBlocked || candidates.blocked() || (localBusy && !editorDraft?.saving)}>
         <div className="execution-content" aria-busy={busy}>
           <ContextFactDecisionFields context={context} disabled={disabled}/>
           {onReturnToAi ? <button type="button" className="secondary-button" disabled={disabled || composing || draftSession.protection.blocked()}
@@ -1211,8 +1214,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
           {sourceMissing ? <p role="status">{t("translation.noSource")}</p> : null}
           {sourceRead.error || contentRead.error ? <button className="secondary-button" disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable} onClick={() => void performRead(refreshSource)}>{t("execution.refresh")}</button> : null}
           {!project.metadata.targetLocales.length ? <p role="status">{t("translation.noTargets")}</p> : null}
-          <div className="execution-actions"><button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} onClick={() => setTab("import")}>{t("translation.importTab")}</button><button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
-          {sourcePage && (project.metadata.targetLocales.length || targetUnavailable) ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || dirty || !!pendingSave || !!pendingSelection || protectionBlocked || importSession.hasPending() || importSession.hasActive()} onChange={event => changeTarget(event.target.value)}>{targetUnavailable ? <option value={targetLocale} disabled>{t("translation.removedTargetOption", { locale: targetLocale })}</option> : null}{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}
+          <div className="translation-controls"><div className="execution-actions"><button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} onClick={() => setTab("import")}>{t("translation.importTab")}</button><button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
+          {sourcePage && (project.metadata.targetLocales.length || targetUnavailable) ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || dirty || !!pendingSave || !!pendingSelection || protectionBlocked || importSession.hasPending() || importSession.hasActive()} onChange={event => changeTarget(event.target.value)}>{targetUnavailable ? <option value={targetLocale} disabled>{t("translation.removedTargetOption", { locale: targetLocale })}</option> : null}{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}</div>
           {tab === "import" && targetLocale ? <>
             <PluginTranslationControls project={project} open={open && tab === "import"} targetLocale={targetLocale} disabled={disabled || localBusy || !!leaveIntent || !!pendingSave || !!pendingSelection || dirty} onOpenExtensions={onOpenExtensions} />
             {preview ? <section><h3>{t("translation.preview")}</h3><p>{t("translation.counts", { unique: String(preview.unique), unmatched: String(preview.unmatched), conflicts: String(preview.selectedConflicts), changed: String(preview.sourceChanged) })}</p><p>{preview.logicalPath} · {preview.targetLocale}</p>{preview.sourceChanged ? <p role="alert">{t("translation.sourceChanged")}</p> : null}
@@ -1229,12 +1232,14 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
             </section> : null}
           </> : null}
           {tab === "edit" && targetLocale ? <section className="translation-workspace" aria-label={t("translation.editor")}>
+            <details className="translation-find" open={findOpen} onToggle={event => setFindOpen(event.currentTarget.open)}><summary>{t("workbench.findAndRange")}</summary>
             <form className="translation-search" onSubmit={event => { event.preventDefault(); if (!busy && !readBusy && targetAvailable) void performRead(current => loadList(0, query.trim(), current, true)); }}>
               <input aria-label={t("workbench.search")} value={query} onChange={event => setQuery(event.target.value)} placeholder={t("workbench.search")} aria-invalid={failure === "query-limit" || undefined} />
               <button className="secondary-button" type="submit" disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable}>{t("workbench.searchAction")}</button>
               <span role="status">{listRead.error ? t("translation.errors.failed") : list ? t("workbench.results", { count: list.total }) : t("execution.loading")}</span>
             </form>
-            <div className="content-selection-toolbar" role="group" aria-label={t("workbench.contentSelection")}>
+            <details className="content-selection-toolbar" open={rangeOpen} onToggle={event => setRangeOpen(event.currentTarget.open)}><summary>{t("workbench.rangeActions", { count: selectedIds.size })}</summary>
+            <div className="content-selection-actions" role="group" aria-label={t("workbench.contentSelection")}>
               <span role="status">{contentSelection ? t("workbench.fixedContentRange", { count: selectedIds.size, excluded: String(contentSelection.excluded.length),
                 locale: contentSelection.capture.locale, query: contentSelection.capture.query || t("workbench.allEntries") }) : t("workbench.noContentSelection")}</span>
               <div className="execution-actions"><button className="secondary-button" disabled={!selectionGate().enabled || !list?.total}
@@ -1243,10 +1248,10 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                   onClick={() => commandRegistry.dispatch("translation.clear-content-selection", commandScope)}>{t("workbench.clearContentSelection")}</button>
                 {onPrepareSelection ? <button className="secondary-button" disabled={!prepareSelectionAvailability().enabled}
                   onClick={() => commandRegistry.dispatch("translation.prepare-selected-ai", commandScope)}>{t("workbench.prepareSelectedAi")}</button> : null}</div>
+            </div></details></details>
               {contentSelection && !selectionSourceCurrent(contentSelection) ? <p role="status">{t("workbench.contentSelectionChanged")}</p> : null}
               {selectedIds.size > 100 ? <p role="status">{t("workbench.contentSelectionAiLimit")}</p> : null}
               {onPrepareSelection && !aiSelection?.available ? <p role="status">{t("workbench.contentSelectionAiBusy")}</p> : null}
-            </div>
             <ContentPaneLayout ref={paneLayout} intent={paneIntent} active={open && tab === "edit"} hasEditor={!!editorDraft && !!displayedTarget}
               referencesOpen={referencesOpen} composing={composing} editorFocus={draftField} onEditorVisibilityChange={setEditorVisible} list={
               <div className="translation-entry-list" aria-label={t("translation.chooseUnit")}>
@@ -1257,7 +1262,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     onChange={event => { const payload = contentRowPayload(row, event.target.checked); if (payload) commandRegistry.dispatch("translation.toggle-content-selection", commandScope, payload); }} />
                   <button className="translation-entry" aria-label={row.nativeKey}
                   aria-current={displayedTarget?.unitId === row.unitId ? "true" : undefined} disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable} onClick={() => chooseEditor(listTarget(row))}>
-                  <strong>{row.nativeKey}</strong><span className="entry-source">{row.sourcePreview || t("translation.empty")}</span>
+                  <span className="entry-source">{row.sourcePreview || t("translation.empty")}</span><strong>{row.nativeKey}</strong>
                   <span className="entry-translation">{row.translationPreview === null ? t("workbench.unselected") : row.translationPreview || t("translation.empty")}</span>
                   <span className="entry-status">{row.selectionId ? t("workbench.selected") : t("workbench.unselected")} · {reviewState(row)} · {qaState(row)}</span>
                 </button></li>)}</ul>
@@ -1290,6 +1295,17 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                       const input = draftField.current; if (input && input.selectionStart < input.selectionEnd) void queryEditorText(input.value.slice(input.selectionStart, input.selectionEnd));
                     }}>{t("toolQuery.querySelection")}</button></div> : null}
                   {queryUnavailable ? <p role="status">{t("toolQuery.editorUnavailable")}</p> : null}
+                  <label className="translation-draft-field">{t("translation.draft")}<textarea ref={draftField} value={textareaDisplayText(draft)}
+                    readOnly={protectionBlocked || editingReady?.scope !== editingProtectionScope(context, displayedTarget, targetLocale) || !editingReady.ready}
+                    onCompositionStart={event => {
+                      setComposing(true);
+                      // Composition is newer input even before its first text
+                      // change. A pending immutable selection cannot replace it.
+                      const current = draftSession.current();
+                      if (!event.currentTarget.readOnly && current) draftSession.edit(current.text);
+                    }} onCompositionEnd={() => setComposing(false)}
+                    onSelect={event => setHasDraftSelection(event.currentTarget.selectionStart < event.currentTarget.selectionEnd)}
+                    onChange={event => draftSession.edit(event.target.value)} /></label>
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorDraft?.baseSelectionId ? editorDraft.baseText || t("translation.empty") : t("translation.noSelection")}</pre></details>
                   <button type="button" className="secondary-button" disabled={disabled || !!sharing.state.target || !targetAvailable || !snapshot || readyEditorRead !== editorIntent?.id
                     || snapshot.target.sourceRevisionId !== displayedTarget.sourceRevisionId || !checkedRead(editorKey(editorIntent), snapshot)}
@@ -1302,24 +1318,17 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     draftBlocked={dirty || !!pendingSave || !!pendingSelection} run={perform} onBlockedChange={() => {}}
                     onEditingReadyChange={(scope, ready) => setEditingReady(before => before?.scope === scope && before.ready === ready ? before : { scope, ready })}
                     onReturnFocus={() => { const layout = paneLayout.current; if (layout && !layout.editorVisible()) { layout.focusVisible(); return true; } return false; }} />
-                  <label>{t("translation.draft")}<textarea ref={draftField} value={textareaDisplayText(draft)}
-                    readOnly={protectionBlocked || editingReady?.scope !== editingProtectionScope(context, displayedTarget, targetLocale) || !editingReady.ready}
-                    onCompositionStart={event => {
-                      setComposing(true);
-                      // Composition is newer input even before its first text
-                      // change. A pending immutable selection cannot replace it.
-                      const current = draftSession.current();
-                      if (!event.currentTarget.readOnly && current) draftSession.edit(current.text);
-                    }} onCompositionEnd={() => setComposing(false)}
-                    onSelect={event => setHasDraftSelection(event.currentTarget.selectionStart < event.currentTarget.selectionEnd)}
-                    onChange={event => draftSession.edit(event.target.value)} /></label>
                   </div>
-                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave || !!pendingSelection} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div>
+                  <div className="editor-save-bar"><details className="editor-save-help"><summary>{t("workbench.aboutSaving")}</summary><p>{t("translation.draftHelp")}</p></details><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave || !!pendingSelection} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div>
                   {pendingSelection ? <div role="status">{editorDraft?.checkingAction !== "selection" ? <p>{t("translation.selectionUnknown")}</p> : null}<button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload()).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.check-selection",commandScope,payload);}}>{t("translation.checkSelection")}</button><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload(),true).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.retry-selection",commandScope,payload);}}>{t("translation.retrySelection")}</button></div> : null}
                   {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
                   </div>
                 </div> : <div className="editor-empty"><h2>{t("workbench.chooseEntry")}</h2><p>{t("workbench.chooseEntryHelp")}</p></div>}
-              references={editorDraft && displayedTarget ? <details className="editor-references" open={referencesOpen} onToggle={event => setReferencesOpen(event.currentTarget.open)}><summary>{t("workbench.references")}</summary>
+              references={editorDraft && displayedTarget ? <details className="editor-references" open={referencesOpen} onToggle={event => setReferencesOpen(event.currentTarget.open)}><summary onClick={event => {
+                // Commit the controlled disclosure before native resize delivery;
+                // the later toggle event only confirms the same view state.
+                event.preventDefault(); setReferencesOpen(!referencesOpen);
+              }}>{t("workbench.references")}</summary>
               <section aria-label={t("resource.editorReference")}><h5>{t("resource.editorReference")}</h5><p>{t("resource.editorReferenceHelp")}</p>
                 {editorRead.error ? <p role="status">{t("resource.editorLoadFailed")}</p> : null}
                 {editorResources?.terms ? <><h6>{t("resource.applicableTerms")}</h6>{editorResources.terms.entries.length ? <ul>{editorResources.terms.entries.map(entry => <li key={entry.source}>{entry.source}: {entry.selected ? <>{entry.selected.target} · {entry.selected.originKind === "manual" ? t("resource.manual") : t("resource.external")} · {entry.selected.reason}</> : t("resource.conflict")}</li>)}</ul> : <p>{t("resource.noApplicableTerms")}</p>}</> : null}

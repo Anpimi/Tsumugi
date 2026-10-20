@@ -838,6 +838,8 @@ contentPaneLayout: {
   pixels: "{{value}} pixels",
 },
 workbench: {
+  findAndRange: "Find and range actions", aboutSaving: "About saving",
+  aboutWorkspace: "About this workspace", rangeActions: "Range actions ({{count}} selected)",
   retiredDraftTitle: "Local work from the previous project",
   retiredDraftHelp: "The previous project session has ended. Its local work is read-only and kept in this window so you can copy it. No more operations will run from it. Copy what you need before discarding it or closing this window. This recovery view does not save changes to the project.",
   retiredDraftData: "Preserved local work and original recovery details",
@@ -2224,7 +2226,7 @@ ai: {
       savedActionFound: "The original save was confirmed. Your newer draft, if any, is still here.",
       savedActionMissing: "No saved result was found for the original action. The request and draft are kept; restore this target language before retrying the same action.",
         saveAndContinue: "Save and continue",
-      savedNewerDraft: "The earlier text was saved. Your newer draft is still here; save it separately when ready.",
+      savedNewerDraft: "Earlier text saved. Your newer draft is still unsaved.",
       history: "Revision history",
         refreshHistory: "Refresh history",
         historyStale: "This save is confirmed. Refresh history to include the latest revisions.",

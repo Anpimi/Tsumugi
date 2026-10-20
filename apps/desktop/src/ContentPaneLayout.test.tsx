@@ -41,6 +41,15 @@ vi.mock("react-resizable-panels", async () => {
   };
 });
 
+let frameSequence = 0;
+const pendingFrames = new Map<number, FrameRequestCallback>();
+function advanceFrame() {
+  act(() => {
+    const current = [...pendingFrames.values()]; pendingFrames.clear();
+    current.forEach(callback => callback(16));
+  });
+}
+
 const noop = () => {};
 type TestHandle = ContentPaneLayoutHandle & { captureEditorReveal: () => () => void };
 function Content({ handle, composing = false, active = true, referencesOpen = true }: {
@@ -84,7 +93,7 @@ function harness(overrides: Partial<ComponentProps<typeof Content>> = {}) {
     Object.assign(geometry, { width, height, detailWidth });
     const outer = group("list").element, inner = group("references").element;
     if (!outer || !inner) throw new Error("Expected both product groups");
-    resize(outer, width, height); resize(inner, detailWidth, height);
+    resize(outer, width, height); resize(inner, detailWidth, height); advanceFrame();
   }
   function complete(boundary: "list" | "references", pixels: number, requested = pixels, user = true) {
     const value = group(boundary), horizontal = boundary === "list" || value.props.orientation === "horizontal";
@@ -92,9 +101,14 @@ function harness(overrides: Partial<ComponentProps<typeof Content>> = {}) {
     const id = panelId(boundary), layout = { ...value.layout, [id]: pixels / (axis - 24) * 100 };
     act(() => value.props.onLayoutChanged?.(layout, { isUserInteraction: user, requestedLayout: { ...layout, [id]: requested / (axis - 24) * 100 } }));
   }
-  return { ...rendered, memory, handle, tree, group, panelId, measure, complete };
+  return { ...rendered, memory, handle, tree, group, panelId, measure, complete, resize };
 }
-beforeEach(async () => { await i18n.changeLanguage("en-US"); library.groups.clear(); library.panels.clear(); });
+beforeEach(async () => {
+  await i18n.changeLanguage("en-US"); library.groups.clear(); library.panels.clear();
+  frameSequence = 0; pendingFrames.clear();
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { pendingFrames.set(++frameSequence, callback); return frameSequence; });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { pendingFrames.delete(id); });
+});
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it.each(["en-US", "zh-CN"])("labels library separators and delegates both orientations in %s", async locale => {
@@ -215,4 +229,74 @@ it("honors a later list choice over an asynchronous reveal and consumes same-pan
   act(() => ui.handle.current?.captureEditorReveal()());
   const outside = screen.getByRole("button", { name: "Outside layout" }); outside.focus(); ui.measure(900);
   expect(outside).toHaveFocus(); expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
+});
+
+it("uses the measured text size to select the existing narrow mode without replacing the draft", async () => {
+  const ui = harness(), user = userEvent.setup(); ui.measure(900, 600, 636);
+  const field = screen.getByRole("textbox", { name: "Kept draft" }) as HTMLTextAreaElement;
+  field.focus(); field.setSelectionRange(2, 8);
+  const metric = ui.container.querySelector(".content-pane-font-metric");
+  if (!metric) throw new Error("Expected the text-size measurement");
+  ui.resize(metric, 28, 28); advanceFrame();
+  expect(screen.getByRole("button", { name: "Entries" })).toHaveAttribute("aria-pressed", "true");
+  expect(field).not.toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Current entry" }));
+  expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
+  expect(field).toHaveFocus(); expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(8);
+  expect(field).toHaveValue("Original draft 日本語");
+  expect(ui.memory.read("translation", "paneLayout.compact.listWidth")).toBe(240);
+  ui.resize(metric, 14, 14); advanceFrame();
+  expect(screen.getByRole("textbox", { name: "Kept draft" })).toBe(field);
+  expect(ui.group("list").props.disabled).toBe(false);
+});
+
+it("reveals an already focused field locally after panel bounds settle without changing its selection", () => {
+  let sequence = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.set(++sequence, callback); return sequence; });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+  const ui = harness(); ui.measure(900);
+  const field = screen.getByRole("textbox", { name: "Kept draft" }) as HTMLTextAreaElement;
+  const scroll = field.closest<HTMLElement>(".translation-editor-content");
+  if (!scroll) throw new Error("Expected the local editor scroller");
+  const outer = ui.container.querySelector<HTMLElement>(".content-pane-layout")!;
+  outer.scrollTop = 27; scroll.scrollTop = 40;
+  Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(0, 0, 400, 120) });
+  Object.defineProperty(field, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(0, -20, 400, 96) });
+  field.focus(); field.setSelectionRange(2, 8);
+  act(() => { const current = [...frames.values()]; frames.clear(); current.forEach(callback => callback(16)); });
+  expect(scroll.scrollTop).toBe(20); expect(outer.scrollTop).toBe(27);
+  expect(field).toHaveFocus(); expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(8);
+  expect(field).toHaveValue("Original draft 日本語");
+});
+
+it("cancels a resized gesture before deferred geometry is published and retains the latest same-frame size", () => {
+  const ui = harness(); ui.measure(1300, 600, 988);
+  const separator = screen.getByRole("separator", { name: "Resize entry list" });
+  const group = ui.group("list"), outer = group.element!;
+  panePointer(separator, "pointerdown", 300);
+  ui.resize(outer, 900, 600); ui.resize(outer, 1300, 600);
+  ui.complete("list", 368);
+  expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(288);
+  panePointer(separator, "pointerup", 410);
+  advanceFrame();
+  expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(288);
+  expect(ui.group("list").layout[ui.panelId("list")]).toBeCloseTo(288 / 1276 * 100);
+});
+
+it("does not record an already opened native disclosure as its collapsed reference height", () => {
+  const ui = harness({ referencesOpen: false }); ui.measure(900, 600, 636);
+  const references = ui.container.querySelector<HTMLDetailsElement>(".editor-references");
+  if (!references) throw new Error("Expected the original reference disclosure");
+  const referencePanel = () => library.panels.get(ui.panelId("references"))!;
+  expect(referencePanel().minSize).toBe(52);
+  // The DOM opens before its asynchronous toggle event updates React state.
+  references.open = true;
+  Object.defineProperty(references, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(0, 0, 636, 1045) });
+  ui.resize(references, 636, 1045); advanceFrame();
+  expect(referencePanel().minSize).toBe(52);
+  references.open = false;
+  Object.defineProperty(references, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(0, 0, 636, 88) });
+  ui.resize(references, 636, 88); advanceFrame();
+  expect(referencePanel().minSize).toBe(88);
 });

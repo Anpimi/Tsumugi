@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The production content editor adopts neutral surfaces and an indigo accent,
+readable natural-language text, source-first entry summaries and a fixed save
+bar. The existing resizable panes, draft/session owners, permission checks and
+save reconciliation retain their behavior. Shared light tokens and controls are
+updated; dark production surfaces remain outside this increment. No Core, IPC,
+SDK, persisted format, dependency or version-source change is introduced. This
+stays in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with bilingual Unreleased entries and no additional bump.
+
 Source snapshot reads now reuse the existing single qualified source proof's
 immutable frames and projection. Every reuse rechecks stored bytes, associations,
 original provenance and the current proof; full snapshot mapping, bundle and

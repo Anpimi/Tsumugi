@@ -25,7 +25,7 @@ import wire from "../test/fixtures/reviewCommands.contract.json";
 import { semanticDiagnosticFixture } from "./testSupport/semanticDiagnosticFixture";
 import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
 import { reviewFindingsKey } from "./reviewQueries";
-import { controlContentPaneGeometry } from "./testSupport/contentPaneGeometry";
+import { controlContentPaneGeometry, paintContentPanes } from "./testSupport/contentPaneGeometry";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -182,7 +182,7 @@ it("keeps a pending model diagnostic out of the hidden editor and locates it onl
   const resize = controlContentPaneGeometry(), value = installSemantic(), response = deferred<ReviewEditorSnapshot>(); holdEditor = response.promise;
   const { ui, user } = await openQueue(); await user.click(await modelFinding().findByRole("button", { name: "Locate in translation" }));
   const input = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "Your draft" });
-  resize(ui.container.querySelector(".translation-columns")!, 600);
+  resize(ui.container.querySelector(".translation-columns")!, 600); await paintContentPanes();
   await user.click(screen.getByRole("button", { name: "Entries" }));
   const selectedRange = [input.selectionStart, input.selectionEnd];
   await act(async () => { response.resolve(structuredClone(value.editor)); });

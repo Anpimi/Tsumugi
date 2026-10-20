@@ -830,6 +830,8 @@ contentPaneLayout: {
   pixels: "{{value}} 像素",
 },
 workbench: {
+  findAndRange: "查找与范围操作", aboutSaving: "保存说明",
+  aboutWorkspace: "工作区说明", rangeActions: "范围操作（已选 {{count}} 条）",
   retiredDraftTitle: "上一个项目的本地工作",
   retiredDraftHelp: "上一个项目会话已结束。本地工作以只读方式保留在此窗口，便于复制，不会继续执行操作。请在丢弃这些内容或关闭窗口前复制需要的内容。恢复界面不会将修改写回项目。",
   retiredDraftData: "保留的本地工作与原始恢复资料",
@@ -2215,7 +2217,7 @@ ai: {
       savedActionFound: "已确认原保存请求。若您后来继续编辑，新草稿仍在此处。",
       savedActionMissing: "未找到原操作的已保存结果。原请求和草稿均已保留；请先恢复此目标语言，再重试同一次操作。",
       saveAndContinue: "保存后继续",
-      savedNewerDraft: "较早的文本已保存。您继续输入的新草稿仍在，可另行保存。",
+      savedNewerDraft: "较早文本已保存；您的新草稿仍未保存。",
       history: "修订历史",
         refreshHistory: "刷新历史",
         historyStale: "本次保存已确认。刷新历史可查看最新修订。",
