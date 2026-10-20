@@ -446,7 +446,21 @@ fn control_owned_team(command: &str) {
     );
     assert_no_http(&peers);
 
-    let receipt = control(&fixture, &plan, &grant["lease"], command);
+    let io = fixture.app.state::<AppState>().io.clone();
+    let mut held = SaturatedIo::hold(&io);
+    assert!(!grant_revoked(&fixture, attempts[2]));
+    let receipt = held
+        .call_once(
+            &fixture,
+            "control_work_plan",
+            json!({
+                "actionId":ExecutionId::new(),"planId":plan["planId"],
+                "expectedGeneration":grant["lease"]["generation"],"command":command,
+                "confirmed":false,"checkerExecutions":[],"toolExecution":false,
+                "applicationToolExecutions":[],"expiresAt":null
+            }),
+        )
+        .unwrap();
     let expected_state = if command == "stop" {
         "stopped"
     } else {
@@ -455,6 +469,7 @@ fn control_owned_team(command: &str) {
     assert_eq!(receipt["state"], expected_state);
     assert_ne!(receipt["lease"], grant["lease"]);
     assert!(grant_revoked(&fixture, attempts[2]));
+    held.assert_full(&io);
     let mut late = send.clone();
     late["message"]["messageId"] = json!(ExecutionId::new());
     let closed = fixture
@@ -483,6 +498,9 @@ fn control_owned_team(command: &str) {
     // A successful socket write is not proof the cancelled Core transport read it.
     let sent = late_translation(b, &fixture);
     eprintln!("team control={command} late_original_response_write_completed={sent}");
+    held.assert_full(&io);
+    // The control receipt proves revocation; producer drain is checked separately.
+    drop(held);
     let plan_id = serde_json::from_value(plan["planId"].clone()).unwrap();
     tool_history::wait_drained(&fixture, plan_id, &attempts);
     for pid in members.into_iter().chain([query_pid]) {

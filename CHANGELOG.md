@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Keep work-plan Pause, Stop and Take over available when ordinary background
+  I/O capacity is full. Continue retains its existing environment preparation
+  and limits; original authorization, control receipts and drain checks remain.
+
 - Reuse the exact format-check request already validated while reading each
   saved QA origin. Keep complete input validation for successful, failed and
   unknown outcomes, along with original execution and coverage checks.

@@ -1291,8 +1291,11 @@ pub async fn control_work_plan(
             Ok(environment) => environment,
             Err(receipt) => return Ok(receipt),
         };
-        let (settings_revision, runners) =
-            checker_runners(io, plugins.clone(), environment, work.clone()).await?;
+        let (settings_revision, runners) = if plan.is_some() {
+            checker_runners(io, plugins.clone(), environment, work.clone()).await?
+        } else {
+            (None, Vec::new())
+        };
         lease
             .run(
                 "control_work_plan.finish",
@@ -1793,6 +1796,93 @@ mod tests {
     }
 
     type MockWebview = tauri::WebviewWindow<tauri::test::MockRuntime>;
+
+    struct SaturatedIo {
+        releases: Vec<mpsc::SyncSender<()>>,
+        workers: Vec<std::thread::JoinHandle<()>>,
+    }
+
+    impl SaturatedIo {
+        fn hold(io: &BlockingExecutor) -> Self {
+            let mut held = Self {
+                releases: Vec::new(),
+                workers: Vec::new(),
+            };
+            for _ in 0..4 {
+                let (entered, started) = mpsc::sync_channel(1);
+                let (release, wait) = mpsc::sync_channel(1);
+                held.releases.push(release);
+                let io = io.clone();
+                held.workers.push(std::thread::spawn(move || {
+                    tauri::async_runtime::block_on(io.run(CommandStage::ExecutionRead, move || {
+                        entered.send(()).unwrap();
+                        wait.recv_timeout(Duration::from_secs(60)).unwrap();
+                        Ok(())
+                    }))
+                    .unwrap();
+                }));
+                started.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+            held.assert_full(io);
+            held
+        }
+
+        fn assert_full(&self, io: &BlockingExecutor) {
+            assert_eq!(
+                tauri::async_runtime::block_on(io.run(CommandStage::ExecutionRead, || Ok(())))
+                    .unwrap_err()
+                    .code,
+                CommandErrorCode::Busy
+            );
+        }
+
+        fn call_once(
+            &mut self,
+            fixture: &Fixture,
+            command: &'static str,
+            extra: Value,
+        ) -> Result<Value, Value> {
+            let webview = fixture.webview.clone();
+            let request = request(&fixture.context, extra);
+            let (reply, response) = mpsc::sync_channel(1);
+            // Keep the original wire boundary, without the fixture's Busy retry.
+            // The guard releases all IO gates before joining this caller on failure.
+            self.workers.push(std::thread::spawn(move || {
+                let result = tauri::test::get_ipc_response(
+                    &webview,
+                    InvokeRequest {
+                        cmd: command.into(),
+                        callback: CallbackFn(0),
+                        error: CallbackFn(1),
+                        url: crate::ipc_test_url().parse().unwrap(),
+                        body: InvokeBody::Json(json!({"request":request})),
+                        headers: Default::default(),
+                        invoke_key: tauri::test::INVOKE_KEY.into(),
+                    },
+                )
+                .map(|response| response.deserialize::<Value>().unwrap());
+                let _ = reply.send(result);
+            }));
+            response
+                .recv_timeout(Duration::from_secs(10))
+                .expect("single IPC response did not arrive while IO gates were held")
+        }
+    }
+
+    impl Drop for SaturatedIo {
+        fn drop(&mut self) {
+            for release in self.releases.drain(..) {
+                let _ = release.send(());
+            }
+            let mut failed = false;
+            for worker in self.workers.drain(..) {
+                failed |= worker.join().is_err();
+            }
+            if !std::thread::panicking() {
+                assert!(!failed, "an owned IO or IPC fixture worker panicked");
+            }
+        }
+    }
 
     struct Fixture {
         directory: tempfile::TempDir,
@@ -3767,6 +3857,152 @@ mod tests {
                 .prepared
                 .is_some()
         }));
+    }
+
+    fn assert_control_revokes_its_lease_while_blocking_io_is_saturated(
+        command: &str,
+        expected_state: &str,
+    ) {
+        let fixture = Fixture::create();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let config = AiConfig {
+            endpoint: format!("http://{}", listener.local_addr().unwrap()),
+            model: "synthetic-control-admission".into(),
+            credential_env: String::new(),
+            max_requests: 4,
+            timeout_seconds: 1,
+            ..AiConfig::default()
+        };
+        let prepared = fixture
+            .call(
+                "prepare_work_plan",
+                json!({
+                    "config":config,"locale":"zh-CN","unitIds":[fixture.unit],
+                    "options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null
+                }),
+            )
+            .unwrap();
+        let authorization = fixture
+            .call(
+                "authorize_work_plan",
+                json!({
+                    "planId":prepared["planId"],"digest":prepared["digest"],
+                    "actionId":ExecutionId::new(),"confirmed":true,
+                    "checkerExecutions":checker_keys(&prepared),"toolExecution":false,
+                    "applicationToolExecutions":[],"effects":["save-candidate"],"expiresAt":expiry()
+                }),
+            )
+            .unwrap();
+        assert_eq!(authorization["lease"]["generation"], "1");
+        let attempts = fixture.attempt_count();
+        let io = fixture.app.state::<AppState>().io.clone();
+        let mut held = SaturatedIo::hold(&io);
+        let control = json!({
+            "planId":prepared["planId"],"actionId":ExecutionId::new(),
+            "expectedGeneration":authorization["lease"]["generation"],"command":command,
+            "confirmed":false,"checkerExecutions":[],"toolExecution":false,
+            "applicationToolExecutions":[],"expiresAt":null
+        });
+        let receipt = held
+            .call_once(&fixture, "control_work_plan", control.clone())
+            .unwrap();
+        assert_eq!(receipt["state"], expected_state);
+        assert_eq!(receipt["lease"]["generation"], "2");
+        assert_eq!(receipt["lease"]["planId"], prepared["planId"]);
+        assert_eq!(receipt["actionId"], control["actionId"]);
+        held.assert_full(&io);
+        assert_eq!(
+            held.call_once(&fixture, "control_work_plan", control.clone())
+                .unwrap(),
+            receipt
+        );
+        let recorded = held
+            .call_once(&fixture, "read_work_plan_control_action", control.clone())
+            .unwrap();
+        assert_eq!(recorded["receipt"], receipt);
+        assert_eq!(
+            recorded["request"],
+            json!({
+                "kind":"control","planId":prepared["planId"],"actionId":control["actionId"],
+                "expectedGeneration":"1","command":command,"confirmed":false,"expiresAt":null
+            })
+        );
+
+        let mut stale = control.clone();
+        stale["actionId"] = json!(ExecutionId::new());
+        let rejected = held
+            .call_once(&fixture, "control_work_plan", stale.clone())
+            .unwrap_err();
+        assert_eq!(rejected["code"], "dependency-conflict");
+        assert_eq!(rejected["reason"], "work-plan-generation");
+        assert_eq!(
+            held.call_once(
+                &fixture,
+                "read_work_plan_action",
+                json!({"actionId":stale["actionId"]})
+            )
+            .unwrap(),
+            Value::Null
+        );
+
+        if command == "pause" {
+            let resume = json!({
+                "planId":prepared["planId"],"actionId":ExecutionId::new(),
+                "expectedGeneration":receipt["lease"]["generation"],"command":"continue",
+                "confirmed":true,"checkerExecutions":checker_keys(&prepared),"toolExecution":false,
+                "applicationToolExecutions":[],"expiresAt":expiry()
+            });
+            let busy = held
+                .call_once(&fixture, "control_work_plan", resume.clone())
+                .unwrap_err();
+            assert_eq!(busy["code"], "busy");
+            assert_eq!(
+                held.call_once(
+                    &fixture,
+                    "read_work_plan_action",
+                    json!({"actionId":resume["actionId"]})
+                )
+                .unwrap(),
+                Value::Null
+            );
+        }
+        let plan_id = serde_json::from_value(prepared["planId"].clone()).unwrap();
+        let (state, lease) = fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let status = sessions
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .store
+                    .work_plan_status(plan_id)
+                    .unwrap();
+                (status.state, status.lease)
+            });
+        assert_eq!(serde_json::to_value(state).unwrap(), expected_state);
+        assert_eq!(serde_json::to_value(lease).unwrap(), receipt["lease"]);
+        assert_eq!(fixture.attempt_count(), attempts);
+        assert!(matches!(listener.accept(), Err(error)
+            if error.kind() == std::io::ErrorKind::WouldBlock));
+        held.assert_full(&io);
+    }
+
+    #[test]
+    fn pause_work_plan_revokes_its_lease_while_blocking_io_is_saturated() {
+        assert_control_revokes_its_lease_while_blocking_io_is_saturated("pause", "paused");
+    }
+
+    #[test]
+    fn stop_work_plan_revokes_its_lease_while_blocking_io_is_saturated() {
+        assert_control_revokes_its_lease_while_blocking_io_is_saturated("stop", "stopped");
+    }
+
+    #[test]
+    fn take_over_work_plan_revokes_its_lease_while_blocking_io_is_saturated() {
+        assert_control_revokes_its_lease_while_blocking_io_is_saturated("take-over", "taken-over");
     }
 
     #[test]
