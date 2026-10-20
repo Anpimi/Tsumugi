@@ -735,6 +735,28 @@ or desktop interaction. Run it with:
 cargo test -p tsumugi-plugin-host --features core-adapter,javascript-conformance --test release_validation --locked
 ```
 
+The separate `source_maintenance` consumer uses the same explicit SMAPI package
+and captured JavaScript runtime variables. It runs the public two-generation
+maintenance fixture with normal Core features `[]`, rather than the Host
+workspace's fixture-enabled Core. Source extraction, independent source checks,
+manual translations, domain QA, building and artifact checking use the captured
+package's real workers. Fixed comparison and lineage expectations distinguish
+unchanged work, edited text, confirmed renames, rejected key reuse and unresolved
+splits/merges. The test also checks retained original Release bytes after the
+update and reopening. Run it explicitly with the reviewed artifact inputs:
+
+```sh
+cargo test --locked --offline \
+  --manifest-path crates/plugin-host/compatibility/Cargo.toml \
+  --features core-adapter,javascript-conformance \
+  --test source_maintenance -- --ignored --nocapture --test-threads=1
+```
+
+This synthetic software journey does not establish native Desktop interaction,
+the complete real-world maintenance corpus, other platforms or plugin upgrade
+compatibility. It leaves the original two-consumer compatibility runner and its
+report format unchanged.
+
 The `official` pairing tests consume an explicitly selected prebuilt WebVTT
 candidate from the independent
 [official plugin repository](https://github.com/Anpimi/tsumugi-plugins). They install
