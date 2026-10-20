@@ -4,6 +4,9 @@ For a complete development path, start with the [plugin authoring
 walkthrough](../../docs/plugin-authoring.md), then use the contracts below for
 the capability you implement.
 
+The Rust SDK source in this checkout requires Rust 1.98 or newer. Independently
+pinned SDK artifacts retain their own manifest and contract surface.
+
 `tsumugi-plugin-sdk` is a Rust contract library and conformance harness. Its
 current package version is `0.1.0-alpha.1`; declaration and exchange protocols `1` are separate
 versions. It has no dependency on Core, SQLite, the desktop application or Cordis.

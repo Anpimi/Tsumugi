@@ -165,7 +165,9 @@ cargo test -p tsumugi-desktop --features wire-schema,bundled-runtime translation
 当前校验声明、内容/执行交换帧及固定检查覆盖；本单元不负责插件加载与运行绑定。详见[插件声明契约](crates/plugin-sdk/docs/declarations.md)与[内容交换契约](crates/plugin-sdk/docs/exchange.md)。[实验性进程 Host](crates/plugin-host)使用 SDK 所有的[帧协议](crates/plugin-sdk/docs/process.md)、固定包与运行环境身份，并提供可选 Core 执行适配；支持的组件 profile 和平台限制仍以实验契约明确界定。
 [插件开发指南（英文）](docs/plugin-authoring.md)串联固定 SDK、独立样例、预构建包检查与人工开发加载，无需私有工作区或内部 Core 依赖。
 
-桌面支持 Windows x64 和 macOS（Apple Silicon 与 Intel 构建目标），使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
+当前源码要求 Rust 1.98 或更新版本，使用 React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows x64 与 Intel macOS 仍是开发目标，尚未完成其完整原生工作流程验收；当前 Host 平台门禁仍不开放 Windows 插件执行。
+
+Windows 桌面壳构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
 
 命令失败会保留原始结构化证据。已保存依据发生变化时，可展开诊断查看提交值与拒绝时的值；恢复提示说明下一步读取或决策，不会自动重试写入。诊断编号关联命令边界日志，日志只包含操作标签、错误分类与编号，不包含请求正文或工程路径。结果未知时继续保留原行动以供核对。
 
@@ -173,14 +175,16 @@ cargo test -p tsumugi-desktop --features wire-schema,bundled-runtime translation
 
 在仓库根目录执行：
 
-macOS 构建需要 Xcode Command Line Tools，使用系统 WKWebView；平台依赖见 [Tauri 指引](https://v2.tauri.app/start/prerequisites/)。macOS 应用包最低系统版本为 11，默认构建当前架构：
+macOS 构建需要 Xcode Command Line Tools，使用系统 WKWebView；平台依赖见 [Tauri 指引](https://v2.tauri.app/start/prerequisites/)。基础平台配置默认构建当前架构，声明最低 macOS 11.0。可选的[随附运行时与插件配置](docs/plugin-distribution.zh-CN.md)要求 Apple Silicon 构建机与目标，以及 macOS 13.5 或更新版本。
+
+基础 `.app` 构建命令如下；随附配置的准备与构建按上述指南进行：
 
 ```text
 pnpm --dir apps/desktop tauri build
 open target/release/bundle/macos/Tsumugi.app
 ```
 
-Apple Silicon 已通过原生构建和本地项目流程验收。在 Apple Silicon 上构建 Intel 版本时，先安装 Rust 的 `x86_64-apple-darwin` target，再加 `--target x86_64-apple-darwin`；Intel 构建和 macOS 11 运行尚未验证。开发使用 `pnpm --dir apps/desktop tauri dev`；签名、公证与发布另行进行。macOS 使用 Command+S 保存和 Command+C 复制。
+既往 Apple Silicon 原生构建与本地项目流程证据只适用于当时记录的候选，不能据此认定当前候选已完成完整原生流程验收。在 Apple Silicon 上尝试 Intel 桌面壳构建时，先安装 Rust 的 `x86_64-apple-darwin` target，再加 `--target x86_64-apple-darwin`；这不启用随附配置。Intel 构建和 macOS 11 运行尚未验证。开发使用 `pnpm --dir apps/desktop tauri dev`；签名、公证与发布另行进行。macOS 使用 Command+S 保存和 Command+C 复制。
 
 ```text
 pnpm install
@@ -189,7 +193,15 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
-如需不带安装器的 Windows 独立可执行程序，运行：
+分别运行普通 Core 内容回归：
+
+```text
+cargo test -p tsumugi-core --test source_production --test translation_production --test build_production
+```
+
+该组检查拒绝旧内置源内容／译文／构建输入，在不修改文件的前提下执行当前项目格式限制，并核对人工历史与原始保存凭据。workspace 测试通过开发依赖启用显式的 `execution-test-host` fixture；上述聚焦命令使用普通 Core features。
+
+如需实验性的 Windows 桌面壳独立可执行程序（不带安装器），运行：
 
 ```text
 pnpm --dir apps/desktop tauri build --no-bundle

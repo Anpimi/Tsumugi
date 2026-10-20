@@ -231,7 +231,15 @@ The [plugin authoring walkthrough](docs/plugin-authoring.md) connects the fixed
 SDK, independent examples, prebuilt-package inspection and manual development
 loading without a private workspace or an internal Core dependency.
 
-The desktop supports Windows x64 and macOS (Apple Silicon and Intel build targets), and uses Rust 1.98+, React 19, TypeScript 7, Vite 8, Tauri 2, and pnpm 12. The native Windows build requires Visual Studio C++ Build Tools, a Windows SDK, and the Microsoft Edge WebView2 Runtime. The macOS build requires Xcode Command Line Tools and uses the system WKWebView. Install the platform prerequisites from the [Tauri guide](https://v2.tauri.app/start/prerequisites/). macOS application bundles target macOS 11 or later; each architecture must be built with its corresponding Rust target.
+This source checkout requires Rust 1.98 or newer and uses React 19, TypeScript 7,
+Vite 8, Tauri 2, and pnpm 12. Windows x64 and Intel macOS remain development
+targets; complete native workflow acceptance is pending for them. Windows plugin
+execution remains unavailable under the current Host platform gates.
+
+The Windows desktop shell build requires Visual Studio C++ Build Tools, a Windows
+SDK, and the Microsoft Edge WebView2 Runtime. The macOS build requires Xcode
+Command Line Tools and uses the system WKWebView. Install the platform
+prerequisites from the [Tauri guide](https://v2.tauri.app/start/prerequisites/).
 
 Project lifecycle, application plugin controls, command error, change notification, execution, source content, translation, resource, review, release, AI and Arena DTOs use the Rust/Serde definitions as their wire source. After changing these definitions, run `pnpm --dir apps/desktop generate:contracts`; `pnpm --dir apps/desktop check:contracts` verifies that the checked-in schemas, TypeScript types and precompiled validators are current. Generation is partitioned by domain; add `--domain=project`, `--domain=plugins`, `--domain=execution`, `--domain=source`, `--domain=translation`, `--domain=resource`, `--domain=review`, `--domain=release`, `--domain=ai` or `--domain=arena` for a focused update or check. The optional `wire-schema` Cargo feature is used for generation; the application does not compile schemas dynamically. AI display counters use exact decimal strings; their persisted execution inputs and results retain their original representation.
 
@@ -254,12 +262,13 @@ Run the normal Core content regressions separately:
 cargo test -p tsumugi-core --test source_production --test translation_production --test build_production
 ```
 
-This checks production source/translation/build input rejection, schema 32 refusal of
-previous formats, manual history and original save receipts.
+This checks rejection of legacy built-in source/translation/build inputs,
+current-only project-format enforcement without modifying files, manual history
+and original save receipts.
 Workspace tests enable the explicit `execution-test-host` fixture through
 development dependencies; this focused command uses normal Core features.
 
-For a standalone Windows executable without an installer, run:
+For an experimental Windows desktop shell executable without an installer, run:
 
 ```text
 pnpm --dir apps/desktop tauri build --no-bundle
@@ -272,7 +281,18 @@ pnpm --dir apps/desktop tauri build
 open target/release/bundle/macos/Tsumugi.app
 ```
 
-The platform configuration bundles the current architecture as a `.app`. Apple Silicon has been verified with a native build and local project workflow. To build Intel on Apple Silicon, install the Rust `x86_64-apple-darwin` target and pass `--target x86_64-apple-darwin`; the Intel build and macOS 11 runtime have not yet been verified. Code signing, notarization, and distributing a release are separate operations. Development builds can run with `pnpm --dir apps/desktop tauri dev`.
+The base platform configuration bundles the current architecture as a `.app`
+and declares macOS 11.0 as its minimum. The optional [bundled runtime and plugin
+profile](docs/plugin-distribution.md) requires an Apple Silicon builder and target, and
+macOS 13.5 or later. Earlier Apple Silicon native build and local project workflow
+evidence applies to its recorded candidate; it does not establish complete native
+workflow acceptance for the current candidate.
+
+For an experimental Intel shell build on Apple Silicon, install the Rust
+`x86_64-apple-darwin` target and pass `--target x86_64-apple-darwin`; this does not
+enable the bundled profile. The Intel build and macOS 11 runtime have not yet
+been verified. Code signing, notarization, and distributing a release are separate
+operations. Development builds can run with `pnpm --dir apps/desktop tauri dev`.
 
 Launch `target/release/tsumugi-desktop.exe` directly. This build embeds the frontend and does not need a development server or console window. The Microsoft Edge WebView2 Runtime is still required. `tauri dev` and debug builds retain the development console.
 
