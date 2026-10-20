@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+The delivery workspace separates current build readiness from immutable saved
+releases and their export results, while preserving the existing release owner,
+command gates and uncertain-action recovery. The ready summary now reports the
+approved exception count rather than the blocker count. These presentation and
+summary fixes change no Core, IPC, SDK, persisted format or dependency contract.
+They remain in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch with bilingual Unreleased entries and no additional bump.
+
 The production content editor adopts neutral surfaces and an indigo accent,
 readable natural-language text, source-first entry summaries and a fixed save
 bar. The existing resizable panes, draft/session owners, permission checks and

@@ -704,3 +704,24 @@ it("opens Extensions for an unavailable builder without clearing the entered bui
   expect(onOpenExtensions).toHaveBeenCalledOnce(); expect(paths).toHaveValue("outputs/retained.txt");
   expect(invoke.mock.calls.some(([command]) => ["create_execution_identity", "prepare_plugin_build", "start_plugin_build", "prepare_artifact_check", "adopt_execution"].includes(command))).toBe(false);
 });
+
+it.each(["en-US", "zh-CN"])("reports the approved exception count when a build is ready in %s", async locale => {
+  await i18n.changeLanguage(locale);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    const reply = await original(command, args);
+    return command === "read_review_eligibility" ? { ...reply, locales: reply.locales.map((item: { locale: string }) => ({
+      ...item, exceptionCount: 1, exceptions: [{ unitId: fixtureIdentity(901), nativeKey: "retained.original", code: "source-fallback", reference: null }],
+    })) } : reply;
+  });
+  render(<ReleaseWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("releasePlugin.refresh") })).toBeEnabled());
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  await user.type(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) }), "deliverables/zh-CN/captions.txt");
+  await user.click(screen.getByRole("button", { name: i18n.t("release.check") }));
+  expect(await screen.findByText(i18n.t("release.ready", { count: 1 }))).toBeVisible();
+  expect(screen.getByRole("button", { name: i18n.t("releasePlugin.capture") })).toBeEnabled();
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_plugin_build")).toBe(false);
+});

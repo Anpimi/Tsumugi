@@ -17,6 +17,10 @@ within this same undistributed batch.
   to the existing single-pane mode for larger text. Shared light surfaces,
   controls and focus indicators use a consistent accent.
 
+- Present build readiness, blocking requirements and saved releases in a clearer
+  delivery workspace. Keep original export recovery and access to older releases
+  when a new build is blocked, and report approved exceptions accurately.
+
 - Reuse an already qualified source projection while preparing and saving QA.
   Recheck the complete stored source and checker frames, original provenance,
   current proof and complete snapshot mappings on every read.

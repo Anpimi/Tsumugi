@@ -1704,6 +1704,12 @@ ai: {
       }
     },
     release: {
+      workflow: "构建与交付步骤",
+      stages: { readiness: "就绪检查", build: "固定构建", check: "产物检查", record: "保存发布", export: "导出结果" },
+      readiness: "构建就绪情况",
+      entry: "条目", blockingReason: "阻塞要求", action: "行动",
+      blockerTable: "{{locale}} 的构建阻塞项",
+      savedReleaseHelp: "已保存的发布保留原文件。即使新构建受阻或构建器不可用，仍可导出这些发布。",
       title: "构建与导出",
       description: "通过已安装的能力构建文件，独立检查已保存的输出，再把已保存的发布导出到本地目录。",
       prepare: "准备构建",

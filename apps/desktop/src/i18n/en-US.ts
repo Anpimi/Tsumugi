@@ -1713,6 +1713,12 @@ ai: {
       }
     },
     release: {
+      workflow: "Build and delivery steps",
+      stages: { readiness: "Readiness", build: "Fixed build", check: "Artifact checks", record: "Saved release", export: "Export results" },
+      readiness: "Build readiness",
+      entry: "Entry", blockingReason: "Blocking requirement", action: "Action",
+      blockerTable: "Build blockers for {{locale}}",
+      savedReleaseHelp: "Saved releases keep their original files. You can export them even when a new build is blocked or its builder is unavailable.",
       title: "Build and export",
       description: "Build files through an installed capability, verify the saved output independently, then export a saved release to a local folder.",
       prepare: "Prepare a build",
