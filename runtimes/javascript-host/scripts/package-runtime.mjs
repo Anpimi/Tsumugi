@@ -1,25 +1,12 @@
 // Preparation from a trusted, quiescent production deploy, not source capture,
 // package authentication or permission to execute code. No dependency code runs.
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 const PACKAGES = new Map([
-  ['cordis', { version: '4.0.0-rc.10', dependencies: {
-    '@standard-schema/spec': '^1.1.0', cosmokit: '^1.8.1',
-  } }],
-  ['cosmokit', { version: '1.8.1', dependencies: {} }],
   ['jsonc-parser', { version: '3.3.1', dependencies: {} }],
-  ['@standard-schema/spec', { version: '1.1.0', dependencies: {} }],
 ]);
-const HOST_DEPENDENCIES = { cordis: '4.0.0-rc.10', 'jsonc-parser': '3.3.1' };
-// These peers belong to the upstream CLI, which this Host library profile does
-// not execute. Retain their published declarations without installing them.
-const CORDIS_PEERS = {
-  '@cordisjs/plugin-include': '^1.1.0',
-  '@cordisjs/plugin-loader': '^1.0.0-rc.7',
-};
-const CORDIS_LICENSE_SHA256 = '034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7';
+const HOST_DEPENDENCIES = { 'jsonc-parser': '3.3.1' };
 // Preparation limits are deliberately narrower than runtime admission limits.
 const MAX_FILES = 1024;
 const MAX_ENTRIES = 4096;
@@ -35,7 +22,7 @@ const PRIVATE_PATHS = [
   '/Users/', '/home/', '/private/var/', '/var/folders/', '/.pnpm/', '/.npm/',
   'file:///',
 ];
-const USAGE = 'usage: package-runtime.mjs --source <absolute-production-deploy> --output <absolute-new-directory> --cordis-license <absolute-approved-license>';
+const USAGE = 'usage: package-runtime.mjs --source <absolute-production-deploy> --output <absolute-new-directory>';
 
 class PackagingError extends Error {}
 const fail = message => { throw new PackagingError(message); };
@@ -49,8 +36,8 @@ const sameEntries = (actual, expected) => actual != null
 
 function options(args) {
   const values = new Map();
-  const flags = ['--source', '--output', '--cordis-license'];
-  if (args.length !== 6) fail(USAGE);
+  const flags = ['--source', '--output'];
+  if (args.length !== flags.length * 2) fail(USAGE);
   for (let i = 0; i < args.length; i += 2) {
     if (!flags.includes(args[i]) || values.has(args[i]) || !isAbsolute(args[i + 1] ?? '')) fail(USAGE);
     values.set(args[i], args[i + 1]);
@@ -78,20 +65,20 @@ async function manifest(root) {
   return { data, file };
 }
 
-function dependencyFields(data, dependencies, peers = {}) {
+function dependencyFields(data, dependencies) {
   if (!sameEntries(data.dependencies ?? {}, dependencies)
     || !sameEntries(data.optionalDependencies ?? {}, {})
-    || !sameEntries(data.peerDependencies ?? {}, peers)
+    || !sameEntries(data.peerDependencies ?? {}, {})
     || (data.bundledDependencies?.length ?? 0) !== 0
     || (data.bundleDependencies?.length ?? 0) !== 0) fail('Production dependency closure does not match the pinned profile.');
   const metadata = data.peerDependenciesMeta ?? {};
-  if (!sameEntries(metadata, Object.fromEntries(Object.keys(peers).map(name => [name, { optional: true }])))) {
+  if (!sameEntries(metadata, {})) {
     fail('Unsupported required or unknown peer dependency.');
   }
 }
 
 // Follow only the named, pinned dependency edges in this explicit trusted input.
-// Search from each real owner so pnpm's Cordis-local dependencies are selected.
+// Search from each real owner so pnpm's package-local dependencies are selected.
 // Never search an ancestor outside the deploy or use a global dependency store.
 async function resolvePackage(source, owner, name) {
   for (let cursor = owner; inside(source, cursor); cursor = dirname(cursor)) {
@@ -126,11 +113,6 @@ async function main(args) {
   if (host.data.name !== '@tsumugi/javascript-host' || host.data.type !== 'module'
     || host.data.engines?.node !== '>=26.10.0 <27') fail('Unexpected Host production manifest.');
   dependencyFields(host.data, HOST_DEPENDENCIES);
-
-  const license = await regularBytes(config['--cordis-license']);
-  if (createHash('sha256').update(license.bytes).digest('hex') !== CORDIS_LICENSE_SHA256) {
-    fail('Cordis license does not match the approved upstream license.');
-  }
 
   const files = new Map();
   const names = new Map();
@@ -195,16 +177,10 @@ async function main(args) {
     const packageManifest = await manifest(root);
     if (packageManifest.data.name !== name || packageManifest.data.version !== expected.version
       || packageManifest.data.license !== 'MIT') fail('Unexpected production package identity.');
-    dependencyFields(packageManifest.data, expected.dependencies, name === 'cordis' ? CORDIS_PEERS : {});
+    dependencyFields(packageManifest.data, expected.dependencies);
     selected.set(name, root);
     const prefix = `node_modules/${name}`;
     await tree(root, prefix);
-    if (name === 'cordis') {
-      const path = `${prefix}/LICENSE`;
-      const existing = files.get(path);
-      if (existing && !existing.bytes.equals(license.bytes)) fail('Conflicting Cordis license.');
-      if (!existing) add(path, { bytes: license.bytes, executable: false });
-    }
     if (![`${prefix}/LICENSE`, `${prefix}/LICENSE.md`].some(path => files.has(path))) {
       fail('A production package license is missing.');
     }
@@ -237,7 +213,7 @@ async function main(args) {
     await fs.writeFile(destination, file.bytes, { flag: 'wx', mode: file.executable ? 0o755 : 0o644 });
     await fs.chmod(destination, file.executable ? 0o755 : 0o644);
   }
-  process.stdout.write(`Prepared Host runtime: ${files.size} files, ${total} bytes, four pinned production dependencies.\n`);
+  process.stdout.write(`Prepared Host runtime: ${files.size} files, ${total} bytes, ${selected.size} pinned production dependency.\n`);
 }
 
 try { await main(process.argv.slice(2)); }

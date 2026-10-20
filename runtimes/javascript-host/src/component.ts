@@ -1,4 +1,3 @@
-import { Context, type Fiber } from 'cordis';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
@@ -55,12 +54,10 @@ interface PendingService {
   reject(error: Error): void;
 }
 
-/** One SDK facade on one Cordis fiber. Neither object escapes to the component.
+/** One SDK facade and its owned registrations and cleanup on one session.
  * The parent Rust Host owns actual channel identity, authority and deadlines. */
 export class ComponentSession {
   private phase: 'waiting' | 'activating' | 'active' | 'closing' | 'closed' = 'waiting';
-  private root = new Context();
-  private fiber: Fiber | undefined;
   private activation: ProcessActivation | undefined;
   private starting: Promise<void> | undefined;
   private invocation: { id: string; abort: AbortController; done: Promise<void> } | undefined;
@@ -68,7 +65,9 @@ export class ComponentSession {
   private dispatches = new Set<string>();
   private serviceCalls = new Set<string>();
   private pendingService: PendingService | undefined;
-  private handlerKeys = new Map<string, string>();
+  private handlers = new Map<string, CapabilityHandler>();
+  private cleanups: (() => void | Promise<void>)[] = [];
+  private disposing: Promise<void> | undefined;
   private cleanupFailed = false;
   constructor(
     private entry: string,
@@ -93,7 +92,6 @@ export class ComponentSession {
         || new Set(members.map(member => member.contributionId)).size !== members.length) {
         throw new Error('Invalid capability roster');
       }
-      for (const member of members) this.handlerKeys.set(member.contributionId, `tsumugi.handler.${randomUUID()}`);
       this.phase = 'activating';
       this.activation = immutable(structuredClone(body.data));
       this.starting = this.activate();
@@ -104,7 +102,7 @@ export class ComponentSession {
       const { contributionId, ...instance } = request.provider;
       if (!member || !isDeepStrictEqual(instance, this.activation!.instance)) throw new Error('Request provider mismatch');
       const declaration = member.capability;
-      if (!this.handlerKeys.has(contributionId)
+      if (!this.handlers.has(contributionId)
         || !isDeepStrictEqual(request.capability, declaration.contract)
         || !isDeepStrictEqual(request.input.schema, declaration.inputSchema)
         || !isDeepStrictEqual(request.outputSchema, declaration.outputSchema)
@@ -148,78 +146,65 @@ export class ComponentSession {
     const module: { default?: ComponentModule } = await import(pathToFileURL(this.entry).href);
     if (this.phase !== 'activating') return;
     if (!module.default || typeof module.default.activate !== 'function') throw new Error('Invalid component');
-    const registered = new Set<string>();
     let registrationFailed = false;
     let accepting = true;
-    this.fiber = this.root.plugin({
-      name: 'tsumugi-component',
-      apply: async ctx => {
-        const live = () => {
-          if (this.phase !== 'activating' || this.scope.signal.aborted || !accepting) throw new Error('Inactive component');
-        };
-        const api: ComponentAPI = Object.freeze({
-          instance: this.activation!.instance,
-          contributions: immutable(this.activation!.capabilities.map(member => ({
-            id: member.contributionId, contract: structuredClone(member.capability.contract),
-          }))),
-          signal: this.scope.signal,
-          services: this.activation!.services,
-          register: (contributionId: string, handler: CapabilityHandler) => {
-            try { live(); } catch (error) {
-              // A caught late registration must not leave an active callable set.
-              // Cleanup of an already closed generation cannot affect another session.
-              if (this.phase === 'active') {
-                this.phase = 'closing';
-                this.scope.abort();
-                this.invocation?.abort.abort();
-                this.rejectService(new Error('Inactive component'));
-                this.handlerKeys.clear();
-                void this.fiber!.dispose().then(this.fail, this.fail);
-              }
-              registrationFailed = true;
-              throw error;
-            }
-            const key = this.handlerKeys.get(contributionId);
-            if (!key || registered.has(contributionId) || typeof handler !== 'function') {
-              registrationFailed = true;
-              throw new Error('Invalid registration');
-            }
-            registered.add(contributionId);
-            // Keep plugin-owned function metadata outside Cordis reflection.
-            const owned: CapabilityHandler = (input, metadata) => handler(input, metadata);
-            ctx.provide(key, owned);
-          },
-          onDispose: (cleanup: () => void | Promise<void>) => {
-            live();
-            if (typeof cleanup !== 'function') throw new Error('Invalid cleanup');
-            ctx.effect(() => async () => {
-              try { await cleanup(); } catch { this.cleanupFailed = true; }
-            });
-          },
-        });
-        try { await module.default!.activate(api); } finally { accepting = false; }
-        if (registrationFailed || registered.size !== this.handlerKeys.size) throw new Error('Incomplete capability roster');
+    const live = () => {
+      if (this.phase !== 'activating' || this.scope.signal.aborted || !accepting) throw new Error('Inactive component');
+    };
+    const api: ComponentAPI = Object.freeze({
+      instance: this.activation!.instance,
+      contributions: immutable(this.activation!.capabilities.map(member => ({
+        id: member.contributionId, contract: structuredClone(member.capability.contract),
+      }))),
+      signal: this.scope.signal,
+      services: this.activation!.services,
+      register: (contributionId: string, handler: CapabilityHandler) => {
+        try { live(); } catch (error) {
+          // A caught late registration must not leave an active callable set.
+          // Cleanup of an already closed generation cannot affect another session.
+          if (this.phase === 'active') {
+            this.phase = 'closing';
+            this.scope.abort();
+            this.invocation?.abort.abort();
+            this.rejectService(new Error('Inactive component'));
+            this.handlers.clear();
+            void this.dispose().then(this.fail, this.fail);
+          }
+          registrationFailed = true;
+          throw error;
+        }
+        if (!this.activation!.capabilities.some(member => member.contributionId === contributionId)
+          || this.handlers.has(contributionId) || typeof handler !== 'function') {
+          registrationFailed = true;
+          throw new Error('Invalid registration');
+        }
+        this.handlers.set(contributionId, handler);
+      },
+      onDispose: (cleanup: () => void | Promise<void>) => {
+        live();
+        if (typeof cleanup !== 'function') throw new Error('Invalid cleanup');
+        this.cleanups.push(cleanup);
       },
     });
     try {
-      await this.fiber.await();
-      if (this.phase !== 'activating') return;
-      if (registrationFailed || [...this.handlerKeys.values()].some(key => typeof this.root.get(key) !== 'function')) {
+      try { await module.default.activate(api); } finally { accepting = false; }
+      if (registrationFailed || this.handlers.size !== this.activation!.capabilities.length) {
         throw new Error('Incomplete capability roster');
       }
+      if (this.phase !== 'activating') return;
       this.phase = 'active';
       await this.emit({ kind: 'ready', data: this.activation! });
     } catch {
       this.phase = 'closed';
       this.scope.abort();
-      this.handlerKeys.clear();
-      await this.fiber.dispose();
+      this.handlers.clear();
+      await this.dispose();
       throw new Error('Activation failed');
     }
   }
   private async invoke(request: InvocationRequest, abort: AbortController, maxOutputBytes: number): Promise<void> {
     if (this.phase !== 'active' || abort.signal.aborted) return;
-    const handler: CapabilityHandler = this.root.get(this.handlerKeys.get(request.provider.contributionId)!);
+    const handler = this.handlers.get(request.provider.contributionId)!;
     let output: CapabilityOutput;
     try {
       output = await handler(request.input, Object.freeze({
@@ -316,13 +301,24 @@ export class ComponentSession {
     this.pendingService = undefined;
     pending?.reject(error);
   }
+  private dispose(): Promise<void> {
+    // Install one shared completion before invoking component callbacks. Every
+    // cleanup starts independently; one failure must not skip or outlive peers.
+    this.disposing ??= Promise.resolve().then(async () => {
+      this.handlers.clear();
+      await Promise.all(this.cleanups.splice(0).map(async cleanup => {
+        try { await cleanup(); } catch { this.cleanupFailed = true; }
+      }));
+    });
+    return this.disposing;
+  }
   private async close(): Promise<void> {
     await this.starting;
     await this.invocation?.done;
-    await this.fiber?.dispose();
+    await this.dispose();
     if (this.cleanupFailed) throw new Error('Cleanup failed');
     this.phase = 'closed';
-    this.handlerKeys.clear();
+    this.handlers.clear();
     await this.emit({ kind: 'closed', data: { instance: this.activation!.instance } });
     this.finish();
   }

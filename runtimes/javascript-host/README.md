@@ -1,9 +1,9 @@
 # Experimental JavaScript component Host
 
 This private workspace is the Node side of the [Rust process Host](../../crates/plugin-host).
-It uses pinned `cordis@4.0.0-rc.10` for component registration and owned cleanup.
+Its component session owns registration, asynchronous activation and cleanup.
 Plugins see only the [SDK component facade](../../crates/plugin-sdk/javascript/component.d.ts),
-not a Cordis Context, Loader, service registry, credential or project database.
+without an internal lifecycle object, service registry, credential or project database.
 It implements a frozen, bounded callable roster on one serial component process.
 Project and Attempt channels activate only their selected capability; the initial
 Application profile supports multiple read-only capabilities without required
@@ -32,7 +32,8 @@ export default {
 Register every declared contribution ID exactly once during activation. Ready
 echoes the complete captured activation only after asynchronous setup completes.
 Missing, extra, duplicate and late registrations fail; catching a setup error
-does not permit a partial Ready. A failed setup disposes its entire owned fiber.
+does not permit a partial Ready. A failed setup clears its handlers and awaits
+every registered cleanup.
 Register cleanup during activation too. The scope signal aborts on close, and
 each invocation receives its own cancellation signal. Input, context,
 `api.instance` and `api.contributions` are cloned and deeply frozen. The facade
@@ -62,7 +63,7 @@ may be pending, and calls outside the live invocation or after cancellation are
 refused. Close/cancel reject pending promises; a handler cannot finish with an
 unawaited service call. The Rust parent owns permissions, current selection,
 actual channel identity and the original deadline. Services expose no credentials,
-Cordis Context or project database.
+internal lifecycle objects or a project database.
 
 Process protocol 3 requires the current generated bindings and captured Host.
 Activate/Ready carry the exact nonempty roster (at most 128 unique members);
@@ -100,9 +101,8 @@ schema compiler are development dependencies. Runtime parsing uses `jsonc-parser
 with comments/trailing commas disabled and every syntax error rejected; its visitor
 also rejects duplicate decoded keys before `JSON.parse` can erase them.
 
-The compiler uses Bundler type resolution because Cordis's pinned declarations
-contain extensionless relative exports. Our runtime imports have explicit `.js`
-extensions and the compiled ESM runs directly in Node; no bundler is required.
+Runtime imports have explicit `.js` extensions and the compiled ESM runs
+directly in Node; no bundler is required.
 The integration script supplies the approved tool tree, clean Host tree and
 environment descriptor to Rust tests; enabling `javascript-conformance` without
 those values fails. Prepare the clean Host tree as described below. The tests
@@ -136,8 +136,7 @@ external pnpm store is not a supported input.
 pnpm --filter @tsumugi/javascript-host deploy --prod --ignore-scripts /absolute/new/production-deploy
 pnpm --dir runtimes/javascript-host package:runtime \
   --source /absolute/new/production-deploy \
-  --output /absolute/new/clean-host-runtime \
-  --cordis-license /absolute/approved/cordis-LICENSE
+  --output /absolute/new/clean-host-runtime
 ```
 
 The output parent directory must already exist; the output itself must be new.
@@ -148,19 +147,12 @@ packager never overwrites or removes an existing output.
 
 The resulting tree contains the complete compiled `dist`, the Host `package.json`,
 and the published public files and original `package.json` bytes for exactly
-`cordis@4.0.0-rc.10`, `cosmokit@1.8.1`, `jsonc-parser@3.3.1`, and
-`@standard-schema/spec@1.1.0`, including their licenses. Cordis owns the two
-transitive dependencies; they need not appear at the deploy's top level.
-jsonc-parser's published entrypoint is `lib/umd/main.js`. Both its UMD and ESM files,
-and both cosmokit module formats, remain in the output. This profile uses the
-Cordis library only: it does not run the published Cordis CLI or install its
-optional loader/include peers. Upstream CLI and peer declarations remain intact.
-
-The Cordis published package omits its license file. Supply the unmodified
-[upstream MIT license](https://github.com/cordiverse/cordis/blob/f8ea3cd50f1a5724e8e715995bcde131c9c12b2c/LICENSE)
-approved for this exact package revision. Its SHA-256 is
-`034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7`;
-the packager checks those bytes and adds `node_modules/cordis/LICENSE`.
+`jsonc-parser@3.3.1`, including its license. Its published entrypoint is
+`lib/umd/main.js`; both its UMD and ESM files remain in the output. There are
+no lifecycle-library dependencies or optional loader peers. The former
+`--cordis-license` option and dependency closure are refused; build and deploy
+the current Host before packaging it. Previously approved Host artifacts retain
+their own identity and do not approve these new bytes.
 
 Files are copied into independent regular files with normalized permissions.
 Nested `node_modules`, pnpm/cache metadata, source map files and source map/source
@@ -190,7 +182,6 @@ cargo build --locked -p tsumugi-plugin-host --bin tsumugi-plugin-runtime
 pnpm --dir runtimes/javascript-host prepare:runtime \
   --node-archive /absolute/pinned/node-v26.10.0-darwin-arm64.tar.xz \
   --host-source /absolute/new/production-deploy \
-  --cordis-license /absolute/approved/cordis-LICENSE \
   --inspector /absolute/project/target/debug/tsumugi-plugin-runtime \
   --output /absolute/new/prepared-runtime
 ```
@@ -310,8 +301,8 @@ application-build origin and limits. Tauri preserves the package, tool and Host
 trees at logical resource paths. It separately captures `member-runtime/`
 through the same bounded Host artifact owner used for execution and rejects a
 missing entrypoint or a protocol different from Core's generated profile. Pi
-uses only the approved Node tool; its artifact is not the Cordis Host or the SDK
-Process protocol. Runtime preparation JSON stays outside those
+uses only the approved Node tool; its artifact is separate from this component
+Host and the SDK Process protocol. Runtime preparation JSON stays outside those
 mapped trees. The plugin preparation report accompanies its mapped directory;
 neither report is used as approval. This opt-in bundle requires macOS 13.5;
 ordinary builds retain their base minimum and offer no implicit development

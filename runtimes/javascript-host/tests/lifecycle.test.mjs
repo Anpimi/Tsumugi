@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { FrameDecoder, encodeFrame } from '../dist/codec.js';
 import { PROCESS_PROFILE } from '../dist/generated/protocol.js';
 
@@ -218,6 +218,86 @@ test('close during asynchronous activation suppresses Ready and waits for owned 
   assert.deepEqual(await h.ended, [0, null]);
   assert.deepEqual(h.frames.map(f => f.kind), ['closed']);
   assert.equal(await h.marker('cleaned'), 'yes');
+});
+
+for (const stage of ['close', 'activation-failure']) {
+  test(`${stage} waits for every concurrent cleanup despite synchronous and asynchronous failures`, { timeout: 5000 }, async t => {
+    const h = await harness(t, `import {readFile,writeFile} from 'node:fs/promises';
+      export default {activate(api) {
+        api.onDispose(() => {throw new Error('Synchronous cleanup failure')});
+        api.onDispose(async () => {
+          await writeFile('cleanup-waiting','yes');
+          for (;;) {
+            try {await readFile('cleanup-peer'); await readFile('release-cleanup'); break}
+            catch (error) {if (error.code !== 'ENOENT') throw error}
+            await new Promise(resolve => setTimeout(resolve,5));
+          }
+          await writeFile('cleaned','yes');
+        });
+        api.onDispose(async () => {
+          await writeFile('cleanup-peer','yes');
+          throw new Error('Asynchronous cleanup failure');
+        });
+        api.register(api.contributions[0].id, () => ({kind:'succeeded',utf8:'unused'}));
+        if (${JSON.stringify(stage)} === 'activation-failure') throw new Error('Setup failed');
+      }};`);
+    h.send({ kind: 'activate', data: activation });
+    if (stage === 'close') {
+      await h.waitFor(() => h.frames.length === 1);
+      h.send({ kind: 'close', data: { instance: activation.instance } });
+    }
+    await h.waitFor(async () => await h.marker('cleanup-waiting') === 'yes'
+      && await h.marker('cleanup-peer') === 'yes');
+    assert.deepEqual(h.frames.map(frame => frame.kind), stage === 'close' ? ['ready'] : []);
+    assert.equal(await h.marker('cleaned'), '');
+    await h.writeMarker('release-cleanup', 'yes');
+    assert.deepEqual(await h.ended, [1, null]);
+    assert.equal(await h.marker('cleaned'), 'yes');
+    assert.ok(!h.frames.some(frame => frame.kind === 'closed'));
+  });
+}
+
+test('duplicate Close is refused without reentering cleanup or emitting a second Closed', { timeout: 5000 }, async t => {
+  const { ComponentSession } = await import('../dist/component.js');
+  const root = await mkdtemp(join(tmpdir(), 'tsumugi-component-close-'));
+  t.after(() => rm(root, { recursive: true }));
+  const entry = join(root, 'component.mjs');
+  await writeFile(entry, `let entered, release;
+    export const observations = {cleanups:0};
+    export const cleanupStarted = new Promise(resolve => {entered=resolve});
+    export const finishCleanup = () => release();
+    export default {activate(api) {
+      api.register(api.contributions[0].id, input => ({kind:'succeeded',utf8:input.utf8}));
+      api.onDispose(async () => {
+        observations.cleanups++; entered();
+        await new Promise(resolve => {release=resolve});
+      });
+    }};`);
+  const component = await import(pathToFileURL(entry).href);
+  const sent = [];
+  let failures = 0;
+  let finishes = 0;
+  const session = new ComponentSession(entry, async frame => { sent.push(frame.body); },
+    () => { failures++; }, () => { finishes++; });
+  const until = async predicate => {
+    const end = Date.now() + 2000;
+    while (!predicate()) { assert.ok(failures === 0 && Date.now() < end); await new Promise(resolve => setTimeout(resolve, 5)); }
+  };
+  session.receive({ protocolVersion: PROCESS_PROFILE.protocolVersion, body: { kind: 'activate', data: activation } });
+  await until(() => sent.length === 1);
+  const close = { protocolVersion: PROCESS_PROFILE.protocolVersion, body: { kind: 'close', data: { instance: activation.instance } } };
+  session.receive(close);
+  await component.cleanupStarted;
+  assert.throws(() => session.receive(close), /Unexpected process frame/);
+  assert.equal(component.observations.cleanups, 1);
+  assert.deepEqual(sent.map(frame => frame.kind), ['ready']);
+  assert.equal(finishes, 0);
+  component.finishCleanup();
+  await until(() => finishes === 1);
+  assert.throws(() => session.receive(close), /Unexpected process frame/);
+  assert.equal(component.observations.cleanups, 1);
+  assert.deepEqual(sent.map(frame => frame.kind), ['ready', 'closed']);
+  assert.equal(failures, 0);
 });
 
 test('cancel followed by close suppresses a late result and waits for async cleanup', { timeout: 5000 }, async t => {

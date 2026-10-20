@@ -10,6 +10,11 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Keep JavaScript component activation, registration and asynchronous cleanup
+  within its existing session owner, removing the Cordis runtime dependency.
+  Clean runtime preparation now needs only the pinned JSON parser; rebuild,
+  inspect and explicitly approve the new Host artifact before execution.
+
 - Capture independently approved Node runtime archives as immutable data on
   Windows as well as macOS/Linux, retaining exact artifact bytes and logical
   execution flags. The experimental SDK adds the `windows` platform value;

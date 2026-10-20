@@ -71,7 +71,7 @@ test('preparation rejects an unpinned archive before creating output', {
     await mkdir(join(root, 'host'));
     await writeFile(archive, 'untrusted archive');
     await assert.rejects(prepare(['--node-archive', archive, '--host-source', join(root, 'host'),
-      '--cordis-license', join(root, 'LICENSE'), '--inspector', join(root, 'inspector'), '--output', output]), /pinned official distribution/);
+      '--inspector', join(root, 'inspector'), '--output', output]), /pinned official distribution/);
     assert.deepEqual((await readdir(root)).sort(), ['host', 'node.tar.xz']);
   } finally { await rm(root, { recursive: true }); }
 });
@@ -84,7 +84,7 @@ test('preparation refuses an existing output without changing its bytes', {
     const sentinel = join(root, 'sentinel');
     await writeFile(sentinel, 'preserved');
     await assert.rejects(prepare(['--node-archive', join(root, 'missing'), '--host-source', join(root, 'host'),
-      '--cordis-license', join(root, 'LICENSE'), '--inspector', join(root, 'inspector'), '--output', root]), /already exists/);
+      '--inspector', join(root, 'inspector'), '--output', root]), /already exists/);
     assert.equal(await readFile(sentinel, 'utf8'), 'preserved');
   } finally { await rm(root, { recursive: true }); }
 });

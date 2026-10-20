@@ -1437,6 +1437,17 @@ API in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1`
 batch, with no extra version bump or historical migration. Independent knowledge
 examples own their initial version and do not advance the application version.
 
+The JavaScript component Host now owns its existing activation, registration
+and asynchronous cleanup directly in `ComponentSession`, removing Cordis and its
+otherwise unused transitive dependencies. The production closure contains only
+`jsonc-parser@3.3.1`; runtime preparation no longer accepts `--cordis-license`.
+Rebuild and deploy the current Host, then inspect and explicitly approve its
+new complete artifact identity. Earlier approvals continue to identify only
+their original bytes. Component facade, Process 3, SDK version, runtime digest
+rules, Store receipt 2, settings 2 and project schema 61 are unchanged. This is
+the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
+with synchronized Unreleased changelogs and no additional SemVer bump.
+
 ## Version source and release boundary
 
 `[workspace.package].version` in [Cargo.toml](../Cargo.toml) is the application's single version source. `tsumugi-core` and `tsumugi-desktop` inherit it. Tauri's configuration omits `version` so it reads the desktop Cargo package version; the frontend package is marked `private` and has no independent release version. Regenerate the workspace package entries in `Cargo.lock` with Cargo when changing the application version, using `cargo update --workspace --offline` with the existing dependency cache.

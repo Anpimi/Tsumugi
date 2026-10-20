@@ -19,8 +19,9 @@ Application compositions remain unsupported. The Unix launcher creates an owned 
 this profile is tested on macOS. Windows is refused until an owned Job Object implementation is verified.
 The JavaScript launcher requires a `CapturedRuntime` containing the independently
 approved Node tool and complete [built component Host](../../runtimes/javascript-host/README.md) trees. That Host
-owns the process protocol and privately uses Cordis behind the SDK facade. The
-plugin entrypoint exports a component; it is not launched as a protocol peer.
+owns the process protocol, component activation, handler registration and cleanup
+behind the SDK facade. The plugin entrypoint exports a component; it is not
+launched as a protocol peer.
 The local installation store can retain and reopen the approved runtime trees.
 Trusted runtime acquisition and desktop distribution remain separate work.
 

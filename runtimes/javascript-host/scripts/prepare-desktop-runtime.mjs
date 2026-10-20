@@ -11,13 +11,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const LOCK = JSON.parse(await fs.readFile(join(HERE, 'node-distribution.macos-aarch64.json'), 'utf8'));
 const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_NODE_BYTES = 160 * 1024 * 1024;
-const USAGE = 'usage: prepare-desktop-runtime.mjs --node-archive <absolute-pinned-archive> --host-source <absolute-trusted-production-deploy> --cordis-license <absolute-approved-license> --inspector <absolute-tsumugi-plugin-runtime> --output <absolute-new-directory>';
+const USAGE = 'usage: prepare-desktop-runtime.mjs --node-archive <absolute-pinned-archive> --host-source <absolute-trusted-production-deploy> --inspector <absolute-tsumugi-plugin-runtime> --output <absolute-new-directory>';
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 class PreparationError extends Error {}
 const fail = message => { throw new PreparationError(message); };
 
 function options(args) {
-  const flags = ['--node-archive', '--host-source', '--cordis-license', '--inspector', '--output'];
+  const flags = ['--node-archive', '--host-source', '--inspector', '--output'];
   const result = {};
   if (args.length !== flags.length * 2) fail(USAGE);
   for (let i = 0; i < args.length; i += 2) {
@@ -176,8 +176,7 @@ export async function prepare(args) {
   await fs.chmod(join(tool, 'bin/node'), 0o755);
   await fs.chmod(join(tool, 'LICENSE'), 0o644);
   await command(process.execPath, [join(HERE, 'package-runtime.mjs'),
-    '--source', source, '--output', host,
-    '--cordis-license', config['--cordis-license']], undefined, 4096);
+    '--source', source, '--output', host], undefined, 4096);
   const requestPath = join(output, 'inspection-request.json');
   await fs.writeFile(requestPath, JSON.stringify({ profile: 'node-system-libraries-v1',
     toolVersion: LOCK.version, toolEntrypoint: 'bin/node', hostEntrypoint: 'dist/main.js' }), { mode: 0o600, flag: 'wx' });

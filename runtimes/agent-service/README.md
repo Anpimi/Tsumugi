@@ -51,7 +51,7 @@ Rust types. It is separate from the SDK plugin Process protocol. The trusted
 Host stages the captured application bundle with only the independently approved
 Node tool, clears the environment, bounds frames and process lifetime, and waits
 for the original child to exit before releasing its staging directory. Pi runs
-without the Cordis Host or ambient credentials. Model capacity and prices remain
+without the component Host or ambient credentials. Model capacity and prices remain
 unknown unless supplied by their actual owner; normalized SDK zero values are
 not authoritative billing records.
 
