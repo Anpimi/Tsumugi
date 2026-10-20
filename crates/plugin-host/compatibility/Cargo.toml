@@ -45,3 +45,7 @@ path = "tests/source_maintenance.rs"
 [[test]]
 name = "version_compatibility"
 path = "../tests/knowledge/version_compatibility.rs"
+
+[[test]]
+name = "sdk_artifact_pair"
+path = "tests/sdk_artifact_pair.rs"

@@ -712,6 +712,31 @@ release acceptance. This pairing also does not establish the full cross-version
 SDK, contract, Profile and data-schema compatibility matrix or behavioral
 compatibility from matching version labels.
 
+The isolated `sdk_artifact_pair` consumer additionally accepts two independently
+built Rust catalog packages from different locked SDK archives: a retained
+Process2 worker and a current Process3 worker. Review both public build recipes,
+archive provenance and package inspection digests first. The packages must keep
+the same manifest, plugin version, nominal SDK version and all declared domain
+Resource bytes. Changing a descriptor label or repackaging the current worker
+does not supply the historical artifact.
+
+```sh
+TSUMUGI_TEST_LEGACY_NATIVE_PACKAGE=/absolute/path/to/process2-flat-json \
+TSUMUGI_TEST_LEGACY_NATIVE_DIGEST='<independently-reviewed-legacy-package-digest>' \
+TSUMUGI_TEST_NATIVE_PACKAGE=/absolute/path/to/process3-flat-json \
+TSUMUGI_TEST_NATIVE_DIGEST='<independently-reviewed-current-package-digest>' \
+cargo test --manifest-path crates/plugin-host/compatibility/Cargo.toml --features core-adapter --test sdk_artifact_pair --locked -- --ignored --nocapture --test-threads=1
+```
+
+The single selected test must execute. It installs/reopens both exact packages,
+captures its actual current Native Host, observes legacy launch refusal and an
+empty owned staging parent, then executes current extraction over the same Host
+and checks literal Unicode/BOM material and byte ranges. The historical worker
+closes its stream on the current activation; the public Host reports `Crashed`,
+which is not a protocol-specific diagnosis. Current cooperative close and direct
+child reaping are checked separately. This bounded artifact pair adds no fallback,
+SDK upgrade mechanism, Desktop approval or promise about other SDK versions.
+
 The `translation_validation` test, with `core-adapter,javascript-conformance`,
 uses an explicitly captured SMAPI package and the independently approved runtime
 to adopt its actual source, then qualify a complete translation proposal in the
