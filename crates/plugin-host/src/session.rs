@@ -385,9 +385,9 @@ impl ProcessSession {
         if !valid_scope {
             return Err(HostError::InvalidContract);
         }
-        // The Windows process owner does not yet provide the filesystem capture,
-        // staging and runtime-identity support required by this product entry.
-        // Keep the gate closed until those independent boundaries are available.
+        // Windows archive capture and the staging/process backends do not
+        // establish verified runtime identity, distribution or product lifecycle
+        // guarantees. Keep this execution entry closed until those are complete.
         #[cfg(not(unix))]
         return Err(HostError::UnsupportedPlatform);
         #[cfg(unix)]

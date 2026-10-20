@@ -2,13 +2,13 @@
 
 `RuntimeEnvironmentDescriptor` is data, not a runtime loader or an execution
 grant. Environment protocol `1` has one profile, `node-system-libraries-v1`.
-The current SDK validates its own exact SDK version and process protocol `1`.
+The current SDK validates its own exact SDK version and process protocol `3`.
 Unknown profiles, fields and protocols are refused; omitted fields have no
 defaults. This experimental contract has no historical-format decoder.
 
 The descriptor records:
 
-- `platform.operatingSystem`: `macos` or `linux`.
+- `platform.operatingSystem`: `macos`, `linux` or `windows`.
 - `platform.architecture`: `aarch64` or `x86_64`.
 - `protocolVersion`, exact `sdkVersion`, and `processProtocol`.
 - The fixed `profile` and SemVer `toolVersion`.
@@ -30,6 +30,17 @@ reject links, portable aliases and observed replacement, check the platform and
 profile, and compare both complete artifact digests. An artifact's entrypoint
 must be present, and the tool entrypoint must be executable. Invocation must
 retain those immutable bytes rather than reopen a mutable installation.
+
+Windows is a data-contract choice for independently approved captured Node
+artifacts. Logical executable flags remain artifact data, including for `.exe`
+entrypoints; a filename does not grant execution permission. Host archive
+capture validates the exact current platform and both approved artifact digests.
+This does not establish a Windows distribution's DLL closure, filesystem capture,
+installation or process execution support. The native Host profile below still
+accepts only its existing macOS/Linux identity algorithms and rejects Windows.
+Older immutable SDK artifacts retain their original supported platform values;
+a consumer of this addition must explicitly select and verify a matching newer
+SDK artifact. The SDK version label alone is not an artifact identity.
 
 ## Artifact digest profile
 

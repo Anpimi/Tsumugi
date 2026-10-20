@@ -68,7 +68,7 @@ fn native_identity_platform_and_application_version_are_fixed_choices() {
 
 #[test]
 fn native_protocol_versions_identity_algorithms_and_hashes_are_checked() {
-    let mut bad = vec![native(); 10];
+    let mut bad = vec![native(); 12];
     bad[0].protocol_version += 1;
     bad[1].process_protocol += 1;
     bad[2].sdk_version = "0.1.0".into();
@@ -79,6 +79,9 @@ fn native_protocol_versions_identity_algorithms_and_hashes_are_checked() {
     bad[7].executable = NativeHostExecutableIdentity::DarwinCodeDirectoryHashV1("g".repeat(40));
     bad[8].executable = NativeHostExecutableIdentity::LinuxExecutableSha256V1("a".repeat(64));
     bad[9].platform.operating_system = RuntimeOperatingSystem::Linux;
+    bad[10].platform.operating_system = RuntimeOperatingSystem::Windows;
+    bad[11].platform.operating_system = RuntimeOperatingSystem::Windows;
+    bad[11].executable = NativeHostExecutableIdentity::LinuxExecutableSha256V1("a".repeat(64));
     for value in bad {
         assert!(value.validate().is_err());
         assert!(

@@ -41,7 +41,7 @@ export type ComponentScope = "application" | "project" | "attempt";
  */
 export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
 export type RuntimeArchitecture = "aarch64" | "x86_64";
-export type RuntimeOperatingSystem = "macos" | "linux";
+export type RuntimeOperatingSystem = "macos" | "linux" | "windows";
 /**
  * The installer must independently verify that the approved tool distribution
  * depends only on the supported platform's system libraries. The profile does

@@ -1689,7 +1689,8 @@
       "RuntimeOperatingSystem": {
         "enum": [
           "macos",
-          "linux"
+          "linux",
+          "windows"
         ],
         "type": "string"
       },
@@ -8171,7 +8172,8 @@
       "RuntimeOperatingSystem": {
         "enum": [
           "macos",
-          "linux"
+          "linux",
+          "windows"
         ],
         "type": "string"
       },

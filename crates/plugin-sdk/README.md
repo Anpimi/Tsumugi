@@ -151,6 +151,11 @@ adoption authority, and a digest does not authenticate a package publisher.
 [Captured runtime descriptions](docs/environment.md) define the experimental
 `node-system-libraries-v1` profile, complete tool/Host artifact hashes, and an
 SDK-owned environment digest derived from the full validated descriptor.
+The captured Node data contract admits `macos`, `linux` and `windows`; this does
+not establish platform execution or distribution support. Adding the Windows
+Rust enum variant requires downstream exhaustive matches to include it and a
+consumer to explicitly verify a matching immutable SDK artifact. Older artifacts
+keep their own contract surface even when their version labels are equal.
 `ExecutionEnvironmentDescriptor` also admits the separate
 `native-application-host-v1` profile, recording the actual application Host
 identity rather than artificial Node artifacts. Native package bytes remain

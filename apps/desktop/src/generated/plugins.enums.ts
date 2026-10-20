@@ -17,5 +17,5 @@ export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeAvailabilityValues = ["available","unsupported-platform","system-too-old","system-version-unknown","resources-unavailable"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeKindValues = ["data","native-worker","javascript"] as const;
-export const RuntimeOperatingSystemValues = ["macos","linux"] as const;
+export const RuntimeOperatingSystemValues = ["macos","linux","windows"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;

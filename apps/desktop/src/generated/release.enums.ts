@@ -20,5 +20,5 @@ export const RecoveryGuidanceValues = ["reconcile-original","review-current","ch
 export const ReleaseExceptionKindValues = ["source-fallback","qa-waiver"] as const;
 export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
-export const RuntimeOperatingSystemValues = ["macos","linux"] as const;
+export const RuntimeOperatingSystemValues = ["macos","linux","windows"] as const;
 export const ValidationStateValues = ["absent","pending","valid","invalid"] as const;

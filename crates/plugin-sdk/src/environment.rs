@@ -156,6 +156,7 @@ pub fn native_host_executable_sha256(bytes: &[u8]) -> Result<String, ContractErr
 pub enum RuntimeOperatingSystem {
     Macos,
     Linux,
+    Windows,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Captured Node runtime descriptors now admit the explicit Windows platform, and
+read-only archive capture can retain the corresponding approved bytes on that
+platform. This adds an experimental Rust enum variant: downstream exhaustive
+matches must handle `RuntimeOperatingSystem::Windows`, and consumers must select
+and verify a matching immutable SDK artifact rather than infer compatibility
+from its version label. Existing macOS/Linux descriptor serialization and digest
+profiles remain unchanged. No Windows Native identity, directory capture, Store,
+process execution or distribution support is enabled. Store receipt2, project
+schema61, SDK/Process3/Member3/WorkPlan3, dependencies and version sources are
+unchanged. This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch with bilingual Unreleased entries and no additional bump.
+Older assessments below describe their introduction baselines.
+
 The managed Store now uses one immutable tar payload per package/tool/Host
 artifact. Logical executable flags no longer depend on persistent filesystem
 modes. This incompatible development layout advances package, runtime and

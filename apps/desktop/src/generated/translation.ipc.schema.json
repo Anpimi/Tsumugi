@@ -1654,7 +1654,8 @@
       "RuntimeOperatingSystem": {
         "enum": [
           "macos",
-          "linux"
+          "linux",
+          "windows"
         ],
         "type": "string"
       },

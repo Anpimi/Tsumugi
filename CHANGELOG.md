@@ -10,6 +10,11 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Capture independently approved Node runtime archives as immutable data on
+  Windows as well as macOS/Linux, retaining exact artifact bytes and logical
+  execution flags. The experimental SDK adds the `windows` platform value;
+  Windows directory capture, Store installation and execution remain unavailable.
+
 - Retain installed package and runtime bytes in immutable archives with explicit
   logical execution flags, including reopening and interrupted-action recovery.
   Store receipt format 2 preserves and refuses earlier development Stores and

@@ -97,9 +97,39 @@ fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
 }
 
 #[test]
+fn windows_descriptor_has_an_independent_vector_without_native_execution_support() {
+    let mut windows = descriptor();
+    windows.platform.operating_system = RuntimeOperatingSystem::Windows;
+    windows.platform.architecture = RuntimeArchitecture::X86_64;
+    windows.tool.entrypoint = "node.exe".into();
+    // Independently calculated from the documented tag, length and ordered
+    // JSON using Python hashlib, not this SDK's serializer or digest function.
+    assert_eq!(
+        windows.digest().unwrap(),
+        "2f07f2dc985a20a86a1a1ceeed0738e74cc24f933505d2fd61856056c13b2a6d"
+    );
+    let bytes = serde_json::to_vec(&windows).unwrap();
+    let decoded: RuntimeEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, windows);
+    let execution: ExecutionEnvironmentDescriptor = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        execution,
+        ExecutionEnvironmentDescriptor::Captured(windows.clone())
+    );
+    assert_eq!(execution.digest().unwrap(), windows.digest().unwrap());
+    assert_eq!(serde_json::to_vec(&execution).unwrap(), bytes);
+    assert_eq!(
+        serde_json::to_value(&windows).unwrap()["platform"]["operatingSystem"],
+        "windows"
+    );
+    windows.platform.architecture = RuntimeArchitecture::Aarch64;
+    assert_ne!(windows.digest().unwrap(), decoded.digest().unwrap());
+}
+
+#[test]
 fn every_fixed_environment_choice_participates_in_the_digest() {
     let original = descriptor();
-    let mut alternatives = vec![original.clone(); 7];
+    let mut alternatives = vec![original.clone(); 8];
     alternatives[0].platform.operating_system = RuntimeOperatingSystem::Linux;
     alternatives[1].platform.architecture = RuntimeArchitecture::X86_64;
     alternatives[2].tool_version = "26.9.0".into();
@@ -107,6 +137,7 @@ fn every_fixed_environment_choice_participates_in_the_digest() {
     alternatives[4].tool.entrypoint = "node".into();
     alternatives[5].host.tree_digest = "c".repeat(64);
     alternatives[6].host.entrypoint = "dist/other.js".into();
+    alternatives[7].platform.operating_system = RuntimeOperatingSystem::Windows;
     let digest = original.digest().unwrap();
     for alternative in alternatives {
         assert_ne!(alternative.digest().unwrap(), digest);
@@ -151,7 +182,7 @@ fn descriptors_reject_missing_unknown_duplicate_and_unimplemented_fields() {
         ("profile", json!("arbitrary-homebrew")),
         (
             "platform",
-            json!({"operatingSystem":"windows","architecture":"aarch64"}),
+            json!({"operatingSystem":"unknown-os","architecture":"aarch64"}),
         ),
     ] {
         let mut bad = original.clone();

@@ -275,6 +275,16 @@ executable flag must match. The trees share a 256 MiB / 2048-file / 60-second
 observed bound. Later edits or deletion of their source directories cannot change
 the retained snapshot. Capture executes no code and grants no authority.
 
+`CapturedRuntime::capture_archives` is a public read-only alternative for held
+`Read + Seek` inputs on macOS, Linux and Windows. It uses the same snapshot owner,
+independent descriptor, exact current platform, combined artifact budget and
+60-second observed guard as directory capture. Strict archives preserve logical
+executable flags without trusting filesystem modes or filename extensions;
+links and unsupported archive records are refused. The Windows archive data API
+does not open directory capture, Store installation, native identity or process
+execution. Reading archives neither validates Windows DLL dependency closure nor
+verifies a distribution or its publisher. Other platforms remain unsupported.
+
 The initial `node-system-libraries-v1` profile requires the trusted installer to
 verify a Node distribution using only platform system libraries. A Homebrew
 entrypoint with external dynamic libraries cannot be approved by hashing that

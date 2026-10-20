@@ -9,6 +9,7 @@ import translation from "../test/fixtures/pluginTranslation.contract.json";
 import build from "../test/fixtures/pluginBuild.contract.json";
 import { textReviewViewFixture } from "./testSupport/textReviewFixture";
 import { validateRequestTextReview, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
+import { validateResponseRuntime } from "./generated/plugins.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -92,6 +93,18 @@ it("keeps runtime installation exact and rejects caller approval, resources and 
   invoke.mockResolvedValueOnce(fixture.empty);
   await expect(pluginCommands.installRuntime(request)).resolves.toEqual(fixture.empty);
   expect(invoke).toHaveBeenLastCalledWith("install_plugin_runtime", { request });
+});
+
+it("admits the Windows runtime data contract while rejecting unknown platform values", () => {
+  const windows = structuredClone(runtime.environment);
+  windows.platform = { operatingSystem: "windows", architecture: "x86_64" };
+  windows.tool.entrypoint = "node.exe";
+  expect(validateResponseRuntime(windows)).toBe(true);
+  for (const operatingSystem of ["unknown-os", "Windows", "windows-legacy"]) {
+    expect(validateResponseRuntime({ ...windows, platform: { ...windows.platform, operatingSystem } })).toBe(false);
+  }
+  expect(validateResponseRuntime({ ...windows, platform: { architecture: "x86_64" } })).toBe(false);
+  expect(validateResponseRuntime({ ...windows, approved: true })).toBe(false);
 });
 
 it("rejects caller paths, authority, lossy revisions and unrecognized metadata", () => {

@@ -13409,7 +13409,7 @@ const schema311 = {"additionalProperties":false,"properties":{"entrypoint":{"typ
 const schema315 = {"description":"The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.","enum":["node-system-libraries-v1"],"type":"string"};
 const schema312 = {"additionalProperties":false,"properties":{"architecture":{"$ref":"#/definitions/RuntimeArchitecture"},"operatingSystem":{"$ref":"#/definitions/RuntimeOperatingSystem"}},"required":["operatingSystem","architecture"],"type":"object"};
 const schema313 = {"enum":["aarch64","x86_64"],"type":"string"};
-const schema314 = {"enum":["macos","linux"],"type":"string"};
+const schema314 = {"enum":["macos","linux","windows"],"type":"string"};
 
 function validate233(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -13455,7 +13455,7 @@ if(typeof data1 !== "string"){
 validate233.errors = [{instancePath:instancePath+"/operatingSystem",schemaPath:"#/definitions/RuntimeOperatingSystem/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((data1 === "macos") || (data1 === "linux"))){
+if(!(((data1 === "macos") || (data1 === "linux")) || (data1 === "windows"))){
 validate233.errors = [{instancePath:instancePath+"/operatingSystem",schemaPath:"#/definitions/RuntimeOperatingSystem/enum",keyword:"enum",params:{allowedValues: schema314.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
