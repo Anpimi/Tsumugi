@@ -25,7 +25,8 @@ import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { McpSharingPanel } from "./McpSharingPanel";
 import type { ReviewSummaryPage } from "./reviewCommands";
 import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
-import { useWorkspaceView } from "./WorkbenchFrame";
+import { useWorkspaceView, type WorkspaceViewMemory } from "./WorkbenchFrame";
+import type { TranslationFindFocusRequest } from "./sessionNavigation";
 import { controlContentPaneGeometry, paintContentPanes, panePointer, pointerCaptureFor } from "./testSupport/contentPaneGeometry";
 
 function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => void }) {
@@ -182,6 +183,114 @@ async function revealFindActions(user: ReturnType<typeof userEvent.setup>) {
   const summary = screen.getByText("Find and range actions", { exact: true });
   if (!summary.closest("details")?.open) await user.click(summary);
 }
+
+function FindMemoryProbe({ capture }: { capture: (memory: WorkspaceViewMemory) => void }) {
+  const { memory } = useWorkspaceView();
+  useLayoutEffect(() => { capture(memory); });
+  return null;
+}
+
+function holdFindFrames() {
+  let next = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++next, callback); return next; });
+  vi.stubGlobal("cancelAnimationFrame", (frame: number) => { frames.delete(frame); });
+  return () => { const pending = [...frames.values()]; frames.clear(); act(() => { pending.forEach(callback => callback(performance.now())); }); };
+}
+
+it("consumes a rejected find frame once without suppressing a later explicit editor focus", async () => {
+  const resize = controlContentPaneGeometry(), ref = createRef<TranslationHandle>(), user = userEvent.setup();
+  let memory!: WorkspaceViewMemory;
+  const ui = render(<><FindMemoryProbe capture={value => { memory = value; }} /><TranslationWorkbench ref={ref} project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  resize(ui.container.querySelector(".translation-columns")!, 900); await paintContentPanes();
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await screen.findByRole("textbox", { name: "Your draft" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "first" })).toBeEnabled());
+  const flush = holdFindFrames(), consume = vi.fn(() => false);
+  const request: TranslationFindFocusRequest = { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    metadataRevision: project.metadata.metadataRevision, current: () => false, consume, cancel: vi.fn() };
+  act(() => { memory.write("translation", "findOpen", true); memory.write("translation", "findFocus", request); });
+  const outside = screen.getByRole("button", { name: "Back to overview" }); outside.focus();
+  flush(); expect(consume).toHaveBeenCalledTimes(1); expect(outside).toHaveFocus();
+  expect(memory.read("translation", "findFocus")).toBeNull();
+  act(() => { expect(ref.current!.openUnit({ unitId: fixtureIdentity(217), sourceRevisionId: fixtureIdentity(218), key: "second", sourceText: "Second" }, "zh-CN")).toBe(true); });
+  await waitFor(() => expect(screen.getByRole("heading", { name: "second" })).toBeVisible());
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveFocus());
+  flush(); expect(consume).toHaveBeenCalledTimes(1);
+});
+
+it.each(["disabled", "metadata", "collapsed"] as const)("does not retry a consumed find focus after %s becomes usable again", async reason => {
+  const user = userEvent.setup(); let memory!: WorkspaceViewMemory;
+  const component = (value = project, disabled = false) => <><FindMemoryProbe capture={next => { memory = next; }} /><TranslationWorkbench project={value} disabled={disabled} /></>;
+  const ui = render(component(), project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await screen.findByRole("button", { name: "first" });
+  const flush = holdFindFrames(), consume = vi.fn(() => true);
+  const request: TranslationFindFocusRequest = { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    metadataRevision: project.metadata.metadataRevision, current: () => true, consume, cancel: vi.fn() };
+  act(() => { memory.write("translation", "findOpen", true); memory.write("translation", "findFocus", request); });
+  if (reason === "disabled") ui.rerender(component(project, true), project);
+  else if (reason === "metadata") { const changed = { ...project, metadata: { ...project.metadata, metadataRevision: "2" } }; ui.rerender(component(changed), changed); }
+  else act(() => { memory.write("translation", "findOpen", false); });
+  const outside = screen.getByRole("button", { name: "Project overview" }); expect(outside).toBeEnabled(); outside.focus();
+  flush(); expect(consume).toHaveBeenCalledTimes(1); expect(outside).toHaveFocus();
+  ui.rerender(component(), project); act(() => { memory.write("translation", "findOpen", true); });
+  flush(); expect(consume).toHaveBeenCalledTimes(1); expect(outside).toHaveFocus();
+});
+
+it("supersedes a pending editor focus with Find while allowing a later explicit editor intent", async () => {
+  const resize = controlContentPaneGeometry(), ref = createRef<TranslationHandle>(), user = userEvent.setup();
+  let memory!: WorkspaceViewMemory, finish!: () => Promise<void>;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_review_editor_snapshot" && args.request.unitId === fixtureIdentity(217)
+    ? new Promise(resolve => { finish = async () => { resolve(await original(command, args)); }; }) : original(command, args));
+  const ui = render(<><FindMemoryProbe capture={value => { memory = value; }} /><TranslationWorkbench ref={ref} project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  resize(ui.container.querySelector(".translation-columns")!, 900); await paintContentPanes();
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await screen.findByRole("textbox", { name: "Your draft" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "first" })).toBeEnabled());
+  act(() => { expect(ref.current!.openUnit({ unitId: fixtureIdentity(217), sourceRevisionId: fixtureIdentity(218), key: "second", sourceText: "Second" }, "zh-CN")).toBe(true); });
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  const flush = holdFindFrames(), consume = vi.fn(() => true);
+  const request: TranslationFindFocusRequest = { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    metadataRevision: project.metadata.metadataRevision, current: () => true, consume, cancel: vi.fn() };
+  act(() => { memory.write("translation", "findOpen", true); memory.write("translation", "findFocus", request); });
+  flush(); const find = screen.getByRole("textbox", { name: "Find by key, source or translation" }); expect(find).toHaveFocus();
+  await act(async () => { await finish(); });
+  await waitFor(() => expect(screen.getByRole("heading", { name: "second" })).toBeVisible());
+  expect(find).toHaveFocus(); expect(consume).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(screen.getByRole("button", { name: "first" })).toBeEnabled());
+  act(() => { expect(ref.current!.openUnit({ unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(205), key: "first", sourceText: "Original" }, "zh-CN")).toBe(true); });
+  await waitFor(() => expect(screen.getByRole("heading", { name: "first" })).toBeVisible());
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveFocus());
+});
+
+it("keeps search composition separate from the draft and submits only a later explicit search", async () => {
+  const user = userEvent.setup(), ref = createRef<TranslationHandle>();
+  let owner!: ReturnType<typeof useTranslationDraftSession>;
+  render(<><QueryProbe capture={(_reads, value) => { owner = value; }} /><TranslationWorkbench ref={ref} project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Retained B");
+  await revealFindActions(user);
+  const find = screen.getByRole("textbox", { name: "Find by key, source or translation" }), before = { ...owner.current()! };
+  const calls = invoke.mock.calls.length;
+  fireEvent.compositionStart(find); fireEvent.change(find, { target: { value: "日本語 é" } });
+  expect(fireEvent.keyDown(find, { key: "Enter", isComposing: true })).toBe(false);
+  fireEvent.submit(find.closest("form")!);
+  expect(await ref.current!.allowNavigate({ kind: "translation-find" })).toBe(false);
+  fireEvent.compositionEnd(find); fireEvent.submit(find.closest("form")!);
+  expect(invoke.mock.calls.slice(calls).some(([command, args]) => command === "read_review_summary_page" && args.request.query === "日本語 é")).toBe(false);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Find" })).toBeEnabled());
+  expect(await ref.current!.allowNavigate({ kind: "translation-find" })).toBe(true);
+  expect(owner.current()).toMatchObject({ text: before.text, editSeq: before.editSeq });
+  await user.click(screen.getByRole("button", { name: "Find" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command, args]) => command === "read_review_summary_page" && args.request.query === "日本語 é")).toBe(true));
+  expect(owner.current()).toMatchObject({ text: before.text, editSeq: before.editSeq });
+  expect(invoke.mock.calls.some(([command]) => command === "save_translation_revision")).toBe(false);
+});
 
 it("keeps the real editor DOM, draft, selection and composition through pane resizing without dispatching commands", async () => {
   seedSelectedTranslation();

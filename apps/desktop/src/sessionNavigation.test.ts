@@ -53,6 +53,31 @@ function setup() {
 }
 
 describe("project session navigation", () => {
+  it("commits the content-find view only after both original navigation guards accept", async () => {
+    const test = setup(); test.setArea("translation");
+    const commit = vi.fn(() => true);
+    test.ports.accept = vi.fn(async () => commit);
+    test.presentation.allowNavigate.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    expect(await test.navigation.navigate({ kind: "translation-find" })).toBe(false);
+    expect(commit).not.toHaveBeenCalled();
+    expect(test.ports.show).not.toHaveBeenCalled();
+    expect(await test.navigation.navigate({ kind: "translation-find" })).toBe(true);
+    expect(commit).toHaveBeenCalledOnce();
+    expect(test.ports.show).toHaveBeenCalledWith("translation");
+    expect(test.ports.accept).toHaveBeenLastCalledWith({ kind: "translation-find" }, expect.any(Function));
+    expect(test.presentation.allowNavigate).toHaveBeenCalledTimes(4);
+  });
+  it("abandons content-find before acceptance when its source guard outlives the session", async () => {
+    const test = setup(), guard = deferred<boolean>(); test.setArea("review");
+    test.presentation.allowNavigate.mockImplementationOnce(() => guard.promise);
+    const moving = test.navigation.navigate({ kind: "translation-find" });
+    await Promise.resolve();
+    test.replace(); test.navigation.dispose(); guard.resolve(true);
+    expect(await moving).toBe(false);
+    expect(test.ports.accept).not.toHaveBeenCalled();
+    expect(test.ports.show).not.toHaveBeenCalled();
+    expect(test.area()).toBe("review");
+  });
   it("routes a readonly source notice to AI through both source guards and preserves its original owner sequences", async () => {
     const test = setup(); test.setArea("source"); const wait = deferred<boolean>();
     test.presentation.allowNavigate.mockImplementationOnce(() => wait.promise);

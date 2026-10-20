@@ -852,6 +852,7 @@ workbench: {
     entrySelectionScope_one: "Entry: {{name}}; retained selection: {{count}} entry",
     entrySelectionScope_other: "Entry: {{name}}; retained selection: {{count}} entries",
   },
+  findContent: "Find content", findNeedsTarget: "Add a project target language to find content.",
   findAndRange: "Find and range actions", aboutSaving: "About saving",
   aboutWorkspace: "About this workspace", rangeActions: "Range actions ({{count}} selected)",
   retiredDraftTitle: "Local work from the previous project",

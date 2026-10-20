@@ -1345,6 +1345,11 @@ function AppWorkbench() {
     const session = projectSession.current;
     if (session) await session.navigate({ kind: "area", area: next });
   }
+  async function findContent() {
+    if (!project || !project.metadata.targetLocales.length || busy || stopping || coordinating || currentRetiredSession.current || areaNavigation.current || lifecycleFlight.current
+      || compositionActive.current || navigationIntent || restorePromptOpen || document.querySelector('[role="dialog"]')) return;
+    await projectSession.current?.navigate({ kind: "translation-find" });
+  }
   const viewOwner = { area, memory, activate: (next: WorkspaceArea) => { void navigateArea(next); },
     deactivate: (closing: WorkspaceArea) => { if (currentExitPresentation.current.area === closing) void navigateArea("overview"); } };
   const sessionPresentation = retiredSession?.project ?? project;
@@ -1422,6 +1427,12 @@ function AppWorkbench() {
             {project ? <WorkbenchContext area={area} targetLocales={project.metadata.targetLocales} presentation={currentWorkContext} /> : null}
           </div>
            <div className="topbar-actions">
+            {project ? <div>
+              <button type="button" className="secondary-button" disabled={busy || stopping || coordinating || !project.metadata.targetLocales.length}
+                aria-describedby={!project.metadata.targetLocales.length ? "workspace-find-unavailable" : undefined}
+                onClick={() => void findContent()}>{t("workbench.findContent")}</button>
+              {!project.metadata.targetLocales.length ? <small id="workspace-find-unavailable">{t("workbench.findNeedsTarget")}</small> : null}
+            </div> : null}
             <PluginManager ref={pluginManager} disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
             <ConnectionManager ref={connectionManager} disabled={operation !== "idle" || stopping || stopIntent !== null || pluginsBusy}/>
             <label className="language-control">

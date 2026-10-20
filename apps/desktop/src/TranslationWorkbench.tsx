@@ -4,7 +4,7 @@ import { useResourceDraftSession } from "./ResourceDraftSession";
 import { resourceCommands } from "./resourceCommands";
 import { useSessionQuery, useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef, useWorkbenchValue, useWorkspaceView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { reviewCommands, type ReviewSummaryPage, type ReviewSummary, type ReviewTarget, type ReviewEditorSnapshot, type ReviewNeighbor } from "./reviewCommands";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -31,7 +31,7 @@ import { validateResponseHistory } from "./generated/translation.validators";
 import { validateResponseEditor } from "./generated/review.validators";
 import type { ChangeScope } from "./sessionReads";
 import type { QueryKey } from "@tanstack/react-query";
-import type { WorkspaceDestination } from "./sessionNavigation";
+import type { WorkspaceDestination, TranslationFindFocusRequest } from "./sessionNavigation";
 import { diagnosticMatchesEditor, diagnosticTextareaSelection, textareaDisplayText, type ReviewDiagnosticAnchor } from "./reviewDiagnosticNavigation";
 import { semanticReviewRead } from "./aiSemanticReviewQueries";
 import { reviewFindingsRead } from "./reviewQueries";
@@ -126,6 +126,12 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const paneIntent = useContentPaneIntent();
   const [editorVisible, setEditorVisible] = useState(true);
   const [findOpen, setFindOpen] = useWorkbenchState("translation", "findOpen", false);
+  const findFocus = useWorkbenchValue<TranslationFindFocusRequest | null>("translation", "findFocus");
+  const { memory: viewMemory } = useWorkspaceView();
+  const findField = useRef<HTMLInputElement>(null), pendingFindFocus = useRef<TranslationFindFocusRequest | null>(null);
+  const supersededFocus = useRef<{ editorReadId: number | null; diagnostic: ReviewDiagnosticAnchor | null } | null>(null);
+  const findComposition = useRef(false), findCompositionEnd = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [findingComposition, setFindingComposition] = useState(false);
   const [rangeOpen, setRangeOpen] = useWorkbenchState("translation", "rangeOpen", false);
   const [query, setQuery] = useWorkbenchState("translation", "query", "");
   const [appliedQuery, setAppliedQuery] = useWorkbenchState("translation", "appliedQuery", "");
@@ -200,6 +206,43 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const currentLocale = (locale: string) => selectedLocale.current === locale && localeAvailable(locale);
   const targetAvailable = targetLocale !== "" && project.metadata.targetLocales.includes(targetLocale);
   const targetUnavailable = targetLocale !== "" && !targetAvailable;
+  const findView = useRef({ open, tab, findOpen, disabled, targetAvailable, project });
+  useLayoutEffect(() => { findView.current = { open, tab, findOpen, disabled, targetAvailable, project }; });
+  useLayoutEffect(() => {
+    if (!findFocus) return;
+    pendingFindFocus.current = findFocus;
+    // A later Find intent supersedes only the already requested editor/anchor.
+    // New explicit editor reads and diagnostic handoffs keep their own focus.
+    supersededFocus.current = { editorReadId: editorIntent?.id ?? null, diagnostic: diagnosticAnchor ?? null };
+    const frame = requestAnimationFrame(() => {
+      const accepted = findFocus.consume();
+      if (pendingFindFocus.current === findFocus) pendingFindFocus.current = null;
+      if (viewMemory.read("translation", "findFocus") === findFocus) viewMemory.write("translation", "findFocus", null);
+      const value = findView.current, input = findField.current;
+      if (!accepted || reads.retired || !value.open || value.tab !== "edit" || !value.findOpen || value.disabled
+        || !value.targetAvailable || findComposition.current || !input || input.disabled
+        || value.project.metadata.projectId !== findFocus.projectId || value.project.sessionToken !== findFocus.sessionToken
+        || value.project.metadata.metadataRevision !== findFocus.metadataRevision) return;
+      input.focus({ preventScroll: true }); input.scrollIntoView({ block: "nearest" });
+    });
+    // The session cancels an abandoned request. A StrictMode probe may remount
+    // this same consumer before its one frame has consumed the request.
+    return () => {
+      cancelAnimationFrame(frame);
+      if (pendingFindFocus.current === findFocus) pendingFindFocus.current = null;
+    };
+  }, [findFocus, viewMemory, reads]);
+  useEffect(() => () => { if (findCompositionEnd.current !== null) clearTimeout(findCompositionEnd.current); }, []);
+  function beginFindComposition() {
+    if (findCompositionEnd.current !== null) clearTimeout(findCompositionEnd.current);
+    findCompositionEnd.current = null; findComposition.current = true; setFindingComposition(true);
+  }
+  function endFindComposition() {
+    if (findCompositionEnd.current !== null) clearTimeout(findCompositionEnd.current);
+    findCompositionEnd.current = setTimeout(() => {
+      findComposition.current = false; findCompositionEnd.current = null; setFindingComposition(false);
+    }, 0);
+  }
   const semanticDiagnostic = diagnosticAnchor?.diagnostic.source.purpose === "ai-semantic" ? diagnosticAnchor : null;
   const diagnosticReadsActive = open && tab === "edit" && targetAvailable && !!semanticDiagnostic
     && semanticDiagnostic.projectId === context.projectId && semanticDiagnostic.sessionToken === context.sessionToken;
@@ -319,7 +362,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
       && checkedRead(editorKey(editorIntent), snapshot) && sourceReady(anchor.value.basisEvidence.sourceSnapshotId);
   }
   useEffect(() => {
-    if (!diagnosticAnchor || !open || tab !== "edit" || !editorVisible || !paneLayout.current?.editorVisible() || disabled || composing || readBusy || editorRead.isFetching || sourceRead.isFetching
+    if (pendingFindFocus.current || diagnosticAnchor && supersededFocus.current?.diagnostic === diagnosticAnchor
+      || !diagnosticAnchor || !open || tab !== "edit" || !editorVisible || !paneLayout.current?.editorVisible() || disabled || composing || readBusy || editorRead.isFetching || sourceRead.isFetching
       || !snapshot || readyEditorRead !== editorIntent?.id) return;
     if (locatedAnchor.current === diagnosticAnchor || !diagnosticCurrent(diagnosticAnchor)) return;
     const location = diagnosticAnchor.value.location;
@@ -544,7 +588,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   useEffect(() => { setHasDraftSelection(false); setQueryUnavailable(false); }, [editorTarget?.unitId, targetLocale]);
   useEffect(() => { if (entryList.current) entryList.current.scrollTop = 0; }, [listAfter, appliedQuery, targetLocale]);
   useEffect(() => {
-    if (!open || tab !== "edit" || !paneLayout.current?.editorVisible()) return;
+    if (pendingFindFocus.current || supersededFocus.current && supersededFocus.current.editorReadId === (editorIntent?.id ?? null)
+      || !open || tab !== "edit" || !paneLayout.current?.editorVisible()) return;
     const input = draftField.current;
     input?.focus({ preventScroll: true });
     input?.scrollIntoView({ block: "nearest" });
@@ -916,7 +961,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     allowNavigate(destination) {
       const confirmingSelection = selectionAction !== null && (selectionAction.kind !== "ai" || selectionTransfer.current !== selectionAction.value
         || contentSelection !== selectionAction.value || selectionVersion.current !== selectionAction.version);
-      if (resourceDrafts.factBlocked() || composing || draftSession.protection.blocked() || candidates.blocked() || leaveIntent || confirmingSelection || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
+      if (resourceDrafts.factBlocked() || composing || findComposition.current || draftSession.protection.blocked() || candidates.blocked() || leaveIntent || confirmingSelection || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
       if (destination?.kind === "review-return") {
         const draft = draftSession.current();
         return allowProjectLeave(() => mounted.current && !reads.retired && draftSession.current()?.editSeq === draft?.editSeq && draftSession.current()?.text === draft?.text);
@@ -1237,9 +1282,12 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
           </> : null}
           {tab === "edit" && targetLocale ? <section className="translation-workspace" aria-label={t("translation.editor")}>
             <details className="translation-find" open={findOpen} onToggle={event => setFindOpen(event.currentTarget.open)}><summary>{t("workbench.findAndRange")}</summary>
-            <form className="translation-search" onSubmit={event => { event.preventDefault(); if (!busy && !readBusy && targetAvailable) void performRead(current => loadList(0, query.trim(), current, true)); }}>
-              <input aria-label={t("workbench.search")} value={query} onChange={event => setQuery(event.target.value)} placeholder={t("workbench.search")} aria-invalid={failure === "query-limit" || undefined} />
-              <button className="secondary-button" type="submit" disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable}>{t("workbench.searchAction")}</button>
+            <form className="translation-search" onSubmit={event => { event.preventDefault(); if (!busy && !readBusy && !composing && !findComposition.current && !protectionBlocked && targetAvailable) void performRead(current => loadList(0, query.trim(), current, true)); }}>
+              <input ref={findField} aria-label={t("workbench.search")} value={query} onChange={event => setQuery(event.target.value)}
+                onCompositionStart={beginFindComposition} onCompositionEnd={endFindComposition}
+                onKeyDown={event => { if (event.key === "Enter" && (event.nativeEvent.isComposing || findComposition.current)) event.preventDefault(); }}
+                placeholder={t("workbench.search")} aria-invalid={failure === "query-limit" || undefined} />
+              <button className="secondary-button" type="submit" disabled={busy || readBusy || composing || findingComposition || protectionBlocked || !targetAvailable}>{t("workbench.searchAction")}</button>
               <span role="status">{listRead.error ? t("translation.errors.failed") : list ? t("workbench.results", { count: list.total }) : t("execution.loading")}</span>
             </form>
             <details className="content-selection-toolbar" open={rangeOpen} onToggle={event => setRangeOpen(event.currentTarget.open)}><summary>{t("workbench.rangeActions", { count: selectedIds.size })}</summary>

@@ -9,11 +9,21 @@ export interface AiReviewOrigin { attemptId: string; taskId: string; itemId: str
 export interface ReviewHandoffPresentation { unitId: string; locale: string; basis: string; currentBasis: string; fallbackId: string | null }
 /** A read-only destination, carrying no plan, consent or execution authority. */
 export interface MaintenanceNoticeTarget { sourceActionId: string; sourceEditSeq: number; aiEditSeq: number }
+/** One bounded presentation request; it carries no content query or authority. */
+export interface TranslationFindFocusRequest {
+  projectId: string;
+  sessionToken: string;
+  metadataRevision: string;
+  current: () => boolean;
+  consume: () => boolean;
+  cancel: () => void;
+}
 
 export type WorkspaceDestination =
   | { kind: "area"; area: WorkspaceArea }
   | { kind: "task"; taskId: string; attemptId: string }
   | { kind: "task-list" }
+  | { kind: "translation-find" }
   | { kind: "translation"; target: EditorTarget; locale: string; suggestedText?: string; returnTo?: "ai" }
   | { kind: "review-edit"; target: EditorTarget; locale: string; handoff: ReviewEditorHandoff }
   | { kind: "review-return"; capture: ReviewEditorReturn }
@@ -51,7 +61,7 @@ export interface SessionNavigationPorts {
 }
 export function destinationArea(destination: WorkspaceDestination): WorkspaceArea {
   return destination.kind === "area" || destination.kind === "attempt" ? destination.area
-    : destination.kind === "translation" || destination.kind === "review-edit" ? "translation" : destination.kind === "ai-selection" || destination.kind === "ai-mcp-query" || destination.kind === "maintenance-notice" ? "ai" : destination.kind === "saved-build" ? "release"
+    : destination.kind === "translation" || destination.kind === "translation-find" || destination.kind === "review-edit" ? "translation" : destination.kind === "ai-selection" || destination.kind === "ai-mcp-query" || destination.kind === "maintenance-notice" ? "ai" : destination.kind === "saved-build" ? "release"
       : destination.kind === "tool-query" || destination.kind === "mcp-query" || destination.kind === "resource-context" || destination.kind === "resource-correction" ? "resources" : destination.kind === "resource-context-return" || destination.kind === "resource-correction-return" ? "translation" : destination.kind === "arena-comparison" ? "arena" : destination.kind === "task" || destination.kind === "task-list" ? "tasks" : "review";
 }
 

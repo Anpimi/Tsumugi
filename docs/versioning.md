@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The fixed Find content entry opens the existing translation search through the
+original session navigation guards. It preserves the working language, query,
+selection and local work without automatically submitting search or selecting an
+entry. Its one-time focus intent does not wait for later queries or replace newer
+user navigation. This changes no Core, IPC, SDK, protocol, persisted format,
+dependency or version source. It stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and
+no additional bump.
+
 The fixed workspace header presents the original owners' current area, target
 languages and retained range. Its view subscription is read-only, and scoped
 presentation rejects old project, session, metadata-version or area callbacks.

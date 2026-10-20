@@ -33,7 +33,7 @@ import type { Eligibility } from "./reviewCommands";
 import { StrictMode } from "react";
 import { connectionFixture } from "./testSupport/connectionFixture";
 import type { ProjectMetadataReconcileCommandPayload, WorkbenchCommands } from "./workbenchCommands";
-import type { WorkbenchContextPresentation } from "./WorkbenchFrame";
+import { useWorkspaceView, type WorkbenchContextPresentation, type WorkspaceViewMemory } from "./WorkbenchFrame";
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
 
@@ -49,6 +49,7 @@ const mocks = vi.hoisted(() => ({
   commands: null as WorkbenchCommands | null,
   drafts: new Map<string, ReturnType<typeof import("./TranslationDraftSession").useTranslationDraftSession>>(),
   contextCallbacks: new Map<string, (value: WorkbenchContextPresentation) => void>(),
+  memories: new Map<string, WorkspaceViewMemory>(),
 }));
 
 vi.mock("./workbenchCommands", async importOriginal => {
@@ -76,6 +77,7 @@ vi.mock("./TranslationDraftSession", async importOriginal => {
 vi.mock("./ProjectSessionWorkbench", async importOriginal => {
   const actual = await importOriginal<typeof import("./ProjectSessionWorkbench")>();
   return { ...actual, ProjectSessionWorkbench: (props: React.ComponentProps<typeof actual.ProjectSessionWorkbench>) => {
+    mocks.memories.set(props.project.sessionToken, useWorkspaceView().memory);
     if (props.onWorkContext) mocks.contextCallbacks.set(props.project.sessionToken, props.onWorkContext);
     return <actual.ProjectSessionWorkbench {...props} />;
   } };
@@ -347,6 +349,119 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it.each(["en-US", "zh-CN"] as const)("opens the original content find from Tasks without rebinding an unknown save or its newer draft (%s)", async language => {
+    const user = userEvent.setup(); await renderApp();
+    expect(screen.queryByRole("button", { name: "Find content" })).not.toBeInTheDocument();
+    await createProject(user); const fixture = installTranslationEditor();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(await editableDraft(), "A");
+    fixture.setSave(async () => { throw new Error("Original save acknowledgement lost"); });
+    await user.click(screen.getByRole("button", { name: "Save revision" }));
+    await waitFor(() => expect(mocks.drafts.get("session-1")?.current()?.outcomeUnknown).toBe(true));
+    await user.type(screen.getByRole("textbox", { name: "Your draft" }), " newer B 👩🏽‍💻 é");
+    await user.click(screen.getByText("Find and range actions", { exact: true }));
+    await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "Unsubmitted 日本語 é");
+    const memory = mocks.memories.get("session-1")!, draft = mocks.drafts.get("session-1")!.current()!;
+    const before = { locale: memory.read("translation", "targetLocale"), query: memory.read<string>("translation", "query"),
+      applied: memory.read("translation", "appliedQuery"), selection: memory.read("translation", "contentSelection"),
+      request: structuredClone(draft.pending!.request), text: draft.text, editSeq: draft.editSeq };
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByRole("region", { name: "Tasks" });
+    await act(async () => { await i18n.changeLanguage(language); });
+    await user.click(screen.getByRole("button", { name: i18n.t("workbench.findContent") }));
+    const find = await screen.findByRole("textbox", { name: i18n.t("workbench.search") });
+    await waitFor(() => expect(find).toHaveFocus());
+    expect(find).toHaveValue(before.query);
+    expect(screen.getByRole("textbox", { name: i18n.t("translation.draft") })).toHaveValue(before.text);
+    expect(memory.read("translation", "targetLocale")).toBe(before.locale);
+    expect(memory.read("translation", "appliedQuery")).toBe(before.applied);
+    expect(memory.read("translation", "contentSelection")).toBe(before.selection);
+    expect(mocks.drafts.get("session-1")?.current()).toMatchObject({ text: before.text, editSeq: before.editSeq, pending: { request: before.request } });
+    expect(fixture.saves()).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command, args]) => command === "read_review_summary_page" && args.request.query === before.query)).toHaveLength(0);
+    await user.click(screen.getByText(i18n.t("workbench.findAndRange"), { exact: true }));
+    expect(find.closest("details")).not.toHaveAttribute("open");
+    await user.click(screen.getByRole("button", { name: i18n.t("workbench.backOverview") }));
+    expect(screen.getByRole("heading", { name: "Demo" })).toBeVisible();
+    expect(mocks.drafts.get("session-1")?.current()?.pending?.request).toEqual(before.request);
+  });
+
+  it.each(["success", "failure"] as const)("consumes find focus before a slow original source read completes with %s", async outcome => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); installTranslationEditor();
+    const original = mocks.invoke.getMockImplementation()!;
+    let complete!: (value: ContentScope) => void, fail!: (error: Error) => void;
+    const pending = new Promise<ContentScope>((resolve, reject) => { complete = resolve; fail = reject; });
+    mocks.invoke.mockImplementation((command: string, args) => command === "read_content_scope" ? pending : original(command, args));
+    await user.click(screen.getByRole("button", { name: "Find content" }));
+    const find = await screen.findByRole("textbox", { name: "Find by key, source or translation" });
+    await waitFor(() => expect(find).toHaveFocus());
+    const language = screen.getByRole("combobox", { name: "Language" }); language.focus();
+    await act(async () => outcome === "success" ? complete({ revision: "2", currentSnapshot: fixtureIdentity(500) }) : fail(new Error("Synthetic source read unavailable")));
+    const reads = mocks.reads; if (!reads) throw new Error("No project read owner");
+    await waitFor(() => expect(reads.client.getQueryState(reads.key(["translation-source-scope"]))?.status).toBe(outcome === "success" ? "success" : "error"));
+    expect(language).toHaveFocus(); expect(find).not.toHaveFocus();
+    expect(mocks.memories.get("session-1")?.read("translation", "findFocus")).toBeNull();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "save_translation_revision")).toBe(false);
+  });
+  it.each(["focus", "collapse", "navigation"] as const)("abandons the one find frame after a newer user %s intent", async intent => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); installTranslationEditor();
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByRole("region", { name: "Tasks" });
+    let next = 0; const frames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++next, callback); return next; });
+    vi.stubGlobal("cancelAnimationFrame", (frame: number) => { frames.delete(frame); });
+    await user.click(screen.getByRole("button", { name: "Find content" }));
+    const find = await screen.findByRole("textbox", { name: "Find by key, source or translation" });
+    const memory = mocks.memories.get("session-1")!;
+    expect(memory.read("translation", "findFocus")).not.toBeNull();
+    if (intent === "focus") act(() => { screen.getByRole("combobox", { name: "Language" }).focus(); });
+    else if (intent === "collapse") await user.click(screen.getByText("Find and range actions", { exact: true }));
+    else await user.click(screen.getByRole("button", { name: "Tasks" }));
+    const focused = document.activeElement;
+    const pending = [...frames.values()]; frames.clear(); act(() => { pending.forEach(callback => callback(performance.now())); });
+    expect(document.activeElement).toBe(focused); expect(find).not.toHaveFocus();
+    expect(memory.read("translation", "findFocus")).toBeNull();
+    if (intent === "collapse") expect(find.closest("details")).not.toHaveAttribute("open");
+    if (intent === "navigation") expect(screen.getByRole("region", { name: "Tasks" })).toBeVisible();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "save_translation_revision")).toBe(false);
+  });
+  it("keeps content find discoverable but unavailable without a project target language", async () => {
+    const user = userEvent.setup(), original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => command === "create_project"
+      ? Promise.resolve({ ...projectView(), metadata: { ...metadata(), targetLocales: [] } }) : original(command, args));
+    await renderApp(); await createProject(user);
+    const find = screen.getByRole("button", { name: "Find content" });
+    expect(find).toBeDisabled(); expect(find).toHaveAccessibleDescription("Add a project target language to find content.");
+    const calls = mocks.invoke.mock.calls.length; await user.click(find);
+    expect(mocks.invoke.mock.calls.slice(calls).some(([command]) => ["read_content_scope", "read_source_content", "read_review_summary_page", "save_translation_revision"].includes(command))).toBe(false);
+    expect(screen.getByRole("heading", { name: "Demo" })).toBeVisible();
+  });
+  it("cancels the old session's unconsumed find frame before opening another project", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); installTranslationEditor();
+    let next = 0; const frames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++next, callback); return next; });
+    vi.stubGlobal("cancelAnimationFrame", (frame: number) => { frames.delete(frame); });
+    await user.click(screen.getByRole("button", { name: "Find content" }));
+    await screen.findByRole("textbox", { name: "Find by key, source or translation" });
+    const oldMemory = mocks.memories.get("session-1")!, request = oldMemory.read<import("./sessionNavigation").TranslationFindFocusRequest>("translation", "findFocus")!;
+    const original = mocks.invoke.getMockImplementation()!;
+    const replacement = { ...projectView("Other"), sessionToken: "session-2", locator: "C:\\Projects\\other",
+      metadata: { ...metadata("Other"), projectId: fixtureIdentity(900) } };
+    mocks.invoke.mockImplementation((command: string, args) => command === "open_project" ? Promise.resolve(replacement) : original(command, args));
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    expect(request.current()).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Open another" }));
+    await user.type(screen.getByRole("textbox", { name: /Project folder/ }), replacement.locator);
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    await screen.findByRole("heading", { name: "Other" });
+    const language = screen.getByRole("combobox", { name: "Language" }); act(() => { language.focus(); });
+    const pending = [...frames.values()]; frames.clear(); act(() => { pending.forEach(callback => callback(performance.now())); });
+    expect(request.current()).toBe(false); expect(language).toHaveFocus();
+    expect(screen.queryByRole("textbox", { name: "Find by key, source or translation" })).not.toBeInTheDocument();
+    expect(mocks.memories.get("session-2")?.read("translation", "findFocus")).toBeUndefined();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(1);
+  });
   it("projects actual working context independently of UI language and retains a newer draft after an unknown save", async () => {
     const user = userEvent.setup(), original = mocks.invoke.getMockImplementation()!;
     mocks.invoke.mockImplementation((command: string, args) => command === "create_project"
@@ -907,6 +1022,7 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Translations" }));
     expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Late original draft");
     expect(owner.current()?.text).toBe("Late original draft");
+    expect(screen.getByRole("button", { name: "Find content" })).toBeEnabled();
     expect(mocks.drafts.get("session-1")?.current()?.text).toBe("Late original draft");
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(1);
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision")).toHaveLength(0);
@@ -984,6 +1100,8 @@ describe("project lifecycle workbench", () => {
     await screen.findByRole("heading", { name: kind === "open" ? "Other" : "No project open" });
     const recovery = screen.getByRole("textbox", { name: i18n.t("workbench.retiredDraftData") });
     expect(recovery).toHaveAttribute("readonly");
+    if (kind === "open") expect(screen.getByRole("button", { name: "Find content" })).toBeDisabled();
+    else expect(screen.queryByRole("button", { name: "Find content" })).not.toBeInTheDocument();
     if (!(recovery instanceof HTMLTextAreaElement)) throw new Error("Recovery details must be copyable text");
     const preserved = JSON.parse(recovery.value);
     expect(preserved.translation).toEqual(originalDraft);
@@ -2459,6 +2577,7 @@ describe("project lifecycle workbench", () => {
     mocks.commands = null;
     mocks.drafts.clear();
     mocks.contextCallbacks.clear();
+    mocks.memories.clear();
     await i18n.changeLanguage("en-US");
     mocks.join.mockResolvedValue("C:\\Projects\\demo");
     mocks.sep.mockReturnValue("\\");
@@ -2486,6 +2605,7 @@ describe("project lifecycle workbench", () => {
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
     if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
     else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     vi.resetAllMocks();

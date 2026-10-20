@@ -31,7 +31,7 @@ import { translationCommands, type TranslationHistory, type TranslationRevision 
 import { sourceKeys, sourceReads } from "./sourceQueries";
 import type { ContentScope } from "./sourceCommands";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { SessionNavigation, type AiReviewOrigin, type ReviewHandoffPresentation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination } from "./sessionNavigation";
+import { SessionNavigation, type AiReviewOrigin, type ReviewHandoffPresentation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination, type TranslationFindFocusRequest } from "./sessionNavigation";
 import { contentSelectionIds, type ContentSelection } from "./contentSelection";
 import { resourceCommands, type CorrectionTermEvidence } from "./resourceCommands";
 import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
@@ -207,6 +207,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     onWorkContext(contextPresentation);
   });
   const mounted = useRef(false), handles = useRef(new Map<WorkspaceArea, SessionConsumer>());
+  const findFocus = useRef<TranslationFindFocusRequest | null>(null);
+  const deliverFindFocus = useRef<(() => void) | null>(null);
   const waiting = useRef(new Map<WorkspaceArea, ((handle: SessionConsumer | null) => void)[]>());
   const [failure, setFailure] = useState<CommandFailure | null>(null);
   const [navigating, setNavigating] = useState(false);
@@ -229,6 +231,14 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   const [scope] = useState(() => ({ projectId: project.metadata.projectId, sessionToken: project.sessionToken }));
   function live() { return !reads.retired && mounted.current && committed.current.project.sessionToken === scope.sessionToken
     && committed.current.project.metadata.projectId === scope.projectId; }
+  function cancelFindFocus(request = findFocus.current) {
+    request?.cancel();
+    if (request && view.memory.read("translation", "findFocus") === request) view.memory.write("translation", "findFocus", null);
+    if (findFocus.current === request) { findFocus.current = null; deliverFindFocus.current = null; }
+  }
+  useLayoutEffect(() => {
+    if (retired || findFocus.current && !findFocus.current.current()) cancelFindFocus();
+  }, [view.area, project.metadata.metadataRevision, retired]);
   function inspect(): ExitDisposition[] {
     const manual = translation.current(), imported = imports.current(), src = source.current(), res = resources.current();
     const rev = review.current(), rel = release.current(), prepared = ai.current(), comparison = arena.current();
@@ -273,6 +283,16 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (!current()) return false;
     setFailure(null);
     if (destination.kind === "area") return true;
+    if (destination.kind === "translation-find") return () => {
+      const request = findFocus.current;
+      if (!current() || !request?.current()) return false;
+      const memory = committed.current.view.memory;
+      memory.write("translation", "tab", "edit");
+      memory.write("translation", "findOpen", true);
+      deliverFindFocus.current?.();
+      memory.write("translation", "findFocus", request);
+      return true;
+    };
     if (destination.kind === "task" || destination.kind === "task-list") {
       const pending = tasks.currentActivity();
       if (tasks.unresolved() || pending && pending.phase !== "recorded" && pending.phase !== "rejected") return false;
@@ -750,12 +770,45 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     busy: (value, kind) => { setNavigating(value && kind === "navigation"); committed.current.onCoordinatingChange(value); },
     failure: value => setFailure(commandFailure(value)),
   }));
+  async function navigate(destination: WorkspaceDestination) {
+    if (disabled) return false;
+    if (destination.kind !== "translation-find") { cancelFindFocus(); return navigation.navigate(destination); }
+    cancelFindFocus();
+    const project = committed.current.project, from = committed.current.view.area, trigger = document.activeElement;
+    let finished = false, delivered = false;
+    const activity = () => cancelFindFocus(request);
+    const focus = (event: FocusEvent) => {
+      const target = event.target;
+      // Entering the existing workspace may focus its heading or retained editor.
+      if (target !== trigger && target !== document.body && !(target instanceof Element
+        && target.matches(".translation-workbench .workbench-heading h1, .translation-workbench .translation-draft-field textarea"))) activity();
+    };
+    function cleanup() {
+      for (const type of ["pointerdown", "keydown", "input", "compositionstart"]) document.removeEventListener(type, activity, true);
+      document.removeEventListener("focusin", focus, true);
+    }
+    const current = () => !finished && live() && !retired
+      && committed.current.project.metadata.metadataRevision === project.metadata.metadataRevision
+      && committed.current.view.area === (delivered ? "translation" : from);
+    const request: TranslationFindFocusRequest = { ...scope, metadataRevision: project.metadata.metadataRevision, current,
+      consume() { const accepted = current(); finished = true; cleanup();
+        if (findFocus.current === request) { findFocus.current = null; deliverFindFocus.current = null; }
+        return accepted; },
+      cancel() { finished = true; cleanup(); } };
+    for (const type of ["pointerdown", "keydown", "input", "compositionstart"]) document.addEventListener(type, activity, true);
+    document.addEventListener("focusin", focus, true);
+    findFocus.current = request;
+    deliverFindFocus.current = () => { delivered = true; };
+    const accepted = await navigation.navigate(destination);
+    if (!accepted) { cancelFindFocus(request); if (live()) setFailure("navigation-edited"); }
+    return accepted;
+  }
   useLayoutEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; navigation.dispose(); waiting.current.forEach(resolvers => resolvers.forEach(resolve => resolve(null))); waiting.current.clear(); handles.current.clear(); };
+    return () => { mounted.current = false; cancelFindFocus(); navigation.dispose(); waiting.current.forEach(resolvers => resolvers.forEach(resolve => resolve(null))); waiting.current.clear(); handles.current.clear(); };
   }, [navigation]);
-  useImperativeHandle(ref, () => ({ navigate: destination => disabled ? Promise.resolve(false) : navigation.navigate(destination),
-    prepareExit: () => navigation.prepareExit(), retire: () => { reads.retire(); navigation.dispose(); } }), [navigation, disabled, reads]);
+  useImperativeHandle(ref, () => ({ navigate,
+    prepareExit: () => { cancelFindFocus(); return navigation.prepareExit(); }, retire: () => { cancelFindFocus(); reads.retire(); navigation.dispose(); } }), [navigation, disabled, reads]);
   const openTranslation = (target: import("./TranslationWorkbench").EditorTarget, locale: string, suggestedText?: string) =>
     navigation.navigate({ kind: "translation", target, locale, ...(suggestedText === undefined ? {} : { suggestedText }) });
   const openAiTranslation = (target: import("./TranslationWorkbench").EditorTarget, locale: string, suggestedText?: string) =>

@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Open the existing content search from the fixed Find content entry, preserving
+  the working language, query, selection and local edits through the original
+  navigation guards. Opening search does not submit it or change the current entry.
+
 - Show the current workspace, working target language and retained range in the
   fixed header. Keep interface language separate, preserve removed-language and
   uncertain work, and show saved releases using their actual artifact languages.

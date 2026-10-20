@@ -844,6 +844,7 @@ workbench: {
     entrySelectionScope_one: "条目：{{name}}；保留选择：{{count}} 条",
     entrySelectionScope_other: "条目：{{name}}；保留选择：{{count}} 条",
   },
+  findContent: "查找内容", findNeedsTarget: "请先添加项目目标语言，再查找内容。",
   findAndRange: "查找与范围操作", aboutSaving: "保存说明",
   aboutWorkspace: "工作区说明", rangeActions: "范围操作（已选 {{count}} 条）",
   retiredDraftTitle: "上一个项目的本地工作",
