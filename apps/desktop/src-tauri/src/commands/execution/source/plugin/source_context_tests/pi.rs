@@ -1,4 +1,7 @@
 //! Installed source facts reach an actual Pi process through captured requests.
+#[path = "pi/webvtt.rs"]
+mod webvtt;
+
 use super::*;
 use std::{
     io::{Read, Write},
@@ -64,13 +67,43 @@ impl DerefMut for Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let directory = EvidenceDirectory::new();
-        let root = directory.path();
-        let (package, approval) = selected_package(
+        let mut fixture = Self::from_package(
             "TSUMUGI_TEST_SMAPI_PACKAGE",
             "TSUMUGI_TEST_SMAPI_DIGEST",
             "stardew-smapi",
         );
+        fixture.manifest = format!(
+            "{{\"UniqueID\":\"Example.PiContext\",\"Description\":\"雪\",\"Name\":\"{NAME}\",\"Version\":\"1.0.0\",\"EntryDll\":\"Context.dll\"}}"
+        );
+        std::fs::create_dir_all(fixture.source_directory.join("i18n")).unwrap();
+        std::fs::write(
+            fixture.source_directory.join("manifest.json"),
+            &fixture.manifest,
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.source_directory.join("i18n/default.json"),
+            serde_json::to_vec(&json!({"greeting":SOURCE,"neighbor":NEIGHBOR})).unwrap(),
+        )
+        .unwrap();
+        fixture.adopt_current_source();
+        fixture
+    }
+    fn for_webvtt(raw: &str) -> Self {
+        let fixture = Self::from_package(
+            "TSUMUGI_TEST_WEBVTT_PACKAGE",
+            "TSUMUGI_TEST_WEBVTT_DIGEST",
+            "webvtt",
+        );
+        std::fs::create_dir_all(&fixture.source_directory).unwrap();
+        std::fs::write(fixture.source_directory.join("source.vtt"), raw).unwrap();
+        fixture.adopt_current_source();
+        fixture
+    }
+    fn from_package(package_env: &str, digest_env: &str, plugin: &str) -> Self {
+        let directory = EvidenceDirectory::new();
+        let root = directory.path();
+        let (package, approval) = selected_package(package_env, digest_env, plugin);
         let runtime = approved_runtime();
         let runtime_approval = RuntimeApproval {
             environment: runtime.descriptor().clone().into(),
@@ -118,9 +151,7 @@ impl Fixture {
                 environment_digest,
             },
             source_directory,
-            manifest: format!(
-                "{{\"UniqueID\":\"Example.PiContext\",\"Description\":\"雪\",\"Name\":\"{NAME}\",\"Version\":\"1.0.0\",\"EntryDll\":\"Context.dll\"}}"
-            ),
+            manifest: String::new(),
         }));
         let project = call(
             &fixture.window,
@@ -132,26 +163,17 @@ impl Fixture {
         .unwrap();
         fixture.context = json!({"sessionToken":project["sessionToken"],
             "projectId":project["metadata"]["projectId"]});
-        std::fs::create_dir_all(fixture.source_directory.join("i18n")).unwrap();
-        std::fs::write(
-            fixture.source_directory.join("manifest.json"),
-            &fixture.manifest,
-        )
-        .unwrap();
-        std::fs::write(
-            fixture.source_directory.join("i18n/default.json"),
-            serde_json::to_vec(&json!({"greeting":SOURCE,"neighbor":NEIGHBOR})).unwrap(),
-        )
-        .unwrap();
-        let (attempt, result, preview) = fixture.checked_source();
+        fixture
+    }
+    fn adopt_current_source(&self) {
+        let (attempt, result, preview) = self.checked_source();
         adopt(
-            &fixture.window,
-            &fixture.context,
+            &self.window,
+            &self.context,
             &attempt,
             &result,
             preview["confirmation"].clone(),
         );
-        fixture
     }
     fn ipc(&self, command: &str, fields: Value) -> Result<Value, Value> {
         call(&self.window, command, scoped(&self.context, fields))
@@ -596,10 +618,16 @@ fn assert_private_basis_absent(http: &Http, plan: &Value, page: &Value) {
     assert!(!http.raw.contains("manifest.json"));
     assert!(!http.raw.contains("i18n/default.json"));
     assert!(!http.raw.contains("utf8-byte"));
+    // A local fact ID can also be a legitimate shared kind, such as "time".
+    // Check the metadata field rather than banning its value in user content.
+    if let Some(facts) = http.shared()["sourceContext"]["facts"].as_array() {
+        for fact in facts {
+            assert!(fact.get("id").is_none(), "local fact ID field leaked");
+        }
+    }
     for entry in page["entries"].as_array().unwrap() {
         if entry["kind"] == "block" {
             for fact in entry["value"]["facts"]["facts"].as_array().unwrap() {
-                assert!(!http.raw.contains(fact["id"].as_str().unwrap()));
                 for source in fact["origin"]["sources"].as_array().unwrap() {
                     assert!(!http.raw.contains(source["artifactId"].as_str().unwrap()));
                 }
