@@ -116,6 +116,10 @@ within this same undistributed batch.
   schema 57; keep earlier development directories and create a new project to
   reimport sources, as they are preserved and refused without migration or reset.
 
+- Confirm uncertain plugin reference queries from their exact original saved input,
+  across Project, Attempt and Application scopes. Checking does not activate a
+  component or renew permission; explicit retries keep the same original request.
+
 - Confirm uncertain translation match previews from their original saved projection
   and independent check evidence. Recovery does not rerun extraction or checks;
   explicit retries retain the same prepared preview and newer input.

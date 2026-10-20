@@ -562,6 +562,7 @@ connections: {
   }
 },
 toolQuery: {
+  startUnknown: "尚未确认查询是否启动。核对已存启动时，将保留原输入和许可。",
   scopes: { project: "组件存活范围：当前项目", attempt: "组件存活范围：本次任务尝试", application: "组件存活范围：当前应用共享" },
   applicationTitle: "应用共享实例",
   applicationHelp: "此实例可以跨项目持续运行，并在停止前将运行状态及此前提供的输入保留在内存中。每次新查询仍需独立的项目授权。停止共享实例会中断它当前的查询，并保留已保存结果。",

@@ -227,8 +227,14 @@ fn real_native_application_tool_ipc_keeps_host_approval_lifetime_and_project_gra
     });
     eprintln!("native-tool-ipc: first independently consented project call");
     let first_start = consent(&first_context, &first_preflight, true);
+    let original_read = scoped(&first_context,json!({"attemptId":first_preflight["attemptId"],"inputDigest":first_preflight["inputDigest"],"operation":"plugin-tool-query"}));
+    assert_eq!(call(&window,"read_plugin_execution_start",original_read.clone()).unwrap(),Value::Null);
     let first_attempt = call(&window, "start_plugin_tool", first_start.clone()).unwrap();
     let first_result = result(&window, &first_context, &first_attempt);
+    let original_proof=call(&window,"read_plugin_execution_start",original_read.clone()).unwrap();
+    assert_eq!(original_proof["projectId"],first_context["projectId"]);
+    assert_eq!(original_proof["attemptId"],first_attempt);
+    assert_eq!(original_proof["inputDigest"],first_preflight["inputDigest"]);
     let channel = first_result["plugin"]["channel"].clone();
     assert_eq!(channel["instanceId"], basis["instanceId"]);
     assert_eq!(
@@ -356,6 +362,12 @@ fn real_native_application_tool_ipc_keeps_host_approval_lifetime_and_project_gra
 
     let reopened = call(&window, "open_project", json!({"locator":first_path})).unwrap();
     let reopened_context = json!({"sessionToken":reopened["sessionToken"],"projectId":reopened["metadata"]["projectId"]});
+    assert!(call(&window,"read_plugin_execution_start",original_read.clone()).is_err());
+    let historical_read=scoped(&original_read,reopened_context.clone());
+    assert_eq!(call(&window,"read_plugin_execution_start",historical_read).unwrap(),original_proof);
+    state.sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    assert_eq!(call(&window,"read_application_plugin_instance",json!({"basis":basis})).unwrap()["state"],"stopped");
+
     assert_eq!(
         result(&window, &reopened_context, &first_attempt),
         first_result

@@ -340,7 +340,8 @@
           "translation-extract",
           "translation-semantic-check",
           "locale-build",
-          "artifact-semantic-check"
+          "artifact-semantic-check",
+          "plugin-tool-query"
         ],
         "type": "string"
       },

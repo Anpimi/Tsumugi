@@ -1620,7 +1620,7 @@ return errors === 0;
 export const validateRequestPluginStartAction = validate109;
 const schema151 = {"$id":"urn:tsumugi:ipc:execution:requests:pluginStartAction","$ref":"urn:tsumugi:ipc:execution:requests#/properties/pluginStartAction"};
 const schema62 = {"additionalProperties":false,"properties":{"attemptId":{"$ref":"#/definitions/ExecutionId"},"inputDigest":{"type":"string"},"operation":{"$ref":"#/definitions/PluginStartOperation"},"projectId":{"$ref":"#/definitions/ExecutionId"},"sessionToken":{"type":"string"}},"required":["sessionToken","projectId","attemptId","inputDigest","operation"],"type":"object"};
-const schema64 = {"enum":["source-import","source-semantic-check","translation-extract","translation-semantic-check","locale-build","artifact-semantic-check"],"type":"string"};
+const schema64 = {"enum":["source-import","source-semantic-check","translation-extract","translation-semantic-check","locale-build","artifact-semantic-check","plugin-tool-query"],"type":"string"};
 
 function validate110(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -1673,7 +1673,7 @@ if(typeof data2 !== "string"){
 validate110.errors = [{instancePath:instancePath+"/operation",schemaPath:"#/definitions/PluginStartOperation/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((((((data2 === "source-import") || (data2 === "source-semantic-check")) || (data2 === "translation-extract")) || (data2 === "translation-semantic-check")) || (data2 === "locale-build")) || (data2 === "artifact-semantic-check"))){
+if(!(((((((data2 === "source-import") || (data2 === "source-semantic-check")) || (data2 === "translation-extract")) || (data2 === "translation-semantic-check")) || (data2 === "locale-build")) || (data2 === "artifact-semantic-check")) || (data2 === "plugin-tool-query"))){
 validate110.errors = [{instancePath:instancePath+"/operation",schemaPath:"#/definitions/PluginStartOperation/enum",keyword:"enum",params:{allowedValues: schema64.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }

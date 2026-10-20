@@ -215,6 +215,17 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
             }
         }
     }
+    fn reopen_original_start(
+        window: &tauri::WebviewWindow<tauri::test::MockRuntime>, state: &AppState,
+        path: &std::path::Path, original: &Value, proof: &Value,
+    ) {
+        let opened = call(window, "open_project", json!({"locator":path})).unwrap();
+        assert!(call(window, "read_plugin_execution_start", original.clone()).is_err());
+        let mut request = original.clone(); request["sessionToken"] = opened["sessionToken"].clone();
+        assert_eq!(call(window, "read_plugin_execution_start", request).unwrap(), *proof);
+        state.sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+        close(window, &json!({"sessionToken":opened["sessionToken"]}));
+    }
     fn results(
         window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
         context: &Value,
@@ -520,12 +531,33 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
             assert!(store.execution_input(current_attempt).is_err());
         });
     }
+    let proof_request = json!({"projectId":context["projectId"],"sessionToken":context["sessionToken"],
+        "attemptId":current["attemptId"],"inputDigest":current["inputDigest"],"operation":"plugin-tool-query"});
+    assert_eq!(call(&window,"read_plugin_execution_start",proof_request.clone()).unwrap(),Value::Null);
     let attempt = call(&window, "start_plugin_tool", start.clone()).unwrap();
     assert_eq!(
         call(&window, "start_plugin_tool", start.clone()).unwrap(),
         attempt
     );
     let single = results(&window, &context, &attempt, 1);
+    let proof = call(&window,"read_plugin_execution_start",proof_request.clone()).unwrap();
+    let saved_attempt: ExecutionId = serde_json::from_value(attempt.clone()).unwrap();
+    let expected_project = context["projectId"].clone(); let expected_digest = current["inputDigest"].clone();
+    let expected_proof = state.sessions.with(move |sessions| {
+        let input = sessions.active.as_ref().unwrap().store.execution_input(saved_attempt).unwrap();
+        assert_eq!(input.envelope().plugin.as_ref().unwrap().application_scope.is_some(),application);
+        json!({"projectId":expected_project,"taskId":input.envelope().task_id,"attemptId":saved_attempt,
+            "inputDigest":expected_digest,"operation":"plugin-tool-query"})
+    });
+    assert_eq!(proof,expected_proof);
+    for (field,value) in [("inputDigest",json!("0".repeat(64))),("operation",json!("source-import")),("projectId",json!(ExecutionId::new()))] {
+        let mut wrong = proof_request.clone();wrong[field]=value;
+        assert!(call(&window,"read_plugin_execution_start",wrong).is_err());
+    }
+    state.sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing=true; });
+    assert_eq!(call(&window,"read_plugin_execution_start",proof_request.clone()).unwrap(),proof);
+    state.sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing=false; });
+
     assert_eq!(single[0]["outcome"], "succeeded");
     assert_eq!(single[0]["plugin"]["authorizationId"], start["grantId"]);
     assert_eq!(
@@ -596,6 +628,7 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
         call(&window, "start_plugin_tool", start.clone()).unwrap(),
         attempt
     );
+    assert_eq!(call(&window,"read_plugin_execution_start",proof_request.clone()).unwrap(),proof);
     let mut renewed = start.clone();
     renewed["grantId"] = json!(ExecutionId::new());
     assert!(call(&window, "start_plugin_tool", renewed).is_err());
@@ -901,6 +934,7 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
             );
         });
         close(&window, &second_context);
+        reopen_original_start(&window,&state,&temporary.path().join("project"),&proof_request,&proof);
         return;
     }
     prepare["attemptId"] = json!(ExecutionId::new());
@@ -954,6 +988,7 @@ fn real_scoped_tool_ipc(component_scope: tsumugi_plugin_sdk::ComponentScope) {
         json!({"sessionToken":context["sessionToken"]}),
     )
     .unwrap();
+    reopen_original_start(&window,&state,&temporary.path().join("project"),&proof_request,&proof);
 }
 
 #[cfg(all(

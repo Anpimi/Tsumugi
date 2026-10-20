@@ -844,6 +844,7 @@ pub enum PluginStartOperation {
     TranslationSemanticCheck,
     LocaleBuild,
     ArtifactSemanticCheck,
+    PluginToolQuery,
 }
 impl PluginStartOperation {
     fn operation(&self) -> &'static str {
@@ -854,6 +855,7 @@ impl PluginStartOperation {
             Self::TranslationSemanticCheck => tsumugi_core::execution::TRANSLATION_CHECK_OPERATION,
             Self::LocaleBuild => tsumugi_core::content::BUILD_OPERATION,
             Self::ArtifactSemanticCheck => tsumugi_core::execution::ARTIFACT_CHECK_OPERATION,
+            Self::PluginToolQuery => tools::OPERATION,
         }
     }
 }

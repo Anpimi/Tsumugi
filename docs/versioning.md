@@ -2,9 +2,11 @@
 
 The combined development candidate retains current-only project schema 61,
 Member3, WorkPlan3 and SDK/Process3. It includes the fixed Pi MCP query and
-pinned resizable-panel dependency together; their existing Unreleased entries
-remain separate user changes. The application and SDK remain in the same
-undistributed alpha batch with no additional package version bump. The
+pinned resizable-panel dependency together with exact original reference-tool
+start recovery. The additive experimental start-operation enum requires
+regenerated execution contracts without another project-format change.
+Their existing Unreleased entries remain separate user changes. The application
+and SDK remain in the same undistributed alpha batch with no additional bump. The
 assessments below describe each change at its introduction baseline.
 
 An ordinary Pi member may use one explicitly captured MCP terminology query.

@@ -559,6 +559,7 @@ connections: {
   }
 },
 toolQuery: {
+  startUnknown: "The query start is not confirmed. Keep its original input and permission while checking the saved start.",
   scopes: { project: "Component lifetime: this project", attempt: "Component lifetime: this task attempt", application: "Component lifetime: shared by this application" },
   applicationTitle: "Shared application instance",
   applicationHelp: "This instance can keep running across projects and retain runtime state and previously supplied input in memory until it stops. Each new query still needs its own project authorization. Stopping the shared instance interrupts its current queries and keeps saved results.",

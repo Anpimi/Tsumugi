@@ -260,6 +260,7 @@ interface WorkbenchCommandPayloads {
   "resource.start-tool": ResourceToolCaptureCommandPayload;
   "resource.stop-tool-instance": ResourceToolCaptureCommandPayload;
   "resource.discard-tool": ResourceToolCaptureCommandPayload;
+  "resource.check-tool-start": ResourceToolPendingCommandPayload;
   "resource.retry-tool": ResourceToolPendingCommandPayload;
   "resource.cancel-tool": ExecutionCancellationCommandPayload;
   "resource.retry-tool-cancellation": ExecutionCancellationRetryCommandPayload;
@@ -605,7 +606,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"ai-translation-target", "ai.open-translation" | "ai.rewrite-translation" | "ai.open-review">
   | ResourceCommand<"resource-tool-preparation", "resource.prepare-tool">
   | ResourceCommand<"resource-tool-capture", "resource.start-tool" | "resource.stop-tool-instance" | "resource.discard-tool">
-  | ResourceCommand<"resource-tool-pending", "resource.retry-tool">
+  | ResourceCommand<"resource-tool-pending", "resource.check-tool-start" | "resource.retry-tool">
   | ResourceCommand<"resource-term", "resource.save-term">
   | ResourceCommand<"resource-fact", "resource.save-fact" | "resource.check-fact" | "resource.retry-fact" | "resource.discard-fact">
   | ResourceCommand<"resource-context", "resource.save-context" | "resource.capture-context">

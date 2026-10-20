@@ -13,7 +13,8 @@ export type PluginStartOperation =
   | "translation-extract"
   | "translation-semantic-check"
   | "locale-build"
-  | "artifact-semantic-check";
+  | "artifact-semantic-check"
+  | "plugin-tool-query";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
 export type UnsignedDecimal = string;
