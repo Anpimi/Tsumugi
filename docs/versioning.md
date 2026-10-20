@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Ordinary plugin request serialization borrows the captured payload directly,
+avoiding a temporary deep JSON copy. Translation checks retain their complete
+expansion before the same bounded encoder. Exact wire bytes, SDK checks, result
+and history validation, input limits and permission owners remain unchanged.
+This changes no public API, SDK, protocol, persistent format, dependency or
+version source. It stays in the same undistributed application `0.2.0-alpha.1` /
+SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and no additional bump.
+
 The workspace follows the system color-scheme preference using shared light
 and dark semantic tokens. Legacy forms, dialogs and output surfaces use the
 same roles, with no theme state, preference store, command or draft-owner change.

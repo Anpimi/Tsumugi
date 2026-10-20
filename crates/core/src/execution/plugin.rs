@@ -174,12 +174,13 @@ impl FixedInput {
         }
         let declaration = &binding.capability.declaration;
         let item = self.item(item_id)?;
-        let payload = if envelope.operation == TRANSLATION_CHECK_OPERATION {
-            translation_validation::expand_translation_check_payload(&item.payload)?
+        let limit = declaration.limits.max_input_bytes as usize;
+        let bytes = if envelope.operation == TRANSLATION_CHECK_OPERATION {
+            let payload = translation_validation::expand_translation_check_payload(&item.payload)?;
+            codec::encode(&payload, limit)?
         } else {
-            item.payload.clone()
+            codec::encode(&item.payload, limit)?
         };
-        let bytes = codec::encode(&payload, declaration.limits.max_input_bytes as usize)?;
         let input = sdk::EncodedPayload::capture(
             declaration.input_schema.clone(),
             String::from_utf8(bytes)

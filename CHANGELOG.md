@@ -10,6 +10,9 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Reduce temporary allocations when encoding captured plugin requests, while
+  keeping exact request bytes, input limits and complete result validation.
+
 - Follow the system appearance with coordinated light and dark colors for the
   workspace, forms, dialogs, execution output and feedback. Keep existing drafts,
   permissions and recovery actions while appearance changes.

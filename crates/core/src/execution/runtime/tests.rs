@@ -1232,6 +1232,131 @@ fn plugin_input(store: &ProjectStore, binding: PluginExecutionBinding) -> FixedI
 }
 
 #[test]
+fn plugin_request_preserves_payload_bytes_context_and_exact_input_limit() {
+    let (_temp, store, _runtime, _calls) = setup();
+    let expected = concat!(
+        r#"{"nested":{"escape":"\r\n\u0001","values":[null,true,-7,42,1.5]},"text":"世界 👩🏽‍💻 cafe"#,
+        "\u{301}",
+        r#"\n\"{playerName}\"\\route\t"}"#,
+    );
+    assert!(expected.len() > expected.chars().count());
+    let mut binding = plugin_binding("b");
+    binding.capability.declaration.limits.max_input_bytes = expected.len() as u32;
+    let mut envelope = plugin_input(&store, binding.clone()).envelope().clone();
+    envelope.items[0].payload = json!({
+        "nested": { "escape": "\r\n\u{1}", "values": [null, true, -7, 42, 1.5] },
+        "text": "世界 👩🏽‍💻 cafe\u{301}\n\"{playerName}\"\\route\t",
+    });
+    envelope.items[0].scope.id = "captured-scope".into();
+    envelope.items[0].scope.locale = Some("zh-CN".into());
+    envelope.settings = json!({ "mode": "fixed", "text": "中文" });
+    let fixed = FixedInput::capture(envelope).unwrap();
+    let item = fixed.envelope().items[0].item_id;
+    let dispatch = ExecutionId::new();
+    let selected = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: selected.plugin.clone(),
+        component_id: selected.component_id.clone(),
+        contribution_id: selected.contribution_id.clone(),
+        package_digest: selected.package_digest.clone(),
+        instance_id: "fixture-instance".into(),
+        activation_generation: 1,
+    };
+    let request = fixed.plugin_request(item, dispatch, &channel).unwrap();
+    assert_eq!(request.input.utf8.as_bytes(), expected.as_bytes());
+    assert_eq!(request.input.sha256, sdk::payload_digest(expected));
+    assert_eq!(request.context.input_digest, request.input.sha256);
+    assert_eq!(
+        request.input.schema,
+        binding.capability.declaration.input_schema
+    );
+    assert_eq!(request.provider, channel);
+    assert_eq!(request.capability, binding.capability.declaration.contract);
+    assert_eq!(request.profile, binding.profile);
+    assert_eq!(
+        request.context.project_id,
+        fixed.envelope().project_id.to_string()
+    );
+    assert_eq!(
+        request.context.scope_id,
+        fixed.envelope().project_id.to_string()
+    );
+    assert_eq!(
+        request.context.operation_id,
+        fixed.envelope().task_id.to_string()
+    );
+    assert_eq!(
+        request.context.attempt_id,
+        fixed.envelope().attempt_id.to_string()
+    );
+    assert_eq!(request.context.item_id, item.to_string());
+    assert_eq!(request.context.dispatch_id, dispatch.to_string());
+    assert_eq!(
+        request.context.scope_digest,
+        sdk::payload_digest(r#"[{"kind":"fixture","id":"captured-scope","locale":"zh-CN"},[]]"#,)
+    );
+    assert_eq!(
+        request.context.configuration_digest,
+        sdk::payload_digest(r#"{"mode":"fixed","text":"中文"}"#,)
+    );
+    assert_eq!(
+        request.context.environment_digest,
+        binding.environment.digest().unwrap()
+    );
+    request.validate().unwrap();
+
+    let mut foreign_channel = channel.clone();
+    foreign_channel.package_digest = "f".repeat(64);
+    let error = fixed
+        .plugin_request(item, dispatch, &foreign_channel)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ResultMismatch);
+    assert_eq!(error.stage, "plugin-provider");
+
+    let mut bounded = fixed.envelope().clone();
+    bounded
+        .plugin
+        .as_mut()
+        .unwrap()
+        .capability
+        .declaration
+        .limits
+        .max_input_bytes -= 1;
+    let bounded = FixedInput::capture(bounded).unwrap();
+    let error = bounded
+        .plugin_request(item, dispatch, &channel)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::LimitExceeded);
+    assert_eq!(error.stage, "limit-exceeded");
+}
+
+#[test]
+fn plugin_request_translation_check_rejects_unexpanded_ordinary_payload() {
+    let (_temp, store, _runtime, _calls) = setup();
+    let binding = plugin_binding("b");
+    let mut envelope = plugin_input(&store, binding.clone()).envelope().clone();
+    envelope.operation = TRANSLATION_CHECK_OPERATION.into();
+    let fixed = FixedInput::capture(envelope).unwrap();
+    let selected = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: selected.plugin.clone(),
+        component_id: selected.component_id.clone(),
+        contribution_id: selected.contribution_id.clone(),
+        package_digest: selected.package_digest.clone(),
+        instance_id: "fixture-instance".into(),
+        activation_generation: 1,
+    };
+    let error = fixed
+        .plugin_request(
+            fixed.envelope().items[0].item_id,
+            ExecutionId::new(),
+            &channel,
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::OutputInvalid);
+}
+
+#[test]
 fn generation_receipt_budget_keeps_payload_and_complete_frame_limits_distinct() {
     let (_temp, store, _runtime, _calls) = setup();
     let mut binding = plugin_binding("b");
