@@ -459,7 +459,7 @@ fn bounded_2000_source_eight_qa_setup_profiles_real_stages() {
 fn full_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
     let _trace = TraceRegistration::new();
     let started = Instant::now();
-    let (directory, mut store, rows) = support::source_fixture_with_scope(2000, &["zh-CN"]);
+    let (_directory, mut store, rows) = support::source_fixture_with_scope(2000, &["zh-CN"]);
     let mut runtime = prepare_runtime(&store, rows[0].unit_id.unwrap(), "zh-CN");
     for (index, row) in rows.iter().enumerate() {
         let unit = row.unit_id.unwrap();
@@ -476,7 +476,49 @@ fn full_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
             );
         }
     }
-    let db = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    assert_full_2000_qa_scope(store, &rows, Some(runtime));
+}
+
+#[test]
+#[ignore = "requires an explicitly prepared copy of a complete synthetic QA project"]
+fn existing_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
+    let _trace = TraceRegistration::new();
+    // Point this at a disposable copy, never the preserved fixture. Opening
+    // uses the normal project lock and validates all stored original evidence.
+    let directory = std::env::var_os("TSUMUGI_TEST_REVIEW_SCOPE_PROJECT")
+        .expect("set TSUMUGI_TEST_REVIEW_SCOPE_PROJECT to a prepared synthetic project copy");
+    let (store, _) = measured("open-existing-2000", || {
+        ProjectStore::open(std::path::PathBuf::from(directory)).unwrap()
+    });
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let mut rows = Vec::with_capacity(2000);
+    let mut after = 0;
+    loop {
+        let page = store.source_content(snapshot, after, 100).unwrap();
+        assert_eq!(page.total, 2000);
+        rows.extend(page.rows);
+        match page.next_ordinal {
+            Some(next) => {
+                assert!(next > after);
+                after = next;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(rows.len(), 2000);
+    let identities: std::collections::BTreeSet<_> =
+        rows.iter().map(|row| row.unit_id.unwrap()).collect();
+    assert_eq!(identities.len(), 2000);
+    assert_full_2000_qa_scope(store, &rows, None);
+}
+
+fn assert_full_2000_qa_scope(
+    store: ProjectStore,
+    rows: &[tsumugi_core::content::ContentRow],
+    runtime: Option<tsumugi_core::execution::ExecutionRuntime>,
+) {
+    let directory = store.directory().to_path_buf();
+    let db = Connection::open(directory.join("project.sqlite3")).unwrap();
     let checks: i64 = db
         .query_row(
             "SELECT COUNT(*) FROM review_checks WHERE evidence_json IS NOT NULL",
@@ -610,7 +652,7 @@ fn full_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
         );
     });
     let (reopened, _) = measured("reopen-2000", || {
-        ProjectStore::open(&directory.path().join("project")).unwrap()
+        ProjectStore::open(&directory).unwrap()
     });
     let profile = REOPEN_PROFILE.with(|profile| profile.borrow_mut().take().unwrap());
     assert_eq!(
