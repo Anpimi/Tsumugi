@@ -38,3 +38,8 @@ export function panePointer(element: HTMLElement, type: string, x: number, y = 0
   Object.defineProperties(event, { pointerId: { value: pointer }, isPrimary: { value: true } });
   fireEvent(element, event);
 }
+
+/** Product geometry notifications commit on the next animation frame. */
+export async function paintContentPanes() {
+  await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+}

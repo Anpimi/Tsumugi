@@ -10,6 +10,26 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Refresh the content editor with source-first entry summaries, readable source
+  and translation text, quieter reference panes and a fixed save bar. Keep the
+  existing resizable panes, explicit saves and recovery of uncertain actions.
+  Keep find/range actions and explanations available in disclosures, and switch
+  to the existing single-pane mode for larger text. Shared light surfaces,
+  controls and focus indicators use a consistent accent.
+
+- Make extension installation review, declared permissions, installed records and
+  original-action recovery easier to scan. Installed package details now show
+  each capability's declared permissions without changing execution consent.
+  Bring failed operations and their original-request recovery into view.
+
+- Avoid reconstructing every complete execution input a second time when opening
+  a project. Validate the same application associations within the original read
+  snapshot, preserving complete integrity checks and ordinary reconciliation.
+
+- Present build readiness, blocking requirements and saved releases in a clearer
+  delivery workspace. Keep original export recovery and access to older releases
+  when a new build is blocked, and report approved exceptions accurately.
+
 - Reuse an already qualified source projection while preparing and saving QA.
   Recheck the complete stored source and checker frames, original provenance,
   current proof and complete snapshot mappings on every read.

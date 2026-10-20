@@ -156,7 +156,7 @@ export function WorkProtectionControl({ context, session, target, locale, select
     return () => removals.forEach(remove => remove());
   });
   if (!open) return null;
-  return <section ref={section} tabIndex={-1} aria-label={t("protection.title")}>
+  return <section className="work-protection" ref={section} tabIndex={-1} aria-label={t("protection.title")}>
     <p role="status">{query.isPending || query.isFetching ? t("protection.loading") : query.error
       ? t("protection.unavailable") : t(query.data?.protected ? "protection.protected" : "protection.unprotected")}</p>
     {query.error ? <p role="alert">{t("protection.readFailed")} <button type="button" className="text-button"

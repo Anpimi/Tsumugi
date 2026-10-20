@@ -1,5 +1,43 @@
 # Application versioning and changelog maintenance
 
+The Extensions manager presents installation review, declared package and
+capability permissions, installed records and original-action recovery in
+separate, readable regions. Installed details now expose the capability-level
+permissions already present in the saved manifest. Failed operations bring
+their recovery region into view, including when reopening a retained request.
+Repository trust, package
+approval, installation/enabling, runtime and Native Host identity approval, and
+per-execution consent retain their original owners and remain independent.
+No Core, IPC, SDK, persistent format, dependency or version-source change is
+introduced. This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch with bilingual Unreleased entries and no additional bump.
+
+Normal project open now validates application execution associations against the
+complete input already restored by the ledger in the same read-only snapshot.
+Only small pending row identities are retained; all original frame, authority,
+history and coverage checks remain required. Ordinary reconciliation retains its
+complete input scan. This changes no Core API, protocol, persistent format,
+dependency or version source. It remains in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch with bilingual Unreleased entries and
+no additional bump.
+
+The delivery workspace separates current build readiness from immutable saved
+releases and their export results, while preserving the existing release owner,
+command gates and uncertain-action recovery. The ready summary now reports the
+approved exception count rather than the blocker count. These presentation and
+summary fixes change no Core, IPC, SDK, persisted format or dependency contract.
+They remain in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch with bilingual Unreleased entries and no additional bump.
+
+The production content editor adopts neutral surfaces and an indigo accent,
+readable natural-language text, source-first entry summaries and a fixed save
+bar. The existing resizable panes, draft/session owners, permission checks and
+save reconciliation retain their behavior. Shared light tokens and controls are
+updated; dark production surfaces remain outside this increment. No Core, IPC,
+SDK, persisted format, dependency or version-source change is introduced. This
+stays in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with bilingual Unreleased entries and no additional bump.
+
 Source snapshot reads now reuse the existing single qualified source proof's
 immutable frames and projection. Every reuse rechecks stored bytes, associations,
 original provenance and the current proof; full snapshot mapping, bundle and

@@ -56,6 +56,8 @@ function toolbar() { return screen.getByRole("group", { name: "Selected content 
 async function open() {
   const result = render(<Harness project={project} />);
   await userEvent.click(screen.getByRole("button", { name: "Translations" }));
+  await userEvent.click(screen.getByText("Find and range actions", { exact: true }));
+  await userEvent.click(screen.getByText("Range actions (0 selected)", { exact: true }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Select all matching entries across pages" })).toBeEnabled());
   return result;
 }

@@ -7,6 +7,12 @@ import "./ContentPaneLayout.css";
 type Mode = "wide" | "compact" | "narrow";
 type Pane = "list" | "editor";
 type Gesture = { group: GroupImperativeHandle; element: HTMLDivElement; layout: Layout; pointer: number; mode: Mode; cancelled: boolean };
+type Measurements = {
+  size?: { width: number; height: number };
+  detailSize?: { width: number; height: number };
+  fontSize?: number;
+  closedReferenceHeight?: number;
+};
 const gutter = 24;
 
 /** Group layouts use percentages of panel space, excluding the separator. */
@@ -60,11 +66,17 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
   const editorPane = useRef<HTMLDivElement>(null), referencePane = useRef<HTMLDivElement>(null), paneButtons = useRef<HTMLDivElement>(null);
   const listSeparator = useRef<HTMLDivElement>(null), outer = useRef<GroupImperativeHandle>(null), inner = useRef<GroupImperativeHandle>(null);
   const alive = useRef(false), focusRequested = useRef(false), gesture = useRef<Gesture | null>(null);
+  const fontMetric = useRef<HTMLSpanElement>(null);
+  const [fontSize, setFontSize] = useState(14);
   const measured = useRef({ width: 0, height: 0 });
   const [size, setSize] = useState(measured.current);
   const [detailSize, setDetailSize] = useState({ width: 0, height: 0 }), [closedReferenceHeight, setClosedReferenceHeight] = useState(0);
   const [gestureCancelled, setGestureCancelled] = useState(false);
-  const mode: Mode = size.width >= 1100 ? "wide" : size.width > 0 && size.width < 660 ? "narrow" : "compact";
+  const pendingMeasurements = useRef<Measurements>({});
+  const measurementFrame = useRef<{ window: Window; id: number } | null>(null);
+  const pendingRollback = useRef<Gesture | null>(null);
+  const effectiveWidth = size.width * 14 / fontSize;
+  const mode: Mode = effectiveWidth >= 1100 ? "wide" : effectiveWidth > 0 && effectiveWidth < 660 ? "narrow" : "compact";
   const pane = hasEditor && (composing || intent.pane === "editor") ? "editor" : "list";
   const editorVisible = mode !== "narrow" || pane === "editor", listVisible = mode !== "narrow" || pane === "list";
   const previouslyVisible = useRef(editorVisible), seenReveal = useRef(intent.revealVersion);
@@ -89,9 +101,39 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
       setGestureCancelled(true);
     }
   }, []);
+  const queueMeasurements = useCallback((next: Measurements) => {
+    const win = columns.current?.ownerDocument.defaultView;
+    if (!win || !alive.current) return;
+    Object.assign(pendingMeasurements.current, next);
+    if (measurementFrame.current) return;
+    const frame = { window: win, id: 0 };
+    measurementFrame.current = frame;
+    frame.id = win.requestAnimationFrame(() => {
+      if (measurementFrame.current !== frame) return;
+      measurementFrame.current = null;
+      const { size: nextSize, detailSize: nextDetail, fontSize: nextFont, closedReferenceHeight: nextClosed } = pendingMeasurements.current;
+      const rollback = pendingRollback.current;
+      pendingMeasurements.current = {}; pendingRollback.current = null;
+      if (!alive.current) return;
+      // RO callbacks mark cancellation immediately, but never restore layout
+      // or publish state while the browser is delivering resize observations.
+      if (rollback && gesture.current === rollback) cancelGesture();
+      if (nextSize && (nextSize.width !== measured.current.width || nextSize.height !== measured.current.height)) {
+        measured.current = nextSize; setSize(nextSize);
+      }
+      if (nextDetail) setDetailSize(before => before.width === nextDetail.width && before.height === nextDetail.height ? before : nextDetail);
+      if (nextFont !== undefined) setFontSize(before => before === nextFont ? before : nextFont);
+      if (nextClosed !== undefined) setClosedReferenceHeight(nextClosed);
+    });
+  }, [cancelGesture]);
   useLayoutEffect(() => {
     alive.current = true;
-    return () => { alive.current = false; gesture.current = null; };
+    return () => {
+      alive.current = false; gesture.current = null;
+      const frame = measurementFrame.current;
+      if (frame) frame.window.cancelAnimationFrame(frame.id);
+      measurementFrame.current = null; pendingMeasurements.current = {}; pendingRollback.current = null;
+    };
   }, []);
   useLayoutEffect(() => {
     const element = columns.current, nested = referenceGroup.current;
@@ -102,22 +144,52 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
     };
     const rect = element.getBoundingClientRect(); measure(rect.width, rect.height);
     const observer = new ResizeObserver(entries => {
+      const next: Measurements = {};
+      const font = entries.find(value => value.target === fontMetric.current)?.contentRect.width;
+      if (font && font > 0) {
+        next.fontSize = font;
+        if (font !== fontSize && gesture.current) { gesture.current.cancelled = true; pendingRollback.current = gesture.current; }
+      }
       const entry = entries.find(value => value.target === element);
-      if (entry) measure(entry.contentRect.width, entry.contentRect.height);
+      if (entry) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          // Keep the latest positive observation even if it returns to the
+          // committed size before the queued frame has run.
+          next.size = { width, height };
+          if ((width !== measured.current.width || height !== measured.current.height) && gesture.current) {
+            gesture.current.cancelled = true; pendingRollback.current = gesture.current;
+          }
+        }
+      }
       const inner = entries.find(value => value.target === nested)?.contentRect;
-      if (inner && inner.width > 0 && inner.height > 0) setDetailSize(before => before.width === inner.width && before.height === inner.height ? before : { width: inner.width, height: inner.height });
+      if (inner && inner.width > 0 && inner.height > 0) next.detailSize = { width: inner.width, height: inner.height };
+      if (next.size || next.detailSize || next.fontSize !== undefined) queueMeasurements(next);
     });
     observer.observe(element); observer.observe(nested);
+    if (fontMetric.current) observer.observe(fontMetric.current);
     return () => observer.disconnect();
-  }, [cancelGesture]);
+  }, [cancelGesture, queueMeasurements, fontSize]);
   useLayoutEffect(() => { cancelGesture(); }, [mode, active, composing, referencesOpen, cancelGesture]);
   useLayoutEffect(() => {
-    const element = referencePane.current?.querySelector<HTMLElement>(".editor-references");
+    const element = referencePane.current?.querySelector<HTMLDetailsElement>("details.editor-references");
     if (!element || !hasReferences || referencesOpen) return;
-    const measure = () => { const height = element.getBoundingClientRect().height; if (height > 0) setClosedReferenceHeight(height); };
-    measure(); const observer = new ResizeObserver(measure); observer.observe(element);
-    return () => observer.disconnect();
-  }, [hasReferences, referencesOpen]);
+    let observing = true;
+    const measure = () => { if (element.open) return; const height = element.getBoundingClientRect().height; if (height > 0) setClosedReferenceHeight(height); };
+    measure();
+    const observer = new ResizeObserver(() => {
+      // Native details opens before its asynchronous toggle event updates
+      // referencesOpen. Expanded content is never a collapsed-size preference.
+      if (!observing || element.open) return;
+      const height = element.getBoundingClientRect().height;
+      if (height > 0) queueMeasurements({ closedReferenceHeight: height });
+    });
+    observer.observe(element);
+    return () => {
+      observing = false; observer.disconnect();
+      delete pendingMeasurements.current.closedReferenceHeight;
+    };
+  }, [hasReferences, referencesOpen, queueMeasurements]);
   useLayoutEffect(() => {
     const available = availableSize(columns.current, true);
     if (available <= 0) return;
@@ -188,6 +260,24 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
       || (mode !== "narrow" && !!focused && paneButtons.current?.contains(focused));
     if (focusRequested.current || hiddenFocus || revealFocus) { focusRequested.current = false; focusVisible(); }
   }, [active, editorVisible, listVisible, mode, hasEditor, intent.revealVersion]);
+  useLayoutEffect(() => {
+    const win = columns.current?.ownerDocument.defaultView;
+    if (!win || !active || !editorVisible || composing) return;
+    // Mode and panel bounds can settle after the entry's original focus. Keep
+    // that focused field in its local scroll area without moving the toolbar,
+    // stealing focus, or changing the textarea's selection/undo state.
+    const frame = win.requestAnimationFrame(() => {
+      const field = editorFocus.current;
+      if (!alive.current || !field || field.ownerDocument.activeElement !== field) return;
+      const scroll = field.closest<HTMLElement>(".translation-editor-content");
+      if (!scroll) return;
+      const viewport = scroll.getBoundingClientRect(), input = field.getBoundingClientRect();
+      if (viewport.height <= 0) return;
+      if (input.top < viewport.top || input.height > viewport.height) scroll.scrollTop += input.top - viewport.top;
+      else if (input.bottom > viewport.bottom) scroll.scrollTop += input.bottom - viewport.bottom;
+    });
+    return () => win.cancelAnimationFrame(frame);
+  }, [active, editorVisible, composing, mode, size.width, size.height, detailSize.width, detailSize.height, closedReferenceHeight, referencesOpen, editorFocus]);
   useImperativeHandle(ref, () => ({
     editorVisible: () => active && editorVisible,
     focusVisible,
@@ -210,6 +300,7 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
     else (mode === "compact" ? setCompactReferences : setNarrowReferences)(pixels);
   }
   return <div className="content-pane-layout" data-mode={mode}>
+    <span ref={fontMetric} className="content-pane-font-metric" aria-hidden="true" />
     <div className="content-pane-modes" ref={paneButtons} hidden={mode !== "narrow"} role="group" aria-label={t("contentPaneLayout.views")}>
       <button type="button" className="secondary-button" disabled={composing} aria-pressed={pane === "list"} aria-controls={`${id}-list`} onClick={() => choosePane("list")}>{t("contentPaneLayout.list")}</button>
       <button type="button" className="secondary-button" disabled={composing || !hasEditor} aria-pressed={pane === "editor"} aria-controls={`${id}-editor`} onClick={() => choosePane("editor")}>{t("contentPaneLayout.editor")}</button>
@@ -221,20 +312,20 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
         }
       }}
       onLayoutChanged={(layout, meta) => changed("list", layout, meta)}>
-      <Panel id={`${id}-list`} elementRef={listPane} tabIndex={-1} className="content-pane-list" hidden={!listVisible}
+      <Panel id={`${id}-list`} elementRef={listPane} tabIndex={-1} className="content-pane-list" style={{ overflow: "hidden" }} hidden={!listVisible}
         minSize={mode === "narrow" ? listVisible ? "100%" : 0 : 200} maxSize={mode === "narrow" ? listVisible ? "100%" : 0 : 400}
         defaultSize={preferredList} groupResizeBehavior="preserve-pixel-size">{list}</Panel>
       <Separator elementRef={listSeparator} className="content-pane-separator" hidden={mode === "narrow"} disabled={disabled || mode === "narrow"} disableDoubleClick
         aria-label={t("contentPaneLayout.resizeList")}/>
-      <Panel id={`${id}-detail`} elementRef={detail} hidden={!editorVisible} className="translation-detail-panel"
+      <Panel id={`${id}-detail`} elementRef={detail} hidden={!editorVisible} className="translation-detail-panel" style={{ overflow: "hidden" }}
         minSize={mode === "narrow" ? editorVisible ? "100%" : 0 : referenceSide ? 360 + 200 + gutter : 360}
         maxSize={mode === "narrow" && !editorVisible ? 0 : "100%"}>
         <Group elementRef={referenceGroup} groupRef={inner} className="translation-detail" orientation={referenceSide ? "horizontal" : "vertical"} disabled={disabled || !hasReferences || !referencesOpen}
           data-reference-side={referenceSide} data-reference-open={hasReferences && referencesOpen} onLayoutChanged={(layout, meta) => changed("references", layout, meta)}>
-          <Panel id={`${id}-editor`} elementRef={editorPane} tabIndex={-1} className="content-pane-editor" minSize={referencesOpen && hasReferences ? editorMinimum : 0}>{editor}</Panel>
+          <Panel id={`${id}-editor`} elementRef={editorPane} tabIndex={-1} className="content-pane-editor" style={{ overflow: "hidden" }} minSize={referencesOpen && hasReferences ? editorMinimum : 0}>{editor}</Panel>
           <Separator className="content-pane-separator" hidden={!hasReferences || !referencesOpen} disabled={disabled || !hasReferences || !referencesOpen} disableDoubleClick
             aria-label={t(referenceSide ? "contentPaneLayout.resizeReferenceWidth" : "contentPaneLayout.resizeReferenceHeight")}/>
-          <Panel id={`${id}-references`} elementRef={referencePane} className="content-pane-references" hidden={!hasReferences} groupResizeBehavior="preserve-pixel-size"
+          <Panel id={`${id}-references`} elementRef={referencePane} className="content-pane-references" style={{ overflow: "hidden" }} hidden={!hasReferences} groupResizeBehavior="preserve-pixel-size"
             defaultSize={preferredReference} minSize={!hasReferences ? 0 : referencesOpen ? referenceMinimum : closedReferenceHeight}
             maxSize={!hasReferences ? 0 : referencesOpen ? referenceMaximum : closedReferenceHeight}>{references}</Panel>
         </Group>

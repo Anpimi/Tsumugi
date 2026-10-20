@@ -1,9 +1,9 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { PluginManager } from "./PluginManager";
 import { ApplicationReadProvider } from "./ApplicationReadProvider";
-import { validateResponseInventory } from "./generated/plugins.validators";
+import { validateResponseInventory, validateResponsePackage } from "./generated/plugins.validators";
 import type { PluginInventoryView } from "./pluginCommands";
 import { i18n } from "./i18n";
 import inventory from "../test/fixtures/pluginInventory.contract.json";
@@ -72,10 +72,13 @@ it("retains an unknown original request across panel close and confirms that sam
   await user.click(await screen.findByRole("checkbox", { name: /I trust this exact/ }));
   await user.click(screen.getByRole("button", { name: "Approve and install" }));
   expect(await screen.findByRole("button", { name: "Retry original operation" })).toBeEnabled();
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
   expect(screen.getByRole("button", { name: "Choose plugin folder" })).toBeDisabled();
   expect(onBusy).toHaveBeenLastCalledWith(true);
   await user.click(screen.getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("button", { name: "Extensions" }));
+  await screen.findByRole("button", { name: "Retry original operation" });
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
   await user.click(await screen.findByRole("button", { name: "Retry original operation" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Enable" })).toBeEnabled());
   const calls = invoke.mock.calls.filter(([command]) => command === "install_plugin_package");
@@ -138,4 +141,30 @@ it("preserves the last observation and blocks mutations after a failed refresh",
   expect(screen.getByText(candidate.manifest.plugin.id)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Enable" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Choose plugin folder" })).toBeDisabled();
+});
+
+it.each([["en-US", "Package permissions"], ["zh-CN", "包级权限"]])("shows package and capability permission origins in installed details in %s", async (locale, packageLabel) => {
+  await i18n.changeLanguage(locale);
+  const program = "synthetic-helper-木桶";
+  const details: unknown = { enabled: false, packageDigest: candidate.packageDigest,
+    manifest: { ...candidate.manifest, permissions: [...candidate.manifest.permissions, { kind: "process", program }] } };
+  if (!validateResponsePackage(details)) throw new Error("Invalid installed permission fixture");
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "read_plugin_inventory") return installed;
+    if (command === "read_plugin_package") return details;
+    throw new Error(command);
+  });
+  const user = userEvent.setup();
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
+  await user.click(screen.getByRole("button", { name: i18n.t("plugins.open") }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("plugins.details") }));
+  const inspected = await screen.findByRole("region", { name: i18n.t("plugins.details") });
+  const packagePermissions = within(inspected).getByRole("group", { name: packageLabel });
+  const capabilityPermissions = within(inspected).getByRole("group", { name: i18n.t("plugins.capability", { name: "query" }) });
+  expect(within(packagePermissions).getByText(program)).toBeVisible();
+  expect(within(capabilityPermissions).getByText(i18n.t("plugins.permissions.captured-input"))).toBeVisible();
+  expect(within(capabilityPermissions).queryByText(program)).not.toBeInTheDocument();
+  expect(invoke.mock.calls.find(([command]) => command === "read_plugin_package")?.[1].request)
+    .toEqual({ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest });
+  expect(invoke.mock.calls.every(([command]) => command === "read_plugin_inventory" || command === "read_plugin_package")).toBe(true);
 });

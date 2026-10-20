@@ -134,15 +134,15 @@ export function WorkbenchNavigation({ area, onNavigate, disabled, hasProject }: 
 }
 
 /** Panel visibility never owns or discards business drafts. */
-export function WorkbenchPanel({ open, title, description, onBack, backDisabled = false, className = "", children }: {
-  open: boolean; title: string; description: string; onBack: () => void; backDisabled?: boolean; className?: string; children: ReactNode;
+export function WorkbenchPanel({ open, title, description, onBack, backDisabled = false, className = "", descriptionDisclosure = false, children }: {
+  open: boolean; title: string; description: string; onBack: () => void; backDisabled?: boolean; className?: string; descriptionDisclosure?: boolean; children: ReactNode;
 }) {
   const { t } = useTranslation();
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (open) heading.current?.focus(); }, [open]);
   return <section hidden={!open} className={`workbench-panel ${className}`} aria-label={title}>
     <header className="workbench-heading">
-      <div><h1 ref={heading} tabIndex={-1}>{title}</h1><p>{description}</p></div>
+      <div><h1 ref={heading} tabIndex={-1}>{title}</h1>{descriptionDisclosure ? <details className="workbench-help"><summary>{t("workbench.aboutWorkspace")}</summary><p>{description}</p></details> : <p>{description}</p>}</div>
       <button type="button" className="text-button" onClick={onBack} disabled={backDisabled}>{t("workbench.backOverview")}</button>
     </header>
     {children}

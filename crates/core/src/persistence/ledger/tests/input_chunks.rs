@@ -11,6 +11,51 @@ fn large_input(store: &ProjectStore) -> FixedInput {
 }
 
 #[test]
+fn open_control_stream_requires_each_restored_attempt_exactly_once() {
+    let _schema = TestSchema::enable();
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = store(&temp.path().join("project"));
+    install_targets(&store);
+    let first = large_input(&store);
+    let second = fixture_input(&store, false);
+    let other = fixture_input(&store, false);
+    store.enqueue_execution(&first).unwrap();
+    store.enqueue_execution(&second).unwrap();
+    let c = store.execution_connection().unwrap();
+    let snapshot = c.unchecked_transaction().unwrap();
+    let first = load_input(&snapshot, first.envelope().attempt_id).unwrap();
+    let second = load_input(&snapshot, second.envelope().attempt_id).unwrap();
+
+    let mut missing = super::super::super::application::prepare_open(&snapshot).unwrap();
+    missing.validate_input(&first).unwrap();
+    assert_eq!(
+        super::super::super::application::validate_after_open(&snapshot, missing)
+            .unwrap_err()
+            .stage,
+        "work-plan-execution-coverage"
+    );
+
+    let mut duplicate = super::super::super::application::prepare_open(&snapshot).unwrap();
+    duplicate.validate_input(&first).unwrap();
+    assert_eq!(
+        duplicate.validate_input(&first).unwrap_err().stage,
+        "work-plan-execution-coverage"
+    );
+
+    let mut foreign = super::super::super::application::prepare_open(&snapshot).unwrap();
+    assert_eq!(
+        foreign.validate_input(&other).unwrap_err().stage,
+        "work-plan-execution-coverage"
+    );
+
+    let mut complete = super::super::super::application::prepare_open(&snapshot).unwrap();
+    complete.validate_input(&second).unwrap();
+    complete.validate_input(&first).unwrap();
+    super::super::super::application::validate_after_open(&snapshot, complete).unwrap();
+    snapshot.rollback().unwrap();
+}
+
+#[test]
 fn continuation_receipt_chunks_and_attempt_share_one_transaction_and_reopen_exactly() {
     let _schema = TestSchema::enable();
     let temp = tempfile::tempdir().unwrap();

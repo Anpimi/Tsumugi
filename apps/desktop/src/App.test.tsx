@@ -930,6 +930,7 @@ describe("project lifecycle workbench", () => {
     await user.click(await screen.findByRole("button", { name: "first" }));
     const editor = await editableDraft();
     await user.type(editor, "A");
+    await user.click(screen.getByText("Find and range actions", { exact: true }));
     await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "retained range");
     let finish!: () => void;
     fixture.setSave(async (_request, commit) => { await new Promise<void>(resolve => { finish = resolve; }); return commit(); });

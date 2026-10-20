@@ -1220,6 +1220,60 @@ fn multi_unit_tool_reservations_are_atomic_and_root_cancel_reaches_queued_childr
 }
 
 #[test]
+fn reopen_and_reconcile_reject_changed_root_execution_associations_without_writes() {
+    for (damage, stage) in [
+        ("missing", "work-plan-execution"),
+        ("generation", "work-plan-execution"),
+        ("root", "work-plan-agent-association"),
+    ] {
+        let f = fixture(1);
+        f.store.reconcile_execution().unwrap();
+        let path = f.store.directory().to_owned();
+        drop(f.runtime);
+        let database = path.join("project.sqlite3");
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        let attempt: String = connection
+            .query_row(
+                "SELECT attempt_id FROM application_executions WHERE plan_id=?1 AND kind='model'",
+                [f.plan.plan_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let changed = match damage {
+            "missing" => connection.execute(
+                "DELETE FROM application_executions WHERE attempt_id=?1",
+                [&attempt],
+            ),
+            "generation" => connection.execute(
+                "UPDATE application_executions SET generation=generation+1 WHERE attempt_id=?1",
+                [&attempt],
+            ),
+            "root" => connection.execute(
+                "UPDATE application_executions SET root_task=(SELECT task_id FROM execution_tasks WHERE task_id<>root_task LIMIT 1) WHERE attempt_id=?1",
+                [&attempt],
+            ),
+            _ => unreachable!(),
+        }
+        .unwrap();
+        assert_eq!(changed, 1, "{damage}");
+        drop(connection);
+        let before = std::fs::read(&database).unwrap();
+        let error = f.store.reconcile_execution().unwrap_err();
+        assert_eq!(error.code, ErrorCode::CorruptLedger, "{damage}: {error:?}");
+        assert_eq!(error.stage, stage, "{damage}");
+        assert_eq!(std::fs::read(&database).unwrap(), before, "{damage}");
+        drop(f.store);
+        assert!(matches!(
+            ProjectStore::open(&path),
+            Err(tsumugi_core::PersistenceError::CorruptProject {
+                stage: tsumugi_core::PersistenceStage::Open,
+            })
+        ));
+        assert_eq!(std::fs::read(&database).unwrap(), before, "{damage}");
+    }
+}
+
+#[test]
 fn reopening_preserves_reservations_and_never_recreates_old_tool_authority() {
     let mut f = fixture(2);
     let request = request(&f, vec![f.units[0]]);

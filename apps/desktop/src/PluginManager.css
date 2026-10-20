@@ -1,7 +1,46 @@
-.plugin-manager .plugin-section { padding-block: 16px; border-top: 1px solid var(--border); }
-.plugin-manager .plugin-section h3, .plugin-manager .plugin-section h4 { margin-block: 8px; }
-.plugin-manager .plugin-list { list-style: none; padding: 0; }
-.plugin-manager .plugin-list > li { padding-block: 14px; border-bottom: 1px solid var(--border); }
-.plugin-manager code { overflow-wrap: anywhere; }
-.plugin-manager .plugin-consent { display: flex; gap: 10px; align-items: flex-start; max-width: 70ch; }
-.plugin-manager .plugin-consent input { margin-top: 4px; flex: none; }
+.execution-dialog.plugin-manager { display: flex; flex-direction: column; min-width: 0; padding: 0; overflow: hidden; color: var(--text); background: var(--surface); border-color: var(--border); font-size: 1rem; line-height: 1.5; }
+.plugin-manager .execution-heading { flex-shrink: 0; gap: 16px; padding: 16px 24px; border-color: var(--border); }
+.plugin-manager .execution-heading > div { min-width: 0; }
+.plugin-manager .execution-heading h2 { font-size: 1.428571rem; }
+.plugin-manager .execution-heading p { margin: 6px 0 0; color: var(--muted); font-size: .928571rem; }
+.plugin-manager .execution-heading > button { flex-shrink: 0; }
+.plugin-manager-body { flex: 1; min-width: 0; min-height: 0; padding: 0 24px 24px; overflow: auto; container: plugin-manager / inline-size; }
+.plugin-manager .plugin-boundaries { max-width: 90ch; margin-block: 16px; color: var(--muted); font-size: .928571rem; }
+.plugin-manager .execution-actions { flex-wrap: wrap; gap: 8px 12px; }
+.plugin-manager .plugin-entry-actions { margin-block: 16px 24px; }
+.plugin-manager .plugin-section { min-width: 0; padding-block: 20px; border-top: 1px solid var(--border); }
+.plugin-manager .plugin-section :is(h3, h4, h5) { margin-block: 8px; overflow-wrap: anywhere; }
+.plugin-manager .plugin-section h3 { font-size: 1.142857rem; }
+.plugin-manager .plugin-section h4 { font-size: 1rem; }
+.plugin-manager .plugin-section h5 { font-size: .928571rem; }
+.plugin-manager :is(p, li, dd) { overflow-wrap: anywhere; }
+.plugin-manager :is(code, pre) { overflow-wrap: anywhere; white-space: pre-wrap; font: .857143rem/1.6 var(--font-mono); user-select: text; }
+.plugin-manager .plugin-list { list-style: none; padding: 0; margin: 0; }
+.plugin-manager .plugin-list > li { padding-block: 16px; border-bottom: 1px solid var(--border); }
+.plugin-manager .plugin-list > li:last-child { border-bottom: 0; }
+.plugin-manager .plugin-package-name { margin-top: 0; font-size: 1.142857rem; }
+.plugin-manager .plugin-package-plan > p:not(.plugin-package-name) { color: var(--muted); }
+.plugin-manager .plugin-review-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px 32px; margin-block: 16px; }
+.plugin-manager .plugin-review-layout > * { min-width: 0; }
+.plugin-manager .plugin-permission-review { padding: 16px; border: 1px solid var(--border); background: var(--canvas); }
+.plugin-manager .plugin-permission-review > h4 { margin-top: 0; }
+.plugin-manager .plugin-permission-group { padding-block: 12px; border-top: 1px solid var(--border); }
+.plugin-manager .plugin-permission-group > :last-child { margin-bottom: 0; }
+.plugin-manager .plugin-permission-group ul { padding-inline-start: 20px; }
+.plugin-manager .plugin-permission-group li { margin-block: 8px; }
+.plugin-manager .plugin-consent { display: flex; gap: 10px; align-items: flex-start; max-width: 80ch; margin-block: 16px; }
+.plugin-manager .plugin-consent input { margin-top: .3em; flex: none; accent-color: var(--accent); }
+.plugin-manager .plugin-install-actions { position: sticky; bottom: 0; z-index: 1; margin-bottom: 0; padding-block: 12px; border-top: 1px solid var(--border); background: var(--surface); }
+.plugin-manager .plugin-feedback { padding: 12px 16px; margin-block: 16px; border-inline-start: 3px solid var(--accent); background: var(--selected); }
+.plugin-manager .plugin-feedback > p:first-child { margin-top: 0; }
+.plugin-manager .plugin-feedback > :last-child { margin-bottom: 0; }
+.plugin-manager .plugin-cleanup-review { padding: 16px; border: 1px solid var(--input-border); }
+.plugin-manager details > summary { padding-block: 6px; color: var(--accent); cursor: pointer; }
+.plugin-manager :is(input, summary, h3[tabindex], .plugin-feedback):focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+@container plugin-manager (min-width: 64rem) {
+  .plugin-manager .plugin-review-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+}
+@media (max-width: 700px) {
+  .plugin-manager .execution-heading { padding: 12px 16px; }
+  .plugin-manager-body { padding-inline: 16px; }
+}

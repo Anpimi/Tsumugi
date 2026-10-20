@@ -26,7 +26,7 @@ import { McpSharingPanel } from "./McpSharingPanel";
 import type { ReviewSummaryPage } from "./reviewCommands";
 import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
 import { useWorkspaceView } from "./WorkbenchFrame";
-import { controlContentPaneGeometry, panePointer, pointerCaptureFor } from "./testSupport/contentPaneGeometry";
+import { controlContentPaneGeometry, paintContentPanes, panePointer, pointerCaptureFor } from "./testSupport/contentPaneGeometry";
 
 function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => void }) {
   const commands = useWorkbenchCommands();
@@ -178,6 +178,11 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+async function revealFindActions(user: ReturnType<typeof userEvent.setup>) {
+  const summary = screen.getByText("Find and range actions", { exact: true });
+  if (!summary.closest("details")?.open) await user.click(summary);
+}
+
 it("keeps the real editor DOM, draft, selection and composition through pane resizing without dispatching commands", async () => {
   seedSelectedTranslation();
   const resize = controlContentPaneGeometry(), user = userEvent.setup();
@@ -187,19 +192,19 @@ it("keeps the real editor DOM, draft, selection and composition through pane res
   const field = await screen.findByRole("textbox", { name: "Your draft" }) as HTMLTextAreaElement;
   await user.type(field, " local B"); await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
   const draft = owner.current(), columns = ui.container.querySelector(".translation-columns")!;
-  resize(columns, 1300); field.setSelectionRange(2, 7);
+  resize(columns, 1300); await paintContentPanes(); field.setSelectionRange(2, 7);
   const before = invoke.mock.calls.length, separator = screen.getByRole("separator", { name: "Resize entry list" });
   pointerCaptureFor(separator); panePointer(separator, "pointerdown", 300); panePointer(separator, "pointermove", 350); panePointer(separator, "pointerup", 350);
-  resize(columns, 900); resize(columns, 600);
+  resize(columns, 900); await paintContentPanes(); resize(columns, 600); await paintContentPanes();
   await user.click(screen.getByRole("button", { name: "Entries" }));
   expect(field).not.toBeVisible();
   await user.click(screen.getByRole("button", { name: "Current entry" }));
   expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field);
   expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(7); expect(owner.current()).toBe(draft);
-  await user.click(screen.getByRole("button", { name: "Entries" })); resize(columns, 1300);
+  await user.click(screen.getByRole("button", { name: "Entries" })); resize(columns, 1300); await paintContentPanes();
   field.focus(); fireEvent.compositionStart(field);
   fireEvent.change(field, { target: { value: "Saved base local B 日本語" } });
-  resize(columns, 500);
+  resize(columns, 500); await paintContentPanes();
   expect(field).toBeVisible(); expect(field).toHaveFocus(); expect(field).toHaveValue("Saved base local B 日本語");
   expect(screen.getByRole("button", { name: "Entries" })).toBeDisabled();
   fireEvent.keyDown(field, { key: "s", ctrlKey: true, isComposing: true });
@@ -221,8 +226,8 @@ it("keeps B and the original save A while layout changes during the accepted sav
   await user.click(screen.getByRole("button", { name: "Save revision" })); await waitFor(() => expect(finish).toBeDefined());
   await user.type(field, " newer B");
   const columns = ui.container.querySelector(".translation-columns")!, request = invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1];
-  resize(columns, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
-  await user.click(screen.getByRole("button", { name: "Current entry" })); resize(columns, 1300);
+  resize(columns, 600); await paintContentPanes(); await user.click(screen.getByRole("button", { name: "Entries" }));
+  await user.click(screen.getByRole("button", { name: "Current entry" })); resize(columns, 1300); await paintContentPanes();
   expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field); expect(field).toHaveValue("Saved base A newer B");
   expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
   await act(async () => finish());
@@ -250,7 +255,7 @@ it.each(["save", "neighbor"])("does not replace a later list choice after save-a
   const user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   const field = await screen.findByRole("textbox", { name: "Your draft" }), columns = ui.container.querySelector(".translation-columns")!;
-  await user.type(field, " saved A"); resize(columns, 600);
+  await user.type(field, " saved A"); resize(columns, 600); await paintContentPanes();
   await waitFor(() => expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Save and next" })); await waitFor(() => expect(finish).toBeDefined());
   await user.click(screen.getByRole("button", { name: "Entries" }));
@@ -279,7 +284,7 @@ it("retains the exact unknown save request while changing panes and only retries
   await user.click(screen.getByRole("button", { name: "Save revision" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Retry the same action" })).toBeEnabled());
   const columns = ui.container.querySelector(".translation-columns")!;
-  resize(columns, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  resize(columns, 600); await paintContentPanes(); await user.click(screen.getByRole("button", { name: "Entries" }));
   await user.click(screen.getByRole("button", { name: "Current entry" }));
   expect(screen.getByRole("textbox", { name: "Your draft" })).toBe(field);
   expect(saves).toBe(1); expect(field).toHaveValue("Saved base uncertain A");
@@ -306,7 +311,7 @@ it("keeps a later list choice when editor A arrives and allows an explicit same-
   const user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   const field = await screen.findByRole("textbox", { name: "Your draft" }), columns = ui.container.querySelector(".translation-columns")!;
-  resize(columns, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  resize(columns, 600); await paintContentPanes(); await user.click(screen.getByRole("button", { name: "Entries" }));
   await user.click(screen.getByRole("button", { name: "second" })); await waitFor(() => expect(finish).toBeDefined());
   await user.click(screen.getByRole("button", { name: "Entries" }));
   await act(async () => finish());
@@ -316,7 +321,7 @@ it("keeps a later list choice when editor A arrives and allows an explicit same-
   await user.click(screen.getByRole("button", { name: "second" }));
   expect(await screen.findByRole("textbox", { name: "Your draft" })).toBe(field);
   expect(field).toBeVisible(); expect(screen.getByRole("heading", { name: "second" })).toBeVisible();
-  const outside = screen.getByRole("button", { name: "Back to overview" }); outside.focus(); resize(columns, 900);
+  const outside = screen.getByRole("button", { name: "Back to overview" }); outside.focus(); resize(columns, 900); await paintContentPanes();
   expect(outside).toHaveFocus();
 });
 
@@ -333,7 +338,7 @@ it("leaves a failed first editor read in the narrow list and reveals a typed tar
   const user = userEvent.setup(), ui = render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" }));
   const first = await screen.findByRole("button", { name: "first" }), columns = ui.container.querySelector(".translation-columns")!;
-  resize(columns, 600); await user.click(first);
+  resize(columns, 600); await paintContentPanes(); await user.click(first);
   await waitFor(() => expect(first).toBeEnabled());
   expect(screen.getByRole("button", { name: "Current entry" })).toBeDisabled();
   expect(screen.queryByRole("textbox", { name: "Your draft" })).not.toBeInTheDocument();
@@ -358,7 +363,7 @@ it("reveals the successfully opened import-preview editor in a narrow layout tha
   await waitFor(() => expect(openEditor).toBeEnabled());
   expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(0);
   await user.click(openEditor); await waitFor(() => expect(finish).toBeDefined());
-  resize(ui.container.querySelector(".translation-columns")!, 600);
+  resize(ui.container.querySelector(".translation-columns")!, 600); await paintContentPanes();
   expect(screen.getByRole("button", { name: "Current entry" })).toBeDisabled();
   await act(async () => finish());
   const field = await screen.findByRole("textbox", { name: "Your draft" });
@@ -380,7 +385,7 @@ it.each([false, true])("keeps the original typed reveal intent across an absent 
   act(() => { expect(ref.current!.openUnit({ unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(205), key: "first", sourceText: "Original" }, "zh-CN")).toBe(true); });
   await waitFor(() => expect(finish).toBeDefined());
   const columns = ui.container.querySelector(".translation-columns")!;
-  resize(columns, 600);
+  resize(columns, 600); await paintContentPanes();
   if (laterList) await user.click(screen.getByRole("button", { name: "Entries" }));
   await act(async () => finish());
   const field = await screen.findByLabelText("Your draft");
@@ -403,7 +408,7 @@ it("returns dirty-switch Stay focus to the visible list without changing the dra
   const user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   const field = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(field, " kept B");
-  resize(ui.container.querySelector(".translation-columns")!, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  resize(ui.container.querySelector(".translation-columns")!, 600); await paintContentPanes(); await user.click(screen.getByRole("button", { name: "Entries" }));
   await user.click(screen.getByRole("button", { name: "second" }));
   const dialog = await screen.findByRole("dialog");
   await user.click(within(dialog).getByRole("button", { name: i18n.t("translation.stay") }));
@@ -428,7 +433,7 @@ it("keeps hidden editor references inactive while preserving the workbench's cur
   await user.click(screen.getByText("Terms, context and history"));
   const auxiliary = ["read_correction_term_basis", "tm_suggestions", "read_source_context"];
   await waitFor(() => { for (const name of auxiliary) expect(invoke.mock.calls.filter(([command]) => command === name)).toHaveLength(1); });
-  resize(ui.container.querySelector(".translation-columns")!, 600); await user.click(screen.getByRole("button", { name: "Entries" }));
+  resize(ui.container.querySelector(".translation-columns")!, 600); await paintContentPanes(); await user.click(screen.getByRole("button", { name: "Entries" }));
   const checks = invoke.mock.calls.filter(([name]) => name === "read_work_protection").length;
   await act(async () => { reads.invalidate(["source", "translation"]); });
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_work_protection").length).toBeGreaterThan(checks));
@@ -444,10 +449,10 @@ it.each(["cancel", "confirm"])("returns protection-release %s focus to the visib
   const resize = controlContentPaneGeometry(), user = userEvent.setup(), ui = render(<TranslationWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   const field = await screen.findByRole("textbox", { name: "Your draft" }), columns = ui.container.querySelector(".translation-columns")!;
-  resize(columns, 600); await user.click(screen.getByRole("button", { name: "Entries" })); resize(columns, 1300);
+  resize(columns, 600); await paintContentPanes(); await user.click(screen.getByRole("button", { name: "Entries" })); resize(columns, 1300); await paintContentPanes();
   const release = await screen.findByRole("button", { name: i18n.t("protection.release") });
   await waitFor(() => expect(release).toBeEnabled()); await user.click(release);
-  const dialog = await screen.findByRole("dialog"); resize(columns, 600);
+  const dialog = await screen.findByRole("dialog"); resize(columns, 600); await paintContentPanes();
   expect(dialog.contains(document.activeElement)).toBe(true);
   await user.click(within(dialog).getByRole("button", { name: i18n.t(action === "cancel" ? "protection.cancel" : "protection.confirmRelease") }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -571,7 +576,7 @@ it("keeps a newer draft when the entire translation consumer unmounts before sav
   const acknowledgedSelection = history.current!.eventId;
   rerender(<TranslationWorkbench project={project} disabled={false} />);
   expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Saved baseAB");
-  expect(await screen.findByText(/Your newer draft is still here/)).toBeInTheDocument();
+  expect(await screen.findByText(i18n.t("translation.savedNewerDraft"))).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Save revision" }));
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(2));
   expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")[1][1].request)
@@ -760,7 +765,7 @@ it("keeps the draft dirty when text changes after submission and returns to the 
   expect(editor).toHaveValue("Saved baseA");
   await act(async () => releaseSave());
   const acknowledgedSelection = history.current!.eventId;
-  expect(await screen.findByText(/Your newer draft is still here/)).toBeInTheDocument();
+  expect(await screen.findByText(i18n.t("translation.savedNewerDraft"))).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Save revision" }));
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(2));
@@ -963,7 +968,7 @@ it("accepts an in-flight save acknowledgement after removal without overwriting 
   rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2" } }} disabled={false} />);
   await act(async () => releaseSave());
   expect(editor).toHaveValue("Saved baseAB");
-  expect(await screen.findByText(/Your newer draft is still here/)).toBeInTheDocument();
+  expect(await screen.findByText(i18n.t("translation.savedNewerDraft"))).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
   const confirmedSelection = history.current!.eventId;
 
@@ -1134,6 +1139,7 @@ it("keeps a confirmed save and allows leaving when the list refresh fails", asyn
   expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
   expect(await ref.current!.allowLeave()).toBe(true);
+  await revealFindActions(user);
   await user.click(screen.getByRole("button", { name: "Find" }));
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
@@ -1273,7 +1279,7 @@ it.each([
   if (newer) {
     expect(editor).toHaveValue("AB");
     expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
-    expect(screen.getByText(/Your newer draft is still here/)).toBeInTheDocument();
+    expect(screen.getByText(i18n.t("translation.savedNewerDraft"))).toBeInTheDocument();
     expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(0);
   } else {
     expect(await screen.findByRole("heading", { name: "second" })).toBeInTheDocument();
@@ -1414,7 +1420,7 @@ it("keeps save-and-next on the original entry when newer input returns to the su
   await waitFor(() => expect(releaseSave).toBeDefined());
   await user.type(editor, "B{Backspace}");
   await act(async () => releaseSave());
-  expect(await screen.findByText(/Your newer draft is still here/)).toBeInTheDocument();
+  expect(await screen.findByText(i18n.t("translation.savedNewerDraft"))).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
   expect(editor).toHaveValue("A");
   expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
@@ -1650,6 +1656,7 @@ it.each([
   await user.click(screen.getByRole("button", { name: "Next page" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
   expect(editor).toHaveValue("Retained input");
+  await revealFindActions(user);
   await user.click(screen.getByRole("button", { name: "Find" }));
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   expect(editor).toHaveValue("Retained input");
@@ -1670,7 +1677,9 @@ it("keeps the editor but disables list navigation when a new search has no match
   await user.click(await screen.findByRole("button", { name: "first" }));
   const editor = await screen.findByRole("textbox", { name: "Your draft" });
   await user.type(editor, "Keep this input");
+  await revealFindActions(user);
   await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "absent");
+  await revealFindActions(user);
   await user.click(screen.getByRole("button", { name: "Find" }));
   await screen.findByText("0 matching entries");
   expect(editor).toHaveValue("Keep this input");
@@ -1777,7 +1786,7 @@ it("keeps text typed after an earlier save and checks the new selection before s
   expect(editor).not.toHaveAttribute("readonly");
   await user.type(editor, "B");
   await act(async () => { complete(history.current); });
-  await screen.findByText(/Your newer draft is still here/);
+  await screen.findByText(i18n.t("translation.savedNewerDraft"));
   expect(editor).toHaveValue("AB");
   let decision!: Promise<boolean>;
   act(() => { decision = ref.current!.allowLeave(); });
@@ -1816,7 +1825,9 @@ it("queries the complete current scope and retains a filtered position on return
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await screen.findByRole("button", { name: "first" });
+  await revealFindActions(user);
   await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "needle");
+  await revealFindActions(user);
   await user.click(screen.getByRole("button", { name: "Find" }));
   await screen.findByRole("button", { name: "later-needle" });
   expect(invoke).toHaveBeenCalledWith("read_review_summary_page", { request: expect.objectContaining({ query: "needle", afterOrdinal: 0, limit: 50, locale: "zh-CN" }) });
@@ -2658,7 +2669,9 @@ it("keeps the fixed list scope and draft through a hidden semantic source change
   expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Saved base hidden B"); expect(owner.current()).toBe(captured);
   expect(screen.getByText("Original", { selector: ".editor-source pre" })).toBeInTheDocument();
   expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null)).toHaveLength(captures);
+  await revealFindActions(user);
   await waitFor(() => expect(screen.getByRole("button", { name: "Find" })).toBeEnabled());
+  await revealFindActions(user);
   await user.click(screen.getByRole("button", { name: "Find" }));
   expect(await screen.findByRole("button", { name: "current entry" })).toBeVisible();
   expect(owner.current()).toBe(captured);
@@ -2841,6 +2854,7 @@ it("rereads the fixed scope when a semantic change follows its seed before obser
   expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Next entry" })).toBeEnabled();
   const retained = owner.current();
+  await revealFindActions(user);
   recapturing = true; await user.click(screen.getByRole("button", { name: "Find" }));
   await act(async () => { releaseCapture(stale); await capture; });
   await waitFor(() => expect(invoke.mock.calls.some(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === stale.scopeId)).toBe(true));
