@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Use consistent success, warning and error colors for content-save, delivery and
+  extension feedback while preserving status text and recovery actions.
+  Keep draft and save actions usable with large text and error feedback.
+
 - Refresh the content editor with source-first entry summaries, readable source
   and translation text, quieter reference panes and a fixed save bar. Keep the
   existing resizable panes, explicit saves and recovery of uncertain actions.

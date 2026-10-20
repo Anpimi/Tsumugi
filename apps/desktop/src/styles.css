@@ -43,6 +43,26 @@
   --hover: #f1f2f6;
   --border: #dadde2;
   --input-border: #8b909a;
+  --feedback-info-text: #36527f;
+  --feedback-info-border: #cdddf7;
+  --feedback-info-surface: #f4f8ff;
+  --feedback-info-symbol: #315fd5;
+  --feedback-info-symbol-surface: #dbe8ff;
+  --feedback-success-text: #306948;
+  --feedback-success-border: #c9e4d3;
+  --feedback-success-surface: #f3fbf5;
+  --feedback-success-symbol: #247346;
+  --feedback-success-symbol-surface: #d9f0df;
+  --feedback-warning-text: #765b25;
+  --feedback-warning-border: #ead6a8;
+  --feedback-warning-surface: #fffbef;
+  --feedback-warning-symbol: #8b681e;
+  --feedback-warning-symbol-surface: #f8e8b9;
+  --feedback-error-text: #86424e;
+  --feedback-error-border: #edc8ce;
+  --feedback-error-surface: #fff7f8;
+  --feedback-error-symbol: #9d4756;
+  --feedback-error-symbol-surface: #f8dce0;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
   color: var(--text);
   background: var(--canvas);
@@ -927,47 +947,47 @@ button:focus-visible {
 }
 
 .feedback-info {
-  color: #36527f;
-  border-color: #cdddf7;
-  background: #f4f8ff;
+  color: var(--feedback-info-text);
+  border-color: var(--feedback-info-border);
+  background: var(--feedback-info-surface);
 }
 
 .feedback-info strong {
-  color: #315fd5;
-  background: #dbe8ff;
+  color: var(--feedback-info-symbol);
+  background: var(--feedback-info-symbol-surface);
 }
 
 .feedback-success {
-  color: #306948;
-  border-color: #c9e4d3;
-  background: #f3fbf5;
+  color: var(--feedback-success-text);
+  border-color: var(--feedback-success-border);
+  background: var(--feedback-success-surface);
 }
 
 .feedback-success strong {
-  color: #247346;
-  background: #d9f0df;
+  color: var(--feedback-success-symbol);
+  background: var(--feedback-success-symbol-surface);
 }
 
 .feedback-warning {
-  color: #765b25;
-  border-color: #ead6a8;
-  background: #fffbef;
+  color: var(--feedback-warning-text);
+  border-color: var(--feedback-warning-border);
+  background: var(--feedback-warning-surface);
 }
 
 .feedback-warning strong {
-  color: #8b681e;
-  background: #f8e8b9;
+  color: var(--feedback-warning-symbol);
+  background: var(--feedback-warning-symbol-surface);
 }
 
 .feedback-error {
-  color: #86424e;
-  border-color: #edc8ce;
-  background: #fff7f8;
+  color: var(--feedback-error-text);
+  border-color: var(--feedback-error-border);
+  background: var(--feedback-error-surface);
 }
 
 .feedback-error strong {
-  color: #9d4756;
-  background: #f8dce0;
+  color: var(--feedback-error-symbol);
+  background: var(--feedback-error-symbol-surface);
 }
 
 .recent-projects {

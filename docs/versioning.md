@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+Content-save, delivery and extension feedback share explicit success, warning
+and error colors. Unknown outcomes remain distinct from confirmed success,
+with existing messages, original requests, consent and recovery actions intact.
+The editor's minimum working area grows with text size to preserve draft and
+save controls when feedback is shown.
+This visual-only change stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; bilingual Unreleased entries are
+updated without another bump or any Core, IPC, format or dependency change.
+
 The Extensions manager presents installation review, declared package and
 capability permissions, installed records and original-action recovery in
 separate, readable regions. Installed details now expose the capability-level

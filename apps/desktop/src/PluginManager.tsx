@@ -304,10 +304,10 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         })}>{t("plugins.choosePack")}</button>
         <button type="button" className="secondary-button" disabled={busy} aria-expanded={repositoriesVisible} aria-controls="plugin-repositories" onClick={() => setRepositoriesVisible(true)}>{t("plugins.repositoryTitle")}</button>
         <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void query.refetch()}>{t("plugins.refresh")}</button></div>
-      {busy || query.isFetching ? <p role="status">{t("plugins.loading")}</p> : null}
-      {query.isError ? <div className="plugin-feedback" role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
-      {saved ? <p className="plugin-feedback" role="status">{t(saved)}</p> : null}
-      {failure ? <div className="plugin-feedback" role="alert" ref={failureFocus} tabIndex={-1}><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown, trustIntent))}</p>
+      {busy || query.isFetching ? <p className="plugin-feedback" data-tone="info" role="status">{t("plugins.loading")}</p> : null}
+      {query.isError ? <div className="plugin-feedback" data-tone={query.data ? "warning" : "error"} role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
+      {saved ? <p className="plugin-feedback" data-tone="success" role="status">{t(saved)}</p> : null}
+      {failure ? <div className="plugin-feedback" data-tone={originalRequired ? "warning" : "error"} role="alert" ref={failureFocus} tabIndex={-1}><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown, trustIntent))}</p>
         <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching || repositoriesQuery.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
         {!originalRequired && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCleanupSelection(null); setCandidate(null); setPack(null); setPackMembers([]); clearRepositoryReview(); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); if (repositoriesVisible) void repositoriesQuery.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
       </div> : null}
@@ -475,7 +475,7 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
             {approved && record.state === "sealed" ? <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={() => void operation(async () => {
               setVerifiedRuntime(null); await pluginCommands.lookupRuntime({ environmentDigest: record.environmentDigest }); if (mounted.current) setVerifiedRuntime(record.environmentDigest);
             })}>{t("plugins.verifyRuntime")}</button> : null}
-            {verifiedRuntime === record.environmentDigest ? <p role="status">{t("plugins.runtimeVerified")}</p> : null}
+            {verifiedRuntime === record.environmentDigest ? <p className="plugin-feedback" data-tone={query.isError || query.isFetching ? "warning" : "success"} role="status">{t("plugins.runtimeVerified")}</p> : null}
           </li>;
         })}</ul>}
         {inventory.runtimeDecisions.map(decision => decision.environment.profile === "node-system-libraries-v1" && !inventory.runtimes.some(record => record.environmentDigest === decision.environmentDigest)
