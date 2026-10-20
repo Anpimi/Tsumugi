@@ -33,6 +33,7 @@ import type { Eligibility } from "./reviewCommands";
 import { StrictMode } from "react";
 import { connectionFixture } from "./testSupport/connectionFixture";
 import type { ProjectMetadataReconcileCommandPayload, WorkbenchCommands } from "./workbenchCommands";
+import type { WorkbenchContextPresentation } from "./WorkbenchFrame";
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
 
@@ -47,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   reads: null as SessionReads | null,
   commands: null as WorkbenchCommands | null,
   drafts: new Map<string, ReturnType<typeof import("./TranslationDraftSession").useTranslationDraftSession>>(),
+  contextCallbacks: new Map<string, (value: WorkbenchContextPresentation) => void>(),
 }));
 
 vi.mock("./workbenchCommands", async importOriginal => {
@@ -70,6 +72,13 @@ vi.mock("./TranslationDraftSession", async importOriginal => {
   }
   return { ...actual, TranslationDraftSession: (props: React.ComponentProps<typeof actual.TranslationDraftSession>) =>
     <actual.TranslationDraftSession {...props}><CaptureDraft sessionToken={props.project.sessionToken} />{props.children}</actual.TranslationDraftSession> };
+});
+vi.mock("./ProjectSessionWorkbench", async importOriginal => {
+  const actual = await importOriginal<typeof import("./ProjectSessionWorkbench")>();
+  return { ...actual, ProjectSessionWorkbench: (props: React.ComponentProps<typeof actual.ProjectSessionWorkbench>) => {
+    if (props.onWorkContext) mocks.contextCallbacks.set(props.project.sessionToken, props.onWorkContext);
+    return <actual.ProjectSessionWorkbench {...props} />;
+  } };
 });
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/path", () => ({ join: mocks.join, sep: mocks.sep }));
@@ -338,6 +347,111 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("projects actual working context independently of UI language and retains a newer draft after an unknown save", async () => {
+    const user = userEvent.setup(), original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => command === "create_project"
+      ? Promise.resolve({ ...projectView(), metadata: { ...metadata(), targetLocales: ["ja", "zh-CN"] } }) : original(command, args));
+    await renderApp(); await createProject(user);
+    const context = () => within(screen.getByRole("group", { name: i18n.t("workbench.context.label") }));
+    expect(context().getByText("Project targets")).toBeVisible();
+    expect(context().getByText(/\(ja\).*\(zh-CN\)/)).toBeVisible();
+    expect(context().getByText("Project scope")).toBeVisible();
+    const fixture = installTranslationEditor();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Target language" }), "zh-CN");
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const editor = await editableDraft();
+    await user.type(editor, "A");
+    expect(context().getByText("Working target")).toBeVisible();
+    expect(context().getByText(/\(zh-CN\)/)).toBeVisible();
+    expect(context().queryByText(/\(ja\)/)).not.toBeInTheDocument();
+    expect(context().getByText("Entry: first")).toBeVisible();
+    let release!: () => void;
+    fixture.setSave(async () => {
+      await new Promise<void>(resolve => { release = resolve; });
+      throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true };
+    });
+    await user.click(screen.getByRole("button", { name: "Save revision" }));
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await user.type(editor, "B");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Language" }), "zh-CN");
+    await act(async () => release());
+    await waitFor(() => expect(mocks.drafts.get("session-1")?.current()?.outcomeUnknown).toBe(true));
+    expect(context().getByText("当前工作语言")).toBeVisible();
+    expect(context().getByText(/（zh-CN）/)).toBeVisible();
+    expect(context().getByText("条目：first")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: i18n.t("translation.draft") })).toHaveValue("AB");
+    expect(mocks.drafts.get("session-1")?.current()?.pending?.request).toEqual(fixture.saves()[0][1].request);
+    expect(fixture.saves()).toHaveLength(1);
+    expect(fixture.saves()[0][1].request).toMatchObject({ text: "A", locale: "zh-CN" });
+  });
+
+  it("keeps a removed working language and original unknown action visible without making it the project target", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const fixture = installTranslationEditor(), original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => command === "set_target_locales"
+      ? Promise.resolve({ ...projectView("Demo", "2"), metadata: { ...metadata("Demo", "2"), targetLocales: ["ja"] }, outcome: "changed", directoryChanged: false })
+      : original(command, args));
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(await editableDraft(), "Original A");
+    fixture.setSave(async () => { throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true }; });
+    await user.click(screen.getByRole("button", { name: "Save revision" }));
+    await screen.findByRole("button", { name: "Retry the same action" });
+    const request = structuredClone(fixture.saves()[0][1].request);
+    // The draft owner checks its original request once after a lost save ACK.
+    const lookups = () => mocks.invoke.mock.calls.filter(([command]) => command === "read_translation_save_action").map(([, args]) => args.request);
+    expect(lookups()).toEqual([request]);
+    const originalLookups = structuredClone(lookups());
+    await user.type(screen.getByRole("textbox", { name: "Your draft" }), " plus B");
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await user.click(screen.getByRole("button", { name: "Edit target languages" }));
+    const targets = screen.getByRole("textbox", { name: "Target locales" });
+    await user.clear(targets); await user.type(targets, "ja");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Target locales" })).not.toBeInTheDocument());
+    const context = () => within(screen.getByRole("group", { name: "Current work context" }));
+    expect(context().getByText("Project targets")).toBeVisible();
+    expect(context().getByText(/\(ja\)/)).toBeVisible();
+    expect(context().queryByText(/\(zh-CN\)/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    expect(context().getByText("Working target")).toBeVisible();
+    expect(context().getByText(/\(zh-CN\) — no longer a project target/)).toBeVisible();
+    expect(context().getByText("Entry: first")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Original A plus B");
+    expect(mocks.drafts.get("session-1")?.current()?.pending?.request).toEqual(request);
+    expect(fixture.saves()).toHaveLength(1);
+    expect(lookups()).toEqual(originalLookups);
+  });
+
+  it("rejects late context from an old session or workspace after a real App project switch", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const publishOld = mocks.contextCallbacks.get("session-1");
+    if (!publishOld) throw new Error("The actual session context callback was not captured");
+    const original = mocks.invoke.getMockImplementation()!;
+    const other = { ...projectView("Other"), sessionToken: "session-2", locator: "C:\\Projects\\other",
+      metadata: { ...metadata("Other"), projectId: fixtureIdentity(900), targetLocales: ["fr"] } };
+    mocks.invoke.mockImplementation((command: string, args) => command === "open_project" ? Promise.resolve(other) : original(command, args));
+    await user.click(screen.getByRole("button", { name: "Open another" }));
+    await user.type(screen.getByRole("textbox", { name: /Project folder/ }), other.locator);
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    await screen.findByRole("heading", { name: "Other" });
+    const late: WorkbenchContextPresentation = { projectId: metadata().projectId, sessionToken: "session-1", metadataRevision: "1",
+      area: "overview", targetKind: "working", locales: ["ja"], scope: { kind: "entry", name: "Old session entry" } };
+    await act(async () => {
+      publishOld(late);
+      const publishCurrent = mocks.contextCallbacks.get("session-2");
+      if (!publishCurrent) throw new Error("The new session context callback was not captured");
+      publishCurrent({ ...late, projectId: other.metadata.projectId, sessionToken: other.sessionToken, area: "translation" });
+      publishCurrent({ ...late, projectId: other.metadata.projectId, sessionToken: other.sessionToken, metadataRevision: "0" });
+    });
+    const context = within(screen.getByRole("group", { name: "Current work context" }));
+    expect(context.getByText("Project overview")).toBeVisible();
+    expect(context.getByText(/\(fr\)/)).toBeVisible();
+    expect(context.getByText("Project scope")).toBeVisible();
+    expect(context.queryByText(/Old session entry|\(ja\)/)).not.toBeInTheDocument();
+  });
+
   it("uses the AI preparation action by default and retains its owner through the manual editor route", async () => {
     installTranslationEditor(); installAiPreparation();
     const user = userEvent.setup(); await renderApp(); await createProject(user);
@@ -1022,6 +1136,8 @@ describe("project lifecycle workbench", () => {
     Object.assign(detail.progress, { succeeded: 1, unknown: 0 });
     Object.assign(detail.recovery.units[0], { actions: ["adopt-result"], resultIds: [...executionFixture.prepare.resultIds], remainingItemIds: [], blockedReason: null });
     const receipt = { ...executionFixture.receipt, projectId };
+    const action = { ...executionFixture.action, projectId, parameters: null };
+    let adoptionReads = 0;
     mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
       if (command === "execution_status") return executionFixture.status;
       if (command === "list_execution_tasks") return [{ ...executionFixture.task, projectId, sequence: "1" }];
@@ -1032,6 +1148,11 @@ describe("project lifecycle workbench", () => {
       if (command === "create_execution_identity") return executionFixture.prepare.actionId;
       if (command === "prepare_execution_adoption") return { ...executionFixture.action, projectId, parameters: null };
       if (command === "adopt_execution") throw new Error("Original application ACK lost");
+      if (command === "read_execution_adoption_action") {
+        expect(args.request).toEqual({ ...executionFixture.prepare, projectId });
+        if (++adoptionReads === 1) throw new Error("Original application lookup ACK lost");
+        return { action, receipt };
+      }
       if (command === "read_execution_receipt") return receipt;
       return original(command, args);
     });
@@ -1047,6 +1168,7 @@ describe("project lifecycle workbench", () => {
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Check recorded outcome" }));
     await screen.findByRole("heading", { name: "Recorded changes" });
+    expect(adoptionReads).toBe(2);
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "prepare_execution_adoption").map(([, payload]) => payload.request))
       .toEqual([{ ...executionFixture.prepare, projectId }]);
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "adopt_execution").map(([, payload]) => payload.request))
@@ -1131,9 +1253,13 @@ describe("project lifecycle workbench", () => {
     expect(screen.getByRole("button", { name: i18n.t("release.build") })).toBeDisabled();
     await user.click(consent);
     const original = mocks.invoke.getMockImplementation()!;
-    let lost = true;
+    let lost = true, startReads = 0;
     mocks.invoke.mockImplementation((command: string, args) => {
       if (command === "start_plugin_build" && lost) { lost = false; return Promise.reject(new Error("Lost build ACK")); }
+      if (command === "read_plugin_execution_start") {
+        if (++startReads === 1) return Promise.reject(new Error("Lost original start lookup ACK"));
+        return Promise.resolve(null);
+      }
       return original(command, args);
     });
     await user.click(screen.getByRole("button", { name: i18n.t("release.build") })); await screen.findByText(i18n.t("releasePlugin.unknown"));
@@ -1144,9 +1270,26 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Back to overview" })); await user.click(screen.getByRole("button", { name: "Close project" }));
     await screen.findByText(i18n.t("releasePlugin.unknown"));
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
-    await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.reconcile") }));
+    await user.click(screen.getByRole("button", { name: i18n.t("execution.checkPluginStart") }));
+    await screen.findByText(i18n.t("execution.pluginStartMissing"));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_plugin_execution_start").map(([, args]) => args.request)).toEqual([
+      { projectId: metadata().projectId, sessionToken: "session-1", attemptId: request.request.attemptId,
+        inputDigest: request.request.inputDigest, operation: "locale-build" },
+      { projectId: metadata().projectId, sessionToken: "session-1", attemptId: request.request.attemptId,
+        inputDigest: request.request.inputDigest, operation: "locale-build" },
+    ]);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_plugin_build").map(([, args]) => args)).toEqual([request]);
+    await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("execution.retryPluginStart") })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    await screen.findByText(i18n.t("releasePlugin.unknown"));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_plugin_build").map(([, args]) => args)).toEqual([request]);
+    expect(startReads).toBe(2);
+    await user.click(screen.getByRole("button", { name: i18n.t("execution.retryPluginStart") }));
     await screen.findByText(i18n.t("release.started", { id: request.request.attemptId }));
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_plugin_build").map(([, args]) => args)).toEqual([request, request]);
+    expect(startReads).toBe(2);
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "prepare_plugin_build")).toHaveLength(1);
     expect(mocks.invoke.mock.calls.find(([command]) => command === "prepare_plugin_build")![1].request).toEqual({
       projectId: metadata().projectId, sessionToken: "session-1", attemptId: fixtureIdentity(701), build: pluginBuildRequest,
@@ -1568,7 +1711,7 @@ describe("project lifecycle workbench", () => {
     const finding = { issueId: "b".repeat(64), rule: "plugin:synthetic-advisory", code: "same-code", detail: "App advisory evidence", severity: "warning", waivable: false };
     const requirement = { key: pluginRuleKeyFixture("synthetic-advisory"), inputDigest: "c".repeat(64), scopeDigest: "d".repeat(64), targets: [target.unitId], mandatory: false, waivable: false, notApplicable: null };
     target.currentCheck = reviewCheckFixture(target, fixtureIdentity(1100), "completed", { runId: fixtureIdentity(1101), rules: [{ rule: finding.rule, key: requirement.key, mandatory: false, status: "findings", reason: null, findings: [finding] }] });
-    let saved: ReviewFindingDecision | null = null;
+    let saved: ReviewFindingDecision | null = null, findingReads = 0;
     mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
       if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(target)]);
       if (command === "read_review_target") return target;
@@ -1581,7 +1724,11 @@ describe("project lifecycle workbench", () => {
         saved = { purpose: "qa", aiOrigin: null, decisionId: fixtureIdentity(1103), request: structuredClone({ ...args.request.finding, expectedDecisionId: args.request.finding.expectedDecisionId ?? null }), basisEvidence: target.basisEvidence, requirement, finding, createdAt: "2026-10-16T00:00:00Z" };
         throw new Error("Lost response after commit");
       }
-      if (command === "read_review_finding_action") return saved;
+      if (command === "read_review_finding_action") {
+        expect(args.request).toEqual({ projectId: metadata().projectId, sessionToken: "session-1", actionId: fixtureIdentity(1102) });
+        if (++findingReads === 1) throw new Error("Original finding lookup ACK lost");
+        return saved;
+      }
       return original(command, args);
     });
     await user.click(screen.getByRole("button", { name: "Review and QA" }));
@@ -1599,10 +1746,13 @@ describe("project lifecycle workbench", () => {
     await act(async () => { await nativeClose({ preventDefault: vi.fn() }); });
     expect(mocks.close).not.toHaveBeenCalled();
     expect(mocks.invoke.mock.calls.some(([name]) => name === "close_project")).toBe(false);
-    await user.click(screen.getByRole("button", { name: "Retry the same action" }));
+    await user.click(screen.getByRole("button", { name: i18n.t("review.checkSaved") }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Original finding action awaiting confirmation" })).toBeNull());
     expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Reason A plus B");
     expect(mocks.invoke.mock.calls.filter(([name]) => name === "write_review_finding")).toHaveLength(1);
+    expect(findingReads).toBe(2);
+    expect(mocks.invoke.mock.calls.find(([name]) => name === "write_review_finding")?.[1].request.finding)
+      .toMatchObject({ actionId: fixtureIdentity(1102), actor: "Reviewer A", reason: "Reason A" });
   });
 
   it("keeps resource edits during ordinary navigation and confirms real project close", async () => {
@@ -1667,7 +1817,7 @@ describe("project lifecycle workbench", () => {
     expect(fixture.saves()).toHaveLength(1);
 
     await act(async () => releaseFirst());
-    expect(await screen.findByText(/Your newer draft is still here/)).toBeInTheDocument();
+    expect(await screen.findByText(i18n.t("translation.savedNewerDraft"))).toBeInTheDocument();
     expect(editor).toHaveValue("AB");
     await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
     const references = screen.getByText("Terms, context and history");
@@ -2308,6 +2458,7 @@ describe("project lifecycle workbench", () => {
     mocks.reads = null;
     mocks.commands = null;
     mocks.drafts.clear();
+    mocks.contextCallbacks.clear();
     await i18n.changeLanguage("en-US");
     mocks.join.mockResolvedValue("C:\\Projects\\demo");
     mocks.sep.mockReturnValue("\\");

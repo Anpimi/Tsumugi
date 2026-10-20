@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Show the current workspace, working target language and retained range in the
+  fixed header. Keep interface language separate, preserve removed-language and
+  uncertain work, and show saved releases using their actual artifact languages.
+
 - Let Pause, Stop and Take over cancel earlier eligibility and review-work reads
   in the same project session. Keep control receipts durable and discard cancelled
   projections completely, with normal reads available for retry.

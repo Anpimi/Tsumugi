@@ -1,7 +1,7 @@
 import { ProjectSessionWorkbench, type OverviewSourcePresentation, type ProjectSessionHandle } from "./ProjectSessionWorkbench";
 import type { SessionExitPermit } from "./sessionNavigation";
 import { CommandFailureDetails } from "./CommandFailure";
-import { WorkbenchNavigation, WorkspaceViewProvider, WorkspaceViewMemory, type WorkspaceArea } from "./WorkbenchFrame";
+import { WorkbenchContext, WorkbenchNavigation, WorkspaceViewProvider, WorkspaceViewMemory, type WorkspaceArea, type WorkbenchContextPresentation } from "./WorkbenchFrame";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PluginManager, type PluginManagerHandle } from "./PluginManager";
 import { ApplicationReadProvider } from "./ApplicationReadProvider";
@@ -337,6 +337,7 @@ function AppWorkbench() {
   const locale: Locale = isLocale(resolvedLanguage) ? resolvedLanguage : "en-US";
   const [project, setProject] = useState<ProjectView | null>(null);
   const [area, setArea] = useState<WorkspaceArea>("overview");
+  const [workContext, setWorkContext] = useState<WorkbenchContextPresentation | null>(null);
   const [sourcePresentation, setSourcePresentation] = useState<OverviewSourcePresentation | null>(null);
   const sourceState = project && sourcePresentation && sourcePresentation.projectId === project.metadata.projectId
     && sourcePresentation.sessionToken === project.sessionToken ? sourcePresentation.state : "loading";
@@ -1327,6 +1328,13 @@ function AppWorkbench() {
     setSourcePresentation(previous => previous?.projectId === value.projectId && previous.sessionToken === value.sessionToken
       && previous.state === value.state ? previous : value);
   }, []);
+  const workContextChanged = useCallback((value: WorkbenchContextPresentation) => {
+    const current = currentProject.current;
+    if (!metadataOwnerAlive.current || currentRetiredSession.current || !current
+      || current.metadata.projectId !== value.projectId || currentSession.current !== value.sessionToken
+      || current.metadata.metadataRevision !== value.metadataRevision || currentExitPresentation.current.area !== value.area) return;
+    setWorkContext(previous => JSON.stringify(previous) === JSON.stringify(value) ? previous : value);
+  }, []);
   const activateArea = useCallback((next: WorkspaceArea) => {
     if (currentExitPresentation.current.area !== next) setSourcePresentation(null);
     setArea(next);
@@ -1343,6 +1351,9 @@ function AppWorkbench() {
   const sessionViewOwner = retiredSession
     ? { area: retiredSession.area, memory: retiredSession.memory, activate() {}, deactivate() {} }
     : viewOwner;
+  const currentWorkContext = project && !retiredSession && workContext?.projectId === project.metadata.projectId
+    && workContext.sessionToken === project.sessionToken && workContext.metadataRevision === project.metadata.metadataRevision
+    && workContext.area === area ? workContext : null;
   const renderFeedback = feedback ? (
     <div className={`feedback feedback-${feedback.tone}`} aria-live="polite" role={feedback.tone === "error" ? "alert" : "status"}>
       <div className="feedback-copy">
@@ -1403,9 +1414,12 @@ function AppWorkbench() {
 
       <section className="workspace" aria-label={t("nav.workspace")}>
         <header className="topbar">
-          <div className="workspace-caption">
-            <Icon name="folder-open" size={16} />
-            <span>{project?.metadata.displayName ?? t("nav.workspace")}</span>
+          <div className="workspace-identity">
+            <div className="workspace-caption">
+              <Icon name="folder-open" size={16} />
+              <span>{project?.metadata.displayName ?? t("nav.workspace")}</span>
+            </div>
+            {project ? <WorkbenchContext area={area} targetLocales={project.metadata.targetLocales} presentation={currentWorkContext} /> : null}
           </div>
            <div className="topbar-actions">
             <PluginManager ref={pluginManager} disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
@@ -1811,7 +1825,7 @@ function AppWorkbench() {
             <ProjectSessionWorkbench key={`${sessionPresentation.metadata.projectId}:${sessionPresentation.sessionToken}`} ref={projectSession}
               project={sessionPresentation} retired={retiredSession !== null} disabled={busy || stopping}
               onActivate={retiredSession ? () => {} : activateArea} onCoordinatingChange={coordinationChanged}
-              onSourceState={sourceStateChanged} onOpenExtensions={() => pluginManager.current?.open()} onOpenConnections={() => connectionManager.current?.open()} />
+              onSourceState={sourceStateChanged} onWorkContext={workContextChanged} onOpenExtensions={() => pluginManager.current?.open()} onOpenConnections={() => connectionManager.current?.open()} />
             {retiredSession?.metadata ? <section className="editor-card">
               <label className="field" htmlFor="retired-metadata-value">
                 <span>{t(retiredSession.metadata.form.kind === "rename" ? "editor.renameLabel" : "editor.targetLabel")}</span>

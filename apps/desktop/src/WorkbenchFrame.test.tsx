@@ -1,11 +1,34 @@
 import { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WorkspaceViewMemory, WorkspaceViewProvider, useWorkbenchState } from "./WorkbenchFrame";
+import { WorkspaceViewMemory, WorkspaceViewProvider, useWorkbenchState, useWorkbenchValue } from "./WorkbenchFrame";
 
 afterEach(cleanup);
 
 describe("project scoped view inputs", () => {
+  it("observes retained context without initializing inputs and releases the previous session subscription", () => {
+    const first = new WorkspaceViewMemory(), second = new WorkspaceViewMemory();
+    const firstWrite = vi.spyOn(first, "write"), secondWrite = vi.spyOn(second, "write");
+    function Context() {
+      const locale = useWorkbenchValue<string>("translation", "targetLocale");
+      const selection = useWorkbenchValue<readonly string[]>("review", "languages");
+      return <output>{locale ?? "No working language"}: {selection?.join(", ") ?? "No selected languages"}</output>;
+    }
+    const tree = (memory: WorkspaceViewMemory) => <WorkspaceViewProvider value={{ area: "translation", memory, activate() {}, deactivate() {} }}><Context /></WorkspaceViewProvider>;
+    const rendered = render(tree(first));
+    expect(screen.getByText("No working language: No selected languages")).toBeInTheDocument();
+    expect(firstWrite).not.toHaveBeenCalled();
+    act(() => { first.write("translation", "targetLocale", "ja"); first.write("review", "languages", ["ja", "zh-CN"]); });
+    expect(screen.getByText("ja: ja, zh-CN")).toBeInTheDocument();
+    rendered.rerender(tree(second));
+    expect(screen.getByText("No working language: No selected languages")).toBeInTheDocument();
+    expect(secondWrite).not.toHaveBeenCalled();
+    act(() => first.write("translation", "targetLocale", "fr"));
+    expect(screen.queryByText(/^fr:/)).not.toBeInTheDocument();
+    act(() => second.write("translation", "targetLocale", "zh-CN"));
+    expect(screen.getByText("zh-CN: No selected languages")).toBeInTheDocument();
+    expect(secondWrite).toHaveBeenCalledTimes(1);
+  });
   it("resets semantic history cursors while their consumers are absent without clearing input or unrelated positions", () => {
     const memory = new WorkspaceViewMemory();
     memory.write("review", "historyCursor", { unitId: "unit", locale: "zh-CN", offset: 20 });

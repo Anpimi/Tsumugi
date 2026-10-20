@@ -1,4 +1,4 @@
-import { useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { matchQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { SessionReadProvider, SessionReadStatus, useSessionQuery, useSessionReads } from "./SessionReadProvider";
@@ -22,7 +22,7 @@ import { AiWorkbench } from "./AiWorkbench";
 import { ArenaWorkbench } from "./ArenaWorkbench";
 import { ExecutionTasks } from "./ExecutionTasks";
 import { TaskDock } from "./TaskDock";
-import { useWorkspaceView, useWorkspaceViewChanges, type WorkspaceArea } from "./WorkbenchFrame";
+import { useWorkspaceView, useWorkspaceViewChanges, useWorkbenchValue, type WorkspaceArea, type WorkbenchContextPresentation, type WorkbenchContextScope } from "./WorkbenchFrame";
 import { executionContext } from "./executionCommands";
 import { isCommandError, type ProjectView } from "./projectCommands";
 import { reviewCommands, type ReviewEditorSnapshot, type ReviewTarget, type ReviewFindingView } from "./reviewCommands";
@@ -32,7 +32,7 @@ import { sourceKeys, sourceReads } from "./sourceQueries";
 import type { ContentScope } from "./sourceCommands";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { SessionNavigation, type AiReviewOrigin, type ReviewHandoffPresentation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination } from "./sessionNavigation";
-import type { ContentSelection } from "./contentSelection";
+import { contentSelectionIds, type ContentSelection } from "./contentSelection";
 import { resourceCommands, type CorrectionTermEvidence } from "./resourceCommands";
 import type { ContextEditorTarget, CorrectionEditorTarget } from "./workbenchCommands";
 import { sourceMaintenanceHookCommands } from "./sourceMaintenanceHookCommands";
@@ -73,6 +73,7 @@ export interface OverviewSourcePresentation {
 }
 interface Props { project: ProjectView; disabled: boolean; onActivate: (area: WorkspaceArea) => void;
   onCoordinatingChange: (busy: boolean) => void; onSourceState?: (value: OverviewSourcePresentation) => void;
+  onWorkContext?: (value: WorkbenchContextPresentation) => void;
   onOpenExtensions?: () => void; onOpenConnections?: () => void; retired?: boolean; ref?: Ref<ProjectSessionHandle> }
 export function ProjectSessionWorkbench(props: Props) {
   return <ProjectSessionOwners project={props.project}><SessionWorkbench {...props} /></ProjectSessionOwners>;
@@ -104,7 +105,7 @@ function OverviewSourceObserver({ project, onSourceState }: Pick<Props, "project
   return null;
 }
 
-function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange, onSourceState, onOpenExtensions, onOpenConnections, retired = false, ref }: Props) {
+function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange, onSourceState, onWorkContext, onOpenExtensions, onOpenConnections, retired = false, ref }: Props) {
   const { t } = useTranslation(), view = useWorkspaceView(), reads = useSessionReads();
   useWorkspaceViewChanges();
   const translation = useTranslationDraftSession(), imports = useTranslationImportSession(), tasks = useExecutionTaskSession();
@@ -112,6 +113,99 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
   const source = useSourceDraftSession(), resources = useResourceDraftSession(), review = useReviewDraftSession();
   const release = useReleaseDraftSession(), ai = useAiPreparation(), arena = useArenaDraftSession();
   const strategy = useStrategyDraftSession();
+  const translationTab = useWorkbenchValue<"edit" | "import">("translation", "tab");
+  const translationLocale = useWorkbenchValue<string>("translation", "targetLocale");
+  const contentSelection = useWorkbenchValue<ContentSelection | null>("translation", "contentSelection");
+  const resourceTab = useWorkbenchValue<string>("resources", "tab");
+  const reviewTab = useWorkbenchValue<string>("review", "tab");
+  const reviewLanguages = useWorkbenchValue<string[]>("review", "languages");
+  const reviewAssessment = useWorkbenchValue<{ projectId: string; sessionToken: string; reviewLocale: string; locales: string[] } | null>("review", "assessment");
+  const comparisonEntry = useWorkbenchValue<{ unitId: string; locale: string; key: string } | null>("arena", "comparisonEntry");
+  const taskId = useWorkbenchValue<string | null>("tasks", "taskId");
+  let contextLocales: readonly string[] = project.metadata.targetLocales;
+  let targetKind: WorkbenchContextPresentation["targetKind"] = "project";
+  let contextScope: WorkbenchContextScope = { kind: "unselected" };
+  switch (view.area) {
+    case "overview": case "source": contextScope = { kind: "project" }; break;
+    case "translation": {
+      const imported = imports.state, draft = translation.draft;
+      const tab = translationTab ?? (imported.attempt || imported.folder || imported.pendingStart || imported.pendingPlugin || imported.uncertain.length ? "import" : "edit");
+      const locale = tab === "import" ? imported.targetLocale : translationLocale ?? draft?.locale ?? imported.targetLocale;
+      contextLocales = locale ? [locale] : []; targetKind = "working";
+      if (tab === "import") {
+        if (imported.fileName) contextScope = { kind: "file", name: imported.fileName };
+      } else {
+        const entry = draft?.locale === locale ? draft.key : null;
+        const selection = contentSelection && contentSelection.projectId === project.metadata.projectId
+          && contentSelection.sessionToken === project.sessionToken && contentSelection.capture.locale === locale ? contentSelection : null;
+        contextScope = selection ? entry !== null ? { kind: "entrySelection", name: entry, count: contentSelectionIds(selection).length }
+          : { kind: "selection", count: contentSelectionIds(selection).length } : entry !== null ? { kind: "entry", name: entry } : { kind: "unselected" };
+      }
+      break;
+    }
+    case "resources": {
+      const value = resources.state;
+      contextLocales = value.locale ? [value.locale] : []; targetKind = "working";
+      if ((resourceTab ?? "terms") === "terms" && value.selectedTerm) contextScope = { kind: "term", name: value.selectedTerm.source };
+      else if (resourceTab === "context" && value.selectedUnit) contextScope = { kind: "entry", name: value.selectedUnit.occurrence.key };
+      break;
+    }
+    case "review": {
+      const value = review.state;
+      targetKind = "working";
+      if (reviewTab === "eligibility") {
+        contextLocales = reviewLanguages ?? project.metadata.targetLocales;
+        const assessed = reviewAssessment && reviewAssessment.projectId === project.metadata.projectId && reviewAssessment.sessionToken === project.sessionToken
+          && reviewAssessment.reviewLocale === value.locale && reviewAssessment.locales.length > 0
+          && reviewAssessment.locales.length === contextLocales.length
+          && reviewAssessment.locales.every((locale, index) => locale === contextLocales[index] && project.metadata.targetLocales.includes(locale));
+        contextScope = { kind: assessed ? "assessment" : "languages", count: contextLocales.length };
+      } else {
+        contextLocales = value.locale ? [value.locale] : [];
+        const chosen = Object.values(value.chosen).filter(target => target.locale === value.locale);
+        if ((reviewTab ?? "review") === "review" && value.selected?.locale === value.locale) contextScope = { kind: "entry", name: value.selected.nativeKey };
+        else if (chosen.length) contextScope = { kind: "selection", count: chosen.length };
+      }
+      break;
+    }
+    case "release": {
+      const value = release;
+      if (value.chosen) {
+        contextLocales = [...new Set(value.chosen.artifacts.map(artifact => artifact.locale))]; targetKind = "release";
+        contextScope = { kind: "release", name: value.chosen.artifacts.map(artifact => artifact.fileName).join(" · ") };
+      } else {
+        contextLocales = value.languages; targetKind = "working";
+        contextScope = { kind: "languages", count: value.languages.length };
+      }
+      break;
+    }
+    case "ai": {
+      contextLocales = ai.locale ? [ai.locale] : []; targetKind = "working";
+      const capture = ai.capture;
+      contextScope = capture ? { kind: "preparation", count: capture.kind === "plan" ? capture.value.scope.length : capture.value.preview.items.length }
+        : ai.selected.length ? { kind: "selection", count: ai.selected.length } : { kind: "unselected" };
+      break;
+    }
+    case "arena": {
+      contextLocales = arena.locale ? [arena.locale] : []; targetKind = "working";
+      if (comparisonEntry && comparisonEntry.unitId === arena.unit && comparisonEntry.locale === arena.locale) contextScope = { kind: "entry", name: comparisonEntry.key };
+      else if (arena.prepared) contextScope = { kind: "preparation", count: arena.prepared.preview.items.length };
+      else if (arena.unit) contextScope = { kind: "selection", count: 1 };
+      else if (arena.selected.length) contextScope = { kind: "selection", count: arena.selected.length };
+      break;
+    }
+    case "tasks": if (taskId) contextScope = { kind: "task" }; break;
+  }
+  const contextPresentation: WorkbenchContextPresentation = { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    metadataRevision: project.metadata.metadataRevision, area: view.area, targetKind, locales: contextLocales, scope: contextScope };
+  const publishedContext = useRef<{ value: string; callback: Props["onWorkContext"] } | null>(null);
+  useEffect(() => {
+    if (retired || reads.retired || !onWorkContext) return;
+    const value = JSON.stringify(contextPresentation);
+    if (publishedContext.current?.value === value && publishedContext.current.callback === onWorkContext) return;
+    publishedContext.current = { value, callback: onWorkContext };
+    onWorkContext(contextPresentation);
+  });
   const mounted = useRef(false), handles = useRef(new Map<WorkspaceArea, SessionConsumer>());
   const waiting = useRef(new Map<WorkspaceArea, ((handle: SessionConsumer | null) => void)[]>());
   const [failure, setFailure] = useState<CommandFailure | null>(null);

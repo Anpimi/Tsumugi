@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Folder, FileInput, Languages, BookOpen, CheckCheck, PackageCheck, Sparkles, Columns3, ListTodo } from "lucide-react";
 import { useSessionReads } from "./SessionReadProvider";
 import type { ChangeScope } from "./sessionReads";
+import { languageName } from "./i18n/languageNames";
 
 export interface AttemptWorkbenchHandle {
   allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>;
@@ -10,6 +11,21 @@ export interface AttemptWorkbenchHandle {
 }
 
 export type WorkspaceArea = "overview" | "source" | "translation" | "resources" | "review" | "release" | "ai" | "arena" | "tasks";
+export type WorkbenchContextScope =
+  | { kind: "project" | "unselected" | "task" }
+  | { kind: "entry" | "term" | "file" | "release"; name: string }
+  | { kind: "selection" | "preparation" | "languages" | "assessment"; count: number }
+  | { kind: "entrySelection"; name: string; count: number };
+/** A scoped presentation of existing owners, never a selection or execution authority. */
+export interface WorkbenchContextPresentation {
+  projectId: string;
+  sessionToken: string;
+  metadataRevision: string;
+  area: WorkspaceArea;
+  targetKind: "project" | "working" | "release";
+  locales: readonly string[];
+  scope: WorkbenchContextScope;
+}
 /** Project-scoped view inputs only. Query results and business drafts keep their existing owners. */
 export class WorkspaceViewMemory {
   private inputs = new Map<string, unknown>();
@@ -52,6 +68,14 @@ export function useWorkspaceView() {
   const view = useContext(WorkspaceViewContext);
   if (!view) throw new Error("Workbenches require a workspace view owner");
   return view;
+}
+
+/** Observe a retained view input without initializing or changing it. */
+export function useWorkbenchValue<T>(area: WorkspaceArea, key: string): T | undefined {
+  const { memory } = useWorkspaceView();
+  const snapshot = useCallback(() => memory.read<T>(area, key), [memory, area, key]);
+  const subscribe = useCallback((notify: () => void) => memory.subscribe(area, key, notify), [memory, area, key]);
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
 /** Semantic cursor changes survive consumer unmount; Query facts remain in SessionReads. */
@@ -113,6 +137,45 @@ const entries = [
   { area: "arena", label: "arena.open", icon: Columns3 },
   { area: "tasks", label: "execution.title", icon: ListTodo },
 ] as const;
+
+const contextScopeLabels = {
+  project: "workbench.context.projectScope", unselected: "workbench.context.unselectedScope",
+  task: "workbench.context.taskScope", entry: "workbench.context.entryScope", term: "workbench.context.termScope",
+  file: "workbench.context.fileScope", release: "workbench.context.releaseScope",
+  selection: "workbench.context.selectionScope", preparation: "workbench.context.preparationScope",
+  languages: "workbench.context.languagesScope", assessment: "workbench.context.assessmentScope",
+  entrySelection: "workbench.context.entrySelectionScope",
+} as const;
+
+export function WorkbenchContext({ area, targetLocales, presentation }: {
+  area: WorkspaceArea; targetLocales: readonly string[]; presentation: WorkbenchContextPresentation | null;
+}) {
+  const { t, i18n } = useTranslation();
+  const targetKind = presentation?.targetKind ?? "project", locales = presentation?.locales ?? targetLocales;
+  const scope = presentation?.scope ?? { kind: area === "overview" || area === "source" ? "project" as const : "unselected" as const };
+  const languageList = new Intl.ListFormat(i18n.resolvedLanguage ?? i18n.language, { style: "short", type: "conjunction" });
+  const targets = locales.length ? languageList.format(locales.map(locale => {
+    const name = t("workbench.context.locale", { name: languageName(locale, i18n.resolvedLanguage ?? i18n.language), locale });
+    return targetKind !== "project" && !targetLocales.includes(locale) ? t("workbench.context.removedLocale", { locale: name }) : name;
+  })) : t("workbench.context.noTarget");
+  let scopeText: string;
+  switch (scope.kind) {
+    case "entry": case "term": case "file": case "release":
+      scopeText = t(contextScopeLabels[scope.kind], { name: scope.name }); break;
+    case "selection": case "preparation": case "languages": case "assessment":
+      scopeText = t(contextScopeLabels[scope.kind], { count: scope.count }); break;
+    case "entrySelection":
+      scopeText = t(contextScopeLabels[scope.kind], { name: scope.name, count: scope.count }); break;
+    default: scopeText = t(contextScopeLabels[scope.kind]);
+  }
+  return <div className="workspace-context" role="group" aria-label={t("workbench.context.label")}>
+    <dl>
+      <div><dt>{t("workbench.context.area")}</dt><dd>{t(entries.find(entry => entry.area === area)!.label)}</dd></div>
+      <div><dt>{t(targetKind === "project" ? "workbench.context.projectTargets" : targetKind === "release" ? "workbench.context.releaseTargets" : "workbench.context.workingTargets")}</dt><dd title={targets}>{targets}</dd></div>
+      <div><dt>{t("workbench.context.scope")}</dt><dd title={scopeText}>{scopeText}</dd></div>
+    </dl>
+  </div>;
+}
 
 export function WorkbenchNavigation({ area, onNavigate, disabled, hasProject }: {
   area: WorkspaceArea; onNavigate: (area: WorkspaceArea) => void; disabled: boolean; hasProject: boolean;

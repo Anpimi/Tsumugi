@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The fixed workspace header presents the original owners' current area, target
+languages and retained range. Its view subscription is read-only, and scoped
+presentation rejects old project, session, metadata-version or area callbacks.
+Interface language does not change working targets; saved releases retain their
+actual artifact languages. Draft, unknown-action, query and execution owners stay
+unchanged. This adds no Core, IPC, SDK, persisted format, dependency or version
+source. It stays in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with bilingual Unreleased entries and no additional bump.
+
 Pause, Stop and Take over can cooperatively cancel earlier eligibility and review-
 work reads in the exact project session. A cancelled read returns no partial
 projection and releases its snapshot. Control still commits through the original
