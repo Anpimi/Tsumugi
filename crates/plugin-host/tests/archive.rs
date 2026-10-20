@@ -85,6 +85,20 @@ fn captured_image_stays_fixed_after_transport_bytes_are_replaced() {
 }
 
 #[test]
+fn deterministic_encoding_preserves_the_captured_image_and_approved_digest() {
+    let (bytes, digest) = fixture(true);
+    let image = PackageImage::capture_archive(&bytes, &digest, || true).unwrap();
+    let encoded = image.encode_archive(|| true).unwrap();
+    assert_eq!(encoded, image.encode_archive(|| true).unwrap());
+    let recaptured = PackageImage::capture_archive(&encoded, &digest, || true).unwrap();
+    assert_eq!(recaptured.inspection(), image.inspection());
+    assert_eq!(
+        image.encode_archive(|| false).err(),
+        Some(HostError::AuthorityRevoked)
+    );
+}
+
+#[test]
 fn cli_reads_the_selected_archive_from_stdin_without_extracting() {
     let (bytes, digest) = fixture(true);
     let temporary = tempfile::tempdir().unwrap();

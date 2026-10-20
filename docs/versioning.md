@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+Captured package images can also encode a deterministic in-memory candidate
+archive. Encoding and decoding share the original namespace and payload limits;
+binary bytes, manifest and logical flags retain the original package digest.
+The new transport is not the original producer archive or a claim of provenance.
+No SDK, Store/project format, runtime support, dependency or version source
+changes. This stays in the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with the existing bilingual Unreleased entry extended and
+no additional bump.
+
 Direct candidate-archive capture reads the existing uncompressed tar transport
 into the original package image and digest, including explicit member access
 flags. It adds a bounded read-only inspection CLI, without changing the SDK,

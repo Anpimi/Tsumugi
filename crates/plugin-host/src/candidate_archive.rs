@@ -13,6 +13,151 @@ use tsumugi_plugin_sdk::{MAX_MANIFEST_BYTES, RuntimeArtifactFile};
 /// Encoded candidate limit: the original payload budget plus bounded tar overhead.
 pub const MAX_PACKAGE_ARCHIVE_BYTES: usize = MAX_PACKAGE_BYTES + 1024 * 1024;
 
+struct Namespace {
+    directories: BTreeSet<String>,
+    spellings: BTreeMap<String, String>,
+    names: BTreeSet<String>,
+}
+
+impl Namespace {
+    fn new() -> Self {
+        Self {
+            directories: BTreeSet::from([String::new()]),
+            spellings: BTreeMap::new(),
+            names: BTreeSet::new(),
+        }
+    }
+
+    fn admit(&mut self, path: &str) -> HostResult<()> {
+        portable_path(path)?;
+        let folded = path.to_ascii_lowercase();
+        if (folded == "manifest.json" && path != "manifest.json")
+            || folded.starts_with("manifest.json/")
+            || self.names.iter().any(|old| {
+                old == &folded
+                    || old.starts_with(&(folded.clone() + "/"))
+                    || folded.starts_with(&(old.clone() + "/"))
+            })
+        {
+            return Err(HostError::PackagePath);
+        }
+        self.names.insert(folded);
+        let parts: Vec<_> = path.split('/').collect();
+        if parts.len() - 1 > MAX_DEPTH {
+            return Err(HostError::PackageLimit);
+        }
+        let mut prefix = String::new();
+        for (index, part) in parts.iter().enumerate() {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+            if self
+                .spellings
+                .insert(prefix.to_ascii_lowercase(), prefix.clone())
+                .is_some_and(|old| old != prefix)
+            {
+                return Err(HostError::PackagePath);
+            }
+            if index + 1 < parts.len() {
+                self.directories.insert(prefix.clone());
+            }
+        }
+        if self.directories.len() > MAX_DIRECTORIES || self.names.len() > MAX_FILES + 1 {
+            return Err(HostError::PackageLimit);
+        }
+        Ok(())
+    }
+}
+
+struct CheckedBytes<'a, F> {
+    remaining: &'a [u8],
+    check: &'a F,
+    failure: Option<HostError>,
+}
+
+impl<F: Fn() -> HostResult<()>> Read for CheckedBytes<'_, F> {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if let Err(error) = (self.check)() {
+            self.failure = Some(error);
+            return Err(std::io::Error::other(error));
+        }
+        let count = output.len().min(self.remaining.len()).min(64 * 1024);
+        output[..count].copy_from_slice(&self.remaining[..count]);
+        self.remaining = &self.remaining[count..];
+        Ok(count)
+    }
+}
+
+/// Encode the same transport profile from captured facts, without filesystem IO.
+pub(crate) fn encode_files(
+    manifest: &[u8],
+    files: &BTreeMap<String, RuntimeArtifactFile>,
+    check: impl Fn() -> HostResult<()>,
+) -> HostResult<Vec<u8>> {
+    check()?;
+    if manifest.len() > MAX_MANIFEST_BYTES || files.is_empty() {
+        return Err(HostError::PackageLimit);
+    }
+    let mut namespace = Namespace::new();
+    namespace.admit("manifest.json")?;
+    let mut total = manifest.len();
+    for (path, file) in files {
+        check()?;
+        namespace.admit(path)?;
+        total = total
+            .checked_add(file.bytes.len())
+            .ok_or(HostError::PackageLimit)?;
+    }
+    if total > MAX_PACKAGE_BYTES {
+        return Err(HostError::PackageLimit);
+    }
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(total + 1024 * 1024)
+        .map_err(|_| HostError::PackageLimit)?;
+    let mut builder = tar::Builder::new(output);
+    for (path, bytes, executable) in std::iter::once(("manifest.json", manifest, false)).chain(
+        files
+            .iter()
+            .map(|(path, file)| (path.as_str(), file.bytes.as_slice(), file.executable)),
+    ) {
+        check()?;
+        let mut header = tar::Header::new_ustar();
+        if header.set_path(path).is_err() {
+            builder
+                .append_pax_extensions([("path", path.as_bytes())])
+                .map_err(|_| HostError::CaptureFailed)?;
+            header = tar::Header::new_ustar();
+            header
+                .set_path("artifact-file")
+                .map_err(|_| HostError::CaptureFailed)?;
+        }
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
+        header.set_size(bytes.len() as u64);
+        header.set_mode(if executable { 0o755 } else { 0o644 });
+        header.set_entry_type(EntryType::Regular);
+        header.set_cksum();
+        let mut reader = CheckedBytes {
+            remaining: bytes,
+            check: &check,
+            failure: None,
+        };
+        builder
+            .append(&header, &mut reader)
+            .map_err(|_| reader.failure.unwrap_or(HostError::CaptureFailed))?;
+        check()?;
+    }
+    let output = builder.into_inner().map_err(|_| HostError::CaptureFailed)?;
+    if output.len() > MAX_PACKAGE_ARCHIVE_BYTES {
+        return Err(HostError::PackageLimit);
+    }
+    check()?;
+    Ok(output)
+}
+
 fn field(bytes: &[u8]) -> HostResult<&[u8]> {
     let end = bytes
         .iter()
@@ -37,9 +182,7 @@ pub(crate) fn capture_files(
     }
     let mut archive = Archive::new(bytes);
     let mut files = BTreeMap::new();
-    let mut directories = BTreeSet::from([String::new()]);
-    let mut spellings = BTreeMap::new();
-    let mut names = BTreeSet::<String>::new();
+    let mut namespace = Namespace::new();
     let mut pending_path = None;
     let mut total = 0usize;
     let mut end = 0usize;
@@ -124,42 +267,10 @@ pub(crate) fn capture_files(
                 .map_err(|_| HostError::PackagePath)?
                 .to_owned(),
         };
-        portable_path(&path)?;
-        let folded = path.to_ascii_lowercase();
-        if (folded == "manifest.json" && (path != "manifest.json" || mode & 0o111 != 0))
-            || folded.starts_with("manifest.json/")
-            || names.iter().any(|old| {
-                old == &folded
-                    || old.starts_with(&(folded.clone() + "/"))
-                    || folded.starts_with(&(old.clone() + "/"))
-            })
-        {
+        if path == "manifest.json" && mode & 0o111 != 0 {
             return Err(HostError::PackagePath);
         }
-        names.insert(folded);
-        let parts: Vec<_> = path.split('/').collect();
-        if parts.len() - 1 > MAX_DEPTH {
-            return Err(HostError::PackageLimit);
-        }
-        let mut prefix = String::new();
-        for (index, part) in parts.iter().enumerate() {
-            if !prefix.is_empty() {
-                prefix.push('/');
-            }
-            prefix.push_str(part);
-            if spellings
-                .insert(prefix.to_ascii_lowercase(), prefix.clone())
-                .is_some_and(|old| old != prefix)
-            {
-                return Err(HostError::PackagePath);
-            }
-            if index + 1 < parts.len() {
-                directories.insert(prefix.clone());
-            }
-        }
-        if directories.len() > MAX_DIRECTORIES || files.len() > MAX_FILES {
-            return Err(HostError::PackageLimit);
-        }
+        namespace.admit(&path)?;
         total = total.checked_add(size).ok_or(HostError::PackageLimit)?;
         if total > MAX_PACKAGE_BYTES || (path == "manifest.json" && size > MAX_MANIFEST_BYTES) {
             return Err(HostError::PackageLimit);
@@ -464,6 +575,98 @@ mod tests {
             .err()
             .unwrap(),
             HostError::AuthorityRevoked
+        );
+    }
+
+    #[test]
+    fn encoding_is_deterministic_and_round_trips_long_paths_binary_and_flags() {
+        let path = format!("data/{}.bin", "a".repeat(160));
+        let files = BTreeMap::from([
+            (
+                path.clone(),
+                RuntimeArtifactFile {
+                    bytes: vec![0, 255, 13, 10],
+                    executable: true,
+                },
+            ),
+            (
+                "read-only.exe".into(),
+                RuntimeArtifactFile {
+                    bytes: b"data".to_vec(),
+                    executable: false,
+                },
+            ),
+        ]);
+        let encoded = encode_files(b"{}", &files, || Ok(())).unwrap();
+        assert_eq!(encoded, encode_files(b"{}", &files, || Ok(())).unwrap());
+        let captured = read(&encoded).unwrap();
+        assert_eq!(captured[&path].bytes, files[&path].bytes);
+        assert!(captured[&path].executable);
+        assert!(!captured["read-only.exe"].executable);
+        let mut archive = Archive::new(encoded.as_slice());
+        assert!(
+            archive
+                .entries()
+                .unwrap()
+                .raw(true)
+                .any(|entry| entry.unwrap().header().entry_type() == EntryType::XHeader)
+        );
+    }
+
+    #[test]
+    fn encoder_preserves_mid_file_authority_and_timeout_failures() {
+        let files = BTreeMap::from([(
+            "data.bin".into(),
+            RuntimeArtifactFile {
+                bytes: vec![0; 128 * 1024],
+                executable: false,
+            },
+        )]);
+        for error in [HostError::AuthorityRevoked, HostError::Timeout] {
+            let calls = Cell::new(0);
+            let result = encode_files(b"{}", &files, || {
+                calls.set(calls.get() + 1);
+                if calls.get() > 8 { Err(error) } else { Ok(()) }
+            });
+            assert_eq!(result.err(), Some(error));
+        }
+    }
+
+    #[test]
+    fn encoder_and_decoder_share_namespace_and_materialization_bounds() {
+        for paths in [
+            ["A/x", "a/y"],
+            ["manifest.json", "data"],
+            ["data", "data/x"],
+        ] {
+            let files = paths
+                .into_iter()
+                .map(|path| {
+                    (
+                        path.to_owned(),
+                        RuntimeArtifactFile {
+                            bytes: b"data".to_vec(),
+                            executable: false,
+                        },
+                    )
+                })
+                .collect();
+            assert_eq!(
+                encode_files(b"{}", &files, || Ok(())).err(),
+                Some(HostError::PackagePath)
+            );
+        }
+        let path = format!("{}file", "directory/".repeat(MAX_DEPTH + 1));
+        let files = BTreeMap::from([(
+            path,
+            RuntimeArtifactFile {
+                bytes: b"data".to_vec(),
+                executable: false,
+            },
+        )]);
+        assert_eq!(
+            encode_files(b"{}", &files, || Ok(())).err(),
+            Some(HostError::PackageLimit)
         );
     }
 }

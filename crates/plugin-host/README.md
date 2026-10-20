@@ -211,6 +211,14 @@ are accepted. Links, sparse entries, path aliases, other extensions, executable
 manifests, incomplete terminators and nonzero trailing input are refused.
 The parser checks the live read guard and an observed ten-second deadline.
 
+`PackageImage::encode_archive` writes a deterministic in-memory transport from
+an already captured image, preserving its manifest, file bytes and logical
+flags. It shares the decoder's path and materialization bounds and checks the
+same live guard during bounded file chunks. Long paths use the supported local
+PAX record. This does not write files or grant permission. The resulting tar
+retains the captured package digest; its transport bytes and archive SHA-256
+can differ from the original producer's archive, which must retain its own pin.
+
 The read-only CLI consumes a bounded archive from standard input:
 
 ```sh

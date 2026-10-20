@@ -12,6 +12,8 @@ within this same undistributed batch.
 
 - Inspect existing uncompressed plugin candidate archives directly, retaining
   their file access flags without extracting or executing their contents.
+  Encode already captured packages deterministically with the same package
+  identity and explicit flags.
 
 - Add an experimental Windows filesystem backend for already captured plugin
   materializations, with explicit artifact access flags and identity-checked

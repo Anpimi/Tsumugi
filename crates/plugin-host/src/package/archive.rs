@@ -23,21 +23,19 @@ impl PackageImage {
         Self::read_archive(bytes, None, authorized).map(|image| image.inspection())
     }
 
+    /// Encode a deterministic candidate transport from this immutable image.
+    /// This preserves package identity, not the original transport's bytes or
+    /// publisher provenance, and does not write files or grant any permission.
+    pub fn encode_archive(&self, authorized: impl Fn() -> bool) -> HostResult<Vec<u8>> {
+        crate::candidate_archive::encode_files(&self.manifest_bytes, &self.files, guard(authorized))
+    }
+
     fn read_archive(
         bytes: &[u8],
         expected: Option<&str>,
         authorized: impl Fn() -> bool,
     ) -> HostResult<Self> {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let check = || {
-            if !authorized() {
-                Err(HostError::AuthorityRevoked)
-            } else if Instant::now() >= deadline {
-                Err(HostError::Timeout)
-            } else {
-                Ok(())
-            }
-        };
+        let check = guard(authorized);
         let mut files = crate::candidate_archive::capture_files(bytes, &check)?;
         let manifest = files
             .remove("manifest.json")
@@ -54,5 +52,18 @@ impl PackageImage {
         let image = Self::capture(manifest.bytes, files, expected)?;
         check()?;
         Ok(image)
+    }
+}
+
+fn guard(authorized: impl Fn() -> bool) -> impl Fn() -> HostResult<()> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    move || {
+        if !authorized() {
+            Err(HostError::AuthorityRevoked)
+        } else if Instant::now() >= deadline {
+            Err(HostError::Timeout)
+        } else {
+            Ok(())
+        }
     }
 }
