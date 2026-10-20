@@ -12,6 +12,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tsumugi_core::execution::{Cancellation, ExecutionId};
 
 const PROJECT_CAPACITY: usize = 32;
 const CONTROL_CAPACITY: usize = 4;
@@ -56,7 +57,35 @@ struct Job {
     work: Work,
     operation: &'static str,
     queued: Instant,
+    _review_read: Option<ReviewReadRegistration>,
     _permit: Arc<Permit>,
+}
+
+#[derive(PartialEq, Eq)]
+struct ReviewReadScope {
+    session: String,
+    project: ExecutionId,
+}
+
+type ReviewReads = Arc<Mutex<Vec<(ExecutionId, ReviewReadScope, Cancellation)>>>;
+
+struct ReviewReadRegistration {
+    reads: ReviewReads,
+    id: ExecutionId,
+}
+impl Drop for ReviewReadRegistration {
+    fn drop(&mut self) {
+        self.reads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|(id, _, _)| *id != self.id);
+    }
+}
+
+enum ReviewAdmission {
+    Ordinary,
+    Read(ReviewReadScope, Cancellation),
+    Control(ReviewReadScope),
 }
 
 struct SessionAdmission {
@@ -64,6 +93,7 @@ struct SessionAdmission {
     normal: Capacity,
     control: Capacity,
     accepting: AtomicBool,
+    review_reads: ReviewReads,
 }
 
 impl SessionAdmission {
@@ -85,6 +115,7 @@ impl SessionAdmission {
         Ok(SessionLease {
             sender: self.sender.clone(),
             permit: Arc::new(capacity.acquire(stage)?),
+            review_reads: self.review_reads.clone(),
         })
     }
 }
@@ -177,6 +208,7 @@ impl SessionExecutor {
             normal: Capacity::new(PROJECT_CAPACITY),
             control: Capacity::new(CONTROL_CAPACITY),
             accepting: AtomicBool::new(true),
+            review_reads: Arc::default(),
         });
         let services = super::ProjectServiceContext {
             callback: SessionCallback {
@@ -228,6 +260,7 @@ impl SessionExecutor {
                             eprintln!("desktop operation={} dispatch={} epoch={} queue_ms={} work_ms={}",
                                 job.operation, sequence, epoch, queue_time.as_millis(), work_time.as_millis());
                         }
+                        drop(job._review_read);
                         drop(job._permit);
                         if result.is_err() { break; }
                     }
@@ -350,6 +383,7 @@ impl Drop for Pause {
 pub(super) struct SessionLease {
     sender: mpsc::Sender<Job>,
     permit: Arc<Permit>,
+    review_reads: ReviewReads,
 }
 
 impl SessionLease {
@@ -359,14 +393,112 @@ impl SessionLease {
         stage: CommandStage,
         work: Work,
     ) -> Result<(), CommandError> {
-        self.sender
-            .send(Job {
-                work,
-                operation,
-                queued: Instant::now(),
-                _permit: Arc::clone(&self.permit),
-            })
-            .map_err(|_| CommandError::unknown(stage))
+        self.enqueue_review(operation, stage, ReviewAdmission::Ordinary, work)
+    }
+
+    fn enqueue_review(
+        &self,
+        operation: &'static str,
+        stage: CommandStage,
+        admission: ReviewAdmission,
+        work: Work,
+    ) -> Result<(), CommandError> {
+        // Only the two interruptible Review reads register here. Their original
+        // normal permits bound this metadata to PROJECT_CAPACITY entries.
+        let mut reads = if matches!(&admission, ReviewAdmission::Ordinary) {
+            None
+        } else {
+            Some(
+                self.review_reads
+                    .lock()
+                    .map_err(|_| CommandError::unknown(stage))?,
+            )
+        };
+        let mut registration = None;
+        let mut control = None;
+        match admission {
+            ReviewAdmission::Read(scope, cancellation) => {
+                let id = ExecutionId::new();
+                reads
+                    .as_mut()
+                    .expect("read lock")
+                    .push((id, scope, cancellation));
+                registration = Some(ReviewReadRegistration {
+                    reads: self.review_reads.clone(),
+                    id,
+                });
+            }
+            ReviewAdmission::Control(scope) => control = Some(scope),
+            ReviewAdmission::Ordinary => {}
+        }
+        let sent = self.sender.send(Job {
+            work,
+            operation,
+            queued: Instant::now(),
+            _permit: Arc::clone(&self.permit),
+            _review_read: registration,
+        });
+        if sent.is_ok() {
+            if let Some(scope) = control {
+                // Registration+send and control send+signal share this short
+                // lock. Later reads cannot inherit a completed control signal.
+                for (_, original, cancellation) in reads.as_ref().expect("control lock").iter() {
+                    if original == &scope {
+                        cancellation.request();
+                    }
+                }
+            }
+        }
+        // A failed send owns the Job, whose registration also locks this map.
+        // Unlock before dropping it; rejected controls must signal nothing.
+        drop(reads);
+        sent.map_err(|_| CommandError::unknown(stage))
+    }
+
+    pub(super) fn submit_review_read<T, F>(
+        &self,
+        operation: &'static str,
+        session: String,
+        project: ExecutionId,
+        work: F,
+    ) -> Result<
+        impl std::future::Future<Output = Result<T, CommandError>> + Send + 'static + use<T, F>,
+        CommandError,
+    >
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut SessionManager, &Cancellation) -> Result<T, CommandError> + Send + 'static,
+    {
+        let cancellation = Cancellation::default();
+        let signal = cancellation.clone();
+        self.submit_review(
+            operation,
+            CommandStage::ExecutionRead,
+            ReviewAdmission::Read(ReviewReadScope { session, project }, signal),
+            move |sessions| work(sessions, &cancellation),
+        )
+    }
+
+    pub(super) fn submit_review_control<T, F>(
+        &self,
+        operation: &'static str,
+        session: String,
+        project: ExecutionId,
+        work: F,
+    ) -> Result<
+        impl std::future::Future<Output = Result<T, CommandError>> + Send + 'static + use<T, F>,
+        CommandError,
+    >
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
+    {
+        self.submit_review(
+            operation,
+            CommandStage::ExecutionCancel,
+            ReviewAdmission::Control(ReviewReadScope { session, project }),
+            work,
+        )
     }
 
     pub(super) async fn run<T: Send + 'static>(
@@ -393,11 +525,29 @@ impl SessionLease {
         T: Send + 'static,
         F: FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
     {
+        self.submit_review(operation, stage, ReviewAdmission::Ordinary, work)
+    }
+
+    fn submit_review<T, F>(
+        &self,
+        operation: &'static str,
+        stage: CommandStage,
+        admission: ReviewAdmission,
+        work: F,
+    ) -> Result<
+        impl std::future::Future<Output = Result<T, CommandError>> + Send + 'static + use<T, F>,
+        CommandError,
+    >
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
+    {
         let (sender, mut receiver) = tauri::async_runtime::channel(1);
         let diagnostic_id = tsumugi_core::execution::ExecutionId::new();
-        self.enqueue(
+        self.enqueue_review(
             operation,
             stage,
+            admission,
             Box::new(move |sessions| {
                 let result = work(sessions).map_err(|error| error.report(operation, diagnostic_id));
                 let _ = sender.try_send(result);
@@ -459,6 +609,201 @@ mod tests {
             future.poll(&mut Context::from_waker(Waker::noop())),
             Poll::Pending
         ));
+    }
+
+    #[test]
+    fn review_control_yields_running_and_earlier_reads_without_cancelling_writes_or_later_reads() {
+        let executor = SessionExecutor::default();
+        let project = ExecutionId::new();
+        let lease = executor.lease(CommandStage::ExecutionRead).unwrap();
+        let (entered, started) = mpsc::channel();
+        let read = lease
+            .submit_review_read(
+                "review.running",
+                "session".into(),
+                project,
+                move |_, cancellation| -> Result<(), CommandError> {
+                    entered.send(()).unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while !cancellation.is_requested() {
+                        assert!(
+                            Instant::now() < deadline,
+                            "control did not signal the running read"
+                        );
+                        std::thread::park_timeout(Duration::from_millis(1));
+                    }
+                    Err(CommandError::simple(
+                        CommandErrorCode::Cancelled,
+                        CommandStage::ExecutionRead,
+                    ))
+                },
+            )
+            .unwrap();
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (observed, observed_read) = mpsc::channel();
+        let lost_read = executor
+            .lease(CommandStage::ExecutionRead)
+            .unwrap()
+            .submit_review_read(
+                "review.queued",
+                "session".into(),
+                project,
+                move |_, signal| {
+                    observed.send(signal.is_requested()).unwrap();
+                    Ok(())
+                },
+            )
+            .unwrap();
+        drop(lost_read);
+        assert_eq!(executor.admission.review_reads.lock().unwrap().len(), 2);
+        let other_session = executor
+            .lease(CommandStage::ExecutionRead)
+            .unwrap()
+            .submit_review_read(
+                "review.other-session",
+                "reopened-session".into(),
+                project,
+                |_, signal| {
+                    assert!(!signal.is_requested());
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let other_project = executor
+            .lease(CommandStage::ExecutionRead)
+            .unwrap()
+            .submit_review_read(
+                "review.other-project",
+                "session".into(),
+                ExecutionId::new(),
+                |_, signal| {
+                    assert!(!signal.is_requested());
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let accepted = writes.clone();
+        let lost_write = executor
+            .lease(CommandStage::Rename)
+            .unwrap()
+            .submit("accepted.write", CommandStage::Rename, move |_| {
+                accepted.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap();
+        drop(lost_write);
+        let control = executor
+            .lease(CommandStage::ExecutionCancel)
+            .unwrap()
+            .submit_review_control("control", "session".into(), project, move |_| {
+                assert_eq!(writes.load(Ordering::SeqCst), 1);
+                Ok(())
+            })
+            .unwrap();
+        let later = executor
+            .lease(CommandStage::ExecutionRead)
+            .unwrap()
+            .submit_review_read("review.later", "session".into(), project, |_, signal| {
+                assert!(!signal.is_requested());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            tauri::async_runtime::block_on(read).unwrap_err().code,
+            CommandErrorCode::Cancelled
+        );
+        assert!(observed_read.recv_timeout(Duration::from_secs(5)).unwrap());
+        tauri::async_runtime::block_on(other_session).unwrap();
+        tauri::async_runtime::block_on(other_project).unwrap();
+        tauri::async_runtime::block_on(control).unwrap();
+        tauri::async_runtime::block_on(later).unwrap();
+        executor.with(|_| ());
+        assert!(executor.admission.review_reads.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn review_control_registrations_follow_capacity_and_survive_owner_and_reply_drop() {
+        let executor = SessionExecutor::default();
+        let held = executor.pause();
+        let project = ExecutionId::new();
+        let (finished, done) = mpsc::channel();
+        for _ in 0..PROJECT_CAPACITY - 1 {
+            let finished = finished.clone();
+            let lost = executor
+                .lease(CommandStage::ExecutionRead)
+                .unwrap()
+                .submit_review_read(
+                    "review.accepted",
+                    "session".into(),
+                    project,
+                    move |_, signal| {
+                        assert!(!signal.is_requested());
+                        finished.send(()).unwrap();
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            drop(lost);
+        }
+        let reads = executor.admission.review_reads.clone();
+        assert_eq!(reads.lock().unwrap().len(), PROJECT_CAPACITY - 1);
+        assert_eq!(
+            executor
+                .lease(CommandStage::ExecutionRead)
+                .err()
+                .unwrap()
+                .code,
+            CommandErrorCode::Busy
+        );
+        drop(executor);
+        drop(held);
+        for _ in 0..PROJECT_CAPACITY - 1 {
+            done.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        // A last reply is delivered before that Job's registration drops.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !reads.lock().unwrap().is_empty() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn review_control_failed_send_never_signals_and_failed_read_send_unregisters() {
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        let project = ExecutionId::new();
+        let signal = Cancellation::default();
+        let reads: ReviewReads = Arc::new(Mutex::new(vec![(
+            ExecutionId::new(),
+            ReviewReadScope {
+                session: "session".into(),
+                project,
+            },
+            signal.clone(),
+        )]));
+        let lease = SessionLease {
+            sender,
+            permit: Arc::new(
+                Capacity::new(1)
+                    .acquire(CommandStage::ExecutionRead)
+                    .unwrap(),
+            ),
+            review_reads: reads.clone(),
+        };
+        assert!(
+            lease
+                .submit_review_control("closed.control", "session".into(), project, |_| Ok(()))
+                .is_err()
+        );
+        assert!(!signal.is_requested());
+        assert!(
+            lease
+                .submit_review_read("closed.read", "session".into(), project, |_, _| Ok(()))
+                .is_err()
+        );
+        assert_eq!(reads.lock().unwrap().len(), 1);
     }
 
     #[test]

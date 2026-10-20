@@ -1,5 +1,16 @@
 # Application versioning and changelog maintenance
 
+Pause, Stop and Take over can cooperatively cancel earlier eligibility and review-
+work reads in the exact project session. A cancelled read returns no partial
+projection and releases its snapshot. Control still commits through the original
+authorization, generation and action-receipt transaction; accepted writes and
+actual producer drain retain their existing semantics. Non-Continue control and
+cleanup complete within one accepted project operation. Existing Core read APIs
+remain available alongside interruptible counterparts. This adds no IPC shape,
+SDK, protocol, persisted format, dependency or version source. It stays in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual
+Unreleased entries and no additional bump.
+
 Ordinary plugin request serialization borrows the captured payload directly,
 avoiding a temporary deep JSON copy. Translation checks retain their complete
 expansion before the same bounded encoder. Exact wire bytes, SDK checks, result

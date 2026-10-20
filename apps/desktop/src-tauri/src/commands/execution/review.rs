@@ -787,10 +787,12 @@ pub async fn read_review_work(
 ) -> Result<WorkPage, CommandError> {
     state
         .sessions
-        .run(
+        .lease(CommandStage::ExecutionRead)?
+        .submit_review_read(
             "read_review_work",
-            CommandStage::ExecutionRead,
-            move |sessions| {
+            request.session_token.clone(),
+            request.project_id,
+            move |sessions, cancellation| {
                 authorized(
                     sessions,
                     &request.session_token,
@@ -798,15 +800,16 @@ pub async fn read_review_work(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .review_work_page(
+                .review_work_page_with_cancel(
                     request.project_id,
                     &request.locale,
                     request.offset,
                     request.limit,
+                    cancellation,
                 )
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
-        )
+        )?
         .await
 }
 
@@ -817,10 +820,12 @@ pub async fn read_review_eligibility(
 ) -> Result<Eligibility, CommandError> {
     state
         .sessions
-        .run(
+        .lease(CommandStage::ExecutionRead)?
+        .submit_review_read(
             "read_review_eligibility",
-            CommandStage::ExecutionRead,
-            move |sessions| {
+            request.session_token.clone(),
+            request.project_id,
+            move |sessions, cancellation| {
                 authorized(
                     sessions,
                     &request.session_token,
@@ -828,10 +833,10 @@ pub async fn read_review_eligibility(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .review_eligibility(request.project_id, &request.locales)
+                .review_eligibility_with_cancel(request.project_id, &request.locales, cancellation)
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
-        )
+        )?
         .await
 }
 

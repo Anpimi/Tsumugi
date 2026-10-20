@@ -816,6 +816,16 @@ impl ProjectStore {
         project_id: ExecutionId,
         locale: &str,
     ) -> Result<Vec<(ReviewTarget, Vec<String>)>, ExecutionError> {
+        self.review_work_set_with_cancel(project_id, locale, &Cancellation::default())
+    }
+
+    fn review_work_set_with_cancel(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+        cancellation: &Cancellation,
+    ) -> Result<Vec<(ReviewTarget, Vec<String>)>, ExecutionError> {
+        queries::check_read_cancel(cancellation)?;
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
@@ -823,7 +833,14 @@ impl ProjectStore {
             check_project(connection, project_id, locale)?;
             let (_, units) = all_units(connection, project_id)?;
             let impacts = self.impact_map(project_id, locale)?;
-            let targets = queries::targets_in(connection, project_id, &units, locale)?;
+            let targets = queries::targets_in_with_cancel(
+                connection,
+                project_id,
+                &units,
+                locale,
+                cancellation,
+            )?;
+            queries::check_read_cancel(cancellation)?;
             Ok(targets
                 .into_iter()
                 .map(|target| {
@@ -1672,11 +1689,32 @@ impl ProjectStore {
         offset: u32,
         limit: u32,
     ) -> Result<WorkPage, ExecutionError> {
+        self.review_work_page_with_cancel(
+            project_id,
+            locale,
+            offset,
+            limit,
+            &Cancellation::default(),
+        )
+    }
+
+    /// Interruptible read only: cancellation discards the complete projection,
+    /// never a partial page or a persisted review outcome.
+    pub fn review_work_page_with_cancel(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+        offset: u32,
+        limit: u32,
+        cancellation: &Cancellation,
+    ) -> Result<WorkPage, ExecutionError> {
         if limit == 0 || limit > 100 || offset > MAX_SCOPE as u32 {
             return Err(failure(ErrorCode::InvalidInput, "review-work-page"));
         }
         let mut items = Vec::new();
-        for (target, reasons) in self.review_work_set(project_id, locale)? {
+        for (target, reasons) in
+            self.review_work_set_with_cancel(project_id, locale, cancellation)?
+        {
             if !reasons.is_empty() {
                 items.push(WorkItem {
                     unit_id: target.unit_id,
@@ -1687,6 +1725,7 @@ impl ProjectStore {
                 });
             }
         }
+        queries::check_read_cancel(cancellation)?;
         let total = items.len() as u32;
         let next_offset = (offset + limit < total).then_some(offset + limit);
         Ok(WorkPage {
@@ -1706,12 +1745,24 @@ impl ProjectStore {
         project_id: ExecutionId,
         locales: &[String],
     ) -> Result<Eligibility, ExecutionError> {
+        self.review_eligibility_with_cancel(project_id, locales, &Cancellation::default())
+    }
+
+    /// A cancelled read returns no qualification and releases its read snapshot.
+    /// Callers must obtain a complete fresh qualification before using it.
+    pub fn review_eligibility_with_cancel(
+        &self,
+        project_id: ExecutionId,
+        locales: &[String],
+        cancellation: &Cancellation,
+    ) -> Result<Eligibility, ExecutionError> {
         if locales.is_empty()
             || locales.len() > 16
             || locales.iter().collect::<BTreeSet<_>>().len() != locales.len()
         {
             return Err(failure(ErrorCode::InvalidInput, "review-locales"));
         }
+        queries::check_read_cancel(cancellation)?;
         let mut requested = locales.to_vec();
         requested.sort();
         let connection = self
@@ -1725,12 +1776,19 @@ impl ProjectStore {
             let mut outcomes = Vec::new();
             let mut bases = Vec::new();
             for locale in &requested {
+                queries::check_read_cancel(cancellation)?;
                 let impacts = self.impact_map(project_id, locale)?;
                 let mut blockers = Vec::new();
                 let mut exceptions = Vec::new();
                 let mut blocker_count = 0u32;
                 let mut exception_count = 0u32;
-                for target in queries::targets_in(connection, project_id, &units, locale)? {
+                for target in queries::targets_in_with_cancel(
+                    connection,
+                    project_id,
+                    &units,
+                    locale,
+                    cancellation,
+                )? {
                     let unit_id = target.unit_id;
                     let (unit_blockers, unit_exceptions) =
                         assess(&target, impacts.contains_key(&unit_id));
@@ -1784,6 +1842,7 @@ impl ProjectStore {
                     exception_count,
                 });
             }
+            queries::check_read_cancel(cancellation)?;
             let ready = outcomes.iter().all(|item| item.ready);
             Ok(Eligibility {
                 policy_version: POLICY_VERSION.to_owned(),

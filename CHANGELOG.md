@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Let Pause, Stop and Take over cancel earlier eligibility and review-work reads
+  in the same project session. Keep control receipts durable and discard cancelled
+  projections completely, with normal reads available for retry.
+
 - Reduce temporary allocations when encoding captured plugin requests, while
   keeping exact request bytes, input limits and complete result validation.
 

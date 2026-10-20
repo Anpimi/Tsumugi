@@ -41,6 +41,13 @@ const WANTED: &str = "WITH wanted AS MATERIALIZED (
     SELECT json_extract(value,'$[0]') AS unit_id,
            json_extract(value,'$[1]') AS basis FROM json_each(?3))";
 
+pub(super) fn check_read_cancel(cancellation: &Cancellation) -> Result<(), ExecutionError> {
+    if cancellation.is_requested() {
+        return Err(failure(ErrorCode::Cancelled, "review-read-cancelled"));
+    }
+    Ok(())
+}
+
 /// A constant number of statements for any bounded number of current units.
 pub(in crate::persistence) fn targets_in(
     connection: &Connection,
@@ -48,6 +55,23 @@ pub(in crate::persistence) fn targets_in(
     units: &[ExecutionId],
     locale: &str,
 ) -> Result<Vec<ReviewTarget>, ExecutionError> {
+    targets_in_with_cancel(
+        connection,
+        project_id,
+        units,
+        locale,
+        &Cancellation::default(),
+    )
+}
+
+pub(super) fn targets_in_with_cancel(
+    connection: &Connection,
+    project_id: ExecutionId,
+    units: &[ExecutionId],
+    locale: &str,
+    cancellation: &Cancellation,
+) -> Result<Vec<ReviewTarget>, ExecutionError> {
+    check_read_cancel(cancellation)?;
     check_project(connection, project_id, locale)?;
     if units.len() > MAX_SCOPE || units.iter().collect::<BTreeSet<_>>().len() != units.len() {
         return Err(failure(ErrorCode::InvalidInput, "review-units"));
@@ -101,6 +125,7 @@ pub(in crate::persistence) fn targets_in(
     let mut targets = BTreeMap::new();
     let mut resolutions = BTreeMap::new();
     for (unit, snapshot, source_revision, key, source, selection, revision, text, context) in raw {
+        check_read_cancel(cancellation)?;
         let unit_id = parse_id(unit)?;
         let source_revision_id = parse_id(source_revision)?;
         let source_snapshot_id = parse_id(snapshot)?;
@@ -184,6 +209,7 @@ pub(in crate::persistence) fn targets_in(
             'kind',kind,'reason',reason,'createdAt',created_at) FROM latest WHERE position=1"
     ), arguments)?;
     for decision in decisions {
+        check_read_cancel(cancellation)?;
         if basis_digest(&decision.basis_evidence)? != decision.basis {
             return Err(failure(ErrorCode::CorruptLedger, "review-basis"));
         }
@@ -211,6 +237,7 @@ pub(in crate::persistence) fn targets_in(
     let mut recorded = BTreeMap::new();
     let mut owners = BTreeMap::new();
     for mut check in checks {
+        check_read_cancel(cancellation)?;
         if basis_digest(&check.basis_evidence)? != check.basis {
             return Err(failure(ErrorCode::CorruptLedger, "review-basis"));
         }
@@ -243,7 +270,9 @@ pub(in crate::persistence) fn targets_in(
     // time, in bounded batches within this same snapshot; do not retain all
     // provider inputs for a whole editor scope.
     for batch in pairs.chunks(10_000) {
+        check_read_cancel(cancellation)?;
         super::super::ledger::visit_result_pairs(connection, batch, |original| {
+            check_read_cancel(cancellation)?;
             let pair = (
                 original.input.envelope().attempt_id,
                 original.result.envelope().result_id,
@@ -278,7 +307,8 @@ pub(in crate::persistence) fn targets_in(
                 saved,
                 &original.input,
                 &original.result,
-            )
+            )?;
+            check_read_cancel(cancellation)
         })?;
     }
     if !owners.is_empty() {
@@ -286,6 +316,7 @@ pub(in crate::persistence) fn targets_in(
     }
     let mut materials = BTreeMap::new();
     for (_, check) in recorded {
+        check_read_cancel(cancellation)?;
         let evidence = check
             .evidence
             .as_ref()
@@ -321,6 +352,7 @@ pub(in crate::persistence) fn targets_in(
          FROM latest WHERE position=1 AND kind='allow'",
         &[&project, &locale, &unit_json, &POLICY_VERSION])?;
     for fallback in fallbacks {
+        check_read_cancel(cancellation)?;
         let target = targets
             .get_mut(&fallback.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
@@ -340,6 +372,7 @@ pub(in crate::persistence) fn targets_in(
          FROM latest WHERE position=1 AND kind='grant' ORDER BY issue_id"
     ), &[&project, &locale, &bases, &POLICY_VERSION])?;
     for waiver in waivers {
+        check_read_cancel(cancellation)?;
         let target = targets
             .get_mut(&waiver.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
@@ -353,6 +386,7 @@ pub(in crate::persistence) fn targets_in(
             target.current_waivers.push(waiver);
         }
     }
+    check_read_cancel(cancellation)?;
     units
         .iter()
         .map(|unit| {

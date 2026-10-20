@@ -17,6 +17,7 @@ use tsumugi_core::{
 thread_local! {
     static STATEMENTS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
     static FRAME_ROWS: RefCell<usize> = const { RefCell::new(0) };
+    static FRAME_GATE: RefCell<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>> = const { RefCell::new(None) };
     static MEASURED_CONNECTION: Cell<*mut ffi::sqlite3> = const { Cell::new(std::ptr::null_mut()) };
     static REOPEN_PROFILE: RefCell<Option<ReopenProfile>> = const { RefCell::new(None) };
     static SETUP_PROFILE: RefCell<Option<SetupProfile>> = const { RefCell::new(None) };
@@ -199,6 +200,18 @@ unsafe extern "C" fn trace(
                                 let _ = FRAME_ROWS.try_with(|rows| {
                                     if let Ok(mut rows) = rows.try_borrow_mut() {
                                         *rows += 1;
+                                        if *rows == 2 {
+                                            let _ = FRAME_GATE.try_with(|gate| {
+                                                if let Ok(mut gate) = gate.try_borrow_mut() {
+                                                    if let Some((entered, release)) = gate.take() {
+                                                        let _ = entered.send(());
+                                                        let _ = release.recv_timeout(
+                                                            std::time::Duration::from_secs(5),
+                                                        );
+                                                    }
+                                                }
+                                            });
+                                        }
                                     }
                                 });
                             }
@@ -879,6 +892,123 @@ fn actual_qa_is_locale_scoped_and_keeps_original_history_after_edit_and_reopen()
                 .checks,
             [run]
         );
+    }
+}
+
+#[test]
+fn cancellable_review_reads_discard_partial_qualification_and_keep_complete_integrity() {
+    let _trace = TraceRegistration::new();
+    let (directory, mut store, rows) = support::source_fixture_with_scope(4, &["zh-CN"]);
+    let mut runtime = prepare_runtime(&store, rows[0].unit_id.unwrap(), "zh-CN");
+    for row in &rows {
+        save(&mut store, row.unit_id.unwrap(), "zh-CN", "译文");
+        support::review_check(&mut store, &mut runtime, row.unit_id.unwrap(), "zh-CN");
+    }
+    let project = project(&store);
+    let locales = ["zh-CN".to_owned()];
+    let expected = store.review_eligibility(project, &locales).unwrap();
+    let expected_work = store.review_work_page(project, "zh-CN", 0, 100).unwrap();
+    let before = std::fs::read(directory.path().join("project/project.sqlite3")).unwrap();
+    for work in [false, true] {
+        let cancellation = Cancellation::default();
+        let signal = cancellation.clone();
+        let (entered, started) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        FRAME_GATE.with(|gate| assert!(gate.borrow_mut().replace((entered, released)).is_none()));
+        let canceller = std::thread::spawn(move || {
+            // SQLITE_TRACE_ROW for row two runs only after row one's complete
+            // restore and saved-frame visitor returned. Do not gate setup/open.
+            started
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            signal.request();
+            release.send(()).unwrap();
+        });
+        let (error, _) = measured("cancelled-original-frame", || {
+            if work {
+                store
+                    .review_work_page_with_cancel(project, "zh-CN", 0, 100, &cancellation)
+                    .unwrap_err()
+            } else {
+                store
+                    .review_eligibility_with_cancel(project, &locales, &cancellation)
+                    .unwrap_err()
+            }
+        });
+        canceller.join().unwrap();
+        assert_eq!(error.code, ErrorCode::Cancelled);
+        assert_eq!(error.stage, "review-read-cancelled");
+        assert_eq!(
+            FRAME_ROWS.with(|rows| *rows.borrow()),
+            2,
+            "discard the projection before the remaining two real frames"
+        );
+        // The existing trace captures this exclusively owned live Store's handle.
+        let handle = MEASURED_CONNECTION.with(|connection| connection.get());
+        assert!(!handle.is_null());
+        let connection = unsafe { Connection::from_handle(handle) }.unwrap();
+        assert!(
+            connection.is_autocommit(),
+            "cancelled snapshot must be released"
+        );
+        drop(connection);
+        assert_eq!(
+            std::fs::read(directory.path().join("project/project.sqlite3")).unwrap(),
+            before
+        );
+    }
+    assert_eq!(
+        store
+            .review_eligibility_with_cancel(project, &locales, &Cancellation::default())
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        store
+            .review_work_page_with_cancel(project, "zh-CN", 0, 100, &Cancellation::default())
+            .unwrap(),
+        expected_work
+    );
+    assert_eq!(
+        store.review_eligibility(project, &locales).unwrap(),
+        expected
+    );
+    assert_eq!(
+        store.review_work_page(project, "zh-CN", 0, 100).unwrap(),
+        expected_work
+    );
+    let db = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    let last: String = db
+        .query_row(
+            "SELECT json_extract(origin.value,'$.attemptId') FROM review_checks
+         CROSS JOIN json_each(review_checks.evidence_json,'$.origins') AS origin
+         ORDER BY json_extract(origin.value,'$.attemptId') DESC,
+                  json_extract(origin.value,'$.resultId') DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        db.execute(
+            "UPDATE execution_attempts SET digest=?1 WHERE attempt_id=?2",
+            [&"0".repeat(64), &last]
+        )
+        .unwrap(),
+        1
+    );
+    drop(db);
+    for work in [false, true] {
+        let error = if work {
+            store
+                .review_work_page_with_cancel(project, "zh-CN", 0, 100, &Cancellation::default())
+                .unwrap_err()
+        } else {
+            store
+                .review_eligibility_with_cancel(project, &locales, &Cancellation::default())
+                .unwrap_err()
+        };
+        assert_eq!(error.code, ErrorCode::CorruptLedger);
+        assert_eq!(error.stage, "input-digest");
     }
 }
 
