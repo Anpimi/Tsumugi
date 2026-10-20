@@ -1,9 +1,9 @@
+use crate::child::{ChildCommand, OwnedChild};
 use crate::staging::StagedDirectory;
 use crate::*;
 use std::{
     collections::BTreeSet,
     path::Path,
-    process::Stdio,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU8, Ordering},
@@ -12,7 +12,6 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    process::{Child, Command},
     sync::mpsc,
     task::JoinHandle,
     time::{Instant, timeout},
@@ -252,12 +251,21 @@ pub(crate) struct Pipes {
     pub(crate) overflow: Arc<AtomicBool>,
     pub(crate) tasks: Vec<JoinHandle<()>>,
 }
+impl Drop for Pipes {
+    fn drop(&mut self) {
+        // A failed admission can return after endpoints are attached but before
+        // a session owns them. Dropping handles must not detach their IO tasks.
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+    }
+}
 
 /// One serialized capability roster on an owned component instance. Multiple
 /// instances have distinct staged directories, process groups and identities.
 /// Direction/state errors permanently revoke a channel; no hidden retry.
 pub struct ProcessSession {
-    child: Child,
+    child: OwnedChild,
     pid: u32,
     directory: Option<StagedDirectory>,
     environment_digest: Option<String>,
@@ -377,9 +385,9 @@ impl ProcessSession {
         if !valid_scope {
             return Err(HostError::InvalidContract);
         }
-        // Windows needs an owned Job Object before it can make the same bounded
-        // descendant-cleanup claim. This experimental runtime refuses it rather
-        // than silently weakening process cleanup. The desktop is unaffected.
+        // The Windows process owner does not yet provide the filesystem capture,
+        // staging and runtime-identity support required by this product entry.
+        // Keep the gate closed until those independent boundaries are available.
         #[cfg(not(unix))]
         return Err(HostError::UnsupportedPlatform);
         #[cfg(unix)]
@@ -467,10 +475,10 @@ impl ProcessSession {
                     .ok_or(HostError::MissingArtifact)?,
             );
             let mut command = match runtime.as_ref() {
-                None => Command::new(&entry),
+                None => ChildCommand::new(&entry),
                 Some(runtime) => {
                     let descriptor = runtime.descriptor();
-                    let mut c = Command::new(
+                    let mut c = ChildCommand::new(
                         directory
                             .path()
                             .join("runtime/tool")
@@ -486,15 +494,7 @@ impl ProcessSession {
                     c
                 }
             };
-            command
-                .current_dir(&package_directory)
-                .env_clear()
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true);
-            use std::os::unix::process::CommandExt;
-            command.as_std_mut().process_group(0);
+            command.current_dir(&package_directory);
             // Capturing/materializing a package can outlive its original grant.
             // Recheck immediately before executing any plugin instructions.
             if !authorized() {
@@ -510,7 +510,7 @@ impl ProcessSession {
             if let RuntimeLauncher::NativeCore { runtime } = launcher {
                 runtime.require_current()?;
             }
-            let child = command.spawn().map_err(|_| HostError::SpawnFailed)?;
+            let child = OwnedChild::spawn(&command).map_err(|_| HostError::SpawnFailed)?;
             // From the first successful spawn through every subsequent await,
             // an owned lease keeps files alive unless the direct child is reaped.
             let mut pending = PendingChild::new(child, directory, cleanup);
@@ -525,6 +525,32 @@ impl ProcessSession {
                     return Err(error);
                 }
             };
+            // A suspended platform child is already owned by PendingChild before
+            // any fallible resume. Failure follows the same bounded rollback and
+            // retains its materialization if cleanup remains unconfirmed.
+            let admission = (|| {
+                if !authorized()
+                    || broker.as_ref().is_some_and(|broker| {
+                        services.iter().any(|binding| !broker.is_current(binding))
+                    })
+                {
+                    return Err(HostError::AuthorityRevoked);
+                }
+                pending.directory.as_ref().unwrap().verify_binding()?;
+                if let RuntimeLauncher::NativeCore { runtime } = launcher {
+                    runtime.require_current()?;
+                }
+                pending
+                    .child
+                    .as_mut()
+                    .unwrap()
+                    .start()
+                    .map_err(|_| HostError::SpawnFailed)
+            })();
+            if let Err(error) = admission {
+                pending.rollback(options.limits.cleanup_timeout_ms).await;
+                return Err(error);
+            }
             let activation = ProcessActivation {
                 instance: ComponentInstanceBinding {
                     plugin: manifest.plugin.clone(),
@@ -1095,7 +1121,7 @@ impl ProcessSession {
         receipt
     }
     fn kill_group(&mut self) {
-        kill_owned_child(&mut self.child, Some(self.pid));
+        kill_owned_child(&mut self.child);
     }
     fn abort_pipes(&mut self) {
         for task in self.pipes.tasks.drain(..) {
@@ -1152,14 +1178,14 @@ impl Drop for ProcessSession {
 // A cancelled launch future cannot run async rollback. In that case the same
 // conservative Drop rule applies as to an already established session.
 pub(crate) struct PendingChild {
-    pub(crate) child: Option<Child>,
+    pub(crate) child: Option<OwnedChild>,
     pub(crate) directory: Option<StagedDirectory>,
     pub(crate) pid: Option<u32>,
     cleanup: Option<LaunchCleanup>,
 }
 impl PendingChild {
     pub(crate) fn new(
-        child: Child,
+        child: OwnedChild,
         directory: StagedDirectory,
         cleanup: Option<LaunchCleanup>,
     ) -> Self {
@@ -1175,7 +1201,7 @@ impl PendingChild {
     }
     pub(crate) async fn rollback(&mut self, timeout_ms: u32) {
         let child = self.child.as_mut().unwrap();
-        kill_owned_child(child, self.pid);
+        kill_owned_child(child);
         if matches!(
             timeout(Duration::from_millis(timeout_ms.into()), child.wait()).await,
             Ok(Ok(_))
@@ -1190,7 +1216,7 @@ impl PendingChild {
 impl Drop for PendingChild {
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
-            kill_owned_child(child, self.pid);
+            kill_owned_child(child);
             if release_or_keep(child, &mut self.directory)
                 && let Some(cleanup) = &self.cleanup
             {
@@ -1199,20 +1225,10 @@ impl Drop for PendingChild {
         }
     }
 }
-pub(crate) fn kill_owned_child(child: &mut Child, pid: Option<u32>) {
-    #[cfg(unix)]
-    if child.id().is_some()
-        && let Some(pid) = pid
-    {
-        // This group belongs to the unreaped child created at spawn. It is
-        // lifecycle control, not confinement of code that can escape the group.
-        unsafe {
-            libc::kill(-(pid as i32), libc::SIGKILL);
-        }
-    }
-    let _ = child.start_kill();
+pub(crate) fn kill_owned_child(child: &mut OwnedChild) {
+    let _ = child.kill_tree();
 }
-fn release_or_keep(child: &mut Child, directory: &mut Option<StagedDirectory>) -> bool {
+fn release_or_keep(child: &mut OwnedChild, directory: &mut Option<StagedDirectory>) -> bool {
     let reaped = matches!(child.try_wait(), Ok(Some(_)));
     if let Some(directory) = directory.take() {
         if reaped {
@@ -1240,14 +1256,14 @@ mod lifetime_tests {
     fn staged(parent: &Path) -> StagedDirectory {
         crate::staging::materialize(parent, b"{}", &BTreeMap::new(), None, || true).unwrap()
     }
-    fn sleeping_child() -> Child {
+    fn sleeping_child() -> OwnedChild {
         // A real owned process exercises reap/lease behavior independently of
         // the synthetic protocol worker. No plugin or user project is opened.
-        let mut command = Command::new("/bin/sleep");
-        command.arg("10").env_clear().kill_on_drop(true);
-        use std::os::unix::process::CommandExt;
-        command.as_std_mut().process_group(0);
-        command.spawn().unwrap()
+        let mut command = ChildCommand::new("/bin/sleep");
+        command.arg("10").current_dir("/");
+        let mut child = OwnedChild::spawn(&command).unwrap();
+        child.start().unwrap();
+        child
     }
 
     #[test]
@@ -1262,6 +1278,9 @@ mod lifetime_tests {
             let mut pending = PendingChild::new(sleeping_child(), directory, Some(cleanup.clone()));
             assert_eq!(cleanup.state(), LaunchCleanupState::Unconfirmed);
             assert!(!cleanup.confirmed());
+            // The shared owner normally captures all three pipes. Deliberately
+            // remove one owned endpoint to retain the post-spawn failure case.
+            pending.child.as_mut().unwrap().stdin.take();
             assert!(matches!(
                 attach_pipes(pending.child.as_mut().unwrap(), &HostLimits::default()),
                 Err(HostError::ChannelFailed)
@@ -1295,8 +1314,7 @@ mod lifetime_tests {
             release_or_keep(&mut child, &mut lease);
             assert!(lease.is_none());
             assert!(path.join("package/manifest.json").is_file());
-            let pid = child.id();
-            kill_owned_child(&mut child, pid);
+            kill_owned_child(&mut child);
             timeout(Duration::from_secs(1), child.wait())
                 .await
                 .unwrap()
@@ -1392,7 +1410,7 @@ fn publish(sender: &mpsc::Sender<Event>, overflow: &AtomicBool, event: Event) {
         overflow.store(true, Ordering::Release);
     }
 }
-pub(crate) fn attach_pipes(child: &mut Child, limits: &HostLimits) -> HostResult<Pipes> {
+pub(crate) fn attach_pipes(child: &mut OwnedChild, limits: &HostLimits) -> HostResult<Pipes> {
     let mut stdin = child.stdin.take().ok_or(HostError::ChannelFailed)?;
     let stdout = child.stdout.take().ok_or(HostError::ChannelFailed)?;
     let mut stderr = child.stderr.take().ok_or(HostError::ChannelFailed)?;

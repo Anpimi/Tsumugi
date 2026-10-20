@@ -3,6 +3,7 @@
 //! no domain implementation or adoption authority. The optional Core adapter
 //! implements the trusted Runner port without giving a child a store.
 pub mod catalog;
+mod child;
 #[cfg(feature = "core-adapter")]
 pub mod core;
 #[cfg(any(target_os = "macos", target_os = "linux"))]

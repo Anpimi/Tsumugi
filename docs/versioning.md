@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+Plugin sessions and application members now share the actual child-process
+owner. Launch admission is rechecked before starting the channel, attached pipe
+tasks are aborted on failed admission, and unconfirmed cleanup retains its
+materialization. The experimental Windows process backend prepares suspended
+children inside a private Job; Windows package, filesystem, runtime and shipping
+gates remain closed. This changes no SDK/process/Member/Store/project format or
+version source. Existing pinned platform dependencies gain direct Windows
+features, without a dependency upgrade. The same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs aligned bilingual Unreleased
+entries and no additional version bump. Platform compilation and actual target
+execution remain separate evidence.
+
 The combined development candidate retains current-only project schema 61,
 Member3, WorkPlan3 and SDK/Process3. It includes the fixed Pi MCP query and
 pinned resizable-panel dependency together with exact original reference-tool

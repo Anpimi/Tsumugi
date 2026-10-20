@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Recheck launch authority before starting a prepared plugin or member channel,
+  and release attached pipe tasks when admission fails. Process ownership now
+  shares one cleanup boundary; unconfirmed cleanup retains its staged files.
+
 - Keep bundled Node and member resource files readable when the application
   is installed by another account, including builds with a restrictive umask.
 

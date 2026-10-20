@@ -550,6 +550,34 @@ JavaScript Tool profile below. The handshake must echo the
 captured capability and provider binding exactly. It cannot upgrade declarations,
 effects, versions, limits or permission requests.
 
+Plugin sessions and application members use the same owned child-process
+implementation. The caller attaches its captured materialization before a
+fallible explicit start, rechecks authority and binding, and rolls back through
+the original bounded cleanup path on failure. Attached pipe tasks are aborted
+when their owner is dropped. Unix children keep their original process-group
+and direct-child wait policy; this is lifecycle control rather than confinement.
+
+The Windows backend creates a suspended process with an explicit inherited
+handle list inside a private kill-on-close Job before its initial thread runs.
+Only an explicit start resumes that thread. Successful wait requires both the
+leader's exit and an empty Job; unknown state cannot release staging. This is a
+process backend, not available Windows package loading or Desktop support:
+the filesystem, staging, runtime identity and distribution gates remain closed.
+It requires the Windows 10 Job-list process attribute and does not fall back to
+assigning an already running process.
+
+The separate `crates/plugin-host/process-conformance` workspace compiles the
+actual process-owner source by path, without database or repository-verifier
+C libraries. With the corresponding Rust target installed, use:
+
+```sh
+cargo check --manifest-path crates/plugin-host/process-conformance/Cargo.toml --target x86_64-pc-windows-msvc --tests --locked
+```
+
+Cross-compilation checks API and type consistency. It does not execute Windows
+Job admission, pipe access controls, descendants or teardown; target execution
+must be checked separately before claiming that platform is supported.
+
 `invoke` checks the captured project/scope, package/instance, exact capability,
 input/output/error/profile identities and limits. The SDK correlates the result
 with both the captured request and this actual channel. Dispatch IDs cannot be

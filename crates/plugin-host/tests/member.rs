@@ -505,12 +505,12 @@ async fn unsupported_member_artifact_protocol_is_rejected_before_launch() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn changed_session_or_sequence_is_rejected_and_the_original_child_is_reaped() {
+async fn changed_protocol_session_or_sequence_is_rejected_and_the_original_child_is_reaped() {
     let runtime = runtime_fixture::approved_runtime();
-    // Require the production bundle fixture even though these two negative
+    // Require the production bundle fixture even though these negative
     // handshakes intentionally execute a smaller synthetic application entry.
     let _ = artifact();
-    for mismatch in ["session", "sequence"] {
+    for mismatch in ["protocol", "session", "sequence"] {
         let fixture = tempfile::tempdir().unwrap();
         let stage = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -522,8 +522,8 @@ async fn changed_session_or_sequence_is_rejected_and_the_original_child_is_reape
 let bytes=Buffer.alloc(0);let sent=false;
 process.stdin.on('data',chunk=>{bytes=Buffer.concat([bytes,chunk]);if(sent||bytes.length<4||bytes.length<4+bytes.readUInt32BE(0))return;sent=true;
 const input=JSON.parse(bytes.subarray(4,4+bytes.readUInt32BE(0)).toString('utf8'));writeFileSync(input.body.input,String(process.pid));
-const body={protocolVersion:1,sessionId:input.sessionId,sequence:0,body:{kind:'ready'}};
-if(MISMATCH==='session')body.sessionId='a3260d1d-7a88-4bda-89e8-2c117320ce12';else body.sequence=1;
+const body={protocolVersion:input.protocolVersion,sessionId:input.sessionId,sequence:0,body:{kind:'ready'}};
+if(MISMATCH==='protocol')body.protocolVersion=1;else if(MISMATCH==='session')body.sessionId='a3260d1d-7a88-4bda-89e8-2c117320ce12';else body.sequence=1;
 const output=Buffer.from(JSON.stringify(body));const header=Buffer.alloc(4);header.writeUInt32BE(output.length);process.stdout.write(Buffer.concat([header,output]));});
 setInterval(()=>{},1000);"#.replace("MISMATCH", &format!("'{mismatch}'"));
         std::fs::write(fixture.path().join("worker.mjs"), worker).unwrap();
@@ -546,7 +546,12 @@ setInterval(()=>{},1000);"#.replace("MISMATCH", &format!("'{mismatch}'"));
             Arc::new(|| true),
         )
         .await;
-        assert!(matches!(result, Err(HostError::RequestMismatch)));
+        let expected = if mismatch == "protocol" {
+            HostError::InvalidFrame
+        } else {
+            HostError::RequestMismatch
+        };
+        assert_eq!(result.as_ref().err(), Some(&expected), "{mismatch}");
         let pid = std::fs::read_to_string(pid_path)
             .unwrap()
             .parse::<u32>()

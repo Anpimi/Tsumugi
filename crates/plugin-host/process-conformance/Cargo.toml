@@ -1,0 +1,31 @@
+[package]
+name = "tsumugi-owned-process-conformance"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+license = "MIT"
+description = "Direct platform checks of the Host's actual owned process implementation"
+
+[workspace]
+resolver = "2"
+
+[dependencies]
+tokio = { version = "=1.53.1", features = ["rt", "macros", "process", "io-util", "sync", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+tokio = { version = "=1.53.1", features = ["net"] }
+uuid = { version = "=1.26.1", features = ["v4"] }
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }

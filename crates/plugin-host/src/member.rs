@@ -6,16 +6,12 @@ use std::{
     future::Future,
     path::Path,
     pin::Pin,
-    process::Stdio,
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
 use serde_json::Value;
-use tokio::{
-    process::Command,
-    time::{Instant, timeout, timeout_at},
-};
+use tokio::time::{Instant, timeout, timeout_at};
 use tsumugi_core::{
     ai::member_wire::{self as wire, MemberBody, MemberCall, MemberFrame, MemberReply},
     execution::{Cancellation, ExecutionError, ExecutionId},
@@ -25,6 +21,7 @@ pub use crate::{CapturedMemberArtifact, MemberArtifactManifest};
 
 use crate::{
     CapturedRuntime, CloseReceipt, HostError, HostLimits, HostResult,
+    child::{ChildCommand, OwnedChild},
     session::{Event, PendingChild, Pipes, attach_pipes, kill_owned_child},
     staging,
 };
@@ -203,7 +200,7 @@ impl MemberProcess {
             }
         };
         self.io_stop.request();
-        kill_owned_child(self.pending.child.as_mut().unwrap(), self.pending.pid);
+        kill_owned_child(self.pending.child.as_mut().unwrap());
         // Core's request observes the shared stop token while actual I/O is
         // pending. Drain it before allowing a caller to retry or release facts.
         if timeout(
@@ -352,7 +349,7 @@ pub async fn run_member(
         .await
         .map_err(|_| HostError::StageFailed)??;
         let package = directory.path().join("package");
-        let mut command = Command::new(
+        let mut command = ChildCommand::new(
             directory
                 .path()
                 .join("runtime/tool")
@@ -360,14 +357,7 @@ pub async fn run_member(
         );
         command
             .arg(package.join(&artifact.manifest().entrypoint))
-            .current_dir(&package)
-            .env_clear()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        use std::os::unix::process::CommandExt;
-        command.as_std_mut().process_group(0);
+            .current_dir(&package);
         directory.verify_binding()?;
         if !authorized() {
             return Err(HostError::AuthorityRevoked);
@@ -378,7 +368,7 @@ pub async fn run_member(
         if Instant::now() >= deadline {
             return Err(HostError::Timeout);
         }
-        let child = command.spawn().map_err(|_| HostError::SpawnFailed)?;
+        let child = OwnedChild::spawn(&command).map_err(|_| HostError::SpawnFailed)?;
         let mut pending = PendingChild::new(child, directory, None);
         let child_pid = pending.pid.ok_or(HostError::SpawnFailed)?;
         let pipes = match attach_pipes(pending.child.as_mut().unwrap(), &options.limits) {
@@ -391,6 +381,28 @@ pub async fn run_member(
                 return Err(error);
             }
         };
+        let admission = (|| {
+            if !authorized() {
+                return Err(HostError::AuthorityRevoked);
+            }
+            if options.cancellation.is_requested() || io_stop.is_requested() {
+                return Err(HostError::Cancelled);
+            }
+            if Instant::now() >= deadline {
+                return Err(HostError::Timeout);
+            }
+            pending.directory.as_ref().unwrap().verify_binding()?;
+            pending
+                .child
+                .as_mut()
+                .unwrap()
+                .start()
+                .map_err(|_| HostError::SpawnFailed)
+        })();
+        if let Err(error) = admission {
+            pending.rollback(options.limits.cleanup_timeout_ms).await;
+            return Err(error);
+        }
         let mut process = MemberProcess {
             pending,
             pipes,
