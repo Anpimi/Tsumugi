@@ -28,16 +28,29 @@ fn checked_source(
     checker: &RunnerProxy,
     text: &[u8],
 ) -> (SourceBundle, FixedInput, FixedResult) {
-    let bundle = SourceBundle::capture_declared(
+    checked_source_materials(
+        runtime,
+        store,
         resource,
+        producer,
+        checker,
         vec![
             br#"{"UniqueID":"Example.Mod","Name":"Test","Version":"1.0.0","EntryDll":"Test.dll"}"#
                 .to_vec(),
             text.to_vec(),
         ],
-        "en-US",
     )
-    .unwrap();
+}
+
+fn checked_source_materials(
+    runtime: &mut ExecutionRuntime,
+    store: &mut ProjectStore,
+    resource: &sdk::SourceImportBinding,
+    producer: &RunnerProxy,
+    checker: &RunnerProxy,
+    materials: Vec<Vec<u8>>,
+) -> (SourceBundle, FixedInput, FixedResult) {
+    let bundle = SourceBundle::capture_declared(resource, materials, "en-US").unwrap();
     let profile = resource.declaration.profile.clone();
     let input = bundle
         .fixed_plugin_input(
@@ -629,6 +642,233 @@ fn checked_source_update_refuses_old_translation_adoption_and_preserves_committe
             .unwrap()
             .applied,
         2
+    );
+    assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
+}
+
+#[test]
+fn webvtt_translation_preserves_captured_cues_and_uses_original_per_entry_adoption() {
+    let selected = PathBuf::from(
+        std::env::var_os("TSUMUGI_TEST_WEBVTT_PACKAGE")
+            .expect("explicit prebuilt WebVTT package required"),
+    );
+    let digest = std::env::var("TSUMUGI_TEST_WEBVTT_DIGEST")
+        .expect("independent WebVTT package fingerprint required");
+    let image = PackageImage::capture_directory(&selected, &digest, || true).unwrap();
+    let source_resource = image.source_import("source-profile").unwrap();
+    let resource = image.translation_import("translation-profile").unwrap();
+    assert_eq!(
+        resource.declaration.profile,
+        source_resource.declaration.profile
+    );
+    assert_eq!(
+        resource.declaration.material.logical_directory,
+        "translations"
+    );
+    assert_eq!(resource.declaration.material.extension, "vtt");
+    let temporary = tempfile::tempdir().unwrap();
+    let staging = temporary.path().join("workers");
+    std::fs::create_dir(&staging).unwrap();
+    let proxy = |contribution| {
+        Arc::new(
+            RunnerProxy::new(
+                image.clone(),
+                contribution,
+                runtime_fixture::approved_runtime(),
+                &staging,
+                HostLimits::default(),
+            )
+            .unwrap(),
+        )
+    };
+    let source_producer = proxy(source_resource.declaration.extractor.as_str());
+    let source_checker = proxy(source_resource.declaration.checker.as_str());
+    let producer = proxy(resource.declaration.extractor.as_str());
+    let checker = proxy(resource.declaration.checker.as_str());
+    let path = temporary.path().join("project");
+    let mut store = ProjectStore::create(
+        &path,
+        ProjectMetadata::create("WebVTT existing translations", "en-US", ["zh-CN"]).unwrap(),
+    )
+    .unwrap();
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    for runner in [&source_producer, &source_checker, &producer, &checker] {
+        runtime.register(runner.clone()).unwrap();
+    }
+    runtime
+        .register_read_only(Arc::new(TranslationProjectionRunner))
+        .unwrap();
+    let source_raw = "WEBVTT\n\nMiXA\n00:01.000 --> 00:02.000\nsame\n\nOther\n00:03.000 --> 00:04.000\nsame\n\nAbsent\n00:05.000 --> 00:06.000\nnot imported\n";
+    let (bundle, source_input, source_result) = checked_source_materials(
+        &mut runtime,
+        &mut store,
+        &source_resource,
+        &source_producer,
+        &source_checker,
+        vec![source_raw.as_bytes().to_vec()],
+    );
+    let confirmation = store
+        .source_preview(
+            source_input.envelope().attempt_id,
+            source_result.envelope().result_id,
+            0,
+            100,
+        )
+        .unwrap()
+        .confirmation;
+    let source_action = store
+        .prepare_adoption(
+            source_input.envelope().attempt_id,
+            source_input.envelope().units[0].unit_id,
+            vec![source_result.envelope().result_id],
+            serde_json::to_value(confirmation).unwrap(),
+        )
+        .unwrap();
+    store
+        .adopt_execution(&source_action, &SourceAdoptionHandler)
+        .unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let before = store.source_content(snapshot, 0, 100).unwrap();
+    let native = before.rows[0].occurrence.native_identity.as_ref().unwrap();
+    // Import order, timings and line endings differ. Only canonical cue identity
+    // pairs entries; the captured translation timeline never updates the source.
+    let raw = "\u{feff}WEBVTT\r\n\r\nNOTE imported evidence 👩🏽‍💻\r\n\r\nOTHER\r\n00:10.000 --> 00:11.000\r\n另一条\r\n第二行\r\n\r\nmIxA\r\n00:20.000 --> 00:21.000\r\n译文 e\u{301} 👩🏽‍💻\r\n\r\nghost\r\n00:30.000 --> 00:31.000\r\nunmatched\r\n";
+    let material = sdk::TranslationExtractionInput {
+        profile: resource.declaration.profile.clone(),
+        import_id: ExecutionId::new().to_string(),
+        source_set_id: bundle.set_id.to_string(),
+        source_snapshot_id: snapshot.to_string(),
+        target_language: "zh-CN".into(),
+        language_evidence: sdk::TranslationLanguageEvidence::UserConfirmed,
+        native_scope: sdk::TranslationNativeScope {
+            namespace: native.namespace.clone(),
+            policy: native.policy.clone(),
+        },
+        artifacts: vec![sdk::CapturedTextArtifact {
+            id: ExecutionId::new().to_string(),
+            logical_path: "translations/zh.vtt".into(),
+            role: "translation".into(),
+            utf8: raw.into(),
+            sha256: sdk::payload_digest(raw),
+        }],
+    };
+    resource.validate_input(&material).unwrap();
+    let (input, result, projected) = checked_translation(
+        &mut runtime,
+        &mut store,
+        &resource,
+        &producer,
+        &checker,
+        material.clone(),
+    );
+    let proposal = validate_plugin_translation_output(&input, &result).unwrap();
+    assert_eq!(proposal.artifacts, material.artifacts);
+    assert_eq!(proposal.declared_language, "zh");
+    assert_eq!(proposal.target_language, "zh-CN");
+    assert_eq!(proposal.entries[0].text, "另一条\n第二行");
+    assert_eq!(proposal.entries[1].text, "译文 e\u{301} 👩🏽‍💻");
+    let preview = store
+        .translation_preview(projected.envelope().attempt_id, 0, 100, None)
+        .unwrap();
+    assert_eq!(
+        (preview.total, preview.unique, preview.unmatched),
+        (3, 2, 1)
+    );
+    assert_eq!(preview.rows[2].status, TranslationMatch::Unmatched);
+    let row = &preview.rows[1];
+    assert_eq!(row.entry.native_key, "mIxA");
+    assert_eq!(row.source_text.as_deref(), Some("same"));
+    assert_ne!(row.unit_id, preview.rows[0].unit_id);
+    assert_eq!(
+        store
+            .translation_history(project, row.unit_id.unwrap(), "zh-CN", 0, 10)
+            .unwrap()
+            .total,
+        0
+    );
+    let candidate = translation_action(
+        &mut store,
+        &projected,
+        row,
+        snapshot,
+        TranslationSelectionDecision::CandidateOnly,
+    );
+    let receipt = store
+        .adopt_execution(&candidate, &TranslationAdoptionHandler)
+        .unwrap();
+    assert_eq!(receipt.changes.len(), 1);
+    let history = store
+        .translation_history(project, row.unit_id.unwrap(), "zh-CN", 0, 10)
+        .unwrap();
+    assert_eq!(history.total, 1);
+    assert!(history.current.is_none());
+    assert_eq!(history.rows[0].text, "译文 e\u{301} 👩🏽‍💻");
+    assert_eq!(history.rows[0].source_snapshot_id, snapshot);
+    assert_eq!(history.rows[0].result_id, Some(row.result_id));
+    let selected = translation_action(
+        &mut store,
+        &projected,
+        &preview.rows[0],
+        snapshot,
+        TranslationSelectionDecision::SelectIfEmpty,
+    );
+    let selected_receipt = store
+        .adopt_execution(&selected, &TranslationAdoptionHandler)
+        .unwrap();
+    assert_eq!(selected_receipt.changes.len(), 2);
+    let selected_history = store
+        .translation_history(project, preview.rows[0].unit_id.unwrap(), "zh-CN", 0, 10)
+        .unwrap();
+    assert_eq!(
+        selected_history.current_text.as_deref(),
+        Some("另一条\n第二行")
+    );
+    assert_eq!(store.source_content(snapshot, 0, 100).unwrap(), before);
+    runtime.begin_quiesce(&mut store).unwrap();
+    runtime.finish_quiesce(&mut store).unwrap();
+    drop(runtime);
+    drop(store);
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.source_content(snapshot, 0, 100).unwrap(), before);
+    assert_eq!(
+        reopened
+            .translation_history(project, row.unit_id.unwrap(), "zh-CN", 0, 10)
+            .unwrap(),
+        history
+    );
+    assert_eq!(
+        reopened
+            .translation_history(project, preview.rows[0].unit_id.unwrap(), "zh-CN", 0, 10)
+            .unwrap(),
+        selected_history
+    );
+    assert_eq!(
+        reopened
+            .adopt_execution(&candidate, &TranslationAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        reopened
+            .adopt_execution(&selected, &TranslationAdoptionHandler)
+            .unwrap(),
+        selected_receipt
+    );
+    let saved = reopened
+        .execution_result(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    assert_eq!(
+        validate_plugin_translation_output(&input, &saved).unwrap(),
+        proposal
+    );
+    assert_eq!(
+        reopened
+            .execution_attempt(input.envelope().attempt_id, false)
+            .unwrap()
+            .items[0]
+            .validation,
+        ValidationState::Valid
     );
     assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
 }

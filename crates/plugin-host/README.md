@@ -863,6 +863,18 @@ projection shares the existing revision/selection/receipt owner. Optional origin
 display evidence has nullable UTF-8 key coordinates; absence is never a fabricated
 range. Desktop plugin import integration and complete domain cutover remain pending.
 
+The `translation_source_change` target also contains
+`webvtt_translation_preserves_captured_cues_and_uses_original_per_entry_adoption`.
+With `core-adapter,javascript-conformance`, explicitly set `TSUMUGI_TEST_WEBVTT_PACKAGE`
+and `TSUMUGI_TEST_WEBVTT_DIGEST` to the actual prebuilt WebVTT candidate, together
+with the three runtime variables described above. Select that exact test to run
+real source extraction/checking/adoption followed by translation extraction,
+independent checking, Core projection, candidate/selection adoption and reopening.
+The fixture changes cue order and timing, retains BOM/CRLF/Unicode and an unmatched
+cue, and asserts unchanged source evidence and original receipt replay. Package
+capture and local conformance grants do not establish publisher authentication,
+Desktop observation or release qualification.
+
 `PackageImage::translation_import` reads the SDK's translation Resource from
 captured bytes and binds its exact extractor/checker selections. The SDK binding
 checks single-file path/extension, role, raw bound and profile data without
