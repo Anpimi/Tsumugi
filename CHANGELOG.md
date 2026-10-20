@@ -10,6 +10,9 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Avoid a repeated source-size scan when qualifying saved review checks while
+  retaining complete source validation and the full review-input size limit.
+
 - Open the existing content search from the fixed Find content entry, preserving
   the working language, query, selection and local edits through the original
   navigation guards. Opening search does not submit it or change the current entry.

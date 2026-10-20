@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Review-check input validation relies on the complete content validator for its
+captured source size limit, avoiding a second encoding of the same immutable
+source at the same limit. Full source semantics and the outer review-input limit
+remain required, with the same rejection codes and fields. This changes no API,
+schema, protocol, persisted format, dependency or version source. It stays in the
+same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+bilingual Unreleased entries and no additional bump.
+
 The fixed Find content entry opens the existing translation search through the
 original session navigation guards. It preserves the working language, query,
 selection and local work without automatically submitting search or selecting an

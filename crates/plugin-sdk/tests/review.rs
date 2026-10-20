@@ -66,6 +66,94 @@ fn review_roundtrip_preserves_original_evidence_unicode_and_missing_vs_empty_tex
     }
 }
 
+// Pad an already valid opaque extension using actual wire encoding. Newlines
+// consume two JSON bytes each without exceeding the block's raw UTF-8 budget.
+fn input_with_encoded_size(
+    size: usize,
+    encoded_len: impl Fn(&ReviewCheckInput) -> usize,
+) -> ReviewCheckInput {
+    let mut value = input();
+    let block = value.source.domain_blocks.last_mut().unwrap();
+    assert_eq!(block.schema.id, "example.unknown.metadata");
+    assert_eq!(block.handling, ExtensionHandling::Preserve);
+    block.payload_utf8.push_str("🧵 e\u{301} \"\\\0\t\r\n");
+    let padding = size.checked_sub(encoded_len(&value)).unwrap();
+    let block = value.source.domain_blocks.last_mut().unwrap();
+    block.payload_utf8.push_str(&"\n".repeat(padding / 2));
+    if padding % 2 != 0 {
+        block.payload_utf8.push('x');
+    }
+    assert!(block.payload_utf8.len() <= MAX_EXCHANGE_BYTES);
+    assert_eq!(encoded_len(&value), size);
+    value
+}
+
+#[test]
+fn review_input_encoded_boundary_preserves_unicode_escapes_and_complete_request_limit() {
+    let mut value = input_with_encoded_size(MAX_INVOCATION_PAYLOAD_BYTES, |input| {
+        serde_json::to_vec(input).unwrap().len()
+    });
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert_eq!(bytes.len(), MAX_INVOCATION_PAYLOAD_BYTES);
+    assert!(serde_json::to_vec(&value.source).unwrap().len() < MAX_CONTENT_EXCHANGE_BYTES);
+    binding().validate_input(&value).unwrap();
+    assert_eq!(parse_review_check_input(&bytes).unwrap(), value);
+
+    value
+        .source
+        .domain_blocks
+        .last_mut()
+        .unwrap()
+        .payload_utf8
+        .push('x');
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert_eq!(bytes.len(), MAX_INVOCATION_PAYLOAD_BYTES + 1);
+    value.source.validate().unwrap();
+    let error = value.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "reviewCheckInput");
+    assert_eq!(parse_review_check_input(&bytes).unwrap_err(), error);
+}
+
+#[test]
+fn review_source_validation_keeps_encoded_boundary_and_original_first_error() {
+    let mut value = input_with_encoded_size(MAX_CONTENT_EXCHANGE_BYTES, |input| {
+        serde_json::to_vec(&input.source).unwrap().len()
+    });
+    value.source.validate().unwrap();
+    assert!(serde_json::to_vec(&value).unwrap().len() > MAX_INVOCATION_PAYLOAD_BYTES);
+    let outer = value.validate().unwrap_err();
+    assert_eq!(outer.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(outer.field, "reviewCheckInput");
+
+    value
+        .source
+        .domain_blocks
+        .last_mut()
+        .unwrap()
+        .payload_utf8
+        .push('x');
+    assert_eq!(
+        serde_json::to_vec(&value.source).unwrap().len(),
+        MAX_CONTENT_EXCHANGE_BYTES + 1
+    );
+    let error = value.source.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::LimitExceeded);
+    assert_eq!(error.field, "contentExchange");
+    value.target_language = "invalid/language".into();
+    assert_eq!(value.validate().unwrap_err(), error);
+
+    let mut invalid = input();
+    invalid.source.domain_blocks.last_mut().unwrap().target = ContentTarget::Unit {
+        id: "outside-source".into(),
+    };
+    invalid.target_language = "invalid/language".into();
+    let error = invalid.source.validate().unwrap_err();
+    assert_eq!(error.code, ContractErrorCode::InvalidDeclaration);
+    assert_eq!(error.field, "content.domainBlocks.target");
+    assert_eq!(invalid.validate().unwrap_err(), error);
+}
+
 #[test]
 fn review_rejects_changed_revision_foreign_scope_duplicate_selection_and_text_overflow() {
     for change in 0..7 {
