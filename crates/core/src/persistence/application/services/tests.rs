@@ -1597,6 +1597,29 @@ fn revoke_after_reservation(settings_changed: bool) {
 
 #[test]
 fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
+    in_flight_http_stop(InFlightStop::Deadline);
+}
+
+#[test]
+fn in_flight_http_origin_revocation_preserves_unknown_outcome() {
+    in_flight_http_stop(InFlightStop::OriginRevoked);
+}
+
+#[test]
+fn in_flight_http_settings_revocation_preserves_unknown_outcome() {
+    in_flight_http_stop(InFlightStop::SettingsRevoked);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InFlightStop {
+    Deadline,
+    OriginRevoked,
+    SettingsRevoked,
+}
+
+fn in_flight_http_stop(stop: InFlightStop) {
+    use std::io::Read;
+
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!(
@@ -1604,20 +1627,26 @@ fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
         listener.local_addr().unwrap()
     );
     let mut fixture = Fixture::with_endpoint(endpoint);
-    let deadline = Instant::now() + std::time::Duration::from_millis(350);
-    fixture.origin = fixture
-        .store
-        .capture_work_plan_service_origin(
-            &fixture.origin.scope,
-            &fixture.dispatch,
-            &fixture.origin.record.invocation,
-            &fixture.origin.record.service,
-            deadline,
-            &fixture.cancellation,
-            &fixture.settings_revocation,
-        )
-        .unwrap();
+    if stop == InFlightStop::Deadline {
+        let deadline = Instant::now() + std::time::Duration::from_millis(350);
+        fixture.origin = fixture
+            .store
+            .capture_work_plan_service_origin(
+                &fixture.origin.scope,
+                &fixture.dispatch,
+                &fixture.origin.record.invocation,
+                &fixture.origin.record.service,
+                deadline,
+                &fixture.cancellation,
+                &fixture.settings_revocation,
+            )
+            .unwrap();
+    }
+    let deadline = fixture.origin.deadline();
     let (prepared, receipt) = fixture.submit();
+    if stop == InFlightStop::SettingsRevoked {
+        fixture.complete_outer();
+    }
     let mut dispatch = fixture
         .store
         .dispatch_execution_item(
@@ -1630,10 +1659,11 @@ fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
     let settings = crate::ai::settings(prepared.input()).unwrap();
     assert!(settings.config.timeout_seconds >= 1);
     let item = crate::ai::item_payload(prepared.input(), dispatch.item_id).unwrap();
+    let (request_sent, request_received) = mpsc::sync_channel(1);
     std::thread::scope(|scope| {
         let server = scope.spawn(move || {
             let limit = Instant::now() + std::time::Duration::from_secs(2);
-            let stream = loop {
+            let mut stream = loop {
                 match listener.accept() {
                     Ok((stream, _)) => break stream,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1646,6 +1676,44 @@ fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
                     Err(error) => panic!("synthetic listener: {error}"),
                 }
             };
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            let header_end = loop {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0, "client closed before sending HTTP headers");
+                request.extend_from_slice(&buffer[..read]);
+                assert!(request.len() <= MAX_INPUT_BYTES);
+                if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                    break end + 4;
+                }
+            };
+            let headers = std::str::from_utf8(&request[..header_end]).unwrap();
+            assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
+            let length: usize = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|value| value.trim().parse().unwrap())
+                })
+                .unwrap();
+            let request_end = header_end.checked_add(length).unwrap();
+            assert!(request_end <= MAX_INPUT_BYTES);
+            while request.len() < request_end {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0, "client closed before sending the HTTP body");
+                request.extend_from_slice(&buffer[..read]);
+                assert!(request.len() <= MAX_INPUT_BYTES);
+            }
+            let body: serde_json::Value =
+                serde_json::from_slice(&request[header_end..request_end]).unwrap();
+            assert_eq!(body["model"], "synthetic-model");
+            // A reservation or TCP connection alone does not prove that the
+            // physical request was sent before the original service expired.
+            request_sent.send(Instant::now()).unwrap();
             std::thread::sleep(std::time::Duration::from_secs(1));
             drop(stream);
         });
@@ -1673,10 +1741,31 @@ fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
             .reserve_provider_request(&dispatch, id, limit)
             .unwrap();
         reply.send(Ok(())).unwrap();
-        assert_eq!(
-            worker.join().unwrap().unwrap_err().code,
-            ErrorCode::OutcomeUnknown
-        );
+        let sent_at = request_received
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("complete HTTP request must arrive before the original service deadline");
+        assert!(sent_at < deadline);
+        if stop != InFlightStop::Deadline {
+            assert!(Instant::now() < deadline, "revocation must precede expiry");
+            dispatch.check_service_dispatch().unwrap();
+        }
+        match stop {
+            InFlightStop::Deadline => {}
+            InFlightStop::OriginRevoked => fixture.origin.revocation().request(),
+            InFlightStop::SettingsRevoked => {
+                fixture.settings_revocation.request();
+                assert!(!fixture.cancellation.is_requested());
+                assert!(!fixture.origin.revocation().is_requested());
+            }
+        }
+        let error = worker.join().unwrap().unwrap_err();
+        if stop != InFlightStop::Deadline {
+            assert!(
+                Instant::now() < deadline,
+                "active revocation must finish before the original service deadline"
+            );
+        }
+        assert_eq!(error.code, ErrorCode::OutcomeUnknown);
         assert!(
             started.elapsed() < std::time::Duration::from_millis(800),
             "in-flight wait must finish before the server or original model timeout"
@@ -1696,6 +1785,13 @@ fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
             .unwrap_err()
             .code,
         ErrorCode::Unauthorized
+    );
+    assert_eq!(
+        fixture
+            .store
+            .work_plan_service_receipt(&receipt.identity, &fixture.call)
+            .unwrap(),
+        Some(receipt)
     );
 }
 

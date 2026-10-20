@@ -1261,12 +1261,42 @@ fn encoded_source_contract_limit_rejects_escaping_expansion_without_truncation()
         .collect();
     let source = serde_json::to_vec(&entries).unwrap();
     let bundle = SourceBundle::capture(&manifest, &source, "en").unwrap();
-    // Count limits do not override the independently documented encoded
-    // ContentExchange ceiling. Return a typed limit, never partial coverage.
+    let output = extract(&bundle, &Cancellation::default()).unwrap();
+    assert_eq!(output.occurrences.len(), MAX_OCCURRENCES);
+    let mut exchange = output.exchange;
+    exchange.domain_blocks.push(sdk::DomainBlock {
+        target: sdk::ContentTarget::Snapshot,
+        schema: contract_ref("fixture.escaping"),
+        handling: sdk::ExtensionHandling::Preserve,
+        payload_utf8: String::new(),
+    });
+    // An opaque NUL needs six JSON bytes, independently of its raw payload
+    // limit. Fill the complete exchange to its current encoded ceiling.
+    let remaining =
+        sdk::MAX_CONTENT_EXCHANGE_BYTES - serde_json::to_vec(&exchange).unwrap().len();
+    let payload = &mut exchange.domain_blocks.last_mut().unwrap().payload_utf8;
+    *payload = "\0".repeat(remaining / 6);
+    payload.push_str(&"x".repeat(remaining % 6));
+    assert!(payload.len() < sdk::MAX_EXCHANGE_BYTES);
     assert_eq!(
-        extract(&bundle, &Cancellation::default()).unwrap_err().code,
-        ErrorCode::LimitExceeded
+        serde_json::to_vec(&exchange).unwrap().len(),
+        sdk::MAX_CONTENT_EXCHANGE_BYTES
     );
+    let accepted =
+        project_source_output(&bundle, exchange.clone(), output.revision_policy.clone()).unwrap();
+    assert_eq!(accepted.occurrences.len(), MAX_OCCURRENCES);
+    assert!(accepted.exchange == exchange, "source evidence must not be truncated");
+
+    exchange.domain_blocks.last_mut().unwrap().payload_utf8.push('x');
+    assert_eq!(
+        serde_json::to_vec(&exchange).unwrap().len(),
+        sdk::MAX_CONTENT_EXCHANGE_BYTES + 1
+    );
+    let error = project_source_output(&bundle, exchange, output.revision_policy)
+        .err()
+        .expect("an oversized encoded exchange must not return partial coverage");
+    assert_eq!(error.code, ErrorCode::LimitExceeded);
+    assert_eq!(error.stage, "source-contract-limit");
 }
 
 #[test]

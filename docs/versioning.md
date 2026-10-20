@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+Revoking or expiring a service origin after its HTTP exchange has begun now
+retains an unknown outcome and the original unresolved request accounting.
+Admission before HTTP remains strict; no retry, permission, protocol, persisted
+shape, dependency or version-source change is introduced. This correction stays
+in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
+with synchronized bilingual Unreleased entries and no additional version bump.
+
 The optional macOS bundle now selects the reviewed WebVTT package with translated
 caption import and independent semantic checking. Its exact source, transport and
 complete package pins change together; the selected SDK artifact, plugin identity,

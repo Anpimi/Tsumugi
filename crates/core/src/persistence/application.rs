@@ -2292,10 +2292,10 @@ mod tests {
         );
     }
     #[test]
-    fn agent_original_reconciliation_preserves_guard_history_and_expired_absence() {
+    fn agent_original_reconciliation_preserves_guard_history_and_requires_irreversible_absence() {
         use crate::application::{
-            AgentGenerationRequest, WorkPlanAgentExecutionIdentity,
-            WorkPlanAgentReconciliationOutcome,
+            AgentGenerationRequest, ControlWorkPlan, WorkPlanAgentExecutionIdentity,
+            WorkPlanAgentReconciliationOutcome, WorkPlanCommand,
         };
         let (directory, mut store, units) = fixture();
         let plan = store
@@ -2429,13 +2429,44 @@ mod tests {
         while control::now().unwrap() <= short_consent.expires_at {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        let sequence = store.execution_sequence().unwrap();
+        let reconciliation = store.reconcile_work_plan_agent_execution(&expired).unwrap();
+        assert_eq!(reconciliation.identity, expired);
+        assert_eq!(
+            reconciliation.outcome,
+            WorkPlanAgentReconciliationOutcome::Active
+        );
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
         assert_eq!(
             store
-                .reconcile_work_plan_agent_execution(&expired)
-                .unwrap()
-                .outcome,
+                .enqueue_work_plan_agent_generation(
+                    &short,
+                    crate::execution::RecoveryPolicy::ExternalUnknown
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        // Wall-clock expiry does not prove irreversible absence. Only explicit
+        // original-scope control prevents this prepared input from later enqueue.
+        store
+            .control_work_plan(&ControlWorkPlan {
+                action_id: ExecutionId::new(),
+                plan_id: short_plan.plan_id,
+                expected_generation: short_grant.lease.generation,
+                command: WorkPlanCommand::Stop,
+                confirmed: false,
+                expires_at: None,
+            })
+            .unwrap();
+        let sequence = store.execution_sequence().unwrap();
+        let reconciliation = store.reconcile_work_plan_agent_execution(&expired).unwrap();
+        assert_eq!(reconciliation.identity, expired);
+        assert_eq!(
+            reconciliation.outcome,
             WorkPlanAgentReconciliationOutcome::NotEnqueued
         );
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
         assert!(
             store
                 .enqueue_work_plan_agent_generation(

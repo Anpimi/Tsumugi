@@ -4,6 +4,7 @@ pub use member::{MemberHttpResponse, MemberProviderSession, ProviderRequestCaptu
 use super::{AiConfig, Usage, error};
 use crate::execution::*;
 use std::{
+    cell::Cell,
     collections::{BTreeMap, VecDeque},
     sync::{
         Mutex, OnceLock,
@@ -232,7 +233,17 @@ impl ProviderService {
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .timeout(timeout).body(body);
             if let Some(key) = key { call = call.bearer_auth(key); }
+            let http_started = Cell::new(false);
+            let check_dispatch = || request.check_service_dispatch().map_err(|failure| {
+                if http_started.get() {
+                    // After entering HTTP, revocation cannot prove that nothing
+                    // was sent or charged. Drop the wait and retain uncertainty.
+                    error(ErrorCode::OutcomeUnknown, "ai-service-revoked-after-dispatch")
+                } else { failure }
+            });
             let io = async {
+                request.check_service_dispatch()?;
+                http_started.set(true);
                 let mut response = call.send().await
                     .map_err(|_| error(ErrorCode::OutcomeUnknown, "ai-network-unknown"))?;
                 let status = response.status();
@@ -253,13 +264,13 @@ impl ProviderService {
                 if cancel.is_requested() {
                     return Err(error(ErrorCode::OutcomeUnknown, "ai-cancelled-after-dispatch"));
                 }
-                request.check_service_dispatch()?;
+                check_dispatch()?;
                 tokio::select! {
                     response = &mut io => {
                         if cancel.is_requested() {
                             return Err(error(ErrorCode::OutcomeUnknown, "ai-cancelled-after-dispatch"));
                         }
-                        request.check_service_dispatch()?;
+                        check_dispatch()?;
                         return response;
                     }
                     _ = tokio::time::sleep(Duration::from_millis(20)) => {}

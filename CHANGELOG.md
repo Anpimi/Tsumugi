@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Retain an unknown outcome when an originating service expires or is revoked
+  after its model HTTP request begins. Keep the original unresolved request
+  accounting and reject further dispatch without automatically retrying.
+
 - Keep JavaScript component activation, registration and asynchronous cleanup
   within its existing session owner, removing the Cordis runtime dependency.
   Clean runtime preparation now needs only the pinned JSON parser; rebuild,
