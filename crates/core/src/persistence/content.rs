@@ -1,6 +1,6 @@
 use super::{
     ProjectStore,
-    ledger::{load_input, load_result, read_receipt, sql_error, validate_source_link},
+    ledger::{load_input, load_qualified_source, load_result, read_receipt, sql_error},
 };
 use crate::{
     content::*,
@@ -497,14 +497,7 @@ pub(super) fn snapshot_rows(
     ExecutionError,
 > {
     let (project,set,attempt,result,language,policy):(String,String,String,String,String,String)=connection.query_row("SELECT project_id,set_id,attempt_id,result_id,source_language,identity_policy FROM source_snapshots WHERE snapshot_id=?1",[snapshot.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(sql_error)?;
-    let input = load_input(connection, id(attempt)?)?;
-    let result = load_result(connection, &input, id(result)?)?;
-    if input.envelope().plugin.is_some() {
-        // A persisted snapshot requires its mandatory semantic proof even if
-        // an external change downgraded the item's validation state.
-        validate_source_link(connection, &input, &result, true)?;
-    }
-    let output = validate_output(&input, &result)?;
+    let (input, result, output) = load_qualified_source(connection, id(attempt)?, id(result)?)?;
     if project != input.envelope().project_id.to_string()
         || set != output.set_id.to_string()
         || language != output.source_language

@@ -33,6 +33,7 @@ pub(crate) struct SourceValidationBasis {
 pub struct SourceValidationCapture {
     pub(crate) source: ResultValidationCapture,
     pub(crate) check_input: FixedInput,
+    pub(crate) projected: Arc<crate::content::SourceOutput>,
     checks: sdk::FixedCheckSet,
 }
 #[derive(Clone)]
@@ -43,7 +44,10 @@ pub struct PreparedSourceValidation {
 }
 impl SourceValidationCapture {
     pub(crate) fn capture(source: ResultValidationCapture) -> Result<Self, ExecutionError> {
-        let projected = crate::content::validate_output(&source.input, &source.result)?;
+        let projected = Arc::new(crate::content::validate_output(
+            &source.input,
+            &source.result,
+        )?);
         let settings = crate::content::SourceSettings::from_input(&source.input)?;
         if source.input.envelope().plugin.is_none() {
             return Err(invalid());
@@ -84,7 +88,7 @@ impl SourceValidationCapture {
             .map_err(|_| invalid())?;
         let payload = sdk::SourceExtractionCheckInput {
             source: crate::content::SourceBundle::from_input(&source.input)?.source_input(),
-            proposal: projected.exchange,
+            proposal: projected.exchange.clone(),
             requirements: domain,
         };
         payload.validate().map_err(|_| invalid())?;
@@ -128,6 +132,7 @@ impl SourceValidationCapture {
         Ok(Self {
             source,
             check_input,
+            projected,
             checks,
         })
     }

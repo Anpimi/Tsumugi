@@ -1106,18 +1106,68 @@ pub(super) fn artifact_check_proof_in(
     }))
 }
 
+fn source_validation_cache() -> &'static std::sync::Mutex<Option<PreparedSourceValidation>> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<Option<PreparedSourceValidation>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Reuse the existing single-proof qualification, never a claim that stored
+/// frames or their provenance are immutable. Snapshot mappings remain the
+/// caller's responsibility and are not part of this memo.
+pub(super) fn load_qualified_source(
+    connection: &Connection,
+    attempt: ExecutionId,
+    result: ExecutionId,
+) -> Result<(FixedInput, FixedResult, crate::content::SourceOutput), ExecutionError> {
+    let cached = source_validation_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|prepared| {
+            let source = &prepared.capture.source;
+            source.input.envelope().attempt_id == attempt
+                && source.result.envelope().attempt_id == attempt
+                && source.result.envelope().result_id == result
+        })
+        .map(|prepared| prepared.capture.source.clone());
+    let (input, result) = if let Some(source) = cached {
+        // Recheck before using the capture even if another reader evicts the
+        // single memo before validate_source_link performs its own lookup.
+        check_stored_input(connection, &source.input)?;
+        check_stored_result(connection, &source.result)?;
+        super::resources::verify_input_fact_decisions(connection, &source.input)?;
+        super::plugin_execution::validate_result_in(connection, &source.input, &source.result)?;
+        (source.input, source.result)
+    } else {
+        let input = load_input(connection, attempt)?;
+        let result = load_result(connection, &input, result)?;
+        (input, result)
+    };
+    let output = if input.envelope().plugin.is_some() {
+        // Persisted snapshots require the original mandatory semantic proof.
+        // Its restored projection belongs to exactly these rechecked frames.
+        validate_source_link(connection, &input, &result, true)?
+            .capture
+            .projected
+            .as_ref()
+            .clone()
+    } else {
+        crate::content::validate_output(&input, &result)?
+    };
+    Ok((input, result, output))
+}
+
 pub(super) fn validate_source_link(
     connection: &Connection,
     input: &FixedInput,
     result: &FixedResult,
     expected_valid: bool,
 ) -> Result<PreparedSourceValidation, ExecutionError> {
-    use std::sync::{Mutex, OnceLock};
     // Memoize only pure immutable source qualification, bounded to one proof.
     // Each reuse checks all four original frames and row associations, plus
     // the current proof link. Execution grants/currentness are never cached.
-    static CACHE: OnceLock<Mutex<Option<PreparedSourceValidation>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let cache = source_validation_cache();
     let (checker_id, saved_valid): (String, bool) = connection.query_row(
         "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
         [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
@@ -1146,6 +1196,12 @@ pub(super) fn validate_source_link(
         check_stored_result(connection, &source.result)?;
         check_stored_input(connection, &prepared.capture.check_input)?;
         check_stored_result(connection, &prepared.check_result)?;
+        super::resources::verify_input_fact_decisions(connection, &prepared.capture.check_input)?;
+        super::plugin_execution::validate_result_in(
+            connection,
+            &prepared.capture.check_input,
+            &prepared.check_result,
+        )?;
         return Ok(prepared);
     }
     let (check_input, check_result) = load_check_frames(connection, &checker_id)?;

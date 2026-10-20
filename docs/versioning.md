@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Source snapshot reads now reuse the existing single qualified source proof's
+immutable frames and projection. Every reuse rechecks stored bytes, associations,
+original provenance and the current proof; full snapshot mapping, bundle and
+lineage checks remain in their original owner. This changes no protocol, stored
+format, dependency, version source or permission behavior. It stays in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with aligned
+bilingual Unreleased entries and no additional version bump.
+
 Revoking or expiring a service origin after its HTTP exchange has begun now
 retains an unknown outcome and the original unresolved request accounting.
 Admission before HTTP remains strict; no retry, permission, protocol, persisted

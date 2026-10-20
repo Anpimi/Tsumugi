@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Reuse an already qualified source projection while preparing and saving QA.
+  Recheck the complete stored source and checker frames, original provenance,
+  current proof and complete snapshot mappings on every read.
+
 - Retain an unknown outcome when an originating service expires or is revoked
   after its model HTTP request begins. Keep the original unresolved request
   accounting and reject further dispatch without automatically retrying.

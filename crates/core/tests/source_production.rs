@@ -164,6 +164,14 @@ fn reused_source_qualification_rechecks_every_frame_association_and_proof_link()
     for change in [
         "producer-input",
         "producer-result",
+        "producer-association",
+        "producer-previous",
+        "producer-grant",
+        "producer-grant-input",
+        "checker-grant",
+        "checker-grant-input",
+        "snapshot-attempt",
+        "source-mapping",
         "checker-input",
         "checker-result",
         "checker-association",
@@ -237,24 +245,89 @@ fn reused_source_qualification_rechecks_every_frame_association_and_proof_link()
                     1
                 );
             }
-            "checker-association" => {
+            "producer-association" | "checker-association" => {
+                let (original, changed) = if change == "producer-association" {
+                    (&checked, &result)
+                } else {
+                    (&result, &checked)
+                };
                 assert_eq!(
                     db.execute(
                         "UPDATE execution_results SET
                          (attempt_id,item_id,dispatch_token)=
                          (SELECT attempt_id,item_id,dispatch_token FROM execution_results WHERE result_id=?1)
                          WHERE result_id=?2",
-                        [&result, &checked]
+                        [original, changed]
                     )
                     .unwrap(),
                     1
                 );
             }
-            "checker-previous" => {
+            "producer-previous" | "checker-previous" => {
+                let attempt = if change == "producer-previous" {
+                    &producer
+                } else {
+                    &checker
+                };
                 assert_eq!(
                     db.execute(
                         "UPDATE execution_attempts SET previous_attempt_id=?1 WHERE attempt_id=?1",
-                        [checker]
+                        [attempt]
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "producer-grant" | "checker-grant" => {
+                let attempt = if change == "producer-grant" {
+                    &producer
+                } else {
+                    &checker
+                };
+                assert_eq!(
+                    db.execute(
+                        "DELETE FROM plugin_execution_grants WHERE attempt_id=?1",
+                        [attempt],
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "producer-grant-input" | "checker-grant-input" => {
+                let attempt = if change == "producer-grant-input" {
+                    &producer
+                } else {
+                    &checker
+                };
+                assert_eq!(
+                    db.execute(
+                        "UPDATE plugin_execution_grants SET input_digest=?1 WHERE attempt_id=?2",
+                        rusqlite::params!["0".repeat(64), attempt],
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "source-mapping" => {
+                assert_eq!(
+                    db.execute(
+                        "UPDATE source_unit_mappings SET basis_digest=?1
+                         WHERE snapshot_id=?2 AND unit_id=?3",
+                        rusqlite::params![
+                            "0".repeat(64),
+                            snapshot.to_string(),
+                            rows[0].unit_id.unwrap().to_string()
+                        ],
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "snapshot-attempt" => {
+                assert_eq!(
+                    db.execute(
+                        "UPDATE source_snapshots SET attempt_id=?1 WHERE snapshot_id=?2",
+                        rusqlite::params![checker, snapshot.to_string()],
                     )
                     .unwrap(),
                     1

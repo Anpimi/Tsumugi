@@ -11,7 +11,7 @@ use std::{
 };
 use tsumugi_core::{
     ProjectStore, ReviewDecisionKind, ReviewWrite, SaveTranslationRevision,
-    execution::{ErrorCode, ExecutionId},
+    execution::{Cancellation, ErrorCode, ExecutionId},
 };
 
 thread_local! {
@@ -19,6 +19,40 @@ thread_local! {
     static FRAME_ROWS: RefCell<usize> = const { RefCell::new(0) };
     static MEASURED_CONNECTION: Cell<*mut ffi::sqlite3> = const { Cell::new(std::ptr::null_mut()) };
     static REOPEN_PROFILE: RefCell<Option<ReopenProfile>> = const { RefCell::new(None) };
+    static SETUP_PROFILE: RefCell<Option<SetupProfile>> = const { RefCell::new(None) };
+}
+
+#[derive(Default)]
+struct SetupProfile {
+    ordinal: usize,
+    phase: &'static str,
+    returned_input_frames: usize,
+    returned_input_bytes: u64,
+    source_mapping_rows: usize,
+}
+
+impl SetupProfile {
+    fn row(&mut self, sql: &str, statement: *mut ffi::sqlite3_stmt) {
+        // Both original ledger readers return the reconstructed input in column
+        // one. Count returned BLOBs, not Rust decodes or SQL-internal work.
+        if sql.contains("tsumugi_input_chunks(")
+            && (sql.contains("FROM execution_attempts a WHERE a.attempt_id=?1")
+                || sql.contains("FROM wanted w JOIN execution_attempts"))
+            && unsafe { ffi::sqlite3_column_type(statement, 1) } == ffi::SQLITE_BLOB
+        {
+            self.returned_input_frames += 1;
+            self.returned_input_bytes += unsafe { ffi::sqlite3_column_bytes(statement, 1) } as u64;
+        }
+        // This is snapshot_rows' complete occurrence/projection validation
+        // query, not a COUNT or a selected-unit target lookup.
+        if sql.contains(
+            "FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id",
+        ) && sql.contains("JOIN source_identity i ON i.occurrence_id=o.occurrence_id")
+            && sql.contains("WHERE o.snapshot_id=?1 ORDER BY o.ordinal")
+        {
+            self.source_mapping_rows += 1;
+        }
+    }
 }
 
 // These windows begin at each validation loop's first query and end at the
@@ -130,6 +164,13 @@ unsafe extern "C" fn trace(
                             });
                             captured.push(sql.into_owned());
                         } else if event == ffi::SQLITE_TRACE_ROW as c_uint {
+                            let _ = SETUP_PROFILE.try_with(|profile| {
+                                if let Ok(mut profile) = profile.try_borrow_mut() {
+                                    if let Some(profile) = profile.as_mut() {
+                                        profile.row(&sql, statement.cast());
+                                    }
+                                }
+                            });
                             let _ = REOPEN_PROFILE.try_with(|profile| {
                                 if let Ok(mut profile) = profile.try_borrow_mut() {
                                     if let Some(profile) = profile.as_mut() {
@@ -193,14 +234,45 @@ fn measured<T>(name: &str, read: impl FnOnce() -> T) -> (T, Vec<String>) {
     let value = read();
     let elapsed = started.elapsed();
     let statements = STATEMENTS.with(|statements| statements.borrow_mut().take().unwrap());
-    println!(
-        "REVIEW_SCOPE_METRIC {}",
-        serde_json::json!({
-            "name": name, "elapsedMs": elapsed.as_secs_f64() * 1000.0,
-        "statements": statements.len(), "originalFrameRows": FRAME_ROWS.with(|rows| *rows.borrow()),
-        })
-    );
+    let setup = SETUP_PROFILE.with(|profile| profile.borrow_mut().take());
+    if let Some(setup) = setup {
+        println!(
+            "REVIEW_SETUP_METRIC {}",
+            serde_json::json!({
+                "ordinal": setup.ordinal, "phase": setup.phase,
+                "elapsedMs": elapsed.as_secs_f64() * 1000.0,
+                "statements": statements.len(),
+                "returnedInputFrames": setup.returned_input_frames,
+                "returnedInputBytes": setup.returned_input_bytes,
+                "sourceMappingRowsReturned": setup.source_mapping_rows,
+            })
+        );
+    } else {
+        println!(
+            "REVIEW_SCOPE_METRIC {}",
+            serde_json::json!({
+                "name": name, "elapsedMs": elapsed.as_secs_f64() * 1000.0,
+            "statements": statements.len(), "originalFrameRows": FRAME_ROWS.with(|rows| *rows.borrow()),
+            })
+        );
+    }
     (value, statements)
+}
+
+fn setup_measured<T>(ordinal: usize, phase: &'static str, run: impl FnOnce() -> T) -> T {
+    SETUP_PROFILE.with(|profile| {
+        assert!(
+            profile
+                .borrow_mut()
+                .replace(SetupProfile {
+                    ordinal,
+                    phase,
+                    ..Default::default()
+                })
+                .is_none()
+        );
+    });
+    measured(phase, run).0
 }
 
 fn query_plans(store: &ProjectStore, statements: &[String]) -> Vec<serde_json::Value> {
@@ -293,6 +365,94 @@ fn prepare_runtime(
         )
         .unwrap();
     support::review_runtime(store, &prepared)
+}
+
+#[test]
+#[ignore = "bounded setup diagnostic; run explicitly under an owned process timeout"]
+fn bounded_2000_source_eight_qa_setup_profiles_real_stages() {
+    let _trace = TraceRegistration::new();
+    // These instrumented wall times include validation and callback overhead.
+    // Row counters cover recognized SQL results, not every internal decode.
+    let (directory, mut store, rows) = setup_measured(0, "source-fixture", || {
+        support::source_fixture_with_scope(2000, &["zh-CN"])
+    });
+    assert_eq!(rows.len(), 2000);
+    let mut runtime = setup_measured(0, "runtime", || {
+        prepare_runtime(&store, rows[0].unit_id.unwrap(), "zh-CN")
+    });
+    for (index, row) in rows.iter().take(8).enumerate() {
+        let ordinal = index + 1;
+        let unit = row.unit_id.unwrap();
+        setup_measured(ordinal, "target-save", || {
+            save(&mut store, unit, "zh-CN", &format!("译文 {index} 🧵"));
+        });
+        setup_measured(ordinal, "approve", || approve(&mut store, unit, "zh-CN"));
+        let (prepared, input) = setup_measured(ordinal, "prepare", || {
+            let project = project(&store);
+            let target = store.review_target(project, unit, "zh-CN").unwrap();
+            let prepared = store
+                .prepare_review_check(
+                    project,
+                    unit,
+                    "zh-CN",
+                    &target.basis,
+                    ExecutionId::new(),
+                    &[],
+                )
+                .unwrap();
+            let plan = prepared.plan().unwrap();
+            assert_eq!(plan.domain_input().source.units.len(), 2000);
+            assert_eq!(plan.domain_input().source.order.len(), 2000);
+            let inputs = prepared.execution_inputs();
+            assert_eq!(inputs.len(), 1, "format-only fixture has one checker input");
+            let input = inputs[0].clone();
+            (prepared, input)
+        });
+        let (grant, result) = setup_measured(ordinal, "execute", || {
+            support::execute(&mut runtime, &mut store, &input)
+        });
+        let captured = setup_measured(ordinal, "capture", || {
+            let checker = prepared.plan().unwrap().checkers()[0].key.clone();
+            store
+                .capture_review_check_execution(
+                    prepared,
+                    &[tsumugi_core::ReviewCheckOrigin {
+                        checker,
+                        attempt_id: input.envelope().attempt_id,
+                        result_id: result.envelope().result_id,
+                    }],
+                )
+                .unwrap()
+        });
+        let computed = setup_measured(ordinal, "compute", || {
+            let computed = captured.compute(&Cancellation::default()).unwrap();
+            assert!(computed.coverage().complete);
+            computed
+        });
+        let run = setup_measured(ordinal, "commit", || {
+            store
+                .commit_review_evidence(computed, &Cancellation::default())
+                .unwrap()
+        });
+        assert!(run.evidence.is_some());
+        assert!(run.rules.iter().all(|rule| rule.status == "passed"));
+        setup_measured(ordinal, "revoke", || {
+            runtime.revoke_plugin(&mut store, grant).unwrap();
+        });
+    }
+    let db = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    let checks: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM review_checks WHERE evidence_json IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(checks, 8);
+    println!(
+        "REVIEW_SETUP_COMPLETE {}",
+        serde_json::json!({"sourceUnits": 2000, "actualChecks": checks})
+    );
 }
 
 #[test]
