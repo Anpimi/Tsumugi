@@ -227,14 +227,23 @@ fn enabling_rechecks_actual_artifact_bytes_but_disabling_needs_no_valid_bytes() 
         .owner
         .enable_package(Fixture::enable(&installed, true))
         .unwrap();
-    let worker = fixture
+    let archive = fixture
         .root()
         .join("objects")
         .join(&enabled.packages[0].package_digest)
-        .join("package/worker.mjs");
-    fs::set_permissions(&worker, fs::Permissions::from_mode(0o600)).unwrap();
-    fs::write(&worker, b"tampered").unwrap();
-    fs::set_permissions(worker, fs::Permissions::from_mode(0o400)).unwrap();
+        .join("package.tar");
+    let mut archive_bytes = fs::read(&archive).unwrap();
+    let worker_bytes = fs::read(fixture.source.join("worker.mjs")).unwrap();
+    let body_offsets: Vec<_> = archive_bytes
+        .windows(worker_bytes.len())
+        .enumerate()
+        .filter_map(|(offset, bytes)| (bytes == worker_bytes.as_slice()).then_some(offset))
+        .collect();
+    assert_eq!(body_offsets.len(), 1);
+    archive_bytes[body_offsets[0]] ^= 1;
+    fs::set_permissions(&archive, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&archive, archive_bytes).unwrap();
+    fs::set_permissions(archive, fs::Permissions::from_mode(0o400)).unwrap();
     assert!(fixture.owner.lookup(&Fixture::provider(&enabled)).is_err());
     assert!(
         fixture
@@ -332,10 +341,10 @@ fn known_install_failure_after_confirmed_settings_retains_original_until_repaire
         .join("objects")
         .join(&installed.packages[0].package_digest);
     let receipt = object.join("receipt.json");
-    let worker = object.join("package/worker.mjs");
+    let archive = object.join("package.tar");
     let settings = fixture.root().join("settings.json");
     let receipt_bytes = fs::read(&receipt).unwrap();
-    let worker_bytes = fs::read(&worker).unwrap();
+    let archive_bytes = fs::read(&archive).unwrap();
     let settings_bytes = fs::read(&settings).unwrap();
     // Retain the original captured install immediately after settings were
     // confirmed. The real Store retry must reject corrupt receipt bytes before
@@ -406,9 +415,9 @@ fn known_install_failure_after_confirmed_settings_retains_original_until_repaire
         CommandErrorCode::Busy
     );
     assert_eq!(fs::read(&settings).unwrap(), settings_bytes);
-    assert_eq!(fs::read(&worker).unwrap(), worker_bytes);
+    assert_eq!(fs::read(&archive).unwrap(), archive_bytes);
     assert_eq!(fs::read(&receipt).unwrap(), b"invalid original receipt");
-    for file in [&settings, &receipt, &worker] {
+    for file in [&settings, &receipt, &archive] {
         assert_eq!(
             fs::metadata(file).unwrap().permissions().mode() & 0o777,
             0o400
@@ -434,8 +443,8 @@ fn known_install_failure_after_confirmed_settings_retains_original_until_repaire
     );
     assert_eq!(fs::read(&settings).unwrap(), settings_bytes);
     assert_eq!(fs::read(&receipt).unwrap(), receipt_bytes);
-    assert_eq!(fs::read(&worker).unwrap(), worker_bytes);
-    for file in [&settings, &receipt, &worker] {
+    assert_eq!(fs::read(&archive).unwrap(), archive_bytes);
+    for file in [&settings, &receipt, &archive] {
         assert_eq!(
             fs::metadata(file).unwrap().permissions().mode() & 0o777,
             0o400
@@ -514,10 +523,10 @@ fn rejected_unconfirmed_settings_intent_releases_pending_and_preserves_current_d
         .join("objects")
         .join(&installed.packages[0].package_digest);
     let receipt = object.join("receipt.json");
-    let worker = object.join("package/worker.mjs");
+    let archive = object.join("package.tar");
     let settings = fixture.root().join("settings.json");
     let receipt_bytes = fs::read(&receipt).unwrap();
-    let worker_bytes = fs::read(&worker).unwrap();
+    let archive_bytes = fs::read(&archive).unwrap();
     let settings_bytes = fs::read(&settings).unwrap();
     let error = fixture.owner.enable_package(request.clone()).unwrap_err();
     assert_eq!(error.code, CommandErrorCode::StaleRevision);
@@ -539,8 +548,8 @@ fn rejected_unconfirmed_settings_intent_releases_pending_and_preserves_current_d
     }
     assert_eq!(fs::read(&settings).unwrap(), settings_bytes);
     assert_eq!(fs::read(&receipt).unwrap(), receipt_bytes);
-    assert_eq!(fs::read(&worker).unwrap(), worker_bytes);
-    for file in [&settings, &receipt, &worker] {
+    assert_eq!(fs::read(&archive).unwrap(), archive_bytes);
+    for file in [&settings, &receipt, &archive] {
         assert_eq!(
             fs::metadata(file).unwrap().permissions().mode() & 0o777,
             0o400
@@ -588,8 +597,8 @@ fn rejected_unconfirmed_settings_intent_releases_pending_and_preserves_current_d
         Fixture::provider(&enabled)
     );
     assert_eq!(fs::read(&receipt).unwrap(), receipt_bytes);
-    assert_eq!(fs::read(&worker).unwrap(), worker_bytes);
-    for file in [&settings, &receipt, &worker] {
+    assert_eq!(fs::read(&archive).unwrap(), archive_bytes);
+    for file in [&settings, &receipt, &archive] {
         assert_eq!(
             fs::metadata(file).unwrap().permissions().mode() & 0o777,
             0o400

@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+The managed Store now uses one immutable tar payload per package/tool/Host
+artifact. Logical executable flags no longer depend on persistent filesystem
+modes. This incompatible development layout advances package, runtime and
+uninstall receipts to format 2; old receipts and directory/mixed layouts are
+preserved and refused. Create a new development Store and explicitly reinstall
+approved inputs. No automatic conversion or load fallback is provided.
+Repository frozen-input records, local settings, project schema 61, SDK,
+Process/Member/WorkPlan protocols, dependencies and version sources are unchanged.
+This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch with aligned bilingual Unreleased entries and no extra
+package-version bump. Windows Store/runtime support remains gated. Older
+assessments below describe their introduction baselines.
+
 Captured package images can also encode a deterministic in-memory candidate
 archive. Encoding and decoding share the original namespace and payload limits;
 binary bytes, manifest and logical flags retain the original package digest.

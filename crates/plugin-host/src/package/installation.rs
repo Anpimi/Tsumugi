@@ -14,7 +14,7 @@ use crate::{
 
 pub const MAX_INSTALLED_PACKAGES: usize = 128;
 pub const MAX_INSTALLED_RUNTIMES: usize = 128;
-const RECEIPT_VERSION: u32 = 1;
+const RECEIPT_VERSION: u32 = 2;
 const MAX_RECEIPT_BYTES: usize = 4096;
 mod repository;
 mod settings;
@@ -620,9 +620,12 @@ fn valid_digest(value: &str) -> bool {
 mod platform {
     mod repository;
     mod uninstall;
-    use super::super::{MAX_DEPTH, MAX_DIRECTORIES};
     use super::*;
-    use crate::{catalog::PackageCatalog, filesystem};
+    use crate::{
+        candidate_archive::{self, ArchiveIndex, Profile},
+        catalog::PackageCatalog,
+        filesystem,
+    };
     use std::{
         cell::Cell,
         collections::{BTreeMap, BTreeSet},
@@ -715,6 +718,7 @@ mod platform {
         directory_mode: u32,
         package: File,
         package_id: (u64, u64),
+        package_stamp: Stamp,
         receipt_file: File,
         receipt_bytes: Vec<u8>,
         receipt: InstallReceipt,
@@ -726,29 +730,14 @@ mod platform {
         directory_mode: u32,
         tool: File,
         tool_id: (u64, u64),
+        tool_stamp: Stamp,
         host: File,
         host_id: (u64, u64),
+        host_stamp: Stamp,
         receipt_file: File,
         receipt_bytes: Vec<u8>,
         receipt: RuntimeInstallReceipt,
     }
-
-    #[derive(Clone, Copy)]
-    struct TreeProfile {
-        max_files: usize,
-        max_directories: usize,
-        max_depth: usize,
-    }
-    const PACKAGE_TREE: TreeProfile = TreeProfile {
-        max_files: super::super::MAX_FILES + 1,
-        max_directories: MAX_DIRECTORIES,
-        max_depth: MAX_DEPTH,
-    };
-    const RUNTIME_TREE: TreeProfile = TreeProfile {
-        max_files: sdk::MAX_RUNTIME_ARTIFACT_FILES,
-        max_directories: 1024,
-        max_depth: 32,
-    };
 
     #[derive(Clone, PartialEq, Eq)]
     struct Stamp {
@@ -1629,11 +1618,12 @@ mod platform {
                 .open_envelope(
                     &self.objects,
                     digest,
-                    &["package", "receipt.json"],
+                    &["package.tar", "receipt.json"],
                     authorized,
                 )?;
-            let package = filesystem::open_child(&directory, OsStr::new("package"), true)?;
-            private(&package, true, 0o500)?;
+            let package = filesystem::open_child(&directory, OsStr::new("package.tar"), false)?;
+            private(&package, false, 0o400)?;
+            let package_stamp = Stamp::from(&metadata(&package)?);
             let package_id = filesystem::identity(&package)?;
             let receipt: InstallReceipt =
                 serde_json::from_slice(&receipt_bytes).map_err(|_| InstallError::CorruptReceipt)?;
@@ -1647,6 +1637,7 @@ mod platform {
                 directory_mode,
                 package,
                 package_id,
+                package_stamp,
                 receipt_file,
                 receipt_bytes,
                 receipt,
@@ -1672,16 +1663,84 @@ mod platform {
             )?;
             same_file(
                 &object.directory,
-                OsStr::new("package"),
-                true,
+                OsStr::new("package.tar"),
+                false,
                 object.package_id,
             )?;
-            private(&object.package, true, 0o500)?;
+            private(&object.package, false, 0o400)?;
+            unchanged(&object.package, &object.package_stamp)?;
             private(&object.receipt_file, false, 0o400)?;
             if !authorized() {
                 return Err(InstallError::AuthorityRevoked);
             }
             Ok(())
+        }
+
+        fn read_package_archive(
+            &self,
+            file: &File,
+            digest: &str,
+            check: impl Fn() -> InstallResult<()>,
+        ) -> InstallResult<PackageImage> {
+            check()?;
+            private(file, false, 0o400)?;
+            let before = Stamp::from(&metadata(file)?);
+            let failure = Cell::new(None);
+            let image =
+                PackageImage::read_archive_reader(&mut &*file, Some(digest), || {
+                    match check().and_then(|()| unchanged(file, &before)) {
+                        Ok(()) => true,
+                        Err(error) => {
+                            failure.set(Some(error));
+                            false
+                        }
+                    }
+                })
+                .map_err(|error| failure.get().unwrap_or(InstallError::from(error)))?;
+            check()?;
+            unchanged(file, &before)?;
+            Ok(image)
+        }
+
+        fn inspect_archive(
+            &self,
+            file: &File,
+            profile: Profile,
+            include_manifest: bool,
+            authorized: &impl Fn() -> bool,
+            check: impl Fn() -> InstallResult<()>,
+        ) -> InstallResult<ArchiveIndex> {
+            check()?;
+            private(file, false, 0o400)?;
+            let before = Stamp::from(&metadata(file)?);
+            let failure = Cell::new(None);
+            let guard = || {
+                // Complete namespace/receipt checks bracket this held-file
+                // read. Each IO retains live authority and its file stamp.
+                (if authorized() {
+                    unchanged(file, &before)
+                } else {
+                    Err(InstallError::AuthorityRevoked)
+                })
+                .map_err(|error| {
+                    failure.set(Some(error));
+                    HostError::AuthorityRevoked
+                })
+            };
+            let result = if include_manifest {
+                candidate_archive::inspect_reader(&mut &*file, profile, &guard)
+            } else {
+                candidate_archive::inspect_headers(&mut &*file, profile, &guard)
+            };
+            let index = result.map_err(|error| {
+                failure.get().unwrap_or(match error {
+                    HostError::AuthorityRevoked | HostError::Timeout => InstallError::from(error),
+                    _ => InstallError::CorruptStore,
+                })
+            })?;
+            check()?;
+            unchanged(file, &before)?;
+            Ok(index)
         }
 
         fn capture_object(
@@ -1690,23 +1749,11 @@ mod platform {
             object: &Object,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<PackageImage> {
-            self.inspect_package(&object.package, authorized, false)?;
-            let failure = Cell::new(None);
-            let path = self.path.join("objects").join(digest).join("package");
-            let image = PackageImage::capture_directory(&path, digest, || {
-                match self.check_object(digest, object, authorized) {
-                    Ok(()) => true,
-                    Err(error) => {
-                        failure.set(Some(error));
-                        false
-                    }
-                }
-            })
-            .map_err(|error| failure.get().unwrap_or(InstallError::Host(error)))?;
-            self.inspect_package(&object.package, authorized, false)?;
-            self.check_object(digest, object, authorized)?;
-            // Reopen the receipt after the capture; metadata-only scans cannot
-            // turn a changed provenance/action into the original approval.
+            let image = self.read_package_archive(&object.package, digest, || {
+                self.check_object(digest, object, authorized)
+            })?;
+            // Reopen the receipt after capture: a changed provenance/action
+            // cannot become the original independently obtained approval.
             let reopened =
                 filesystem::open_child(&object.directory, OsStr::new("receipt.json"), false)?;
             if read_receipt(&reopened)? != object.receipt_bytes {
@@ -1724,42 +1771,23 @@ mod platform {
             object: &Object,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
-            self.check_object(digest, object, authorized)?;
-            self.inspect_package(&object.package, authorized, false)?;
+            let index =
+                self.inspect_archive(&object.package, Profile::Package, true, authorized, || {
+                    self.check_object(digest, object, authorized)
+                })?;
             crate::catalog::validate_origin(&object.receipt.origin)
                 .map_err(|_| InstallError::CorruptReceipt)?;
-            let manifest =
-                filesystem::open_child(&object.package, OsStr::new("manifest.json"), false)?;
-            let manifest_before = Stamp::from(&metadata(&manifest)?);
-            let bytes = read_immutable(
-                &manifest,
-                sdk::MAX_MANIFEST_BYTES,
-                InstallError::CorruptStore,
-            )?;
+            let bytes = index.manifest.ok_or(InstallError::CorruptStore)?;
             let parsed = sdk::parse_manifest(&bytes).map_err(|_| InstallError::CorruptStore)?;
             if parsed.manifest().plugin != object.receipt.plugin {
                 return Err(InstallError::CorruptReceipt);
             }
-            same_file(
-                &object.package,
-                OsStr::new("manifest.json"),
-                false,
-                filesystem::identity(&manifest)?,
-            )?;
-            self.inspect_package(&object.package, authorized, false)?;
             let reopened =
                 filesystem::open_child(&object.directory, OsStr::new("receipt.json"), false)?;
             if read_receipt(&reopened)? != object.receipt_bytes {
                 return Err(InstallError::StoreChanged);
             }
-            self.check_object(digest, object, authorized)?;
-            same_file(
-                &object.package,
-                OsStr::new("manifest.json"),
-                false,
-                filesystem::identity(&manifest)?,
-            )?;
-            unchanged(&manifest, &manifest_before)
+            self.check_object(digest, object, authorized)
         }
 
         pub(super) fn load(
@@ -1896,51 +1924,50 @@ mod platform {
             let candidate = mkdir(&self.root, OsStr::new(&candidate_name))?;
             let candidate_id = filesystem::identity(&candidate)?;
             self.check_candidate(&candidate_name, candidate_id, authorized)?;
-            let held_package = mkdir(&candidate, OsStr::new("package"))?;
-            self.write_image(
-                package.image(),
-                &held_package,
+            let archive = package.image().encode_archive(authorized)?;
+            self.write_immutable(
+                &candidate,
+                "package.tar",
+                &archive,
                 &candidate_name,
                 candidate_id,
                 authorized,
             )?;
+            drop(archive);
+            let held_package =
+                filesystem::open_child(&candidate, OsStr::new("package.tar"), false)?;
+            let package_id = filesystem::identity(&held_package)?;
+            let package_stamp = Stamp::from(&metadata(&held_package)?);
             let receipt_bytes =
                 serde_json::to_vec(&receipt).map_err(|_| InstallError::CorruptReceipt)?;
             if receipt_bytes.len() > MAX_RECEIPT_BYTES {
                 return Err(InstallError::CorruptReceipt);
             }
-            self.write_file(
+            self.write_immutable(
                 &candidate,
                 "receipt.json",
                 &receipt_bytes,
-                false,
                 &candidate_name,
                 candidate_id,
                 authorized,
             )?;
             // Directory rename can require write access to the directory
             // being moved. Only the private envelope remains writable; the
-            // package subtree and receipt are already read-only and synced.
+            // package archive and receipt are already read-only and synced.
             sync(&candidate)?;
             sync(&self.root)?;
             self.check_candidate(&candidate_name, candidate_id, authorized)?;
-            let failure = Cell::new(None);
-            let path = self.path.join(&candidate_name).join("package");
-            let staged = PackageImage::capture_directory(&path, package.package_digest(), || {
-                match self.check_candidate(&candidate_name, candidate_id, authorized) {
-                    Ok(()) => true,
-                    Err(error) => {
-                        failure.set(Some(error));
-                        false
-                    }
-                }
-            })
-            .map_err(|error| failure.get().unwrap_or(InstallError::Host(error)))?;
+            let staged =
+                self.read_package_archive(&held_package, package.package_digest(), || {
+                    self.check_candidate(&candidate_name, candidate_id, authorized)?;
+                    same_file(&candidate, OsStr::new("package.tar"), false, package_id)?;
+                    unchanged(&held_package, &package_stamp)
+                })?;
             if staged.manifest().manifest().plugin != *package.plugin() {
                 return Err(InstallError::CorruptStore);
             }
+            drop(staged);
             private(&candidate, true, 0o700)?;
-            self.inspect_package(&held_package, authorized, false)?;
             let candidate_names = filesystem::directory_names(
                 &candidate,
                 || {
@@ -1952,15 +1979,12 @@ mod platform {
                 },
                 2,
             )?;
-            if candidate_names != ["package", "receipt.json"] {
+            if candidate_names != ["package.tar", "receipt.json"] {
                 return Err(InstallError::CorruptStore);
             }
-            same_file(
-                &candidate,
-                OsStr::new("package"),
-                true,
-                filesystem::identity(&held_package)?,
-            )?;
+            same_file(&candidate, OsStr::new("package.tar"), false, package_id)?;
+            private(&held_package, false, 0o400)?;
+            unchanged(&held_package, &package_stamp)?;
             let final_receipt =
                 filesystem::open_child(&candidate, OsStr::new("receipt.json"), false)?;
             if read_receipt(&final_receipt)? != receipt_bytes {
@@ -2024,7 +2048,7 @@ mod platform {
                 .open_envelope(
                     &self.runtimes,
                     digest,
-                    &["host", "receipt.json", "tool"],
+                    &["host.tar", "receipt.json", "tool.tar"],
                     authorized,
                 )?;
             let receipt: RuntimeInstallReceipt =
@@ -2033,16 +2057,18 @@ mod platform {
             if receipt.environment_digest != digest {
                 return Err(InstallError::CorruptReceipt);
             }
-            let tool = filesystem::open_child(&directory, OsStr::new("tool"), true)?;
-            let host = filesystem::open_child(&directory, OsStr::new("host"), true)?;
-            private(&tool, true, 0o500)?;
-            private(&host, true, 0o500)?;
+            let tool = filesystem::open_child(&directory, OsStr::new("tool.tar"), false)?;
+            let host = filesystem::open_child(&directory, OsStr::new("host.tar"), false)?;
+            private(&tool, false, 0o400)?;
+            private(&host, false, 0o400)?;
             let object = RuntimeObject {
                 directory,
                 directory_id,
                 directory_mode,
                 tool_id: filesystem::identity(&tool)?,
+                tool_stamp: Stamp::from(&metadata(&tool)?),
                 host_id: filesystem::identity(&host)?,
+                host_stamp: Stamp::from(&metadata(&host)?),
                 tool,
                 host,
                 receipt_file,
@@ -2068,52 +2094,55 @@ mod platform {
                 &object.receipt_file,
                 authorized,
             )?;
-            same_file(&object.directory, OsStr::new("tool"), true, object.tool_id)?;
-            same_file(&object.directory, OsStr::new("host"), true, object.host_id)?;
-            private(&object.tool, true, 0o500)?;
-            private(&object.host, true, 0o500)?;
+            same_file(
+                &object.directory,
+                OsStr::new("tool.tar"),
+                false,
+                object.tool_id,
+            )?;
+            same_file(
+                &object.directory,
+                OsStr::new("host.tar"),
+                false,
+                object.host_id,
+            )?;
+            private(&object.tool, false, 0o400)?;
+            private(&object.host, false, 0o400)?;
+            unchanged(&object.tool, &object.tool_stamp)?;
+            unchanged(&object.host, &object.host_stamp)?;
             self.check(authorized)
         }
 
-        fn inspect_runtime_trees(
-            &self,
-            tool: &File,
-            host: &File,
-            authorized: &impl Fn() -> bool,
-            synchronize: bool,
-        ) -> InstallResult<()> {
-            let tool = self.inspect_tree(tool, RUNTIME_TREE, authorized, synchronize)?;
-            let host = self.inspect_tree(host, RUNTIME_TREE, authorized, synchronize)?;
-            if tool
-                .0
-                .checked_add(host.0)
-                .is_none_or(|count| count > sdk::MAX_RUNTIME_ARTIFACT_FILES)
-                || tool
-                    .1
-                    .checked_add(host.1)
-                    .is_none_or(|bytes| bytes > sdk::MAX_RUNTIME_ARTIFACT_BYTES as u64)
-            {
-                return Err(InstallError::CorruptStore);
-            }
-            self.check(authorized)
-        }
-
-        // An unselected object contributes only a strict conflict index. This
-        // verifies immutable metadata and receipt bindings, not executable bytes.
+        // Unselected archives contribute a strict header/receipt index. Their
+        // ordinary bodies are seek-skipped; selected loading verifies digests.
         fn inspect_runtime_index(
             &self,
             digest: &str,
             object: &RuntimeObject,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
-            self.check_runtime_object(digest, object, authorized)?;
-            self.inspect_runtime_trees(&object.tool, &object.host, authorized, false)?;
+            let check = || self.check_runtime_object(digest, object, authorized);
+            let tool =
+                self.inspect_archive(&object.tool, Profile::Runtime, false, authorized, &check)?;
+            let host =
+                self.inspect_archive(&object.host, Profile::Runtime, false, authorized, &check)?;
+            if tool
+                .file_count
+                .checked_add(host.file_count)
+                .is_none_or(|count| count > sdk::MAX_RUNTIME_ARTIFACT_FILES)
+                || tool
+                    .byte_count
+                    .checked_add(host.byte_count)
+                    .is_none_or(|bytes| bytes > sdk::MAX_RUNTIME_ARTIFACT_BYTES)
+            {
+                return Err(InstallError::CorruptStore);
+            }
             let reopened =
                 filesystem::open_child(&object.directory, OsStr::new("receipt.json"), false)?;
             if read_receipt(&reopened)? != object.receipt_bytes {
                 return Err(InstallError::StoreChanged);
             }
-            self.check_runtime_object(digest, object, authorized)
+            check()
         }
 
         fn capture_runtime_object(
@@ -2122,12 +2151,11 @@ mod platform {
             object: &RuntimeObject,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<CapturedRuntime> {
-            self.inspect_runtime_trees(&object.tool, &object.host, authorized, false)?;
-            let path = self.path.join("runtimes").join(digest);
+            self.check_runtime_object(digest, object, authorized)?;
             let failure = Cell::new(None);
-            let runtime = CapturedRuntime::capture_directories(
-                &path.join("tool"),
-                &path.join("host"),
+            let runtime = CapturedRuntime::capture_archives(
+                &mut &object.tool,
+                &mut &object.host,
                 object.receipt.approval.captured_environment()?,
                 || match self.check_runtime_object(digest, object, authorized) {
                     Ok(()) => true,
@@ -2138,7 +2166,6 @@ mod platform {
                 },
             )
             .map_err(|error| failure.get().unwrap_or(InstallError::from(error)))?;
-            self.inspect_runtime_trees(&object.tool, &object.host, authorized, false)?;
             self.check_runtime_object(digest, object, authorized)?;
             let reopened =
                 filesystem::open_child(&object.directory, OsStr::new("receipt.json"), false)?;
@@ -2332,36 +2359,40 @@ mod platform {
             let candidate = mkdir(&self.root, OsStr::new(&candidate_name))?;
             let candidate_id = filesystem::identity(&candidate)?;
             self.check_candidate(&candidate_name, candidate_id, authorized)?;
-            let held_tool = mkdir(&candidate, OsStr::new("tool"))?;
-            let held_host = mkdir(&candidate, OsStr::new("host"))?;
+            let (tool_archive, host_archive) = runtime.encode_archives(authorized)?;
+            self.write_immutable(
+                &candidate,
+                "tool.tar",
+                &tool_archive,
+                &candidate_name,
+                candidate_id,
+                authorized,
+            )?;
+            drop(tool_archive);
+            self.write_immutable(
+                &candidate,
+                "host.tar",
+                &host_archive,
+                &candidate_name,
+                candidate_id,
+                authorized,
+            )?;
+            drop(host_archive);
+            let held_tool = filesystem::open_child(&candidate, OsStr::new("tool.tar"), false)?;
+            let held_host = filesystem::open_child(&candidate, OsStr::new("host.tar"), false)?;
             let tool_id = filesystem::identity(&held_tool)?;
             let host_id = filesystem::identity(&held_host)?;
-            self.write_tree(
-                runtime.tool_files(),
-                &held_tool,
-                RUNTIME_TREE,
-                &candidate_name,
-                candidate_id,
-                authorized,
-            )?;
-            self.write_tree(
-                runtime.host_files(),
-                &held_host,
-                RUNTIME_TREE,
-                &candidate_name,
-                candidate_id,
-                authorized,
-            )?;
+            let tool_stamp = Stamp::from(&metadata(&held_tool)?);
+            let host_stamp = Stamp::from(&metadata(&held_host)?);
             let receipt_bytes =
                 serde_json::to_vec(&receipt).map_err(|_| InstallError::CorruptReceipt)?;
             if receipt_bytes.len() > MAX_RECEIPT_BYTES {
                 return Err(InstallError::CorruptReceipt);
             }
-            self.write_file(
+            self.write_immutable(
                 &candidate,
                 "receipt.json",
                 &receipt_bytes,
-                false,
                 &candidate_name,
                 candidate_id,
                 authorized,
@@ -2371,17 +2402,19 @@ mod platform {
             let check_candidate = || -> InstallResult<()> {
                 self.check_candidate(&candidate_name, candidate_id, authorized)?;
                 private(&candidate, true, 0o700)?;
-                same_file(&candidate, OsStr::new("tool"), true, tool_id)?;
-                same_file(&candidate, OsStr::new("host"), true, host_id)?;
+                same_file(&candidate, OsStr::new("tool.tar"), false, tool_id)?;
+                same_file(&candidate, OsStr::new("host.tar"), false, host_id)?;
+                private(&held_tool, false, 0o400)?;
+                private(&held_host, false, 0o400)?;
+                unchanged(&held_tool, &tool_stamp)?;
+                unchanged(&held_host, &host_stamp)?;
                 self.check_candidate(&candidate_name, candidate_id, authorized)
             };
             check_candidate()?;
-            self.inspect_runtime_trees(&held_tool, &held_host, authorized, false)?;
-            let path = self.path.join(&candidate_name);
             let failure = Cell::new(None);
-            let staged = CapturedRuntime::capture_directories(
-                &path.join("tool"),
-                &path.join("host"),
+            let staged = CapturedRuntime::capture_archives(
+                &mut &held_tool,
+                &mut &held_host,
                 approval.captured_environment()?,
                 || match check_candidate() {
                     Ok(()) => true,
@@ -2396,7 +2429,6 @@ mod platform {
                 return Err(InstallError::ApprovalMismatch);
             }
             drop(staged);
-            self.inspect_runtime_trees(&held_tool, &held_host, authorized, false)?;
             let candidate_names = filesystem::directory_names(
                 &candidate,
                 || {
@@ -2408,7 +2440,7 @@ mod platform {
                 3,
             )
             .map_err(|error| failure.get().unwrap_or(InstallError::from(error)))?;
-            if candidate_names != ["host", "receipt.json", "tool"] {
+            if candidate_names != ["host.tar", "receipt.json", "tool.tar"] {
                 return Err(InstallError::CorruptStore);
             }
             let final_receipt =
@@ -2460,7 +2492,9 @@ mod platform {
             object: &RuntimeObject,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
-            self.inspect_runtime_trees(&object.tool, &object.host, authorized, true)?;
+            self.check_runtime_object(&object.receipt.environment_digest, object, authorized)?;
+            sync(&object.tool)?;
+            sync(&object.host)?;
             sync(&object.receipt_file)?;
             sync(&object.directory)?;
             self.check_runtime_object(&object.receipt.environment_digest, object, authorized)
@@ -2480,12 +2514,11 @@ mod platform {
             Ok(())
         }
 
-        fn write_file(
+        fn write_immutable(
             &self,
             parent: &File,
             child: &str,
             bytes: &[u8],
-            executable: bool,
             candidate: &str,
             candidate_id: (u64, u64),
             authorized: &impl Fn() -> bool,
@@ -2498,187 +2531,9 @@ mod platform {
             }
             self.check_candidate(candidate, candidate_id, authorized)?;
             sync(&file)?;
-            chmod(&file, if executable { 0o500 } else { 0o400 })?;
+            chmod(&file, 0o400)?;
             sync(&file)?;
             self.check_candidate(candidate, candidate_id, authorized)
-        }
-
-        fn write_image(
-            &self,
-            image: &PackageImage,
-            package: &File,
-            candidate: &str,
-            candidate_id: (u64, u64),
-            authorized: &impl Fn() -> bool,
-        ) -> InstallResult<()> {
-            self.write_file(
-                package,
-                "manifest.json",
-                &image.manifest_bytes,
-                false,
-                candidate,
-                candidate_id,
-                authorized,
-            )?;
-            self.write_tree(
-                &image.files,
-                package,
-                PACKAGE_TREE,
-                candidate,
-                candidate_id,
-                authorized,
-            )
-        }
-
-        fn write_tree(
-            &self,
-            files: &BTreeMap<String, sdk::RuntimeArtifactFile>,
-            root: &File,
-            profile: TreeProfile,
-            candidate: &str,
-            candidate_id: (u64, u64),
-            authorized: &impl Fn() -> bool,
-        ) -> InstallResult<()> {
-            if files.len() > profile.max_files {
-                return Err(InstallError::LimitExceeded);
-            }
-            let mut directories = BTreeMap::new();
-            directories.insert(
-                String::new(),
-                root.try_clone().map_err(|_| InstallError::Io)?,
-            );
-            for (path, captured) in files {
-                let parts: Vec<_> = path.split('/').collect();
-                if parts.len() - 1 > profile.max_depth {
-                    return Err(InstallError::Host(HostError::PackageLimit));
-                }
-                let mut prefix = String::new();
-                for part in &parts[..parts.len() - 1] {
-                    let next = if prefix.is_empty() {
-                        (*part).to_owned()
-                    } else {
-                        format!("{prefix}/{part}")
-                    };
-                    if !directories.contains_key(&next) {
-                        if directories.len() >= profile.max_directories {
-                            return Err(InstallError::Host(HostError::PackageLimit));
-                        }
-                        self.check_candidate(candidate, candidate_id, authorized)?;
-                        let directory = mkdir(&directories[&prefix], OsStr::new(part))?;
-                        directories.insert(next.clone(), directory);
-                    }
-                    prefix = next;
-                }
-                self.write_file(
-                    &directories[&prefix],
-                    parts[parts.len() - 1],
-                    &captured.bytes,
-                    captured.executable,
-                    candidate,
-                    candidate_id,
-                    authorized,
-                )?;
-            }
-            // Descendants first, including final read-only modes in each sync.
-            let mut keys: Vec<_> = directories.keys().cloned().collect();
-            keys.sort_by_key(|key| std::cmp::Reverse(key.len()));
-            for key in keys {
-                self.check_candidate(candidate, candidate_id, authorized)?;
-                chmod(&directories[&key], 0o500)?;
-                sync(&directories[&key])?;
-            }
-            self.check_candidate(candidate, candidate_id, authorized)
-        }
-
-        fn inspect_package(
-            &self,
-            package: &File,
-            authorized: &impl Fn() -> bool,
-            synchronize: bool,
-        ) -> InstallResult<()> {
-            let (_, bytes) = self.inspect_tree(package, PACKAGE_TREE, authorized, synchronize)?;
-            if bytes > super::super::MAX_PACKAGE_BYTES as u64 {
-                return Err(InstallError::CorruptStore);
-            }
-            Ok(())
-        }
-
-        fn inspect_tree(
-            &self,
-            root: &File,
-            profile: TreeProfile,
-            authorized: &impl Fn() -> bool,
-            synchronize: bool,
-        ) -> InstallResult<(usize, u64)> {
-            fn walk(
-                store: &Store,
-                directory: &File,
-                depth: usize,
-                counts: &mut (usize, usize, u64),
-                profile: TreeProfile,
-                authorized: &impl Fn() -> bool,
-                synchronize: bool,
-            ) -> InstallResult<()> {
-                store.check(authorized)?;
-                counts.0 += 1;
-                if depth > profile.max_depth || counts.0 > profile.max_directories {
-                    return Err(InstallError::CorruptStore);
-                }
-                private(directory, true, 0o500)?;
-                let before = Stamp::from(&metadata(directory)?);
-                for child in filesystem::directory_names(
-                    directory,
-                    || {
-                        if authorized() {
-                            Ok(())
-                        } else {
-                            Err(HostError::AuthorityRevoked)
-                        }
-                    },
-                    profile.max_files + profile.max_directories,
-                )? {
-                    store.check(authorized)?;
-                    let file = filesystem::open_entry(directory, OsStr::new(&child))?;
-                    if metadata(&file)?.is_dir() {
-                        walk(
-                            store,
-                            &file,
-                            depth + 1,
-                            counts,
-                            profile,
-                            authorized,
-                            synchronize,
-                        )?;
-                    } else {
-                        let mode = metadata(&file)?.mode() & 0o7777;
-                        if mode != 0o400 && mode != 0o500 {
-                            return Err(InstallError::CorruptStore);
-                        }
-                        private(&file, false, mode)?;
-                        let before = Stamp::from(&metadata(&file)?);
-                        if synchronize {
-                            sync(&file)?;
-                        }
-                        unchanged(&file, &before)?;
-                        counts.1 += 1;
-                        counts.2 = counts
-                            .2
-                            .checked_add(before.length)
-                            .ok_or(InstallError::CorruptStore)?;
-                        if counts.1 > profile.max_files {
-                            return Err(InstallError::CorruptStore);
-                        }
-                    }
-                }
-                if synchronize {
-                    sync(directory)?;
-                }
-                unchanged(directory, &before)?;
-                store.check(authorized)
-            }
-            let mut counts = (0, 0, 0);
-            walk(self, root, 0, &mut counts, profile, authorized, synchronize)?;
-            Ok((counts.1, counts.2))
         }
 
         fn sync_object(
@@ -2686,7 +2541,8 @@ mod platform {
             object: &Object,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
-            self.inspect_package(&object.package, authorized, true)?;
+            self.check_object(&object.receipt.package_digest, object, authorized)?;
+            sync(&object.package)?;
             sync(&object.receipt_file)?;
             sync(&object.directory)?;
             self.check_object(&object.receipt.package_digest, object, authorized)
@@ -2980,7 +2836,7 @@ mod platform {
                 .path()
                 .join("runtimes")
                 .join(runtime.environment_digest())
-                .join("host/main.js");
+                .join("host.tar");
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
             fs::write(&path, b"changed stored bytes").unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
@@ -3157,8 +3013,14 @@ mod platform {
                     .path()
                     .join("uninstalls")
                     .join(remove_action)
-                    .join("object/package/resource.json");
-                assert_eq!(fs::read(cached).unwrap(), b"{}");
+                    .join("object/package.tar");
+                let cached = PackageImage::capture_archive(
+                    &fs::read(cached).unwrap(),
+                    &approval.package_digest,
+                    || true,
+                )
+                .unwrap();
+                assert_eq!(cached.files["resource.json"].bytes, b"{}");
                 let (runtime, runtime_approval) = runtime_fixture(root.0.path());
                 for reserved in [install_action, remove_action] {
                     assert_eq!(

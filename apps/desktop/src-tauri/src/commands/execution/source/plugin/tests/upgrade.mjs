@@ -125,30 +125,32 @@ function verifyArtifact(request) {
 export default {
   activate(api) {
     api.onDispose(async () => {});
-    const role = api.contribution.contract.id;
-    api.register(async input => {
-      check(!api.signal.aborted, 'Original worker was cancelled');
-      const payload = JSON.parse(input.utf8);
-      let output;
-      if (role === 'example.upgrade.extract') output = extract(payload);
-      else if (role === 'example.upgrade.source-check') {
-        verifySource(payload.source, payload.proposal);
-        output = findings(payload.requirements, true);
-      } else if (role === 'example.upgrade.review-check') {
-        verifySource({ profile: payload.source.profile, sourceSetId: payload.source.sourceSetId,
-          sourceLanguage: payload.source.sourceLanguage, artifacts: payload.source.artifacts }, payload.source);
-        const faithful = payload.selections.length === 1 && payload.targetLanguage === 'zh-CN'
-          && payload.selections[0].unitId === payload.source.units[0].id
-          && payload.selections[0].sourceRevisionId === payload.source.units[0].sourceRevisionId
-          && typeof payload.selections[0].translationText === 'string' && payload.selections[0].translationText.length > 0;
-        output = findings(payload.requirements, faithful);
-      } else if (role === 'example.upgrade.build') output = build(payload);
-      else if (role === 'example.upgrade.artifact-check') {
-        verifyArtifact(payload);
-        output = findings(payload.requirements, true);
-      } else throw new Error('Undeclared fixture contribution');
-      check(!api.signal.aborted, 'Original worker was cancelled before result');
-      return { kind: 'succeeded', utf8: JSON.stringify(output) };
-    });
+    for (const contribution of api.contributions) {
+      const role = contribution.contract.id;
+      api.register(contribution.id, async input => {
+        check(!api.signal.aborted, 'Original worker was cancelled');
+        const payload = JSON.parse(input.utf8);
+        let output;
+        if (role === 'example.upgrade.extract') output = extract(payload);
+        else if (role === 'example.upgrade.source-check') {
+          verifySource(payload.source, payload.proposal);
+          output = findings(payload.requirements, true);
+        } else if (role === 'example.upgrade.review-check') {
+          verifySource({ profile: payload.source.profile, sourceSetId: payload.source.sourceSetId,
+            sourceLanguage: payload.source.sourceLanguage, artifacts: payload.source.artifacts }, payload.source);
+          const faithful = payload.selections.length === 1 && payload.targetLanguage === 'zh-CN'
+            && payload.selections[0].unitId === payload.source.units[0].id
+            && payload.selections[0].sourceRevisionId === payload.source.units[0].sourceRevisionId
+            && typeof payload.selections[0].translationText === 'string' && payload.selections[0].translationText.length > 0;
+          output = findings(payload.requirements, faithful);
+        } else if (role === 'example.upgrade.build') output = build(payload);
+        else if (role === 'example.upgrade.artifact-check') {
+          verifyArtifact(payload);
+          output = findings(payload.requirements, true);
+        } else throw new Error('Undeclared fixture contribution');
+        check(!api.signal.aborted, 'Original worker was cancelled before result');
+        return { kind: 'succeeded', utf8: JSON.stringify(output) };
+      });
+    }
   },
 };

@@ -50,7 +50,7 @@ export default {
       };
       // In the held-A case these calls run while B has its own live handler.
       // No mutable Host registry or installer is exposed to either component.
-      const registerError = denied(() => api.register(() => returned));
+      const registerError = denied(() => api.register(api.contributions[0].id, () => returned));
       const disposeError = denied(() => api.onDispose(() => {}));
       await observe(invocation.context.attemptId, 'disposed', {
         pid: process.pid, stage, provider: invocation.provider,
@@ -62,18 +62,19 @@ export default {
       }
     });
     component.activate({
-      contribution: api.contribution,
+      instance: api.instance,
+      contributions: api.contributions,
       signal: api.signal,
       services: api.services,
       onDispose: cleanup => api.onDispose(cleanup),
-      register: handler => api.register(async (input, metadata) => {
+      register: (contributionId, handler) => api.register(contributionId, async (input, metadata) => {
         invocation = metadata;
         // Produce the real versioned proposal before the held callback waits.
         returned = await handler(input, metadata);
         await observe(metadata.context.attemptId, 'entered', {
           pid: process.pid, stage, provider: metadata.provider,
           context: metadata.context, profile: metadata.profile, input,
-          contribution: api.contribution,
+          contribution: api.contributions.find(member => member.id === contributionId),
         });
         const hold = join(root, `${metadata.context.attemptId}.hold`);
         if (await exists(hold)) {

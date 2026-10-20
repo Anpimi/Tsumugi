@@ -17,6 +17,8 @@ fn uninstall_preserves_other_packages_original_captures_and_settings() {
         .unwrap();
     let settings_bytes = fs::read(root.root.join("settings.json")).unwrap();
     let receipt = store.uninstall(1, REMOVE, &approval_a, || true).unwrap();
+    assert_eq!(serde_json::to_value(&receipt).unwrap()["formatVersion"], 2);
+    assert_eq!(receipt.installation().format_version(), 2);
     assert_eq!(receipt.action_id(), REMOVE);
     assert_eq!(receipt.settings_revision(), 1);
     assert_eq!(receipt.installation(), &installed_a);
@@ -43,13 +45,14 @@ fn uninstall_preserves_other_packages_original_captures_and_settings() {
         b"original bytes"
     );
     assert_eq!(
-        fs::read(
-            root.root
+        archive_payload::members(
+            &root
+                .root
                 .join("uninstalls")
                 .join(REMOVE)
-                .join("object/package/data/marker.txt")
-        )
-        .unwrap(),
+                .join("object/package.tar")
+        )["data/marker.txt"]
+            .bytes,
         b"original bytes"
     );
     drop(store);
@@ -216,7 +219,13 @@ fn uninstall_observed_namespace_replacement_preserves_external_content() {
 
 #[test]
 fn uninstall_rejects_links_and_changed_retired_bytes_without_overwriting() {
-    for damage in ["namespace-link", "resource", "receipt"] {
+    for damage in [
+        "namespace-link",
+        "resource",
+        "receipt",
+        "receipt-version",
+        "installation-version",
+    ] {
         let root = OwnedRoot::new();
         let (catalog, approval) = basic();
         let mut store = PackageStore::open_existing(&root.root).unwrap();
@@ -239,13 +248,31 @@ fn uninstall_rejects_links_and_changed_retired_bytes_without_overwriting() {
             store.uninstall(0, REMOVE, &approval, || true).unwrap();
             let tx = root.root.join("uninstalls").join(REMOVE);
             let path = if damage == "resource" {
-                tx.join("object/package/data/marker.txt")
+                tx.join("object/package.tar")
             } else {
                 tx.join("receipt.json")
             };
-            replace_receipt(&path, b"changed immutable bytes");
+            if damage == "resource" {
+                archive_payload::replace_member(
+                    &path,
+                    "data/marker.txt",
+                    b"changed immutable bytes",
+                );
+            } else if matches!(damage, "receipt-version" | "installation-version") {
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                if damage == "receipt-version" {
+                    value["formatVersion"] = 1.into();
+                } else {
+                    value["installation"]["formatVersion"] = 1.into();
+                }
+                replace_receipt(&path, &serde_json::to_vec(&value).unwrap());
+            } else {
+                replace_receipt(&path, b"changed immutable bytes");
+            }
+            let before = fs::read(&path).unwrap();
             assert!(store.uninstall(0, REMOVE, &approval, || true).is_err());
-            assert_eq!(fs::read(path).unwrap(), b"changed immutable bytes");
+            assert_eq!(fs::read(path).unwrap(), before);
         }
     }
 }

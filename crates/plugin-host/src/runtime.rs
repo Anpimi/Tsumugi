@@ -3,13 +3,32 @@
 mod member_artifact;
 pub use member_artifact::{CapturedMemberArtifact, MemberArtifactManifest};
 
-use std::{collections::BTreeMap, fmt, path::Path, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    io::{Read, Seek},
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use serde::{Deserialize, Serialize};
 
 use tsumugi_plugin_sdk as sdk;
 
 use crate::{HostError, HostResult};
+
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn check(guard: &impl Fn() -> bool, deadline: Instant) -> HostResult<Duration> {
+    if !guard() {
+        return Err(HostError::AuthorityRevoked);
+    }
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or(HostError::Timeout)
+}
 
 /// Build-time inspection inputs, never independently trusted approval. The
 /// installer must verify the actual tool version and distribution profile.
@@ -125,6 +144,42 @@ impl CapturedRuntime {
         }
     }
 
+    /// Encode each immutable artifact with its captured executable flags. The
+    /// transport bytes do not replace either approved tree digest.
+    pub(crate) fn encode_archives(
+        &self,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<(Vec<u8>, Vec<u8>)> {
+        let deadline = Instant::now() + CAPTURE_TIMEOUT;
+        let live_check = || check(&authorized, deadline).map(|_| ());
+        let tool = crate::candidate_archive::encode_runtime_files(self.tool_files(), &live_check)?;
+        let host = crate::candidate_archive::encode_runtime_files(self.host_files(), &live_check)?;
+        live_check()?;
+        Ok((tool, host))
+    }
+
+    /// Capture complete held archives using an independently approved runtime
+    /// descriptor. Reading archives neither authenticates nor executes a tool.
+    pub(crate) fn capture_archives(
+        tool: &mut (impl Read + Seek),
+        host: &mut (impl Read + Seek),
+        approval: &sdk::RuntimeEnvironmentDescriptor,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<Self> {
+        approval
+            .validate()
+            .map_err(|_| HostError::InvalidContract)?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            platform::capture_archives(tool, host, approval, authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (tool, host, authorized);
+            Err(HostError::UnsupportedPlatform)
+        }
+    }
+
     pub fn descriptor(&self) -> &sdk::RuntimeEnvironmentDescriptor {
         &self.inner.descriptor
     }
@@ -149,9 +204,6 @@ mod platform {
         package::portable_path,
         tree::{TreeLimits, capture_tree},
     };
-    use std::time::{Duration, Instant};
-
-    const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 
     pub(super) fn current_platform() -> HostResult<sdk::RuntimePlatform> {
         let operating_system = if cfg!(target_os = "macos") {
@@ -170,16 +222,6 @@ mod platform {
             operating_system,
             architecture,
         })
-    }
-
-    fn check(guard: &impl Fn() -> bool, deadline: Instant) -> HostResult<Duration> {
-        if !guard() {
-            return Err(HostError::AuthorityRevoked);
-        }
-        deadline
-            .checked_duration_since(Instant::now())
-            .filter(|remaining| !remaining.is_zero())
-            .ok_or(HostError::Timeout)
     }
 
     fn limits(max_files: usize, max_bytes: usize, timeout: Duration) -> TreeLimits {
@@ -221,7 +263,85 @@ mod platform {
         live_read_guard: impl Fn() -> bool,
     ) -> HostResult<CapturedRuntime> {
         let deadline = Instant::now() + CAPTURE_TIMEOUT;
-        check(&live_read_guard, deadline)?;
+        let live_check = || check(&live_read_guard, deadline).map(|_| ());
+        capture_sources(
+            request,
+            expected,
+            &live_check,
+            || {
+                capture_tree(
+                    tool_root,
+                    &limits(
+                        sdk::MAX_RUNTIME_ARTIFACT_FILES,
+                        sdk::MAX_RUNTIME_ARTIFACT_BYTES,
+                        check(&live_read_guard, deadline)?,
+                    ),
+                    &live_read_guard,
+                )
+            },
+            |remaining_files, remaining_bytes| {
+                capture_tree(
+                    host_root,
+                    &limits(
+                        remaining_files,
+                        remaining_bytes,
+                        check(&live_read_guard, deadline)?,
+                    ),
+                    &live_read_guard,
+                )
+            },
+        )
+    }
+
+    pub(super) fn capture_archives(
+        tool: &mut (impl Read + Seek),
+        host: &mut (impl Read + Seek),
+        approval: &sdk::RuntimeEnvironmentDescriptor,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<CapturedRuntime> {
+        let deadline = Instant::now() + CAPTURE_TIMEOUT;
+        let live_check = || check(&authorized, deadline).map(|_| ());
+        capture_sources(
+            &RuntimeInspectionRequest {
+                profile: approval.profile,
+                tool_version: approval.tool_version.clone(),
+                tool_entrypoint: approval.tool.entrypoint.clone(),
+                host_entrypoint: approval.host.entrypoint.clone(),
+            },
+            Some(approval),
+            &live_check,
+            || {
+                crate::candidate_archive::capture_reader(
+                    tool,
+                    crate::candidate_archive::Profile::Runtime,
+                    &live_check,
+                )
+            },
+            |remaining_files, remaining_bytes| {
+                crate::candidate_archive::capture_runtime_reader(
+                    host,
+                    remaining_files,
+                    remaining_bytes,
+                    &live_check,
+                )
+            },
+        )
+    }
+
+    // Both sources first enforce their own namespace/metadata profile. This
+    // owner alone validates entrypoints, shared budgets and the complete
+    // descriptor before the maps become an immutable runtime snapshot.
+    fn capture_sources(
+        request: &RuntimeInspectionRequest,
+        expected: Option<&sdk::RuntimeEnvironmentDescriptor>,
+        check: &impl Fn() -> HostResult<()>,
+        capture_tool: impl FnOnce() -> HostResult<BTreeMap<String, sdk::RuntimeArtifactFile>>,
+        capture_host: impl FnOnce(
+            usize,
+            usize,
+        ) -> HostResult<BTreeMap<String, sdk::RuntimeArtifactFile>>,
+    ) -> HostResult<CapturedRuntime> {
+        check()?;
         let current_platform = current_platform()?;
         if expected.is_some_and(|approval| approval.platform != current_platform) {
             return Err(HostError::UnsupportedPlatform);
@@ -234,16 +354,8 @@ mod platform {
         }
         portable_path(&request.tool_entrypoint)?;
         portable_path(&request.host_entrypoint)?;
-        let tool = capture_tree(
-            tool_root,
-            &limits(
-                sdk::MAX_RUNTIME_ARTIFACT_FILES,
-                sdk::MAX_RUNTIME_ARTIFACT_BYTES,
-                check(&live_read_guard, deadline)?,
-            ),
-            &live_read_guard,
-        )?;
-        check(&live_read_guard, deadline)?;
+        let tool = capture_tool()?;
+        check()?;
         let entry = tool
             .get(&request.tool_entrypoint)
             .ok_or(HostError::MissingArtifact)?;
@@ -252,7 +364,7 @@ mod platform {
         }
         let tool_digest =
             sdk::runtime_artifact_digest(&tool).map_err(|_| HostError::InvalidContract)?;
-        check(&live_read_guard, deadline)?;
+        check()?;
         if expected.is_some_and(|approval| tool_digest != approval.tool.tree_digest) {
             return Err(HostError::RuntimeMismatch);
         }
@@ -268,22 +380,22 @@ mod platform {
         let remaining_bytes = sdk::MAX_RUNTIME_ARTIFACT_BYTES
             .checked_sub(tool_bytes)
             .ok_or(HostError::PackageLimit)?;
-        let host = capture_tree(
-            host_root,
-            &limits(
-                remaining_files,
-                remaining_bytes,
-                check(&live_read_guard, deadline)?,
-            ),
-            &live_read_guard,
-        )?;
-        check(&live_read_guard, deadline)?;
+        let host = capture_host(remaining_files, remaining_bytes)?;
+        check()?;
+        let host_bytes = host.values().try_fold(0usize, |total, file| {
+            total
+                .checked_add(file.bytes.len())
+                .ok_or(HostError::PackageLimit)
+        })?;
+        if host.len() > remaining_files || host_bytes > remaining_bytes {
+            return Err(HostError::PackageLimit);
+        }
         if !host.contains_key(&request.host_entrypoint) {
             return Err(HostError::MissingArtifact);
         }
         let host_digest =
             sdk::runtime_artifact_digest(&host).map_err(|_| HostError::InvalidContract)?;
-        check(&live_read_guard, deadline)?;
+        check()?;
         if expected.is_some_and(|approval| host_digest != approval.host.tree_digest) {
             return Err(HostError::RuntimeMismatch);
         }
@@ -309,7 +421,7 @@ mod platform {
         let environment_digest = descriptor
             .digest()
             .map_err(|_| HostError::InvalidContract)?;
-        check(&live_read_guard, deadline)?;
+        check()?;
         Ok(CapturedRuntime {
             inner: Arc::new(Snapshot {
                 descriptor,
@@ -328,7 +440,11 @@ mod platform {
 ))]
 mod tests {
     use super::*;
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::{
+        fs,
+        io::{Cursor, SeekFrom},
+        os::unix::fs::PermissionsExt,
+    };
 
     fn inspection_fixture() -> (tempfile::TempDir, RuntimeInspectionRequest) {
         let temporary = tempfile::tempdir().unwrap();
@@ -485,5 +601,245 @@ mod tests {
         );
         assert_eq!(cloned.descriptor(), &approval);
         assert_eq!(cloned.environment_digest(), approval.digest().unwrap());
+    }
+
+    fn archive_fixture() -> (
+        BTreeMap<String, sdk::RuntimeArtifactFile>,
+        BTreeMap<String, sdk::RuntimeArtifactFile>,
+        sdk::RuntimeEnvironmentDescriptor,
+    ) {
+        let tool = BTreeMap::from([
+            (
+                "node".into(),
+                sdk::RuntimeArtifactFile {
+                    bytes: vec![0, 255, 13, 10],
+                    executable: true,
+                },
+            ),
+            (
+                "data.exe".into(),
+                sdk::RuntimeArtifactFile {
+                    bytes: b"data".to_vec(),
+                    executable: false,
+                },
+            ),
+        ]);
+        let host = BTreeMap::from([
+            (
+                "main.js".into(),
+                sdk::RuntimeArtifactFile {
+                    bytes: b"host bytes".to_vec(),
+                    executable: false,
+                },
+            ),
+            (
+                "manifest.json".into(),
+                sdk::RuntimeArtifactFile {
+                    bytes: b"ordinary runtime file".to_vec(),
+                    executable: true,
+                },
+            ),
+        ]);
+        let approval = sdk::RuntimeEnvironmentDescriptor {
+            protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+            platform: platform::current_platform().unwrap(),
+            sdk_version: sdk::SDK_VERSION.into(),
+            process_protocol: sdk::PROCESS_PROTOCOL,
+            profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+            tool_version: "26.10.0".into(),
+            tool: sdk::RuntimeArtifactBinding {
+                tree_digest: sdk::runtime_artifact_digest(&tool).unwrap(),
+                entrypoint: "node".into(),
+            },
+            host: sdk::RuntimeArtifactBinding {
+                tree_digest: sdk::runtime_artifact_digest(&host).unwrap(),
+                entrypoint: "main.js".into(),
+            },
+        };
+        (tool, host, approval)
+    }
+
+    #[test]
+    fn complete_runtime_archives_round_trip_flags_bytes_and_independent_descriptor() {
+        let (tool, host, approval) = archive_fixture();
+        let tool_bytes = crate::candidate_archive::encode_runtime_files(&tool, || Ok(())).unwrap();
+        let host_bytes = crate::candidate_archive::encode_runtime_files(&host, || Ok(())).unwrap();
+        let runtime = CapturedRuntime::capture_archives(
+            &mut Cursor::new(&tool_bytes),
+            &mut Cursor::new(&host_bytes),
+            &approval,
+            || true,
+        )
+        .unwrap();
+        assert_eq!(runtime.descriptor(), &approval);
+        assert_eq!(runtime.environment_digest(), approval.digest().unwrap());
+        assert_eq!(runtime.tool_files()["node"].bytes, tool["node"].bytes);
+        assert!(!runtime.tool_files()["data.exe"].executable);
+        assert!(runtime.host_files()["manifest.json"].executable);
+        assert_eq!(
+            runtime.encode_archives(|| true).unwrap(),
+            (tool_bytes.clone(), host_bytes.clone())
+        );
+
+        let mut changed_host = host;
+        changed_host.get_mut("main.js").unwrap().executable = true;
+        let changed =
+            crate::candidate_archive::encode_runtime_files(&changed_host, || Ok(())).unwrap();
+        assert_eq!(
+            CapturedRuntime::capture_archives(
+                &mut Cursor::new(&tool_bytes),
+                &mut Cursor::new(changed),
+                &approval,
+                || true,
+            )
+            .unwrap_err(),
+            HostError::RuntimeMismatch,
+        );
+        let mut wrong = approval.clone();
+        wrong.host.tree_digest = "0".repeat(64);
+        assert_eq!(
+            CapturedRuntime::capture_archives(
+                &mut Cursor::new(&tool_bytes),
+                &mut Cursor::new(&host_bytes),
+                &wrong,
+                || true,
+            )
+            .unwrap_err(),
+            HostError::RuntimeMismatch,
+        );
+        assert_eq!(
+            runtime.encode_archives(|| false).unwrap_err(),
+            HostError::AuthorityRevoked
+        );
+        assert_eq!(
+            CapturedRuntime::capture_archives(
+                &mut Cursor::new(&tool_bytes),
+                &mut Cursor::new(&host_bytes),
+                &approval,
+                || false,
+            )
+            .unwrap_err(),
+            HostError::AuthorityRevoked,
+        );
+        assert!(
+            CapturedRuntime::capture_archives(
+                &mut Cursor::new(&tool_bytes),
+                &mut Cursor::new(&host_bytes[..host_bytes.len() - 512]),
+                &approval,
+                || true,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn runtime_archive_artifacts_share_the_original_file_budget() {
+        let (mut tool, host, mut approval) = archive_fixture();
+        for ordinal in tool.len()..sdk::MAX_RUNTIME_ARTIFACT_FILES {
+            tool.insert(
+                format!("extra-{ordinal}"),
+                sdk::RuntimeArtifactFile {
+                    bytes: vec![],
+                    executable: false,
+                },
+            );
+        }
+        approval.tool.tree_digest = sdk::runtime_artifact_digest(&tool).unwrap();
+        let tool = crate::candidate_archive::encode_runtime_files(&tool, || Ok(())).unwrap();
+        let mut host =
+            Cursor::new(crate::candidate_archive::encode_runtime_files(&host, || Ok(())).unwrap());
+        assert_eq!(
+            CapturedRuntime::capture_archives(&mut Cursor::new(tool), &mut host, &approval, || {
+                true
+            })
+            .unwrap_err(),
+            HostError::PackageLimit,
+        );
+        assert_eq!(
+            host.position(),
+            0,
+            "no host read after tool consumed the shared file budget"
+        );
+    }
+
+    struct DeclaredArchive {
+        header: tar::Header,
+        body_length: u64,
+        position: u64,
+        body_read: bool,
+    }
+
+    impl DeclaredArchive {
+        fn new(body_length: u64) -> Self {
+            let mut header = tar::Header::new_ustar();
+            header.set_path("main.js").unwrap();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_mode(0o644);
+            header.set_size(body_length);
+            header.set_cksum();
+            Self {
+                header,
+                body_length,
+                position: 0,
+                body_read: false,
+            }
+        }
+
+        fn length(&self) -> u64 {
+            512 + self.body_length.div_ceil(512) * 512 + 1024
+        }
+    }
+
+    impl Read for DeclaredArchive {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            let count =
+                (self.length().saturating_sub(self.position)).min(output.len() as u64) as usize;
+            let end = self.position + count as u64;
+            if count != 0 && self.position < 512 + self.body_length && end > 512 {
+                self.body_read = true;
+                return Err(std::io::Error::other("over-budget body was read"));
+            }
+            output[..count].fill(0);
+            if self.position < 512 {
+                let header_count = count.min((512 - self.position) as usize);
+                output[..header_count].copy_from_slice(
+                    &self.header.as_bytes()
+                        [self.position as usize..self.position as usize + header_count],
+                );
+            }
+            self.position = end;
+            Ok(count)
+        }
+    }
+
+    impl Seek for DeclaredArchive {
+        fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+            let position = match position {
+                SeekFrom::Start(position) => i128::from(position),
+                SeekFrom::End(offset) => i128::from(self.length()) + i128::from(offset),
+                SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+            };
+            self.position = u64::try_from(position).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid archive offset")
+            })?;
+            Ok(self.position)
+        }
+    }
+
+    #[test]
+    fn runtime_archive_combined_byte_limit_rejects_before_allocating_or_reading_host_body() {
+        let (tool, _, approval) = archive_fixture();
+        let tool = crate::candidate_archive::encode_runtime_files(&tool, || Ok(())).unwrap();
+        // The declared host alone fits its artifact profile, but the captured
+        // tool has already consumed bytes from the shared snapshot allowance.
+        let mut host = DeclaredArchive::new(sdk::MAX_RUNTIME_ARTIFACT_BYTES as u64);
+        assert_eq!(
+            CapturedRuntime::capture_archives(&mut Cursor::new(tool), &mut host, &approval, || {
+                true
+            })
+            .unwrap_err(),
+            HostError::PackageLimit,
+        );
+        assert!(!host.body_read);
     }
 }

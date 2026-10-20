@@ -388,12 +388,10 @@ fn approved_installation_reopens_and_runs_fixed_package_bytes_through_core() {
             .count(),
         0
     );
-    // These two known directories belong only to this isolated fixture. Make
-    // them removable after the owned child has been reaped.
+    // This known envelope belongs only to this isolated fixture. Make it
+    // removable after the owned child has been reaped; the payload is one file.
     let object = install_root.join("objects").join(&expected_digest);
-    for path in [object.join("package"), object] {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    std::fs::set_permissions(object, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
 #[test]

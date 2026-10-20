@@ -1,6 +1,9 @@
 //! Candidate transport admission reuses the original package image and digest.
 use super::*;
-use std::time::{Duration, Instant};
+use std::{
+    io::{Read, Seek},
+    time::{Duration, Instant},
+};
 
 impl PackageImage {
     /// Capture an already read, bounded uncompressed candidate tar. Member
@@ -36,7 +39,29 @@ impl PackageImage {
         authorized: impl Fn() -> bool,
     ) -> HostResult<Self> {
         let check = guard(authorized);
-        let mut files = crate::candidate_archive::capture_files(bytes, &check)?;
+        let files = crate::candidate_archive::capture_files(bytes, &check)?;
+        Self::from_archive_files(files, expected, check)
+    }
+
+    pub(crate) fn read_archive_reader(
+        reader: &mut (impl Read + Seek),
+        expected: Option<&str>,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<Self> {
+        let check = guard(authorized);
+        let files = crate::candidate_archive::capture_reader(
+            reader,
+            crate::candidate_archive::Profile::Package,
+            &check,
+        )?;
+        Self::from_archive_files(files, expected, check)
+    }
+
+    fn from_archive_files(
+        mut files: BTreeMap<String, PackageFile>,
+        expected: Option<&str>,
+        check: impl Fn() -> HostResult<()>,
+    ) -> HostResult<Self> {
         let manifest = files
             .remove("manifest.json")
             .ok_or(HostError::MissingArtifact)?;

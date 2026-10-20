@@ -8,7 +8,7 @@ export default {
     api.onDispose(async () => {
       await writeFile(controls.disposed, String(process.pid));
     });
-    api.register(async input => {
+    api.register('call', async input => {
       const payload = JSON.parse(input.utf8);
       await writeFile(controls.entered, JSON.stringify({ pid: process.pid, tag: payload.tag }));
       // This owned fixture must finish within the unchanged 10-second Host limit.

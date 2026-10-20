@@ -189,7 +189,7 @@ fn registered_uninstall_requires_separate_approval_action_and_old_receipt_preser
     assert!(!installed.package_decisions[0].enabled);
     let approved = Fixture::uninstall(&installed);
     let object = fixture.object(&approved.package);
-    let original_bytes = fs::read(object.join("package/worker.mjs")).unwrap();
+    let original_archive = fs::read(object.join("package.tar")).unwrap();
     let rejected = fixture
         .call("uninstall_plugin_package", json!(&approved))
         .unwrap_err();
@@ -197,8 +197,8 @@ fn registered_uninstall_requires_separate_approval_action_and_old_receipt_preser
     assert_eq!(rejected["recoveryRequired"], false);
     assert_eq!(fixture.inventory(), installed);
     assert_eq!(
-        fs::read(object.join("package/worker.mjs")).unwrap(),
-        original_bytes
+        fs::read(object.join("package.tar")).unwrap(),
+        original_archive
     );
     fixture.assert_idle();
 
@@ -213,8 +213,8 @@ fn registered_uninstall_requires_separate_approval_action_and_old_receipt_preser
     assert_eq!(withdrawn.packages, installed.packages);
     assert!(withdrawn.uninstallations.is_empty());
     assert_eq!(
-        fs::read(object.join("package/worker.mjs")).unwrap(),
-        original_bytes
+        fs::read(object.join("package.tar")).unwrap(),
+        original_archive
     );
 
     let removal = Fixture::uninstall(&withdrawn);
@@ -251,8 +251,8 @@ fn registered_uninstall_requires_separate_approval_action_and_old_receipt_preser
         removal.original_install_action
     );
     assert_eq!(
-        fs::read(object.join("package/worker.mjs")).unwrap(),
-        original_bytes
+        fs::read(object.join("package.tar")).unwrap(),
+        original_archive
     );
     fixture
         .call(
@@ -270,16 +270,25 @@ fn registered_uninstall_requires_separate_approval_action_and_old_receipt_preser
     fixture.app.state::<AppState>().sessions.with(|sessions| {
         assert!(sessions.active.as_ref().unwrap().execution.is_none());
     });
-    let retired_worker = fixture
+    let retired_archive = fixture
         .root()
         .join("uninstalls")
         .join(removal.action_id.to_string())
-        .join("object/package/worker.mjs");
-    let mut changed_bytes = original_bytes.clone();
-    changed_bytes[0] ^= 1;
-    fs::set_permissions(&retired_worker, fs::Permissions::from_mode(0o600)).unwrap();
-    fs::write(&retired_worker, changed_bytes).unwrap();
-    fs::set_permissions(&retired_worker, fs::Permissions::from_mode(0o400)).unwrap();
+        .join("object/package.tar");
+    let mut changed_archive = original_archive.clone();
+    let worker_bytes = fs::read(fixture.source.join("worker.mjs")).unwrap();
+    let body_offsets: Vec<_> = changed_archive
+        .windows(worker_bytes.len())
+        .enumerate()
+        .filter_map(|(offset, bytes)| (bytes == worker_bytes.as_slice()).then_some(offset))
+        .collect();
+    assert_eq!(body_offsets.len(), 1);
+    // Change only the uniquely identified fixture body; headers, padding and
+    // archive termination remain valid for metadata-only observation.
+    changed_archive[body_offsets[0]] ^= 1;
+    fs::set_permissions(&retired_archive, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&retired_archive, &changed_archive).unwrap();
+    fs::set_permissions(&retired_archive, fs::Permissions::from_mode(0o400)).unwrap();
     // Ordinary inventory still observes a sealed wrapper. The selected original
     // action must verify its retained bytes before reporting confirmed success.
     assert_eq!(fixture.inventory(), reinstalled);
@@ -293,9 +302,9 @@ fn registered_uninstall_requires_separate_approval_action_and_old_receipt_preser
     fixture.app.state::<AppState>().sessions.with(|sessions| {
         assert!(sessions.active.as_ref().unwrap().execution.is_none());
     });
-    fs::set_permissions(&retired_worker, fs::Permissions::from_mode(0o600)).unwrap();
-    fs::write(&retired_worker, &original_bytes).unwrap();
-    fs::set_permissions(&retired_worker, fs::Permissions::from_mode(0o400)).unwrap();
+    fs::set_permissions(&retired_archive, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&retired_archive, &original_archive).unwrap();
+    fs::set_permissions(&retired_archive, fs::Permissions::from_mode(0o400)).unwrap();
     let replayed: PluginInventoryView = serde_json::from_value(
         fixture
             .call("uninstall_plugin_package", json!(&removal))
@@ -308,25 +317,23 @@ fn registered_uninstall_requires_separate_approval_action_and_old_receipt_preser
         assert!(sessions.package_operation.is_none());
     });
     assert_eq!(
-        fs::read(object.join("package/worker.mjs")).unwrap(),
-        original_bytes
+        fs::read(object.join("package.tar")).unwrap(),
+        original_archive
     );
     // A fully handed-off old intent can be replaced after rejected byte
     // verification. Its mere retained metadata is not a live cleanup fence.
-    let mut changed_bytes = original_bytes.clone();
-    changed_bytes[0] ^= 1;
-    fs::set_permissions(&retired_worker, fs::Permissions::from_mode(0o600)).unwrap();
-    fs::write(&retired_worker, changed_bytes).unwrap();
-    fs::set_permissions(&retired_worker, fs::Permissions::from_mode(0o400)).unwrap();
+    fs::set_permissions(&retired_archive, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&retired_archive, &changed_archive).unwrap();
+    fs::set_permissions(&retired_archive, fs::Permissions::from_mode(0o400)).unwrap();
     let rejected = fixture
         .call("uninstall_plugin_package", json!(&removal))
         .unwrap_err();
     assert_eq!(rejected["outcome"], "rejected");
     assert_eq!(rejected["recoveryRequired"], false);
     fixture.assert_idle();
-    fs::set_permissions(&retired_worker, fs::Permissions::from_mode(0o600)).unwrap();
-    fs::write(&retired_worker, &original_bytes).unwrap();
-    fs::set_permissions(&retired_worker, fs::Permissions::from_mode(0o400)).unwrap();
+    fs::set_permissions(&retired_archive, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&retired_archive, &original_archive).unwrap();
+    fs::set_permissions(&retired_archive, fs::Permissions::from_mode(0o400)).unwrap();
 }
 
 #[test]

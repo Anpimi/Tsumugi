@@ -21,6 +21,9 @@ use tsumugi_plugin_sdk as sdk;
 const ACTION: &str = "00000000-0000-4000-8000-000000000001";
 const OTHER_ACTION: &str = "00000000-0000-4000-8000-000000000002";
 
+#[path = "installation/archive_payload.rs"]
+mod archive_payload;
+
 struct Fixture {
     temporary: tempfile::TempDir,
     root: PathBuf,
@@ -230,6 +233,7 @@ fn reopen_uses_original_complete_bytes_after_sources_are_removed() {
         let receipt = store
             .install_runtime(ACTION, &fixture.runtime, &fixture.approval, || true)
             .unwrap();
+        assert_eq!(serde_json::to_value(&receipt).unwrap()["formatVersion"], 2);
         assert_eq!(receipt.action_id(), ACTION);
         assert_eq!(receipt.approval(), &fixture.approval);
         assert_eq!(
@@ -262,17 +266,33 @@ fn reopen_uses_original_complete_bytes_after_sources_are_removed() {
     let (catalog, approval) = package();
     assert!(!catalog.is_enabled(&approval.plugin).unwrap());
     assert_eq!(
-        fs::read(fixture.object().join("tool/bin/node")).unwrap(),
+        archive_payload::members(&fixture.object().join("tool.tar"))["bin/node"].bytes,
         b"synthetic non-program\0\xff"
     );
     assert_eq!(
-        fs::read(fixture.object().join("host/dist/main.js")).unwrap(),
+        archive_payload::members(&fixture.object().join("host.tar"))["dist/main.js"].bytes,
         b"throw new Error('must never execute');\n"
     );
     assert_eq!(
-        fs::read(fixture.object().join("host/node_modules/example/index.js")).unwrap(),
+        archive_payload::members(&fixture.object().join("host.tar"))["node_modules/example/index.js"].bytes,
         b"export const marker = 'A';\n"
     );
+    let tool = archive_payload::members(&fixture.object().join("tool.tar"));
+    let host = archive_payload::members(&fixture.object().join("host.tar"));
+    assert!(tool["bin/node"].executable);
+    assert!(!tool["LICENSE"].executable);
+    assert!(host.values().all(|file| !file.executable));
+    assert_eq!(
+        sdk::runtime_artifact_digest(&tool).unwrap(),
+        loaded.runtime().descriptor().tool.tree_digest
+    );
+    assert_eq!(
+        sdk::runtime_artifact_digest(&host).unwrap(),
+        loaded.runtime().descriptor().host.tree_digest
+    );
+    assert_eq!(fs::read_dir(fixture.object()).unwrap().count(), 3);
+    assert!(!fixture.object().join("tool").exists());
+    assert!(!fixture.object().join("host").exists());
 }
 
 #[test]
@@ -475,29 +495,40 @@ fn cached_bytes_flags_and_unsafe_entries_are_rejected_without_removal() {
         "symlink",
         "hardlink",
         "directory-mode",
+        "readable-group",
+        "executable-archive",
+        "truncated",
     ] {
         let fixture = Fixture::new();
         let mut store = PackageStore::open_existing(&fixture.root).unwrap();
         store
             .install_runtime(ACTION, &fixture.runtime, &fixture.approval, || true)
             .unwrap();
-        let path = fixture.object().join("tool/bin/node");
+        let path = fixture.object().join("tool.tar");
         match damage {
             "bytes" => {
-                mode(&path, 0o700);
-                fs::write(&path, b"modified cached bytes").unwrap();
-                mode(&path, 0o500);
+                archive_payload::replace_member(&path, "bin/node", b"modified cached bytes");
             }
-            "exec" => mode(&path, 0o400),
-            "writable" => mode(&path, 0o700),
+            "exec" => archive_payload::change_member_mode(&path, "bin/node", 0o644),
+            "writable" => mode(&path, 0o600),
+            "readable-group" => mode(&path, 0o440),
+            "executable-archive" => mode(&path, 0o500),
             "symlink" => {
+                let target = fixture.temporary.path().join("external-tool.tar");
+                fs::copy(&path, &target).unwrap();
+                mode(&target, 0o400);
                 mode(path.parent().unwrap(), 0o700);
                 fs::remove_file(&path).unwrap();
-                symlink(fixture.tool.join("bin/node"), &path).unwrap();
+                symlink(&target, &path).unwrap();
                 mode(path.parent().unwrap(), 0o500);
             }
             "hardlink" => fs::hard_link(&path, fixture.temporary.path().join("alias")).unwrap(),
-            "directory-mode" => mode(path.parent().unwrap(), 0o700),
+            "directory-mode" => mode(path.parent().unwrap(), 0o550),
+            "truncated" => {
+                let mut bytes = fs::read(&path).unwrap();
+                bytes.pop();
+                archive_payload::replace(&path, &bytes);
+            }
             _ => unreachable!(),
         }
         assert!(
@@ -524,6 +555,7 @@ fn strict_receipts_cannot_replace_independent_approval() {
         "digest",
         "action",
         "native-environment",
+        "version",
     ] {
         let fixture = Fixture::new();
         let mut store = PackageStore::open_existing(&fixture.root).unwrap();
@@ -539,8 +571,12 @@ fn strict_receipts_cannot_replace_independent_approval() {
             "duplicate" => {
                 let mut bytes = serde_json::to_vec(&receipt).unwrap();
                 bytes.pop();
-                bytes.extend_from_slice(b",\"formatVersion\":1}");
+                bytes.extend_from_slice(b",\"formatVersion\":2}");
                 bytes
+            }
+            "version" => {
+                value["formatVersion"] = 1.into();
+                serde_json::to_vec(&value).unwrap()
             }
             "origin" => {
                 value["approval"]["origin"]["sourceId"] = "changed-source".into();
@@ -594,6 +630,72 @@ fn strict_receipts_cannot_replace_independent_approval() {
 }
 
 #[test]
+fn development_and_mixed_runtime_layouts_are_rejected_without_migration() {
+    for mixed in [false, true] {
+        let fixture = Fixture::new();
+        let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+        store
+            .install_runtime(ACTION, &fixture.runtime, &fixture.approval, || true)
+            .unwrap();
+        let object = fixture.object();
+        let tool_path = object.join("tool.tar");
+        let host_path = object.join("host.tar");
+        let tool_bytes = fs::read(&tool_path).unwrap();
+        let host_bytes = fs::read(&host_path).unwrap();
+        mode(&object, 0o700);
+        archive_payload::write_development_tree(
+            &object.join("tool"),
+            &archive_payload::members(&tool_path),
+        );
+        archive_payload::write_development_tree(
+            &object.join("host"),
+            &archive_payload::members(&host_path),
+        );
+        if !mixed {
+            fs::remove_file(&tool_path).unwrap();
+            fs::remove_file(&host_path).unwrap();
+            let mut receipt: serde_json::Value =
+                serde_json::from_slice(&fs::read(fixture.receipt_path()).unwrap()).unwrap();
+            receipt["formatVersion"] = 1.into();
+            archive_payload::replace(
+                &fixture.receipt_path(),
+                &serde_json::to_vec(&receipt).unwrap(),
+            );
+        }
+        mode(&object, 0o500);
+        let receipt_bytes = fs::read(fixture.receipt_path()).unwrap();
+        assert!(store.inventory(|| true).is_err(), "mixed={mixed}");
+        assert!(
+            store.load_runtime(&fixture.approval, || true).is_err(),
+            "mixed={mixed}"
+        );
+        assert!(
+            store
+                .install_runtime(ACTION, &fixture.runtime, &fixture.approval, || true)
+                .is_err(),
+            "mixed={mixed}"
+        );
+        assert_eq!(fs::read(fixture.receipt_path()).unwrap(), receipt_bytes);
+        assert_eq!(
+            fs::read(object.join("tool/bin/node")).unwrap(),
+            b"synthetic non-program\0\xff"
+        );
+        assert_eq!(
+            fs::read(object.join("host/dist/main.js")).unwrap(),
+            b"throw new Error('must never execute');\n"
+        );
+        if mixed {
+            assert_eq!(fs::read(&tool_path).unwrap(), tool_bytes);
+            assert_eq!(fs::read(&host_path).unwrap(), host_bytes);
+        } else {
+            assert!(!tool_path.exists());
+            assert!(!host_path.exists());
+        }
+        assert!(fixture.candidates().is_empty());
+    }
+}
+
+#[test]
 fn pre_promotion_revocation_preserves_only_private_candidate() {
     let fixture = Fixture::new();
     let mut store = PackageStore::open_existing(&fixture.root).unwrap();
@@ -602,7 +704,7 @@ fn pre_promotion_revocation_preserves_only_private_candidate() {
         if fixture
             .candidates()
             .iter()
-            .any(|path| path.join("tool/bin/node").exists())
+            .any(|path| path.join("tool.tar").exists())
         {
             revoked.set(true);
         }
@@ -807,15 +909,7 @@ fn receipt_roundtrip_is_data_without_activation_or_authority() {
         0o700
     );
     assert_eq!(
-        fs::metadata(fixture.object().join("tool"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o500
-    );
-    assert_eq!(
-        fs::metadata(fixture.object().join("host/dist/main.js"))
+        fs::metadata(fixture.object().join("tool.tar"))
             .unwrap()
             .permissions()
             .mode()
@@ -823,11 +917,15 @@ fn receipt_roundtrip_is_data_without_activation_or_authority() {
         0o400
     );
     assert_eq!(
-        fs::metadata(fixture.object().join("tool/bin/node"))
+        fs::metadata(fixture.object().join("host.tar"))
             .unwrap()
             .permissions()
             .mode()
             & 0o777,
+        0o400
+    );
+    assert_eq!(
+        fs::metadata(fixture.object()).unwrap().permissions().mode() & 0o777,
         0o500
     );
     assert!(matches!(
@@ -852,14 +950,12 @@ fn unselected_runtime_index_never_approves_its_cached_bytes() {
     store
         .install_runtime(ACTION, &fixture.runtime, &fixture.approval, || true)
         .unwrap();
-    let stored_host = fixture.object().join("host/dist/main.js");
-    mode(&stored_host, 0o600);
-    fs::write(
+    let stored_host = fixture.object().join("host.tar");
+    archive_payload::replace_member(
         &stored_host,
+        "dist/main.js",
         b"unapproved bytes with valid read-only metadata",
-    )
-    .unwrap();
-    mode(&stored_host, 0o400);
+    );
     let inventory = store.inventory(|| true).unwrap();
     assert_eq!(inventory.runtimes.len(), 1);
     assert_eq!(inventory.runtimes[0].state, InstalledObjectState::Sealed);
@@ -912,6 +1008,62 @@ fn stored_object_replacement_during_load_is_rejected_without_deleting_replacemen
     ));
     assert!(object.exists());
     assert!(moved.join("receipt.json").exists());
+}
+
+#[test]
+fn stored_archive_changes_during_load_are_rejected_and_preserved() {
+    for replacement in [false, true] {
+        let fixture = Fixture::new();
+        let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+        store
+            .install_runtime(ACTION, &fixture.runtime, &fixture.approval, || true)
+            .unwrap();
+        let path = fixture.object().join("host.tar");
+        let original = fs::read(&path).unwrap();
+        let calls = Cell::new(0usize);
+        store
+            .load_runtime(&fixture.approval, || {
+                calls.set(calls.get() + 1);
+                true
+            })
+            .unwrap();
+        // Change a held archive during the same bounded loading path, after
+        // admission has established the original file's identity and stamp.
+        let change_at = calls.get() * 2 / 3;
+        calls.set(0);
+        let changed = Cell::new(false);
+        let retained = fixture.temporary.path().join("retained-host.tar");
+        let error = store
+            .load_runtime(&fixture.approval, || {
+                calls.set(calls.get() + 1);
+                if calls.get() == change_at {
+                    changed.set(true);
+                    if replacement {
+                        mode(path.parent().unwrap(), 0o700);
+                        fs::rename(&path, &retained).unwrap();
+                        fs::write(&path, &original).unwrap();
+                        mode(&path, 0o400);
+                        mode(path.parent().unwrap(), 0o500);
+                    } else {
+                        archive_payload::replace(&path, &original);
+                    }
+                }
+                true
+            })
+            .unwrap_err();
+        assert!(changed.get());
+        assert_eq!(
+            error,
+            InstallError::StoreChanged,
+            "replacement={replacement}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+        if replacement {
+            assert_eq!(fs::read(&retained).unwrap(), original);
+        }
+        assert!(fixture.receipt_path().exists());
+        assert!(fixture.candidates().is_empty());
+    }
 }
 
 #[test]
@@ -1219,7 +1371,7 @@ fn a_consistent_native_receipt_cannot_approve_a_runtime_tree() {
         InstallError::ApprovalMismatch
     );
     assert_eq!(fs::read(object.join("receipt.json")).unwrap(), before);
-    assert!(object.join("tool/bin/node").is_file());
+    assert!(object.join("tool.tar").is_file());
     assert!(fixture.candidates().is_empty());
 }
 

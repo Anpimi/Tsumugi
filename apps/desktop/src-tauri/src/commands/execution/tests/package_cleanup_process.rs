@@ -405,6 +405,12 @@ impl Runner for ObservedRunner {
     ) -> Result<(), ExecutionError> {
         let _ = self.dispatched.send(request.clone());
         let result = self.proxy.run(request, cancellation, results);
+        if let Err(error) = &result {
+            eprintln!(
+                "owned Node fixture failed: {:?} at {}",
+                error.code, error.stage
+            );
+        }
         let _ = self
             .finished
             .send(result.as_ref().err().map(|error| error.code));
@@ -751,7 +757,7 @@ fn actual_node_uninstall_keeps_independent_grant_and_old_receipt_preserves_reope
         .join("objects")
         .join(&approvals[1].package_digest);
     let b_receipt = fs::read(b_object.join("receipt.json")).unwrap();
-    let b_worker = fs::read(b_object.join("package/worker.mjs")).unwrap();
+    let b_archive_bytes = fs::read(b_object.join("package.tar")).unwrap();
     let request = PluginUninstallRequest {
         package: a_package.clone(),
         origin: receipts[0].origin().into(),
@@ -889,8 +895,8 @@ fn actual_node_uninstall_keeps_independent_grant_and_old_receipt_preserves_reope
     assert_eq!(journal.state, PluginObjectState::Sealed);
     assert_eq!(fs::read(b_object.join("receipt.json")).unwrap(), b_receipt);
     assert_eq!(
-        fs::read(b_object.join("package/worker.mjs")).unwrap(),
-        b_worker
+        fs::read(b_object.join("package.tar")).unwrap(),
+        b_archive_bytes
     );
     assert!(current_result(&first_app, &a).is_none());
     let mut revoked_a = a_grant.clone();
@@ -1031,7 +1037,7 @@ fn actual_node_uninstall_keeps_independent_grant_and_old_receipt_preserves_reope
         json!({"sessionToken":view["sessionToken"],"projectId":view["metadata"]["projectId"]});
     let new_before = inventory(&second_window);
     let new_receipt_bytes = fs::read(a_object.join("receipt.json")).unwrap();
-    let new_worker_bytes = fs::read(a_object.join("package/worker.mjs")).unwrap();
+    let new_archive_bytes = fs::read(a_object.join("package.tar")).unwrap();
     let new_settings_bytes = fs::read(store_root.join("settings.json")).unwrap();
     let new_a = start(
         &second_app,
@@ -1064,8 +1070,8 @@ fn actual_node_uninstall_keeps_independent_grant_and_old_receipt_preserves_reope
         new_receipt_bytes
     );
     assert_eq!(
-        fs::read(a_object.join("package/worker.mjs")).unwrap(),
-        new_worker_bytes
+        fs::read(a_object.join("package.tar")).unwrap(),
+        new_archive_bytes
     );
     assert_eq!(
         fs::read(store_root.join("settings.json")).unwrap(),

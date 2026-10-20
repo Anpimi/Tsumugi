@@ -412,6 +412,18 @@ links, hard-linked regular files, unexpected modes and unknown receipt fields.
 The same-user process can still change permissions; these checks do not create
 an OS sandbox or authenticate the publisher.
 
+Current Store receipt format 2 binds one immutable tar payload per artifact:
+`objects/<package-digest>/{package.tar,receipt.json}` and
+`runtimes/<environment-digest>/{tool.tar,host.tar,receipt.json}`. Each archive and
+receipt has mode `0400`; the sealed envelope has mode `0500`. Logical executable
+flags belong to archive members, independently of the archive file's own access
+mode. No persistent extracted tree or flags sidecar is retained. The original
+manifest, artifact bytes, SDK digests and independent approvals keep their owners.
+Earlier development receipts, directory payloads and mixed layouts are preserved
+and refused; use a new development Store and explicitly reinstall from approved
+inputs. There is no implicit conversion or fallback. Repository frozen-input
+records and application settings retain their independent format versions.
+
 `PackageStore::provision` creates a fixed application-owned suffix under an
 existing current-user directory. Its anchor must not be writable by other users;
 one to eight simple UTF-8 child names are accepted, and every suffix directory
@@ -428,7 +440,11 @@ and 128 runtime receipts under that same lock and live IO guard. It validates
 strict receipt fields, SDK manifest identity, origin syntax, readonly metadata,
 namespace consistency and the shared action/identity conflict index. Package
 metadata retains the 64 MiB limit; runtime metadata retains its existing complete
-tree limits. An interrupted promoted object is listed as `RecoveryRequired` and
+artifact limits. Strict tar headers, local path metadata, padding and terminators
+are read through held files. Package inventory also reads the manifest; ordinary
+payload bodies are seek-skipped. Runtime and retired-object indexes skip every
+ordinary body. Selected load and original-action recovery verify complete bytes.
+These scans perform metadata IO, without treating the index as digest verification. An interrupted promoted object is listed as `RecoveryRequired` and
 is not sealed or repaired. Unknown private candidates remain untouched.
 
 Inventory is metadata only. `Sealed` describes the wrapper, not authenticated
@@ -482,11 +498,11 @@ decisions in its [local package controls](../../README.md). Runtime and executio
 consent remain separate integration work.
 
 Installation accepts an already approved `RegisteredPackage` and a canonical
-non-nil UUID action. It writes captured bytes into a private candidate, synchronizes
-files and nested directories, then promotes the whole object exclusively under
+non-nil UUID action. It encodes captured bytes and logical flags into a private
+candidate archive, synchronizes the archive and receipt, then promotes the whole object exclusively under
 its actual package digest. The private outer directory stays writable for the
 rename and is sealed after the promoted identity and bytes are rechecked;
-package files and descendants are already read-only. The object and required parent directories must be
+the package archive and receipt are already read-only. The object and required parent directories must be
 synchronized before returning a successful immutable receipt. A failure after
 promotion is `InstallError::UnknownCommit`; retain the object and retry the same
 action to verify and synchronize it. A promoted but unsealed object returns
@@ -526,7 +542,8 @@ approved Native descriptor with the actual current Host before execution.
 The current-only local settings format is 2. Earlier development settings are
 refused unchanged, without conversion, implicit approval or receipt-derived
 replacement. Preserve old settings when creating a new development profile.
-Node runtime object and receipt formats remain unchanged. Desktop observation of
+Node runtime objects use the current Store receipt format 2 described above.
+Desktop observation of
 recorded Native decisions is metadata only. The desktop separately observes its
 actual current application identity and accepts an explicit digest-bound decision
 through the same settings revision/action owner. Old Native approvals can be
@@ -539,15 +556,15 @@ Native execution selection remains in development.
 environment digest. Its independent `RuntimeApproval` contains the complete SDK
 descriptor and trusted source/publisher origin. This uses the same store lock,
 descriptor-relative IO, exclusive promotion and original-action recovery as
-package installation. Runtime files and their receipt are read-only; the store
+package installation. The two artifact archives and their receipt are read-only; the store
 keeps distinct environments without replacing an installed one.
 Unselected runtimes participate only in bounded receipt, read-only metadata and
 descriptor-identity checks for conflicting actions. This does not approve their
 execution bytes. The target runtime is fully recaptured before and after promotion
-and during original-action recovery; loading always recaptures the selected trees.
+and during original-action recovery; loading always recaptures the selected archives.
 
 After closing and reopening the store, `load_runtime` requires that independent
-approval again and recaptures both complete trees, including executable flags.
+approval again and recaptures both complete artifacts, including executable flags.
 The original acquisition directories are no longer needed. An installed receipt
 records provenance and the original action; it is not a new source of trust or
 permission. Changed bytes, descriptors or origin are refused. An interrupted

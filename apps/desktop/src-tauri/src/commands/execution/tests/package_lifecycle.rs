@@ -609,7 +609,7 @@ fn registered_uninstall_waits_for_original_target_query_without_stopping_indepen
     assert_ne!(a.package_digest, b.package_digest);
     let a_object = root.join("objects").join(&a.package_digest);
     let b_object = root.join("objects").join(&b.package_digest);
-    let independent_bytes = fs::read(b_object.join("package/worker.mjs")).unwrap();
+    let independent_archive_bytes = fs::read(b_object.join("package.tar")).unwrap();
     let (_temp, app, webview, context) = setup();
     let (calls_tx, calls) = mpsc::channel();
     let ca = a.clone();
@@ -822,8 +822,8 @@ fn registered_uninstall_waits_for_original_target_query_without_stopping_indepen
     assert!(!a_object.exists());
     assert!(b_object.exists());
     assert_eq!(
-        fs::read(b_object.join("package/worker.mjs")).unwrap(),
-        independent_bytes
+        fs::read(b_object.join("package.tar")).unwrap(),
+        independent_archive_bytes
     );
     assert_eq!(removed.settings_revision, before.settings_revision);
     assert_eq!(removed.last_settings_action, before.last_settings_action);

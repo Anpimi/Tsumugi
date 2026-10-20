@@ -132,7 +132,7 @@ impl Store {
 
     // Recovery cache is never registered, enabled, or used as a load fallback.
     // A selected retry verifies all original bytes; ordinary indexing checks
-    // strict receipts, ownership, immutable tree bounds and original identities.
+    // strict receipts, ownership, immutable archive bounds and original identities.
     fn retired_image(
         &self,
         journal: &Journal,
@@ -154,7 +154,7 @@ impl Store {
         let (object, object_id, mode, receipt_file, bytes) = self.open_envelope(
             &tx.directory,
             "object",
-            &["package", "receipt.json"],
+            &["package.tar", "receipt.json"],
             authorized,
         )?;
         if tx.mode == 0o500 && mode != 0o500 {
@@ -165,7 +165,9 @@ impl Store {
         if receipt != tx.receipt.installation {
             return Err(InstallError::CorruptReceipt);
         }
-        let package = filesystem::open_child(&object, OsStr::new("package"), true)?;
+        let package = filesystem::open_child(&object, OsStr::new("package.tar"), false)?;
+        private(&package, false, 0o400)?;
+        let package_stamp = Stamp::from(&metadata(&package)?);
         let package_id = filesystem::identity(&package)?;
         let check = || -> InstallResult<()> {
             self.check_transaction(journal, tx, authorized)?;
@@ -178,40 +180,27 @@ impl Store {
                 &receipt_file,
                 authorized,
             )?;
-            same_file(&object, OsStr::new("package"), true, package_id)?;
-            private(&package, true, 0o500)?;
+            same_file(&object, OsStr::new("package.tar"), false, package_id)?;
+            private(&package, false, 0o400)?;
+            unchanged(&package, &package_stamp)?;
             let reopened = filesystem::open_child(&object, OsStr::new("receipt.json"), false)?;
             if read_receipt(&reopened)? != bytes {
                 return Err(InstallError::StoreChanged);
             }
             Ok(())
         };
-        check()?;
-        self.inspect_package(&package, authorized, false)?;
-        let image = if capture {
-            let failure = Cell::new(None);
-            let path = self
-                .path
-                .join(NAMESPACE)
-                .join(&tx.receipt.action_id)
-                .join("object/package");
-            let image =
-                PackageImage::capture_directory(&path, &receipt.package_digest, || match check() {
-                    Ok(()) => true,
-                    Err(error) => {
-                        failure.set(Some(error));
-                        false
-                    }
-                })
-                .map_err(|error| failure.get().unwrap_or(InstallError::Host(error)))?;
+        if capture {
+            let image = self.read_package_archive(&package, &receipt.package_digest, &check)?;
             let mut catalog = PackageCatalog::new();
             catalog.register(image.clone(), receipt.approval())?;
-            Some(image)
+            check()?;
+            Ok(Some(image))
         } else {
-            None
-        };
-        check()?;
-        Ok(image)
+            // Retirement indexing preserves its original metadata-only read
+            // boundary; payload corruption is checked by the selected retry.
+            self.inspect_archive(&package, Profile::Package, false, authorized, &check)?;
+            Ok(None)
+        }
     }
 
     pub(super) fn uninstall_actions(
@@ -404,11 +393,10 @@ impl Store {
         if bytes.len() > MAX_RECEIPT_BYTES {
             return Err(InstallError::CorruptReceipt);
         }
-        self.write_file(
+        self.write_immutable(
             &candidate,
             "receipt.json",
             &bytes,
-            false,
             &candidate_name,
             candidate_id,
             authorized,

@@ -10,6 +10,11 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Retain installed package and runtime bytes in immutable archives with explicit
+  logical execution flags, including reopening and interrupted-action recovery.
+  Store receipt format 2 preserves and refuses earlier development Stores and
+  mixed layouts; create a new Store and explicitly reinstall approved inputs.
+
 - Inspect existing uncompressed plugin candidate archives directly, retaining
   their file access flags without extracting or executing their contents.
   Encode already captured packages deterministically with the same package

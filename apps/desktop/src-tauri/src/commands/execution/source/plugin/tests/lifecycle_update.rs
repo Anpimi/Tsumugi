@@ -268,14 +268,18 @@ fn assert_installed_bytes(
     manifest: &[u8],
     files: &BTreeMap<String, PackageFile>,
 ) {
-    let package = root
+    let archive = root
         .join("plugins/objects")
         .join(image.package_digest())
-        .join("package");
-    assert_eq!(fs::read(package.join("manifest.json")).unwrap(), manifest);
-    for (path, file) in files {
-        assert_eq!(fs::read(package.join(path)).unwrap(), file.bytes);
-    }
+        .join("package.tar");
+    let bytes = fs::read(archive).unwrap();
+    let expected =
+        PackageImage::capture(manifest.to_vec(), files.clone(), image.package_digest()).unwrap();
+    assert_eq!(bytes, expected.encode_archive(|| true).unwrap());
+    assert_eq!(bytes, image.encode_archive(|| true).unwrap());
+    let captured = PackageImage::capture_archive(&bytes, image.package_digest(), || true).unwrap();
+    assert_eq!(captured.package_digest(), image.package_digest());
+    assert_eq!(captured.encode_archive(|| true).unwrap(), bytes);
 }
 
 #[derive(Clone)]
@@ -337,6 +341,18 @@ fn succeeded(window: &Window, context: &Value, attempt: ExecutionId) -> Executio
     serde_json::from_value(detail["items"][0]["resultId"].clone()).unwrap()
 }
 
+fn frame_output(frame: &Frame) -> Value {
+    let result = frame.result.as_ref().unwrap();
+    if frame.input.envelope().operation == tsumugi_core::content::OPERATION {
+        // The ledger retains the schema/digest reference. Reconstruct the
+        // complete proposal through its original Core owner.
+        let output = tsumugi_core::content::validate_output(&frame.input, result).unwrap();
+        serde_json::to_value(output.exchange).unwrap()
+    } else {
+        result.envelope().output.clone().unwrap()
+    }
+}
+
 fn assert_result(frame: &Frame, dispatch: &DispatchRequest, observed: &Value) {
     let result = frame.result.as_ref().unwrap();
     assert_eq!(frame.input.bytes(), dispatch.input.bytes());
@@ -365,9 +381,15 @@ fn assert_result(frame: &Frame, dispatch: &DispatchRequest, observed: &Value) {
         panic!("real SDK result did not succeed")
     };
     assert_eq!(output.sha256, sdk::payload_digest(&output.utf8));
+    if frame.input.envelope().operation == tsumugi_core::content::OPERATION {
+        assert_eq!(
+            result.envelope().output.as_ref().unwrap(),
+            &serde_json::to_value((&output.schema, &output.sha256)).unwrap()
+        );
+    }
     assert_eq!(
         serde_json::from_str::<Value>(&output.utf8).unwrap(),
-        result.envelope().output.clone().unwrap()
+        frame_output(frame)
     );
 }
 
@@ -397,14 +419,7 @@ fn stable_source_input(input: &FixedInput) -> Value {
 }
 fn stable_source_output(frame: &Frame) -> Value {
     let input = &frame.input.envelope().items[0].payload;
-    let mut output = frame
-        .result
-        .as_ref()
-        .unwrap()
-        .envelope()
-        .output
-        .clone()
-        .unwrap();
+    let mut output = frame_output(frame);
     assert_eq!(output["sourceSetId"], input["sourceSetId"]);
     assert_eq!(output["artifacts"], input["artifacts"]);
     let artifact = input["artifacts"][0]["id"].clone();
@@ -559,14 +574,7 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
     let old_frame = frame(&app, old_attempt);
     assert_result(&old_frame, &old_dispatch, &old_entered);
     assert_eq!(
-        old_frame
-            .result
-            .as_ref()
-            .unwrap()
-            .envelope()
-            .output
-            .as_ref()
-            .unwrap()["units"][0]["occurrences"][0]["nativeIdentity"]["value"],
+        frame_output(&old_frame)["units"][0]["occurrences"][0]["nativeIdentity"]["value"],
         "mixedcase"
     );
     let old_preview = call(
@@ -1052,14 +1060,7 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
     let b_frame = frame(&app, b_attempt);
     assert_result(&b_frame, &b_dispatch, &b_entered);
     assert_eq!(
-        b_frame
-            .result
-            .as_ref()
-            .unwrap()
-            .envelope()
-            .output
-            .as_ref()
-            .unwrap()["units"][0]["occurrences"][0]["nativeIdentity"]["value"],
+        frame_output(&b_frame)["units"][0]["occurrences"][0]["nativeIdentity"]["value"],
         "MixedCase"
     );
     call(
