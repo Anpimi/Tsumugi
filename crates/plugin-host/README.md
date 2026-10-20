@@ -688,12 +688,29 @@ oracles and rehashed semantic forgeries are separate from the producer. Cancelle
 or revoked children are reaped, with owned staging checked for cleanup. The Core
 flow requires separate source proof, current QA, human approval and artifact
 proof before adopting a frozen Release, then checks exact bytes and history on
-reopen. Use this same public test file as an external Cargo consumer with normal
-Core features `[]` to establish that the flow does not depend on legacy fixtures;
-the host workspace's dev dependency enables test fixtures. Installation does not
-grant execution authority. These tests use synthetic project data and establish
-neither Desktop Native discovery/approval, Windows/Linux execution nor complete
-domain migration or release acceptance.
+reopen. The Host workspace's development dependency enables Core test fixtures.
+To run the same three tests with normal Core features `[]`, use the isolated
+consumer workspace, which registers the original test file without copying it:
+
+```sh
+TSUMUGI_TEST_NATIVE_PACKAGE=/absolute/path/to/prebuilt-flat-json \
+TSUMUGI_TEST_NATIVE_DIGEST='<independently-reviewed-package-digest>' \
+cargo test --manifest-path crates/plugin-host/compatibility/Cargo.toml --features core-adapter --test native_catalog --locked -- --ignored --nocapture --test-threads=1
+```
+
+With a prepared dependency cache, add `--offline`. All three selected tests must
+execute; an empty or ignored-only result does not establish conformance. The
+prebuilt package retains its own SDK archive provenance. Each test independently
+observes and captures its actual Native Host executable; it does not use a Node
+tool/JavaScript Host tree or a member-runtime artifact. That test Host identity
+does not approve a different Desktop application executable. Installation does
+not grant execution authority.
+
+These tests use synthetic project data and establish neither Desktop Native
+discovery/approval, Windows/Linux execution nor complete domain migration or
+release acceptance. This pairing also does not establish the full cross-version
+SDK, contract, Profile and data-schema compatibility matrix or behavioral
+compatibility from matching version labels.
 
 The `translation_validation` test, with `core-adapter,javascript-conformance`,
 uses an explicitly captured SMAPI package and the independently approved runtime
