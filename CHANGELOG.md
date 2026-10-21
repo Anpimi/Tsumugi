@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Preserve original Unicode when pasting into the translation editor on macOS.
+  Keep newer input and the original draft when a paste is cancelled or cannot be
+  completed, and coordinate pending clipboard reads with saving and project exit.
+
 - Keep keyboard focus on an entry list row while saving or reading. Block row
   activation until the original operation permits it, without moving focus back
   after the user chooses another control or workspace.

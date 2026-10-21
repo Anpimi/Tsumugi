@@ -177,7 +177,148 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+const originalInsertCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+afterEach(() => {
+  cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  if (originalInsertCommand) Object.defineProperty(document, "execCommand", originalInsertCommand);
+  else Reflect.deleteProperty(document, "execCommand");
+});
+
+async function pasteEditor() {
+  const original = "Left replace right";
+  seedSelectedTranslation(original);
+  const user = userEvent.setup(), clipboard = deferred<string>(), ref = createRef<TranslationHandle>();
+  let owner!: ReturnType<typeof useTranslationDraftSession>, reads!: ReturnType<typeof useSessionReads>;
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const readText = vi.spyOn(navigator.clipboard, "readText").mockReturnValue(clipboard.promise);
+  // This models only the native input notification. It cannot prove native undo.
+  const insertText = vi.fn((command: string, _showUi: boolean, text: string) => {
+    const field = document.activeElement;
+    if (command !== "insertText" || !(field instanceof HTMLTextAreaElement)) return false;
+    const start = field.selectionStart, display = text.replace(/\r\n?/g, "\n");
+    fireEvent.change(field, { target: { value: field.value.slice(0, start) + display + field.value.slice(field.selectionEnd) } });
+    field.setSelectionRange(start + display.length, start + display.length);
+    return true;
+  });
+  Object.defineProperty(document, "execCommand", { configurable: true, value: insertText });
+  const view = render(<><QueryProbe capture={(reader, draft) => { reads = reader; owner = draft; }} />
+    <TranslationWorkbench ref={ref} project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "Your draft" });
+  await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+  await user.click(field); field.setSelectionRange(5, 12, "backward"); fireEvent.select(field);
+  return { original, user, clipboard, readText, insertText, view, field, ref, owner, reads };
+}
+
+it("preserves original decomposed Mac clipboard text instead of the normalized paste event", async () => {
+  const original = "Left replace right", raw = "e\u0301 {{name}}\n👩🏽‍💻 مرحبا 日本語";
+  seedSelectedTranslation(original);
+  const user = userEvent.setup(), clipboard = deferred<string>();
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const readText = vi.spyOn(navigator.clipboard, "readText").mockReturnValue(clipboard.promise);
+  const descriptor = Object.getOwnPropertyDescriptor(document, "execCommand");
+  // JSDOM supplies only the input/owner boundary here; native undo is verified separately.
+  const insertText = vi.fn((command: string, _showUi: boolean, text: string) => {
+    const field = document.activeElement;
+    if (command !== "insertText" || !(field instanceof HTMLTextAreaElement)) return false;
+    const start = field.selectionStart;
+    fireEvent.change(field, { target: { value: field.value.slice(0, start) + text + field.value.slice(field.selectionEnd) } });
+    field.setSelectionRange(start + text.length, start + text.length);
+    return true;
+  });
+  Object.defineProperty(document, "execCommand", { configurable: true, value: insertText });
+  try {
+    render(<TranslationWorkbench project={project} disabled={false} />);
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "Your draft" });
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    await user.click(field); field.setSelectionRange(5, 12, "backward"); fireEvent.select(field);
+    const defaultAllowed = fireEvent.paste(field, { clipboardData: { getData: () => raw.normalize("NFC") } });
+    expect(defaultAllowed).toBe(false);
+    expect(readText).toHaveBeenCalledTimes(1);
+    expect(field).toHaveValue(original);
+    await act(async () => { clipboard.resolve(raw); await clipboard.promise; });
+    expect(insertText).toHaveBeenCalledWith("insertText", false, raw);
+    expect(field).toHaveValue(`Left ${raw} right`);
+    expect(field.selectionStart).toBe(5 + raw.length);
+    expect(field.selectionEnd).toBe(5 + raw.length);
+  } finally {
+    if (descriptor) Object.defineProperty(document, "execCommand", descriptor);
+    else Reflect.deleteProperty(document, "execCommand");
+  }
+});
+
+it.each(["é", "e\u0301\r\n日本語"])("keeps original clipboard normalization and accepts textarea line endings: %j", async raw => {
+  const editor = await pasteEditor();
+  expect(fireEvent.paste(editor.field, { clipboardData: { getData: () => raw.replace(/\r\n/g, "\n").normalize("NFC") } })).toBe(false);
+  await act(async () => { editor.clipboard.resolve(raw); });
+  expect(editor.insertText).toHaveBeenCalledWith("insertText", false, raw);
+  expect(editor.owner.current()?.text).toBe(`Left ${raw.replace(/\r\n/g, "\n")} right`);
+});
+
+it("reserves a pending paste without changing the clean draft and blocks save, leave and retarget until cancellation", async () => {
+  const editor = await pasteEditor(), before = editor.owner.current();
+  fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
+  expect(editor.owner.mutationReserved).toBe(true);
+  expect(editor.owner.current()).toBe(before);
+  expect(screen.getByRole("button", { name: "Save revision", exact: true })).toBeDisabled();
+  await act(async () => { editor.ref.current!.saveCurrent(); expect(await editor.ref.current!.allowLeave()).toBe(false); });
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(0);
+  act(() => { expect(editor.ref.current!.openUnit({ unitId: fixtureIdentity(217), sourceRevisionId: fixtureIdentity(205), key: "second", sourceText: "Second" }, "zh-CN")).toBe(false); });
+  await editor.user.click(screen.getByRole("button", { name: "Cancel paste" }));
+  expect(editor.owner.mutationReserved).toBe(false); expect(editor.owner.current()).toBe(before);
+  await act(async () => { editor.clipboard.resolve("e\u0301"); });
+  expect(editor.insertText).not.toHaveBeenCalled(); expect(editor.field).toHaveValue(editor.original);
+  await act(async () => { expect(await editor.ref.current!.allowLeave()).toBe(true); });
+});
+
+it.each(["newer input", "composition", "selection", "focus", "retirement", "unmount"] as const)("does not apply a late clipboard result after %s", async change => {
+  const editor = await pasteEditor();
+  fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
+  if (change === "newer input") fireEvent.change(editor.field, { target: { value: "Newer B" } });
+  else if (change === "composition") fireEvent.compositionStart(editor.field);
+  else if (change === "selection") { editor.field.setSelectionRange(0, 0); fireEvent.select(editor.field); }
+  else if (change === "focus") screen.getByRole("button", { name: "Back to overview" }).focus();
+  else if (change === "retirement") act(() => editor.reads.retire());
+  else editor.view.unmount();
+  await act(async () => { editor.clipboard.resolve("e\u0301"); });
+  expect(editor.insertText).not.toHaveBeenCalled();
+  expect(editor.owner.current()?.text).toBe(change === "newer input" ? "Newer B" : editor.original);
+  expect(editor.owner.mutationReserved).toBe(false);
+});
+
+it.each(["denied", "different snapshot", "unavailable"] as const)("preserves the draft and offers recovery when clipboard access is %s", async failure => {
+  const editor = await pasteEditor(), privateSnapshot = "Different private clipboard snapshot";
+  if (failure === "unavailable") Object.defineProperty(navigator.clipboard, "readText", { configurable: true, value: undefined });
+  fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
+  await act(async () => {
+    if (failure === "denied") editor.clipboard.reject(new DOMException("private error details", "NotAllowedError"));
+    else editor.clipboard.resolve(privateSnapshot);
+  });
+  expect(editor.insertText).not.toHaveBeenCalled(); expect(editor.field).toHaveValue(editor.original);
+  expect(editor.owner.mutationReserved).toBe(false);
+  expect(document.body).not.toHaveTextContent(privateSnapshot); expect(document.body).not.toHaveTextContent("private error details");
+  expect(screen.getByText(i18n.t(`translation.paste.${failure === "denied" ? "failed" : failure === "unavailable" ? "unavailable" : "changed"}`))).toBeVisible();
+});
+
+it("keeps actual input and reports an unconfirmed native insertion without a value fallback", async () => {
+  const editor = await pasteEditor();
+  editor.insertText.mockImplementation(() => { fireEvent.change(editor.field, { target: { value: "Partial native input" } }); return false; });
+  fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
+  await act(async () => { editor.clipboard.resolve("e\u0301"); });
+  expect(editor.field).toHaveValue("Partial native input"); expect(editor.owner.current()?.text).toBe("Partial native input");
+  expect(screen.getByText(i18n.t("translation.paste.unconfirmed"))).toBeVisible();
+  expect(screen.getByText(i18n.t("translation.paste.unconfirmed")).closest('[role="status"]')).toHaveClass("feedback-warning");
+});
+
+it("keeps Windows native paste behavior without reading another clipboard snapshot", async () => {
+  const editor = await pasteEditor();
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  expect(fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } })).toBe(true);
+  expect(editor.readText).not.toHaveBeenCalled(); expect(editor.owner.mutationReserved).toBe(false);
+});
 
 async function revealFindActions(user: ReturnType<typeof userEvent.setup>) {
   const summary = screen.getByText("Find and range actions", { exact: true });

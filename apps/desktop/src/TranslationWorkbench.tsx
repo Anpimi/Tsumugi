@@ -5,7 +5,7 @@ import { resourceCommands } from "./resourceCommands";
 import { useSessionQuery, useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef, useWorkbenchValue, useWorkspaceView } from "./WorkbenchFrame";
-import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type Ref } from "react";
 import { reviewCommands, type ReviewSummaryPage, type ReviewSummary, type ReviewTarget, type ReviewEditorSnapshot, type ReviewNeighbor } from "./reviewCommands";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -44,6 +44,10 @@ type ListReadProof = { intent: ListReadIntent; query: object; data: ReviewSummar
 type HistoryReadIntent = EditorReadIntent & { after: string };
 type EditorActivation = { target: EditorTarget; locale: string; suggestedText?: string; revealEditor: () => void;
   expectedGeneration: number; draftUnchanged: () => boolean };
+type PasteFeedback = "reading" | "cancelled" | "unavailable" | "failed" | "unconfirmed" | "changed" | "composition" | "busy";
+type PasteFlight = { token: symbol; field: HTMLTextAreaElement; projectId: string; sessionToken: string; unitId: string;
+  locale: string; sourceRevisionId: string; editSeq: number; value: string; start: number; end: number;
+  direction: HTMLTextAreaElement["selectionDirection"]; valid: boolean; applying: boolean };
 type LeaveIntent = { kind: "candidate-project" } | { kind: "import-project" } | { kind: "close" } | { kind: "project" } | { kind: "switch"; target: EditorTarget; after?: number; revealEditor: () => void };
 export interface TranslationHandle {
   showAttempt: (id: string) => void;
@@ -158,6 +162,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const latestListRead = useRef(0);
   const [hasDraftSelection, setHasDraftSelection] = useState(false);
   const [composing, setComposing] = useState(false);
+  const compositionActive = useRef(false);
   const [editingReady, setEditingReady] = useState<{ scope: string; ready: boolean } | null>(null);
   const protectionBlocked = draftSession.protection.blocked();
   const [queryUnavailable, setQueryUnavailable] = useState(false);
@@ -178,6 +183,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const heading = useRef<HTMLHeadingElement>(null);
   const entryList = useRef<HTMLUListElement>(null);
   const draftField = useRef<HTMLTextAreaElement>(null);
+  const pasteFlight = useRef<PasteFlight | null>(null);
+  const [pasteFeedback, setPasteFeedback] = useState<PasteFeedback | null>(null);
   const paneLayout = useRef<ContentPaneLayoutHandle>(null);
   const sourceField = useRef<HTMLTextAreaElement>(null);
   const locatedAnchor = useWorkbenchRef<ReviewDiagnosticAnchor | null>("translation", "locatedDiagnostic", null);
@@ -618,6 +625,69 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
       : check.outcome === "cancelled" ? "review.checkCancelled" : check.outcome === "unknown" ? "review.checkUnknown"
       : check.hasIncomplete ? "review.qaUnavailable" : check.hasFindings ? "review.findings" : "review.passed");
   }
+  function finishPaste(flight: PasteFlight, feedback: PasteFeedback | null) {
+    if (pasteFlight.current !== flight) return;
+    pasteFlight.current = null;
+    draftSession.releaseMutation(flight.token);
+    if (mounted.current) setPasteFeedback(feedback);
+  }
+  function cancelPaste(feedback: PasteFeedback | null = "cancelled") {
+    const flight = pasteFlight.current;
+    if (flight) finishPaste(flight, feedback);
+  }
+  function pasteCurrent(flight: PasteFlight) {
+    const current = draftSession.current(), field = flight.field;
+    return pasteFlight.current === flight && flight.valid && mounted.current && !reads.retired
+      && draftSession.ownsMutation(flight.token) && reads.context.projectId === flight.projectId && reads.context.sessionToken === flight.sessionToken
+      && current?.unitId === flight.unitId && current.locale === flight.locale && current.sourceRevisionId === flight.sourceRevisionId
+      && current.editSeq === flight.editSeq && field === draftField.current && field.isConnected && document.activeElement === field
+      && !field.readOnly && !compositionActive.current && !draftSession.protection.blocked()
+      && field.value === flight.value && field.selectionStart === flight.start && field.selectionEnd === flight.end && field.selectionDirection === flight.direction;
+  }
+  function pasteOriginalText(event: ClipboardEvent<HTMLTextAreaElement>) {
+    // macOS WebKit normalizes the paste event and default insertion to NFC.
+    // The explicit paste gesture's async reader preserves the original text.
+    if (!navigator.platform.startsWith("Mac")) return;
+    event.preventDefault();
+    cancelPaste(null);
+    if (compositionActive.current) { setPasteFeedback("composition"); return; }
+    const field = event.currentTarget, current = draftSession.current();
+    if (!mounted.current || reads.retired || !open || tab !== "edit" || disabled || !targetAvailable || field.readOnly || !current) {
+      setPasteFeedback("unavailable"); return;
+    }
+    const token = draftSession.reserveInputMutation();
+    if (!token) { setPasteFeedback("busy"); return; }
+    const flight: PasteFlight = { token, field, ...context, unitId: current.unitId, locale: current.locale,
+      sourceRevisionId: current.sourceRevisionId, editSeq: current.editSeq, value: field.value,
+      start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection, valid: true, applying: false };
+    pasteFlight.current = flight; setPasteFeedback("reading");
+    let text: string, reading: Promise<string>;
+    try {
+      text = event.clipboardData.getData("text/plain");
+      if (typeof navigator.clipboard?.readText !== "function") { finishPaste(flight, "unavailable"); return; }
+      // Start synchronously while the original native paste gesture is active.
+      reading = navigator.clipboard.readText();
+    } catch { finishPaste(flight, "failed"); return; }
+    void reading.then(original => {
+      if (pasteFlight.current !== flight) return;
+      if (!pasteCurrent(flight) || textareaDisplayText(original).normalize("NFC") !== textareaDisplayText(text).normalize("NFC")) { finishPaste(flight, "changed"); return; }
+      if (original === "") { finishPaste(flight, null); return; }
+      const expected = flight.value.slice(0, flight.start) + textareaDisplayText(original) + flight.value.slice(flight.end);
+      let inserted = false;
+      flight.applying = true;
+      try { inserted = typeof document.execCommand === "function" && document.execCommand("insertText", false, original); }
+      catch { /* Preserve the current editor; never replace its value as a fallback. */ }
+      finally { flight.applying = false; }
+      finishPaste(flight, inserted && field.value === expected ? null : "unconfirmed");
+    }, () => { finishPaste(flight, "failed"); });
+  }
+  useLayoutEffect(() => { cancelPaste("changed"); }, [open, tab, disabled, targetAvailable, targetLocale, editorTarget?.unitId,
+    editorTarget?.sourceRevisionId, project.sessionToken, project.metadata.projectId, reads.retired]);
+  useLayoutEffect(() => () => {
+    const flight = pasteFlight.current;
+    pasteFlight.current = null;
+    if (flight) draftSession.releaseMutation(flight.token);
+  }, []);
   useEffect(() => { if (open) heading.current?.focus(); }, [open, tab]);
   useEffect(() => { setHasDraftSelection(false); setQueryUnavailable(false); }, [editorTarget?.unitId, targetLocale]);
   useEffect(() => { if (entryList.current) entryList.current.scrollTop = 0; }, [listAfter, appliedQuery, targetLocale]);
@@ -640,7 +710,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   }
   function retryAvailability() {
     if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
-    if (composing || busy || running.current || draftSession.protection.blocked()) return { enabled: false, reason: "busy" as const };
+    if (composing || busy || running.current || draftSession.protection.blocked() || draftSession.mutationReserved) return { enabled: false, reason: "busy" as const };
     if (!pendingSave || pendingSelection || saveReceiptCheck !== "missing") return { enabled: false, reason: "unavailable" as const };
     if (!targetAvailable) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
@@ -678,7 +748,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     if (!mounted.current || reads.retired || !open || tab !== area || disabled || leaveIntent
       || reads.context.projectId !== commandScope.projectId || reads.context.sessionToken !== commandScope.sessionToken) return { enabled: false, reason: "hidden" };
     const imported = importSession.current(), draft = draftSession.current();
-    if (draftSession.protection.blocked() || running.current || localBusy || imported.busy || draft?.saving || draft?.selecting || candidates.current().busy) return { enabled: false, reason: "busy" };
+    if (pasteFlight.current || draftSession.protection.blocked() || running.current || localBusy || imported.busy || draft?.saving || draft?.selecting || candidates.current().busy) return { enabled: false, reason: "busy" };
     if (!recovery && (importSession.hasPending() || draft?.pending || draft?.pendingSelection || candidates.current().pending)) return { enabled: false, reason: "pending-action" };
     if (!recovery && (!targetAvailable || (area === "import" && imported.targetLocale !== targetLocale))) return unavailableCommand;
     return { enabled: true };
@@ -952,7 +1022,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   function allowProjectLeave(current: () => boolean = () => true) {
     leaveProof.current = current;
     const manual = draftSession.current(), imported = importSession.current();
-    if (resourceDrafts.factBlocked() || composing || draftSession.protection.blocked() || candidates.blocked() || importSession.hasActive() || imported.busy || manual?.saving || manual?.selecting) { setOpen(true); return Promise.resolve(false); }
+    if (resourceDrafts.factBlocked() || composing || pasteFlight.current || draftSession.protection.blocked() || candidates.blocked() || importSession.hasActive() || imported.busy || manual?.saving || manual?.selecting) { setOpen(true); return Promise.resolve(false); }
     if (manual?.pending || manual?.pendingSelection || importSession.hasPending()) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
     if (candidates.hasDraft()) {
       setOpen(true);setTab("edit");setLeaveIntent({kind:"candidate-project"});
@@ -972,7 +1042,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
       commandRegistry.dispatch("translation.save", commandScope);
     },
     showAttempt(id) {
-      if (composing || draftSession.protection.blocked() || running.current || readRunning.current || draftSession.current()?.saving || draftSession.current()?.selecting || dirty || pendingSave || pendingSelection || importSession.hasPending() || importSession.hasActive() || importState.busy) { setOpen(true); return; }
+      if (composing || pasteFlight.current || draftSession.protection.blocked() || running.current || readRunning.current || draftSession.current()?.saving || draftSession.current()?.selecting || dirty || pendingSave || pendingSelection || importSession.hasPending() || importSession.hasActive() || importState.busy) { setOpen(true); return; }
       generation.current++;
       setEditorTarget(null); setEditorIntent(null); setHistoryIntent(null); draftSession.clear();
       if (!importSession.showAttempt(id)) return;
@@ -983,7 +1053,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
         setOpen(true); setFailure("target-locale");
         return false;
       }
-      if (composing || draftSession.protection.blocked() || running.current || readRunning.current || draftSession.current()?.saving || draftSession.current()?.selecting || dirty || pendingSave || pendingSelection || importSession.hasPending() || importSession.hasActive() || importState.busy) {
+      if (composing || pasteFlight.current || draftSession.protection.blocked() || running.current || readRunning.current || draftSession.current()?.saving || draftSession.current()?.selecting || dirty || pendingSave || pendingSelection || importSession.hasPending() || importSession.hasActive() || importState.busy) {
         setOpen(true);
         return false;
       }
@@ -995,7 +1065,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     allowNavigate(destination) {
       const confirmingSelection = selectionAction !== null && (selectionAction.kind !== "ai" || selectionTransfer.current !== selectionAction.value
         || contentSelection !== selectionAction.value || selectionVersion.current !== selectionAction.version);
-      if (resourceDrafts.factBlocked() || composing || findComposition.current || draftSession.protection.blocked() || candidates.blocked() || leaveIntent || confirmingSelection || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
+      if (resourceDrafts.factBlocked() || composing || findComposition.current || pasteFlight.current || draftSession.protection.blocked() || candidates.blocked() || leaveIntent || confirmingSelection || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
       if (destination?.kind === "review-return") {
         const draft = draftSession.current();
         return allowProjectLeave(() => mounted.current && !reads.retired && draftSession.current()?.editSeq === draft?.editSeq && draftSession.current()?.text === draft?.text);
@@ -1027,6 +1097,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     if (current()) { running.current = false; setBusy(false); }
   }
   function changeTarget(locale: string) {
+    if (pasteFlight.current) return;
     if (locale && !localeAvailable(locale)) return;
     if (!importSession.setTarget(locale)) return;
     selectedLocale.current = locale;
@@ -1201,7 +1272,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     });
   }
   function requestClose() {
-    if (resourceDrafts.factBlocked() || composing || draftSession.protection.blocked() || candidates.blocked() || leaveIntent || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return;
+    if (resourceDrafts.factBlocked() || composing || pasteFlight.current || draftSession.protection.blocked() || candidates.blocked() || leaveIntent || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return;
     generation.current++; setEditorActivation(null); setReadyEditorRead(null); setEditorIntent(null); setOpen(false);
   }
   async function switchEditor(intent: Extract<LeaveIntent, { kind: "switch" }>, current: () => boolean) {
@@ -1304,7 +1375,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
           {sourceRead.error || contentRead.error ? <button className="secondary-button" disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable} onClick={() => void performRead(refreshSource)}>{t("execution.refresh")}</button> : null}
           {!project.metadata.targetLocales.length ? <p role="status">{t("translation.noTargets")}</p> : null}
           <div className="translation-controls"><div className="execution-actions"><button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} onClick={() => setTab("import")}>{t("translation.importTab")}</button><button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
-          {sourcePage && (project.metadata.targetLocales.length || targetUnavailable) ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || dirty || !!pendingSave || !!pendingSelection || protectionBlocked || importSession.hasPending() || importSession.hasActive()} onChange={event => changeTarget(event.target.value)}>{targetUnavailable ? <option value={targetLocale} disabled>{t("translation.removedTargetOption", { locale: targetLocale })}</option> : null}{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}</div>
+          {sourcePage && (project.metadata.targetLocales.length || targetUnavailable) ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || dirty || !!pasteFlight.current || !!pendingSave || !!pendingSelection || protectionBlocked || importSession.hasPending() || importSession.hasActive()} onChange={event => changeTarget(event.target.value)}>{targetUnavailable ? <option value={targetLocale} disabled>{t("translation.removedTargetOption", { locale: targetLocale })}</option> : null}{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}</div>
           {tab === "import" && targetLocale ? <>
             <PluginTranslationControls project={project} open={open && tab === "import"} targetLocale={targetLocale} disabled={disabled || localBusy || !!leaveIntent || !!pendingSave || !!pendingSelection || dirty} onOpenExtensions={onOpenExtensions} />
             {preview ? <section><h3>{t("translation.preview")}</h3><p>{t("translation.counts", { unique: String(preview.unique), unmatched: String(preview.unmatched), conflicts: String(preview.selectedConflicts), changed: String(preview.sourceChanged) })}</p><p>{preview.logicalPath} · {preview.targetLocale}</p>{preview.sourceChanged ? <p role="alert">{t("translation.sourceChanged")}</p> : null}
@@ -1390,17 +1461,27 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     }}>{t("toolQuery.querySelection")}</button></div> : null}
                   {queryUnavailable ? <p role="status">{t("toolQuery.editorUnavailable")}</p> : null}
                   <label className="translation-draft-field">{t("translation.draft")}<textarea ref={draftField} value={textareaDisplayText(draft)}
+                    onPaste={pasteOriginalText}
                     onFocus={event => event.currentTarget.scrollIntoView({ block: "nearest" })}
+                    onBlur={() => { const flight = pasteFlight.current; if (flight && !flight.applying) flight.valid = false; }}
                     readOnly={protectionBlocked || editingReady?.scope !== editingProtectionScope(context, displayedTarget, targetLocale) || !editingReady.ready}
                     onCompositionStart={event => {
+                      cancelPaste("changed"); compositionActive.current = true;
                       setComposing(true);
                       // Composition is newer input even before its first text
                       // change. A pending immutable selection cannot replace it.
                       const current = draftSession.current();
                       if (!event.currentTarget.readOnly && current) draftSession.edit(current.text);
-                    }} onCompositionEnd={() => setComposing(false)}
-                    onSelect={event => setHasDraftSelection(event.currentTarget.selectionStart < event.currentTarget.selectionEnd)}
-                    onChange={event => draftSession.edit(event.target.value)} /></label>
+                    }} onCompositionEnd={() => { compositionActive.current = false; setComposing(false); }}
+                    onSelect={event => {
+                      const field = event.currentTarget, flight = pasteFlight.current;
+                      if (flight && !flight.applying && (field.selectionStart !== flight.start || field.selectionEnd !== flight.end
+                        || field.selectionDirection !== flight.direction)) flight.valid = false;
+                      setHasDraftSelection(field.selectionStart < field.selectionEnd);
+                    }}
+                    onChange={event => { if (!pasteFlight.current?.applying) cancelPaste("changed"); draftSession.edit(event.target.value); }} /></label>
+                  {pasteFeedback ? <div className={`feedback feedback-${pasteFeedback === "reading" || pasteFeedback === "cancelled" ? "info" : pasteFeedback === "failed" ? "error" : "warning"}`} role="status"><p>{t(`translation.paste.${pasteFeedback}`)}</p>
+                    {pasteFlight.current ? <button type="button" className="secondary-button" onClick={() => cancelPaste()}>{t("translation.paste.cancel")}</button> : null}</div> : null}
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorDraft?.baseSelectionId ? editorDraft.baseText || t("translation.empty") : t("translation.noSelection")}</pre></details>
                   <button type="button" className="secondary-button" disabled={disabled || !!sharing.state.target || !targetAvailable || !snapshot || readyEditorRead !== editorIntent?.id
                     || snapshot.target.sourceRevisionId !== displayedTarget.sourceRevisionId || !checkedRead(editorKey(editorIntent), snapshot)}

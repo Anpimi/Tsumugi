@@ -254,10 +254,10 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       row("tasks", tasks.unresolved(), false, null),
       row("source", source.hasPending(),
         !!src.selection || Object.keys(src.lineage).length > 0 || !!src.actor.trim() || source.hook.hasDraft() || source.inFlight(), [src.editSeq, source.hook.revision()]),
-      row("translation", sharing.blocked() || translation.candidates.blocked() || translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
+      row("translation", translation.mutationReserved || sharing.blocked() || translation.candidates.blocked() || translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
         || imported.busy || imports.hasPending() || imports.hasActive(),
         translation.candidates.hasDraft() || !!manual && (manual.text !== (manual.baseText ?? "") || manual.newerDraftSaved),
-        [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.protection.current().pending,
+        [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.mutationReserved, translation.protection.current().pending,
           translation.candidates.current().editSeq,translation.candidates.current().pending, sharing.revision()]),
       row("resources", resources.factBlocked() || resources.inFlight() || !!res.pending || resources.tool.blocked(), resources.factDirty() || resources.termDirty() || resources.contextDirty() || resources.correctionDirty() || resources.tool.hasDraft(),
         [res.termSeq, res.contextSeq, res.correctionDraft, res.factDraft, res.factPending, resources.tool.draftSequence.current, resources.tool.current().capture?.review.inputDigest, resources.tool.current().pending, resources.tool.mcp.revision()]),
@@ -759,7 +759,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (area === "resources" && resources.tool.blocked()) memory.write("resources", "tab", "queries");
     if (area === "translation") {
       const draft = translation.current();
-      memory.write("translation", "tab", sharing.blocked() || translation.candidates.blocked() || translation.candidates.hasDraft() || translation.protection.blocked() || draft && (draft.pending || draft.pendingSelection || draft.saving || draft.text !== (draft.baseText ?? "") || draft.newerDraftSaved) ? "edit" : "import");
+      memory.write("translation", "tab", translation.mutationReserved || sharing.blocked() || translation.candidates.blocked() || translation.candidates.hasDraft() || translation.protection.blocked() || draft && (draft.pending || draft.pendingSelection || draft.saving || draft.text !== (draft.baseText ?? "") || draft.newerDraftSaved) ? "edit" : "import");
     }
   }
   const ports = useRef({ live, inspect, consumer, accept, blocked });

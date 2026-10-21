@@ -113,6 +113,61 @@ function unknownTranslationFailure(): CommandError {
   expect(isCommandError(failure)).toBe(true); return failure;
 }
 
+it("shares a synchronous input reservation without fabricating a clean draft edit", async () => {
+  render(<Probe/>, project); begin();
+  const before = drafts.current(); let token!: symbol | null;
+  act(() => {
+    token = drafts.reserveInputMutation();
+    expect(token).not.toBeNull(); expect(drafts.mutationReserved).toBe(true); expect(drafts.ownsMutation(token!)).toBe(true);
+    expect(drafts.reserveMutation()).toBeNull(); expect(drafts.reserveInputMutation()).toBeNull();
+    expect(drafts.begin({ ...candidate, key: "other", sourceText: "Other" }, null, null)).toBe(false);
+    drafts.clear();
+  });
+  await act(async () => { expect((await drafts.save()).saved).toBe(false); });
+  expect(drafts.current()).toBe(before); expect(calls("create_execution_identity")).toHaveLength(0);
+  act(() => { drafts.releaseMutation(Symbol("wrong owner")); expect(drafts.mutationReserved).toBe(true); drafts.releaseMutation(token!); expect(drafts.mutationReserved).toBe(false); });
+  expect(drafts.current()).toBe(before); expect(drafts.current()).toMatchObject({ text: "", editSeq: 0, newerDraftSaved: false });
+});
+
+it.each(["before input", "after input"] as const)("keeps an input reservation across save A confirmation %s without pre-incrementing editSeq", async receiptTime => {
+  render(<Probe/>, project); begin(); act(() => drafts.edit("A"));
+  const original = invoke.getMockImplementation()!, receipt = deferred<TranslationSaveReceipt>();
+  let request!: TranslationSaveRequest;
+  invoke.mockImplementation((command: string, args) => {
+    if (command === "save_translation_revision") { request = args.request; return receipt.promise; }
+    return original(command, args);
+  });
+  let saving!: ReturnType<typeof drafts.save>; act(() => { saving = drafts.save(); });
+  await waitFor(() => expect(request).toBeDefined());
+  const seq = drafts.current()!.editSeq; let token!: symbol | null;
+  act(() => { token = drafts.reserveInputMutation(); });
+  expect(token).not.toBeNull(); expect(drafts.current()?.editSeq).toBe(seq); expect(drafts.reserveMutation()).toBeNull();
+  if (receiptTime === "before input") {
+    await act(async () => { receipt.resolve(saved(request)); expect((await saving).savedCurrent).toBe(true); });
+    expect(drafts.current()).toMatchObject({ text: "A", editSeq: seq, newerDraftSaved: false });
+  }
+  act(() => { drafts.edit("B e\u0301"); });
+  if (receiptTime === "after input") await act(async () => { receipt.resolve(saved(request)); expect((await saving).savedCurrent).toBe(false); });
+  expect(drafts.current()).toMatchObject({ text: "B e\u0301", baseText: "A", editSeq: seq + 1, newerDraftSaved: receiptTime === "after input" });
+  expect(drafts.ownsMutation(token!)).toBe(true);
+  act(() => drafts.releaseMutation(token!)); expect(calls("save_translation_revision")).toHaveLength(1);
+});
+
+it("accepts input after an unknown save while retaining the original action and excluding another write", async () => {
+  render(<Probe/>, project); begin(); act(() => drafts.edit("A"));
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args) => command === "save_translation_revision" ? Promise.reject(unknownTranslationFailure()) : original(command, args));
+  await act(async () => { await drafts.save(); });
+  const pending = drafts.current()!.pending!; let token!: symbol | null;
+  act(() => { token = drafts.reserveInputMutation(); });
+  expect(token).not.toBeNull(); expect(drafts.reserveMutation()).toBeNull();
+  await act(async () => { expect((await drafts.save()).saved).toBe(false); });
+  act(() => { drafts.edit("B e\u0301"); drafts.releaseMutation(token!); });
+  expect(drafts.current()).toMatchObject({ text: "B e\u0301", pending, outcomeUnknown: true });
+  expect(calls("save_translation_revision")).toHaveLength(1);
+  expect(pending.request.text).toBe("A");
+});
+
 it.each(["lost", "invalid"] as const)("confirms a %s save acknowledgement with one original-request read and keeps newer B across consumer removal", async acknowledgement => {
   const view = render(<Probe/>, project); begin(); act(() => drafts.edit("A 👩🏽‍💻"));
   const original = invoke.getMockImplementation()!, identity = deferred<string>(), lookup = deferred<TranslationSaveReceipt | null>();

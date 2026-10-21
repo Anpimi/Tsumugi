@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+The macOS translation editor preserves original clipboard Unicode through an
+explicit paste gesture. Pending input uses the existing draft mutation owner and
+project exit coordination; newer input, cancellation and read failure retain the
+original draft. Native editing still owns insertion and undo. This changes no
+Core/IPC/SDK API, protocol, persisted format, dependency or version source. It
+stays in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1`
+batch, with bilingual Unreleased entries and no additional bump.
+
 Entry-list buttons retain keyboard focus during ordinary pending saves and reads.
 Their live activation gate still rejects busy, protected, composing, unavailable
 or uncertain work. The existing pane focus owner excludes unavailable rows when

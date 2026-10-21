@@ -45,6 +45,8 @@ interface DraftSession {
   unchanged: (seq: number, text: string) => boolean;
   mutationReserved: boolean;
   reserveMutation: () => symbol | null;
+  reserveInputMutation: () => symbol | null;
+  ownsMutation: (token: symbol) => boolean;
   releaseMutation: (token: symbol) => void;
   selectRevision: (revision: TranslationRevision, proof?: () => boolean, dispose?: () => void) => Promise<boolean>;
   checkSelection: () => Promise<boolean>;
@@ -68,7 +70,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   const selectionReservation = useRef<symbol | null>(null);
   const selectionVersion = useRef(0);
   const selectionReadCleanup = useRef<(() => void) | null>(null);
-  const [mutationReserved, setMutationReserved] = useState(false);
+  const [, setMutationReserved] = useState(false);
   useLayoutEffect(() => {
     const previous = projectRef.current, locale = currentDraft.current?.locale;
     if (selectionReservation.current && (previous.metadata.sourceLocale !== project.metadata.sourceLocale
@@ -84,6 +86,14 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   function reserveMutation() {
     if (!mounted.current || protection.blocked() || mutation.current || inFlight.current || currentDraft.current?.pending || currentDraft.current?.pendingSelection || currentDraft.current?.saving) return null;
     const token = Symbol("translation mutation"); mutation.current = token; setMutationReserved(true); return token;
+  }
+  function reserveInputMutation() {
+    const current = currentDraft.current;
+    // New editor input may follow an accepted save, including an unknown save.
+    // It shares the original exclusive slot without permitting another write.
+    if (!mounted.current || !current || protection.blocked() || mutation.current || current.selecting || current.pendingSelection
+      || !projectRef.current.metadata.targetLocales.includes(current.locale)) return null;
+    const token = Symbol("translation input"); mutation.current = token; setMutationReserved(true); return token;
   }
   function releaseMutation(token: symbol) {
     if (mutation.current !== token) return;
@@ -342,7 +352,8 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   }
 
   return <DraftContext.Provider value={{ candidates, protection, draft, current, begin, edit, revert, clear, save, checkSavedAction, selected, unchanged,
-    mutationReserved, reserveMutation, releaseMutation, selectRevision, checkSelection, retrySelection }}>
+    get mutationReserved() { return mutation.current !== null; }, reserveMutation, reserveInputMutation,
+    ownsMutation: token => mutation.current === token, releaseMutation, selectRevision, checkSelection, retrySelection }}>
     {children}
   </DraftContext.Provider>;
 }
