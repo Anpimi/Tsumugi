@@ -10,7 +10,7 @@ import type { ModelConnectionProfile } from "./connectionCommands";
 import type { SessionExitPermit } from "./sessionNavigation";
 import "./ConnectionManager.css";
 
-export interface ConnectionManagerHandle { prepareExit: (current: () => boolean) => Promise<SessionExitPermit | null>; open: () => void }
+export interface ConnectionManagerHandle { prepareExit: (current: () => boolean) => Promise<SessionExitPermit | null>; open: (returnTo?: HTMLElement) => void }
 const reasons: Partial<Record<string, { field: string; message: TranslationKey }>> = {
   "model-connection-name": { field: "name", message: "connections.errors.name" },
   "ai-endpoint": { field: "endpoint", message: "connections.errors.endpoint" },
@@ -28,7 +28,7 @@ const notices: Record<ConnectionNotice, TranslationKey> = {
   "not-applied": "connections.notices.not-applied", "draft-retained": "connections.notices.draft-retained", "unavailable": "connections.notices.unavailable",
   "exit-blocked": "connections.notices.exit-blocked", "exit-edited": "connections.notices.exit-edited",
 };
-export function ConnectionManager({ disabled, ref }: { disabled: boolean; ref?: Ref<ConnectionManagerHandle> }) {
+export function ConnectionManager({ disabled, hideTrigger = false, ref }: { disabled: boolean; hideTrigger?: boolean; ref?: Ref<ConnectionManagerHandle> }) {
   const { t } = useTranslation(), owner = useConnectionDraft(), client = useApplicationQueryClient();
   const [open, setOpen] = useState(false), [showArchived, setShowArchived] = useState(false);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -42,8 +42,8 @@ export function ConnectionManager({ disabled, ref }: { disabled: boolean; ref?: 
   const fieldReason = failureReason(state.failure), issue = fieldReason ? reasons[fieldReason] : undefined, field = issue?.field;
   function fieldError(name: string) { return field === name && issue ? <p id={"connection-" + name + "-error"} role="alert">{t(issue.message)}</p> : null; }
   const close = () => { if (owner.current().exitHeld) return; if (owner.current().exitPrompt) owner.answerExit(false); setSwitchTarget(null); setOpen(false); };
-  useImperativeHandle(ref, () => ({ open: () => {
-    if (!open) returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  useImperativeHandle(ref, () => ({ open: (returnTo?: HTMLElement) => {
+    if (!open) returnFocus.current = returnTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setOpen(true);
   }, prepareExit: async current => {
     if (connectionDirty(owner.current().editor) || owner.reserved()) setOpen(true);
@@ -66,7 +66,7 @@ export function ConnectionManager({ disabled, ref }: { disabled: boolean; ref?: 
   const blocked = disabled || state.busy || state.pending !== null || state.exitPrompt || state.exitHeld || switchTarget !== null;
   const canSelect = !blocked && confirmed !== undefined;
   return <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else close(); }}>
-    <DialogTrigger asChild><button type="button" className="secondary-button" disabled={disabled || state.exitHeld}>{t("connections.open")}</button></DialogTrigger>
+    {!hideTrigger ? <DialogTrigger asChild><button type="button" className="secondary-button" disabled={disabled || state.exitHeld}>{t("connections.open")}</button></DialogTrigger> : null}
     <DialogPortal><DialogOverlay className="dialog-backdrop"/><DialogContent className="execution-dialog connection-manager" aria-busy={state.busy}
       onCloseAutoFocus={event => {
         const target = returnFocus.current; returnFocus.current = null;

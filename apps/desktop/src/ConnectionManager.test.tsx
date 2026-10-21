@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createRef } from "react";
+import { createRef, useRef, useState } from "react";
 import { ApplicationReadProvider } from "./ApplicationReadProvider";
 import { ConnectionDraftProvider } from "./ConnectionDraftSession";
 import { ConnectionManager, type ConnectionManagerHandle } from "./ConnectionManager";
@@ -100,4 +100,24 @@ it.each(["button","escape"] as const)("returns keyboard focus to an imperative p
   await screen.findByRole("dialog",{name:i18n.t("connections.title")});
   if(dismissal==="button")await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));else await user.keyboard("{Escape}");
   await waitFor(()=>expect(opener).toHaveFocus());expect(invoke.mock.calls.filter(([command])=>command==="change_model_connections")).toHaveLength(0);
+});
+
+it.each(["button", "escape"] as const)("returns to an explicit stable target after its temporary launcher disappears (%s)", async dismissal => {
+  const user = userEvent.setup(), ref = createRef<ConnectionManagerHandle>();
+  function Launcher() {
+    const stable = useRef<HTMLButtonElement>(null), [visible, setVisible] = useState(true);
+    return <><button type="button" ref={stable}>Application settings</button>{visible ? <button type="button" onClick={() => {
+      if (stable.current) { ref.current?.open(stable.current); setVisible(false); }
+    }}>Temporary connection action</button> : null}</>;
+  }
+  render(<ApplicationReadProvider><ConnectionDraftProvider><Launcher/><ConnectionManager ref={ref} disabled={false} hideTrigger/></ConnectionDraftProvider></ApplicationReadProvider>);
+  expect(screen.queryByRole("button", { name: i18n.t("connections.open") })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Temporary connection action" }));
+  await screen.findByRole("dialog", { name: i18n.t("connections.title") });
+  expect(screen.queryByRole("button", { name: "Temporary connection action" })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  if (dismissal === "button") await user.click(screen.getByRole("button", { name: i18n.t("connections.close") }));
+  else await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Application settings" })).toHaveFocus());
+  expect(invoke.mock.calls.some(([command]) => command === "change_model_connections")).toBe(false);
 });

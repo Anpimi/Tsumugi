@@ -2557,7 +2557,7 @@ ai: {
     future: "{{label}} 将在后续模块提供",
     menu: { file: "文件", edit: "编辑", view: "视图", help: "帮助" },
     language: "界面语言",
-    settings: { languageHelp: "选择后立即切换界面语言，不改变项目目标语言或您输入的文本。", close: "关闭设置" },
+    settings: { description: "选择本应用的界面语言，并管理模型连接档案。", languageHelp: "选择后立即切换界面语言，不改变项目目标语言或您输入的文本。", close: "关闭设置" },
     languageEnglish: "English",
     languageChinese: "简体中文",
     localeNames: {

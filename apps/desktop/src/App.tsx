@@ -365,6 +365,7 @@ function AppWorkbench() {
   const [closedPanel, setClosedPanel] = useState<ClosedPanel>("empty");
   const [openPanel, setOpenPanel] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const [activeForm, setActiveForm] = useState<ActiveForm | null>(null);
   const currentExitPresentation = useRef({ form: activeForm, area, memory });
   useLayoutEffect(() => { currentExitPresentation.current = { form: activeForm, area, memory }; }, [activeForm, area, memory]);
@@ -1365,6 +1366,14 @@ function AppWorkbench() {
       || compositionActive.current || navigationIntent || restorePromptOpen || document.querySelector('[role="dialog"]'))) return;
     setSettingsOpen(open);
   }
+  function openConnectionsFromSettings() {
+    const manager = connectionManager.current, trigger = settingsTrigger.current;
+    if (!settingsOpen || !manager || !trigger?.isConnected || busy || stopping || coordinating || currentRetiredSession.current
+      || areaNavigation.current || lifecycleFlight.current || compositionActive.current || navigationIntent || restorePromptOpen
+      || document.querySelector('[role="dialog"]:not(.app-settings-dialog)')) return;
+    setSettingsOpen(false);
+    manager.open(trigger);
+  }
   const viewOwner = { area, memory, activate: (next: WorkspaceArea) => { void navigateArea(next); },
     deactivate: (closing: WorkspaceArea) => { if (currentExitPresentation.current.area === closing) void navigateArea("overview"); } };
   const sessionPresentation = retiredSession?.project ?? project;
@@ -1428,7 +1437,7 @@ function AppWorkbench() {
 
         <div className="sidebar-bottom">
           <DialogRoot open={settingsOpen} onOpenChange={changeSettingsOpen}>
-            <DialogTrigger asChild><button type="button" className="secondary-button app-settings-trigger" disabled={busy || stopping || coordinating}>
+            <DialogTrigger asChild><button ref={settingsTrigger} type="button" className="secondary-button app-settings-trigger" disabled={busy || stopping || coordinating}>
               <Settings size={17} aria-hidden="true" /><span>{t("nav.settings")}</span>
             </button></DialogTrigger>
             <DialogPortal><DialogOverlay className="dialog-backdrop" /><DialogContent className="confirm-dialog app-settings-dialog"
@@ -1437,12 +1446,14 @@ function AppWorkbench() {
                   || document.querySelector('[role="dialog"]:not(.app-settings-dialog)')) event.preventDefault();
               }}>
               <DialogTitle>{t("nav.settings")}</DialogTitle>
-              <DialogDescription>{t("settings.languageHelp")}</DialogDescription>
-              <label className="field"><span>{t("language")}</span><select aria-label={t("language")} value={locale}
+              <DialogDescription>{t("settings.description")}</DialogDescription>
+              <label className="field"><span>{t("language")}</span><select aria-label={t("language")} aria-describedby="app-settings-language-help" value={locale}
                 onChange={event => { if (isLocale(event.target.value)) void translation.changeLanguage(event.target.value); }}>
                 {localeOptions.map(option => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
               </select></label>
-              <div className="form-actions"><DialogClose asChild><button type="button" className="secondary-button">{t("settings.close")}</button></DialogClose></div>
+              <p id="app-settings-language-help">{t("settings.languageHelp")}</p>
+              <div className="form-actions"><button type="button" className="secondary-button" onClick={openConnectionsFromSettings}>{t("connections.open")}</button>
+                <DialogClose asChild><button type="button" className="secondary-button">{t("settings.close")}</button></DialogClose></div>
             </DialogContent></DialogPortal>
           </DialogRoot>
           <div className="sidebar-footer" aria-live="polite">
@@ -1471,7 +1482,7 @@ function AppWorkbench() {
             {project ? <button type="button" className="secondary-button" disabled={busy || stopping || coordinating}
               onClick={revealTaskDock}>{t("execution.dock.reveal")}</button> : null}
             <PluginManager ref={pluginManager} disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
-            <ConnectionManager ref={connectionManager} disabled={operation !== "idle" || stopping || stopIntent !== null || pluginsBusy}/>
+            <ConnectionManager ref={connectionManager} hideTrigger disabled={operation !== "idle" || stopping || stopIntent !== null || pluginsBusy}/>
            </div>
         </header>
 

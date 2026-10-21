@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The sidebar Settings dialog opens the existing model connection manager. The
+manager and draft provider remain mounted, with the same read, mutation,
+uncertain-action recovery and exit-permit owners. Closing it returns keyboard
+focus to the stable Settings entry; project preparation entries retain their
+original targets. This adds no Core/IPC/SDK API, protocol, persisted format,
+dependency or version source. It stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and
+no additional bump.
+
 Interface language is available in the sidebar Settings dialog and still applies
 immediately through the existing locale detector and preference key. Project
 target languages, text, drafts, uncertain actions and model connection settings

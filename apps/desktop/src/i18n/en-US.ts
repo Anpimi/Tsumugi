@@ -2566,7 +2566,7 @@ ai: {
     future: "{{label}} will be available in a later module",
     menu: { file: "File", edit: "Edit", view: "View", help: "Help" },
     language: "Interface language",
-    settings: { languageHelp: "Changes apply immediately to the interface only. Project target languages and your text stay unchanged.", close: "Close settings" },
+    settings: { description: "Choose the interface language and manage model connection profiles for this application.", languageHelp: "Changes apply immediately to the interface only. Project target languages and your text stay unchanged.", close: "Close settings" },
     languageEnglish: "English",
     languageChinese: "Chinese (Simplified)",
     localeNames: {

@@ -10,6 +10,9 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Open saved model connection settings from the sidebar Settings dialog, keeping
+  connection drafts, uncertain actions and project preparation entries in place.
+
 - Move interface language into Settings in the sidebar. Apply changes immediately
   through the existing preference while keeping project languages and local work.
 
