@@ -1,0 +1,200 @@
+{
+  "edition": 1,
+  "sourceLanguage": "en",
+  "targetLanguage": "zh-CN",
+  "requestBudget": 0,
+  "domains": [
+    {
+      "id": "stardew-smapi",
+      "versions": [
+        {
+          "id": "s1",
+          "files": [
+            { "path": "smapi/s1/manifest.json", "logicalPath": "manifest.json", "role": "companion" },
+            { "path": "smapi/s1/i18n/default.json", "logicalPath": "i18n/default.json", "role": "source" }
+          ],
+          "expected": [
+            {
+              "key": "Welcome", "text": "Welcome, {{name}}!\nCafé 🚲",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "welcome", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "waystation", "text": "Meet me at the Waystation. The Waystation closes at dusk.",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "waystation", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "river-bank", "text": "Wait by the bank.",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "river-bank", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "lantern-count", "text": "Bring two blue lanterns.",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "lantern-count", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "panel-old", "text": "Open",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "panel-old", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "obsolete", "text": "The ferry leaves at dusk.",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "obsolete", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "files": [
+            { "path": "smapi/s2/manifest.json", "logicalPath": "manifest.json", "role": "companion" },
+            { "path": "smapi/s2/i18n/default.json", "logicalPath": "i18n/default.json", "role": "source" }
+          ],
+          "expected": [
+            {
+              "key": "Welcome", "text": "Welcome, {{name}}!\nCafé 🚲",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "welcome", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "waystation", "text": "Meet me at the Waystation. The Waystation closes at dusk.",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "waystation", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "river-bank", "text": "Wait by the bank.",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "river-bank", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "lantern-count", "text": "Bring three blue lanterns.",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "lantern-count", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "panel-new", "text": "Open",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "panel-new", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "newcomer", "text": "The ferry arrives at dawn.",
+              "nativeIdentity": { "namespace": "Example.QualityEvaluation", "value": "newcomer", "policy": { "id": "smapi-native-key", "schemaVersion": 1, "behaviorVersion": 1 } }
+            }
+          ]
+        }
+      ],
+      "terms": [
+        {
+          "source": "Waystation", "target": "驿站",
+          "targets": [ { "version": "s1", "key": "waystation" }, { "version": "s2", "key": "waystation" } ],
+          "instruction": "The explicitly approved term applies to both mentions. Record any discrepancy separately from fluency."
+        }
+      ],
+      "contexts": [
+        {
+          "id": "river-landing",
+          "targets": [ { "version": "s1", "key": "river-bank" }, { "version": "s2", "key": "river-bank" } ],
+          "text": "The instruction is given at a river landing. Bank means the edge of the river, not a financial institution."
+        },
+        {
+          "id": "container-action",
+          "targets": [ { "version": "s1", "key": "panel-old" }, { "version": "s2", "key": "panel-new" } ],
+          "text": "This is a button that opens a closed storage chest. Open is an imperative action, not an adjective describing current status. The author proposes a key rename; a person must confirm that continuity."
+        }
+      ],
+      "maintenance": [
+        { "kind": "unchanged", "fromKey": "Welcome", "toKey": "Welcome", "requiredDecision": "Consider reuse only under the current source/resource basis; preserve the placeholder, newline and Unicode." },
+        { "kind": "unchanged", "fromKey": "waystation", "toKey": "waystation", "requiredDecision": "Consider reuse with the same approved term at both mentions; do not infer approval from unchanged text." },
+        { "kind": "unchanged", "fromKey": "river-bank", "toKey": "river-bank", "requiredDecision": "Consider reuse only with the same explicitly shared river context and current basis." },
+        { "kind": "text-changed", "fromKey": "lantern-count", "toKey": "lantern-count", "requiredDecision": "Reassess the quantity: S1 requires two and S2 requires three. Do not silently keep an old count." },
+        { "kind": "rename-proposal", "fromKey": "panel-old", "toKey": "panel-new", "requiredDecision": "Require an explicit human continuation/rename decision; equal Open text and array position do not establish identity." },
+        { "kind": "removed", "fromKey": "obsolete", "toKey": null, "requiredDecision": "Retain its historical evidence; do not transfer its translation or approval to newcomer." },
+        { "kind": "added", "fromKey": null, "toKey": "newcomer", "requiredDecision": "Treat as a new source entry: arrival at dawn differs from departure at dusk." }
+      ]
+    },
+    {
+      "id": "webvtt",
+      "versions": [
+        {
+          "id": "s1",
+          "files": [ { "path": "webvtt/s1.vtt", "logicalPath": "source.vtt", "role": "source" } ],
+          "expected": [
+            {
+              "key": "Welcome", "text": "Welcome, {{name}}!\nCafé 🚲",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "welcome", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "waystation", "text": "Meet me at the Waystation. The Waystation closes at dusk.",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "waystation", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "river-bank", "text": "Wait by the bank.",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "river-bank", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "lantern-count", "text": "Bring two blue lanterns.",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "lantern-count", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "panel-old", "text": "Open",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "panel-old", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "obsolete", "text": "The ferry leaves at dusk.",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "obsolete", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "files": [ { "path": "webvtt/s2.vtt", "logicalPath": "source.vtt", "role": "source" } ],
+          "expected": [
+            {
+              "key": "Welcome", "text": "Welcome, {{name}}!\nCafé 🚲",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "welcome", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "waystation", "text": "Meet me at the Waystation. The Waystation closes at dusk.",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "waystation", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "river-bank", "text": "Wait by the bank.",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "river-bank", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "lantern-count", "text": "Bring three blue lanterns.",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "lantern-count", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "panel-new", "text": "Open",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "panel-new", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            },
+            {
+              "key": "newcomer", "text": "The ferry arrives at dawn.",
+              "nativeIdentity": { "namespace": "webvtt:source", "value": "newcomer", "policy": { "id": "webvtt-cue", "schemaVersion": 1, "behaviorVersion": 1 } }
+            }
+          ]
+        }
+      ],
+      "terms": [
+        {
+          "source": "Waystation", "target": "驿站",
+          "targets": [ { "version": "s1", "key": "waystation" }, { "version": "s2", "key": "waystation" } ],
+          "instruction": "The explicitly approved term applies to both mentions. Record any discrepancy separately from fluency."
+        }
+      ],
+      "contexts": [
+        {
+          "id": "river-landing",
+          "targets": [ { "version": "s1", "key": "river-bank" }, { "version": "s2", "key": "river-bank" } ],
+          "text": "The instruction is given at a river landing. Bank means the edge of the river, not a financial institution. This is explicit human context, not a scene inferred from timing."
+        },
+        {
+          "id": "container-action",
+          "targets": [ { "version": "s1", "key": "panel-old" }, { "version": "s2", "key": "panel-new" } ],
+          "text": "The caption quotes a button that opens a closed storage chest. Open is an imperative action, not an adjective describing current status. The author proposes a cue-ID rename; a person must confirm that continuity."
+        }
+      ],
+      "maintenance": [
+        { "kind": "unchanged", "fromKey": "Welcome", "toKey": "Welcome", "requiredDecision": "Consider reuse only under the current source/resource basis; preserve the placeholder, newline and Unicode." },
+        { "kind": "unchanged", "fromKey": "waystation", "toKey": "waystation", "requiredDecision": "Consider reuse with the same approved term at both mentions; do not infer approval from unchanged text." },
+        { "kind": "timing-changed", "fromKey": "river-bank", "toKey": "river-bank", "oldTiming": "00:05.000 --> 00:06.000", "newTiming": "00:05.000 --> 00:06.500", "requiredDecision": "Reassess applicability under the new source/timing basis despite identical payload text. A translation must not update the source timing." },
+        { "kind": "text-changed", "fromKey": "lantern-count", "toKey": "lantern-count", "requiredDecision": "Reassess the quantity: S1 requires two and S2 requires three. Do not silently keep an old count." },
+        { "kind": "rename-proposal", "fromKey": "panel-old", "toKey": "panel-new", "requiredDecision": "Require an explicit human continuation/rename decision; equal Open text and cue order do not establish identity." },
+        { "kind": "removed", "fromKey": "obsolete", "toKey": null, "requiredDecision": "Retain its historical evidence; do not transfer its translation or approval to newcomer." },
+        { "kind": "added", "fromKey": null, "toKey": "newcomer", "requiredDecision": "Treat as a new source entry: arrival at dawn differs from departure at dusk." }
+      ]
+    }
+  ]
+}

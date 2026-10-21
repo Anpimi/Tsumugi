@@ -1,0 +1,14 @@
+{
+  "status": "DRILL-ONLY",
+  "notice": "Self-authored example texts, not model outputs or observed human ratings.",
+  "packetId": "drill-1",
+  "sourceLanguage": "en",
+  "targetLanguage": "zh-CN",
+  "sourceText": "Wait by the bank.",
+  "context": "The instruction is given at a river landing. Bank means the edge of the river, not a financial institution.",
+  "terms": [],
+  "candidates": [
+    { "label": "Q", "text": "在银行旁等候。" },
+    { "label": "R", "text": "在河岸边等候。" }
+  ]
+}

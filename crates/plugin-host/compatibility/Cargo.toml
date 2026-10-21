@@ -49,3 +49,7 @@ path = "../tests/knowledge/version_compatibility.rs"
 [[test]]
 name = "sdk_artifact_pair"
 path = "tests/sdk_artifact_pair.rs"
+
+[[test]]
+name = "quality_corpus"
+path = "tests/quality_corpus.rs"

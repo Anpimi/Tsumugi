@@ -1,0 +1,7 @@
+{
+  "Name": "Synthetic quality evaluation",
+  "Author": "Tsumugi tests",
+  "Version": "1.0.0",
+  "UniqueID": "Example.QualityEvaluation",
+  "EntryDll": "QualityEvaluation.dll"
+}

@@ -947,6 +947,17 @@ the complete real-world maintenance corpus, other platforms or plugin upgrade
 compatibility. It leaves the original two-consumer compatibility runner and its
 report format unchanged.
 
+The separate `quality_corpus` consumer checks the
+[fixed two-domain evaluation material](../core/tests/fixtures/quality-evaluation/README.md)
+against explicitly selected packages and the captured JavaScript runtime. It
+checks both source generations against independent literal expectations, then
+runs each package's independent source checker. Structurally valid forged text
+must produce a blocking finding even after its scope digest is updated. This
+proves that the material can enter the source workflow; it does not evaluate a
+model, record human quality judgments or approve project maintenance decisions.
+The material's review protocol keeps those measurements separate and starts with
+a model-request budget of zero.
+
 The `official` pairing tests consume an explicitly selected prebuilt WebVTT
 candidate from the independent
 [official plugin repository](https://github.com/Anpimi/tsumugi-plugins). They install
