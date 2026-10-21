@@ -263,7 +263,7 @@ it("reserves a pending paste without changing the clean draft and blocks save, l
   fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
   expect(editor.owner.mutationReserved).toBe(true);
   expect(editor.owner.current()).toBe(before);
-  expect(screen.getByRole("button", { name: "Save revision", exact: true })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
   await act(async () => { editor.ref.current!.saveCurrent(); expect(await editor.ref.current!.allowLeave()).toBe(false); });
   expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(0);
   act(() => { expect(editor.ref.current!.openUnit({ unitId: fixtureIdentity(217), sourceRevisionId: fixtureIdentity(205), key: "second", sourceText: "Second" }, "zh-CN")).toBe(false); });
