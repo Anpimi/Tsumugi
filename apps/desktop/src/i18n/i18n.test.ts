@@ -1,4 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
+import { createInstance } from "i18next";
+import LanguageDetector from "i18next-browser-languagedetector";
 import { enUS } from "./en-US";
 import { i18n, localeOptions, resources, UI_LOCALE_STORAGE_KEY } from "./index";
 import { zhCN } from "./zh-CN";
@@ -34,6 +36,24 @@ describe("i18n resources", () => {
     expect(i18n.options.detection?.caches).toEqual(["localStorage"]);
     expect(i18n.options.detection?.lookupLocalStorage).toBe(UI_LOCALE_STORAGE_KEY);
     expect(i18n.options.supportedLngs).toEqual(expect.arrayContaining(localeOptions.map(({ value }) => value)));
+  });
+
+  it("caches an interface choice and restores it through a fresh detector without replacing the UI singleton", async () => {
+    const originalStorage = localStorage.getItem(UI_LOCALE_STORAGE_KEY);
+    const originalLanguage = i18n.language, restored = createInstance();
+    try {
+      await i18n.changeLanguage("zh-CN");
+      expect(localStorage.getItem(UI_LOCALE_STORAGE_KEY)).toBe("zh-CN");
+      await restored.use(LanguageDetector).init({ ...i18n.options, lng: undefined });
+      expect(restored.resolvedLanguage).toBe("zh-CN");
+      await restored.changeLanguage("en-US");
+      expect(restored.resolvedLanguage).toBe("en-US");
+      expect(i18n.resolvedLanguage).toBe("zh-CN");
+    } finally {
+      await i18n.changeLanguage(originalLanguage);
+      if (originalStorage === null) localStorage.removeItem(UI_LOCALE_STORAGE_KEY);
+      else localStorage.setItem(UI_LOCALE_STORAGE_KEY, originalStorage);
+    }
   });
 
   it("allows a test-only third resource without a product language branch", async () => {

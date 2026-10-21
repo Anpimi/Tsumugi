@@ -10,6 +10,9 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Move interface language into Settings in the sidebar. Apply changes immediately
+  through the existing preference while keeping project languages and local work.
+
 - Open the original background task dock from the fixed header while keeping
   the current workspace, draft and uncertain work in place. Task status, refresh
   and navigation continue to use the original dock.

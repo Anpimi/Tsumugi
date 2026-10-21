@@ -13,10 +13,12 @@ import { useTranslation } from "react-i18next";
 import {
   Dialog as DialogRoot,
   DialogContent,
+  DialogClose,
   DialogDescription,
   DialogOverlay,
   DialogPortal,
   DialogTitle,
+  DialogTrigger,
 } from "@radix-ui/react-dialog";
 import { join as joinPath, sep as pathSeparator } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -27,6 +29,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Settings,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -361,6 +364,7 @@ function AppWorkbench() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [closedPanel, setClosedPanel] = useState<ClosedPanel>("empty");
   const [openPanel, setOpenPanel] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeForm, setActiveForm] = useState<ActiveForm | null>(null);
   const currentExitPresentation = useRef({ form: activeForm, area, memory });
   useLayoutEffect(() => { currentExitPresentation.current = { form: activeForm, area, memory }; }, [activeForm, area, memory]);
@@ -1253,7 +1257,7 @@ function AppWorkbench() {
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
-      if (event.target instanceof Element && event.target.closest(".plugin-manager")) return;
+      if (event.target instanceof Element && event.target.closest(".plugin-manager, .app-settings-dialog")) return;
       if (area === "overview" && event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
         event.preventDefault();
         if (openPanel) {
@@ -1290,6 +1294,7 @@ function AppWorkbench() {
           if (busy || projectActionInFlight() || applicationResumeAction.current) {
             return;
           }
+          setSettingsOpen(false);
            if (!project && createDraftDirty) {
              requestNavigation({ kind: "window-close" });
              return;
@@ -1355,6 +1360,11 @@ function AppWorkbench() {
       || compositionActive.current || navigationIntent || restorePromptOpen || document.querySelector('[role="dialog"]')) return;
     projectSession.current?.revealTaskDock();
   }
+  function changeSettingsOpen(open: boolean) {
+    if (open && (busy || stopping || coordinating || currentRetiredSession.current || areaNavigation.current || lifecycleFlight.current
+      || compositionActive.current || navigationIntent || restorePromptOpen || document.querySelector('[role="dialog"]'))) return;
+    setSettingsOpen(open);
+  }
   const viewOwner = { area, memory, activate: (next: WorkspaceArea) => { void navigateArea(next); },
     deactivate: (closing: WorkspaceArea) => { if (currentExitPresentation.current.area === closing) void navigateArea("overview"); } };
   const sessionPresentation = retiredSession?.project ?? project;
@@ -1416,9 +1426,29 @@ function AppWorkbench() {
 
         <WorkbenchNavigation area={area} hasProject={Boolean(project)} disabled={busy || stopping || coordinating} onNavigate={next => void navigateArea(next)} />
 
-        <div className="sidebar-footer" aria-live="polite">
-          <span className={`status-dot status-dot-${operation}`} aria-hidden="true" />
-          <span>{status}</span>
+        <div className="sidebar-bottom">
+          <DialogRoot open={settingsOpen} onOpenChange={changeSettingsOpen}>
+            <DialogTrigger asChild><button type="button" className="secondary-button app-settings-trigger" disabled={busy || stopping || coordinating}>
+              <Settings size={17} aria-hidden="true" /><span>{t("nav.settings")}</span>
+            </button></DialogTrigger>
+            <DialogPortal><DialogOverlay className="dialog-backdrop" /><DialogContent className="confirm-dialog app-settings-dialog"
+              onCloseAutoFocus={event => {
+                if (lifecycleFlight.current || windowCloseIntent.current || currentNavigationIntent.current
+                  || document.querySelector('[role="dialog"]:not(.app-settings-dialog)')) event.preventDefault();
+              }}>
+              <DialogTitle>{t("nav.settings")}</DialogTitle>
+              <DialogDescription>{t("settings.languageHelp")}</DialogDescription>
+              <label className="field"><span>{t("language")}</span><select aria-label={t("language")} value={locale}
+                onChange={event => { if (isLocale(event.target.value)) void translation.changeLanguage(event.target.value); }}>
+                {localeOptions.map(option => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
+              </select></label>
+              <div className="form-actions"><DialogClose asChild><button type="button" className="secondary-button">{t("settings.close")}</button></DialogClose></div>
+            </DialogContent></DialogPortal>
+          </DialogRoot>
+          <div className="sidebar-footer" aria-live="polite">
+            <span className={`status-dot status-dot-${operation}`} aria-hidden="true" />
+            <span>{status}</span>
+          </div>
         </div>
       </aside>
 
@@ -1442,19 +1472,6 @@ function AppWorkbench() {
               onClick={revealTaskDock}>{t("execution.dock.reveal")}</button> : null}
             <PluginManager ref={pluginManager} disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
             <ConnectionManager ref={connectionManager} disabled={operation !== "idle" || stopping || stopIntent !== null || pluginsBusy}/>
-            <label className="language-control">
-              <span>{t("language")}</span>
-              <select
-                aria-label={t("language")}
-                value={locale}
-                onChange={(event) => {
-                  const nextLocale = event.target.value;
-                  if (isLocale(nextLocale)) void translation.changeLanguage(nextLocale);
-                }}
-              >
-                {localeOptions.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
-              </select>
-            </label>
            </div>
         </header>
 

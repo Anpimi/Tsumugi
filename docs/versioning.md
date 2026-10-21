@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Interface language is available in the sidebar Settings dialog and still applies
+immediately through the existing locale detector and preference key. Project
+target languages, text, drafts, uncertain actions and model connection settings
+retain their original owners. This adds no preference store, Core/IPC/SDK API,
+protocol, persisted format, dependency or version source. It stays in the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual
+Unreleased entries and no additional bump.
+
 The fixed header opens and focuses the original background task dock without
 leaving the current workspace or changing local and uncertain work. The original
 dock retains its task query, loading, empty and failure states, refresh and guarded

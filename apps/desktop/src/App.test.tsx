@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { i18n } from "./i18n";
+import { i18n, UI_LOCALE_STORAGE_KEY } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture, sourceImpactFixture } from "./testSupport/sourceFixture";
 import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
@@ -349,6 +349,55 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it.each(["close", "escape"] as const)("changes only the interface from Settings without a project and returns focus on %s", async close => {
+    const user = userEvent.setup(); await renderApp();
+    const trigger = screen.getByRole("button", { name: "Settings" });
+    expect(screen.queryByRole("combobox", { name: "Interface language" })).not.toBeInTheDocument();
+    const calls = mocks.invoke.mock.calls.length;
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    expect(dialog).toHaveAccessibleDescription("Changes apply immediately to the interface only. Project target languages and your text stay unchanged.");
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Interface language" }), "zh-CN");
+    expect(dialog).toHaveAccessibleName("设置");
+    expect(localStorage.getItem(UI_LOCALE_STORAGE_KEY)).toBe("zh-CN");
+    expect(document.documentElement.lang).toBe("zh-CN");
+    if (close === "escape") await user.keyboard("{Escape}");
+    else await user.click(within(dialog).getByRole("button", { name: "关闭设置" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); expect(mocks.invoke.mock.calls).toHaveLength(calls);
+    await user.click(trigger);
+    expect(within(screen.getByRole("dialog", { name: "设置" })).getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+  });
+  it("keeps a project form intact when Escape closes Settings", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    await user.type(input, " retained metadata");
+    const trigger = screen.getByRole("button", { name: "Settings" }); await user.click(trigger);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(input).toHaveValue("Demo retained metadata");
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "rename_project")).toBe(false);
+  });
+  it("closes Settings before the original native-close draft decision and preserves its focus and input", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); const fixture = installTranslationEditor();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(await editableDraft(), "Retained original draft");
+    const trigger = screen.getByRole("button", { name: "Settings" }); await user.click(trigger);
+    const nativeClose = mocks.onCloseRequested.mock.calls.at(-1)?.[0]; if (!nativeClose) throw new Error("No native close handler");
+    let closing!: Promise<void>;
+    act(() => { closing = nativeClose({ preventDefault: vi.fn() }); });
+    const dialog = await screen.findByRole("dialog", { name: "Leave with an unsaved translation?" });
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await user.tab(); expect(dialog.contains(document.activeElement)).toBe(true); expect(trigger).not.toHaveFocus();
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+    await act(async () => { await closing; });
+    expect(await editableDraft()).toHaveValue("Retained original draft");
+    expect(fixture.saves()).toHaveLength(0); expect(mocks.destroy).not.toHaveBeenCalled();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "close_project")).toBe(false);
+  });
   it.each(["en-US", "zh-CN"] as const)("reveals the unique background dock without leaving an unknown save or rebinding newer input (%s)", async language => {
     const user = userEvent.setup(); await renderApp();
     expect(screen.queryByRole("button", { name: "View background tasks" })).not.toBeInTheDocument();
@@ -469,11 +518,11 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Find content" }));
     const find = await screen.findByRole("textbox", { name: "Find by key, source or translation" });
     await waitFor(() => expect(find).toHaveFocus());
-    const language = screen.getByRole("combobox", { name: "Language" }); language.focus();
+    const outside = screen.getByRole("button", { name: "Settings" }); outside.focus();
     await act(async () => outcome === "success" ? complete({ revision: "2", currentSnapshot: fixtureIdentity(500) }) : fail(new Error("Synthetic source read unavailable")));
     const reads = mocks.reads; if (!reads) throw new Error("No project read owner");
     await waitFor(() => expect(reads.client.getQueryState(reads.key(["translation-source-scope"]))?.status).toBe(outcome === "success" ? "success" : "error"));
-    expect(language).toHaveFocus(); expect(find).not.toHaveFocus();
+    expect(outside).toHaveFocus(); expect(find).not.toHaveFocus();
     expect(mocks.memories.get("session-1")?.read("translation", "findFocus")).toBeNull();
     expect(mocks.invoke.mock.calls.some(([command]) => command === "save_translation_revision")).toBe(false);
   });
@@ -488,7 +537,7 @@ describe("project lifecycle workbench", () => {
     const find = await screen.findByRole("textbox", { name: "Find by key, source or translation" });
     const memory = mocks.memories.get("session-1")!;
     expect(memory.read("translation", "findFocus")).not.toBeNull();
-    if (intent === "focus") act(() => { screen.getByRole("combobox", { name: "Language" }).focus(); });
+    if (intent === "focus") act(() => { screen.getByRole("button", { name: "Settings" }).focus(); });
     else if (intent === "collapse") await user.click(screen.getByText("Find and range actions", { exact: true }));
     else await user.click(screen.getByRole("button", { name: "Tasks" }));
     const focused = document.activeElement;
@@ -528,9 +577,9 @@ describe("project lifecycle workbench", () => {
     await user.type(screen.getByRole("textbox", { name: /Project folder/ }), replacement.locator);
     await user.click(screen.getByRole("button", { name: "Open project" }));
     await screen.findByRole("heading", { name: "Other" });
-    const language = screen.getByRole("combobox", { name: "Language" }); act(() => { language.focus(); });
+    const outside = screen.getByRole("button", { name: "Settings" }); act(() => { outside.focus(); });
     const pending = [...frames.values()]; frames.clear(); act(() => { pending.forEach(callback => callback(performance.now())); });
-    expect(request.current()).toBe(false); expect(language).toHaveFocus();
+    expect(request.current()).toBe(false); expect(outside).toHaveFocus();
     expect(screen.queryByRole("textbox", { name: "Find by key, source or translation" })).not.toBeInTheDocument();
     expect(mocks.memories.get("session-2")?.read("translation", "findFocus")).toBeUndefined();
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(1);
@@ -562,7 +611,14 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Save revision" }));
     await waitFor(() => expect(release).toBeTypeOf("function"));
     await user.type(editor, "B");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Language" }), "zh-CN");
+    await user.click(screen.getByText("Find and range actions", { exact: true }));
+    await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "Unsubmitted 日本語 é");
+    const memory = mocks.memories.get("session-1")!, before = { locale: memory.read("translation", "targetLocale"),
+      query: memory.read("translation", "query"), applied: memory.read("translation", "appliedQuery"), selection: memory.read("translation", "contentSelection") };
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const settings = screen.getByRole("dialog", { name: "Settings" });
+    await user.selectOptions(within(settings).getByRole("combobox", { name: "Interface language" }), "zh-CN");
+    await user.click(within(settings).getByRole("button", { name: i18n.t("settings.close") }));
     await act(async () => release());
     await waitFor(() => expect(mocks.drafts.get("session-1")?.current()?.outcomeUnknown).toBe(true));
     expect(context().getByText("当前工作语言")).toBeVisible();
@@ -572,6 +628,11 @@ describe("project lifecycle workbench", () => {
     expect(mocks.drafts.get("session-1")?.current()?.pending?.request).toEqual(fixture.saves()[0][1].request);
     expect(fixture.saves()).toHaveLength(1);
     expect(fixture.saves()[0][1].request).toMatchObject({ text: "A", locale: "zh-CN" });
+    expect(memory.read("translation", "targetLocale")).toBe(before.locale); expect(memory.read("translation", "query")).toBe(before.query);
+    expect(memory.read("translation", "appliedQuery")).toBe(before.applied); expect(memory.read("translation", "contentSelection")).toBe(before.selection);
+    expect(memory.read("translation", "query")).toBe("Unsubmitted 日本語 é");
+    expect(mocks.reads?.context.sessionToken).toBe("session-1");
+    expect(screen.getByRole("button", { name: i18n.t("translation.title") })).toHaveAttribute("aria-current", "page");
   });
 
   it("keeps a removed working language and original unknown action visible without making it the project target", async () => {
@@ -1180,6 +1241,7 @@ describe("project lifecycle workbench", () => {
       expect(screen.queryByRole("button", { name: "Find content" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "View background tasks" })).not.toBeInTheDocument();
     }
+    expect(screen.getByRole("button", { name: "Settings" })).toBeDisabled();
     if (!(recovery instanceof HTMLTextAreaElement)) throw new Error("Recovery details must be copyable text");
     const preserved = JSON.parse(recovery.value);
     expect(preserved.translation).toEqual(originalDraft);
@@ -2039,9 +2101,11 @@ describe("project lifecycle workbench", () => {
     await user.type(editor, "A");
     await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
     const activityTrigger = screen.getByRole("button", { name: "View background tasks" });
+    const settingsTrigger = screen.getByRole("button", { name: "Settings" });
     const dock = screen.getByText("Background tasks", { selector: "summary", exact: false }).closest("details")!;
 
     fireEvent.compositionStart(editor);
+    fireEvent.click(settingsTrigger); expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
     fireEvent.click(activityTrigger); expect(dock).not.toHaveAttribute("open"); expect(editor).toHaveFocus();
     fireEvent.keyDown(editor, { key: "s", ctrlKey: true, isComposing: false });
     await act(async () => {});
@@ -2058,6 +2122,7 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Close project" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Leave with an unsaved translation?");
+    fireEvent.click(settingsTrigger); expect(screen.getAllByRole("dialog")).toEqual([dialog]);
     fireEvent.click(activityTrigger); expect(dock).not.toHaveAttribute("open"); expect(dialog).toBeVisible();
     await user.keyboard("{Control>}s{/Control}");
     expect(fixture.saves()).toHaveLength(0);
@@ -2430,7 +2495,10 @@ describe("project lifecycle workbench", () => {
     expect(screen.getByText("Swati")).toHaveTextContent("Swati (ss)");
     expect(screen.getByText("Sô")).toHaveTextContent("Sô (sss)");
     expect(screen.getByText("x-example", { selector: ".locale-chip" })).toHaveTextContent(/^x-example$/);
-    await user.selectOptions(screen.getByRole("combobox", { name: /language/i }), "zh-CN");
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const settings = screen.getByRole("dialog", { name: "Settings" });
+    await user.selectOptions(within(settings).getByRole("combobox", { name: "Interface language" }), "zh-CN");
+    await user.click(within(settings).getByRole("button", { name: "关闭设置" }));
     expect(screen.getByText("斯瓦蒂语")).toHaveTextContent("斯瓦蒂语 (ss)");
     expect(screen.getByText("Sô")).toHaveTextContent("Sô (sss)");
   });
@@ -2784,6 +2852,8 @@ describe("project lifecycle workbench", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Open your last project?")).toBeInTheDocument();
+    const settingsTrigger = screen.getByText("Settings", { selector: ".app-settings-trigger span" }).closest("button")!;
+    fireEvent.click(settingsTrigger); expect(screen.getAllByRole("dialog")).toEqual([dialog]);
     await user.click(within(dialog).getByRole("button", { name: "Start without opening" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create project" })).toBeInTheDocument();
@@ -2802,7 +2872,10 @@ describe("project lifecycle workbench", () => {
     await waitFor(() => expect(screen.getByText("The project could not be read or saved. Your current draft is still here.")).toBeInTheDocument());
     expect(nameInput).toHaveValue("Failed draft");
 
-    await user.selectOptions(screen.getByRole("combobox"), "zh-CN");
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const settings = screen.getByRole("dialog", { name: "Settings" });
+    await user.selectOptions(within(settings).getByRole("combobox", { name: "Interface language" }), "zh-CN");
+    await user.click(within(settings).getByRole("button", { name: "关闭设置" }));
     await waitFor(() => expect(screen.getByText("项目无法读取或保存。当前草稿仍保留在这里。")).toBeInTheDocument());
   });
 
