@@ -22,6 +22,7 @@ export interface WorkProtectionControlProps {
   run: (work: (current: () => boolean) => Promise<void>) => Promise<void>;
   onBlockedChange: (blocked: boolean) => void;
   onEditingReadyChange?: (scope: string, ready: boolean) => void;
+  onAutomaticProtectionStart?: (basis: ProtectionBasis) => ((current: () => boolean) => Promise<void>) | null;
   onReturnFocus?: () => boolean;
 }
 
@@ -39,7 +40,7 @@ function protectionIdentity(request: Pick<ProtectionRequest, "projectId" | "sess
 
 /** Current reads and the release dialog consume the stable translation protection owner. */
 export function WorkProtectionControl({ context, session, target, locale, selectionId, selectionText, open, disabled,
-  draftBlocked, run, onBlockedChange, onEditingReadyChange, onReturnFocus }: WorkProtectionControlProps) {
+  draftBlocked, run, onBlockedChange, onEditingReadyChange, onAutomaticProtectionStart, onReturnFocus }: WorkProtectionControlProps) {
   const { t } = useTranslation();
   const reads = useSessionReads(), registry = useWorkbenchCommands();
   const commandScope = { ...context, area: "translation" as const };
@@ -50,6 +51,7 @@ export function WorkProtectionControl({ context, session, target, locale, select
   const section = useRef<HTMLElement>(null);
   const focusAfterRelease = useRef(false);
   const attemptedEdit = session.attemptedEdit;
+  const automaticBasis = useRef<ProtectionBasis | null>(null);
   const editingScope = editingProtectionScope(context, target, locale);
   const scope = scopeIdentity({ ...context, ...target, locale, selectionId });
   const protectionScope = protectionIdentity({ ...context, unitId: target.unitId, locale });
@@ -85,7 +87,13 @@ export function WorkProtectionControl({ context, session, target, locale, select
     attemptedEdit.current = scope;
     if (!query.data?.protected) {
       const basis = capture();
-      if (basis) registry.dispatch("translation.protect-work", commandScope, { kind: "translation-protection", basis, protected: true });
+      if (basis) {
+        // Only this synchronous dispatch can capture an automatic continuation.
+        // Explicit protection and recovery use their original separate paths.
+        automaticBasis.current = basis;
+        registry.dispatch("translation.protect-work", commandScope, { kind: "translation-protection", basis, protected: true });
+        automaticBasis.current = null;
+      }
     }
     // Opening the editor establishes protection once. Explicit release keeps
     // the editor read-only until the user protects it again, without a loop.
@@ -105,6 +113,8 @@ export function WorkProtectionControl({ context, session, target, locale, select
   }
   async function change(basis: ProtectionBasis, protectedValue: boolean) {
     if (session.blocked() || disabled || (!protectedValue && draftBlocked)) return;
+    const automatic = protectedValue && automaticBasis.current === basis;
+    const confirmAutomatic = automatic ? onAutomaticProtectionStart?.(basis) : null;
     await run(async current => {
       const proof = () => {
         const checked = reads.client.getQueryState<import("./workPlanCommands").WorkProtection>(reads.key(protectionKey(basis.request.unitId, basis.request.locale, basis.request.sourceRevisionId, basis.request.selectionId ?? null)));
@@ -113,8 +123,10 @@ export function WorkProtectionControl({ context, session, target, locale, select
           && !checked.isInvalidated && checked.data?.revision === basis.request.expectedRevision;
       };
       if (!protectedValue) { focusAfterRelease.current = true; setRelease(null); }
-      await session.change(basis, protectedValue, proof);
+      const receipt = await session.change(basis, protectedValue, proof);
       await refreshAfter(basis.request, current);
+      if (automatic && receipt?.protected && mounted.current && current() && latest.current.open
+        && latest.current.scope === scopeIdentity(basis.request)) await confirmAutomatic?.(current);
     });
   }
   async function retry() {

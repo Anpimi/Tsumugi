@@ -44,7 +44,9 @@ const validators: Record<string, (value: unknown) => boolean> = {
   read_content_scope: sourceValidation.validateResponseScope, read_source_content: sourceValidation.validateResponsePage,
   read_execution_task_activity: executionValidation.validateResponseActivity,
   read_ai_translation: aiValidation.validateResponseView, read_work_plan_status: aiValidation.validateResponseWorkPlanStatus,
+  read_work_plan_team_history: aiValidation.validateResponseWorkPlanTeamHistory,
   read_review_target: reviewValidation.validateResponseTarget, read_review_history: reviewValidation.validateResponseHistory,
+  read_review_decision_action: reviewValidation.validateResponseDecisionAction,
   read_review_summary_page: reviewValidation.validateResponseSummary, read_review_findings: reviewValidation.validateResponseFindings,
   prepare_review_checks: reviewValidation.validateResponsePrepareCheck,
   create_execution_identity: executionValidation.validateResponseIdentity,
@@ -109,6 +111,7 @@ beforeEach(async () => {
       rows: [sourceRowFixture({ unitId: target.unitId, sourceRevisionId: target.sourceRevisionId }, { key: target.nativeKey, text: target.sourceText })] });
     else if (command === "read_ai_translation") result = structuredClone(view);
     else if (command === "read_work_plan_status") result = structuredClone(status);
+    else if (command === "read_work_plan_team_history") result = { planId: request.planId, members: [], authorRoles: [], posts: [], nextAfter: null };
     else if (command === "read_model_connections") result = connectionFixture([]);
     else if (command === "read_plugin_text_reviews") result = { settingsRevision: "1", entries: [] };
     else if (command === "read_review_target") {
@@ -122,6 +125,7 @@ beforeEach(async () => {
     else if (command === "create_execution_identity") result = fixtureIdentity(serial++);
     else if (command === "prepare_review_checks") result = { kind: "plugin", view: { ...reviewWire.responses.prepareCheck.view,
       actionId: request.actionId, unitId: request.unitId, locale: request.locale, basis: request.expectedBasis } };
+    else if (command === "read_review_decision_action") result = null;
     else if (command === "write_review_decision") { if (holdWrite) await holdWrite; throw new Error("Synthetic lost original review acknowledgement"); }
     else { failures.push(command); throw new Error(`Unexpected current review command: ${command}`); }
     const check = validators[command];

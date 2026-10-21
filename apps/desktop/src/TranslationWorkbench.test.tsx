@@ -1600,6 +1600,262 @@ it("does not advance a replacement session from an old save-and-next acknowledge
     .toMatchObject({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, text: "A" });
 });
 
+it.each(["before acknowledgement", "after acknowledgement"] as const)("reconfirms its own automatic protection without retaining later external navigation authority (%s)", async delivery => {
+  const unitId = fixtureIdentity(204), sourceRevisionId = fixtureIdentity(205), epoch = fixtureIdentity(821);
+  protection.set(`${unitId}:zh-CN`, { unitId, locale: "zh-CN", revision: "0", protected: false });
+  const original = invoke.getMockImplementation()!;
+  const page = reviewSummaryPageFixture([
+    reviewSummaryFor(reviewTargetFixture({ unitId, nativeKey: "first", sourceText: "Original",
+      sourceSnapshotId: fixtureIdentity(200), sourceRevisionId })),
+    reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(217), nativeKey: "second", sourceText: "Second source",
+      sourceSnapshotId: fixtureIdentity(200), sourceRevisionId })),
+  ]);
+  let sequence = "0", receive = (_event: { payload: unknown }) => {};
+  const notify = (afterSequence: string, nextSequence: string) => receive({ payload: {
+    projectId: project.metadata.projectId, sessionToken: project.sessionToken, epoch,
+    kind: "change", afterSequence, sequence: nextSequence, scopes: ["translation"],
+  } });
+  listen.mockImplementation(async (_name: string, callback: typeof receive) => { receive = callback; return () => {}; });
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_project_changes") return { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+      epoch, sequence, progressSequence: "0", scopes: ["translation"], runtime: { active: false, quiescing: false, queryCount: 0, error: null } };
+    if (command === "read_review_summary_page") return page;
+    const value = await original(command, args);
+    if (command === "set_work_protection" && args.request.unitId === unitId) {
+      sequence = "1";
+      if (delivery === "before acknowledgement") notify("0", "1");
+    }
+    return value;
+  });
+  let reads!: ReturnType<typeof useSessionReads>, stop = () => {};
+  render(<><QueryProbe capture={value => { reads = value; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  try {
+    await act(async () => { stop = reads.start(); });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const draft = await screen.findByRole("textbox", { name: "Your draft" });
+    await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+    await user.type(draft, "Retained B 👩🏽‍💻 é");
+    if (delivery === "after acknowledgement") act(() => { notify("0", "1"); });
+    await act(async () => { await reads.synchronizeFresh(); });
+    await waitFor(() => {
+      const list = reads.client.getQueryCache().findAll().find(query => query.queryKey[2] === "translation-list" && query.isActive());
+      expect(list?.state.status).toBe("success");
+      expect(list?.state.fetchStatus).toBe("idle");
+      expect(list?.state.isInvalidated).toBe(false);
+    });
+    const automatic = invoke.mock.calls.filter(([command]) => command === "set_work_protection");
+    expect(automatic).toHaveLength(1);
+    expect(automatic[0][1].request).toMatchObject({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+      unitId, locale: "zh-CN", sourceRevisionId, selectionId: null, expectedRevision: "0", protected: true, confirmedRelease: false });
+    expect(draft).toHaveValue("Retained B 👩🏽‍💻 é");
+    expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Next entry" })).toBeEnabled();
+
+    const activeList = reads.client.getQueryCache().findAll().find(query => query.queryKey[2] === "translation-list" && query.isActive());
+    if (!activeList) throw new Error("Expected the original entry list");
+    const beforeExternal = activeList.state.dataUpdateCount;
+    act(() => { sequence = "2"; notify("1", "2"); });
+    await act(async () => { await reads.synchronizeFresh(); });
+    await waitFor(() => {
+      expect(activeList.state.dataUpdateCount).toBeGreaterThan(beforeExternal);
+      expect(activeList.state.fetchStatus).toBe("idle");
+    });
+    expect(draft).toHaveValue("Retained B 👩🏽‍💻 é");
+    expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next entry" })).toBeDisabled();
+    expect(invoke.mock.calls.some(([command]) => command === "save_translation_revision" || command === "read_review_neighbor")).toBe(false);
+    expect(invoke.mock.calls.filter(([command]) => command === "set_work_protection")).toHaveLength(1);
+  } finally { stop(); cleanup(); }
+});
+
+function automaticProtectionBridgeFixture() {
+  const unitId = fixtureIdentity(204), sourceRevisionId = fixtureIdentity(205), epoch = fixtureIdentity(822);
+  protection.set(`${unitId}:zh-CN`, { unitId, locale: "zh-CN", revision: "0", protected: false });
+  const original = invoke.getMockImplementation()!;
+  const page = reviewSummaryPageFixture([
+    reviewSummaryFor(reviewTargetFixture({ unitId, nativeKey: "first", sourceText: "Original",
+      sourceSnapshotId: fixtureIdentity(200), sourceRevisionId })),
+    reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(217), nativeKey: "second", sourceText: "Second source",
+      sourceSnapshotId: fixtureIdentity(200), sourceRevisionId })),
+  ]);
+  let sequence = "0", receive = (_event: { payload: unknown }) => {};
+  let acknowledge: (value: unknown) => unknown = value => value;
+  let readPage: (request: Record<string, unknown>) => Promise<ReviewSummaryPage> = async () => page;
+  const notify = (afterSequence: string, nextSequence: string) => receive({ payload: {
+    projectId: project.metadata.projectId, sessionToken: project.sessionToken, epoch,
+    kind: "change", afterSequence, sequence: nextSequence, scopes: ["translation"],
+  } });
+  listen.mockImplementation(async (_name: string, callback: typeof receive) => { receive = callback; return () => {}; });
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_project_changes") return { projectId: args.request.projectId, sessionToken: args.request.sessionToken,
+      epoch, sequence, progressSequence: "0", scopes: ["translation"], runtime: { active: false, quiescing: false, queryCount: 0, error: null } };
+    if (command === "read_review_summary_page") return sequence !== "0" && args.request.sessionToken === project.sessionToken ? readPage(args.request) : page;
+    const value = await original(command, args);
+    if (command === "set_work_protection" && args.request.unitId === unitId) {
+      const before = sequence; sequence = (BigInt(sequence) + 1n).toString(); notify(before, sequence); return acknowledge(value);
+    }
+    return value;
+  });
+  return { page,
+    reply: (next: typeof acknowledge) => { acknowledge = next; },
+    read: (next: typeof readPage) => { readPage = next; },
+    external: () => { const before = sequence; sequence = (BigInt(sequence) + 1n).toString(); notify(before, sequence); },
+  };
+}
+
+it.each(["unknown", "missing"] as const)("does not confirm navigation from an automatic protection's %s acknowledgement", async outcome => {
+  const fixture = automaticProtectionBridgeFixture();
+  fixture.reply(() => { if (outcome === "unknown") throw new Error("Protection acknowledgement lost"); return null; });
+  let reads!: ReturnType<typeof useSessionReads>, stop = () => {};
+  render(<><QueryProbe capture={value => { reads = value; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  try {
+    await act(async () => { stop = reads.start(); });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const draft = await screen.findByRole("textbox", { name: "Your draft" });
+    await screen.findByRole("button", { name: "Retry same protection action" });
+    await act(async () => { await reads.synchronizeFresh(); });
+    expect(draft).toHaveAttribute("readonly");
+    expect(draft).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next entry" })).toBeDisabled();
+    expect(invoke.mock.calls.filter(([command]) => command === "set_work_protection")).toHaveLength(1);
+    expect(invoke.mock.calls.some(([command]) => command === "save_translation_revision" || command === "read_review_neighbor")).toBe(false);
+  } finally { stop(); cleanup(); }
+});
+
+it("does not use a later automatic protection to approve an already revoked list", async () => {
+  const fixture = automaticProtectionBridgeFixture();
+  let reads!: ReturnType<typeof useSessionReads>, stop = () => {};
+  render(<><QueryProbe capture={value => { reads = value; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  try {
+    await act(async () => { stop = reads.start(); });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await screen.findByRole("button", { name: "first" });
+    act(() => { fixture.external(); });
+    await act(async () => { await reads.synchronizeFresh(); });
+    await user.click(screen.getByRole("button", { name: "first" }));
+    const draft = await screen.findByRole("textbox", { name: "Your draft" });
+    await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+    await user.type(draft, "B after the earlier external change");
+    expect(draft).toHaveValue("B after the earlier external change");
+    expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next entry" })).toBeDisabled();
+    expect(invoke.mock.calls.filter(([command]) => command === "set_work_protection")).toHaveLength(1);
+    expect(invoke.mock.calls.some(([command]) => command === "save_translation_revision" || command === "read_review_neighbor")).toBe(false);
+  } finally { stop(); cleanup(); }
+});
+
+it("does not attribute externally confirmed protection to an automatic action rejected before submission", async () => {
+  const fixture = automaticProtectionBridgeFixture(), identity = deferred<string>();
+  const original = invoke.getMockImplementation()!;
+  let waiting = false;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "create_execution_identity") { waiting = true; return identity.promise; }
+    return original(command, args);
+  });
+  let reads!: ReturnType<typeof useSessionReads>, stop = () => {};
+  render(<><QueryProbe capture={value => { reads = value; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  try {
+    await act(async () => { stop = reads.start(); });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const draft = await screen.findByRole("textbox", { name: "Your draft" });
+    await waitFor(() => expect(waiting).toBe(true));
+    act(() => {
+      protection.set(`${fixtureIdentity(204)}:zh-CN`, { unitId: fixtureIdentity(204), locale: "zh-CN", revision: "1", protected: true });
+      fixture.external();
+    });
+    await act(async () => { await reads.synchronizeFresh(); });
+    await screen.findByText("Protected from automatic selection");
+    await act(async () => { identity.resolve(fixtureIdentity(823)); });
+    await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+    await user.type(draft, "B after the external protection");
+    expect(draft).toHaveValue("B after the external protection");
+    expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next entry" })).toBeDisabled();
+    expect(invoke.mock.calls.some(([command]) => command === "set_work_protection" || command === "save_translation_revision" || command === "read_review_neighbor")).toBe(false);
+  } finally { identity.resolve(fixtureIdentity(823)); stop(); cleanup(); }
+});
+
+it.each(["failed read", "changed projection", "external change", "removed target", "replacement session"] as const)("does not restore the original automatic-protection list after a %s", async outcome => {
+  const fixture = automaticProtectionBridgeFixture(), held = deferred<ReviewSummaryPage>();
+  let heldReads = 0;
+  fixture.read(async request => {
+    expect(request.scopeId).toBe(fixture.page.scopeId);
+    expect(request.query).toBe("");
+    expect(request.afterOrdinal).toBe(0);
+    heldReads++;
+    return held.promise;
+  });
+  let reads!: ReturnType<typeof useSessionReads>, stop = () => {};
+  const ref = createRef<TranslationHandle>();
+  const component = (value = project) => <><QueryProbe capture={next => { reads = next; }} /><TranslationWorkbench ref={ref} project={value} disabled={false} /></>;
+  const view = render(component(), project);
+  try {
+    await act(async () => { stop = reads.start(); });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const draft = await screen.findByRole("textbox", { name: "Your draft" });
+    await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+    await waitFor(() => expect(heldReads).toBeGreaterThan(0));
+    await user.type(draft, "Keep B during the fixed list read");
+    act(() => { expect(ref.current!.openUnit({ unitId: fixtureIdentity(217), sourceRevisionId: fixtureIdentity(205), key: "second", sourceText: "Second source" }, "zh-CN")).toBe(false); });
+    expect(screen.getByRole("heading", { name: "first" })).toBeVisible();
+
+    if (outcome === "external change") {
+      act(() => { fixture.external(); });
+      await act(async () => { await reads.synchronizeFresh(); });
+    } else if (outcome === "removed target") {
+      const removed = { ...project, metadata: { ...project.metadata, targetLocales: [] } };
+      view.rerender(component(removed), removed);
+    } else if (outcome === "replacement session") {
+      const replacement = { ...project, sessionToken: "replacement-session" };
+      view.rerender(component(replacement), replacement);
+      await user.click(screen.getByRole("button", { name: "Translations" }));
+      await user.click(await screen.findByRole("button", { name: "second" }));
+      const newer = await screen.findByRole("textbox", { name: "Your draft" });
+      await waitFor(() => expect(newer).not.toHaveAttribute("readonly"));
+      await user.type(newer, "New session C");
+    }
+    await act(async () => {
+      if (outcome === "failed read") held.reject(new Error("Fixed list read unavailable"));
+      else if (outcome === "changed projection") held.resolve({ ...fixture.page, readVersion: "changed-view",
+        rows: fixture.page.rows.map(row => ({ ...row, basis: "changed-basis" })) });
+      else held.resolve(fixture.page);
+      await held.promise.catch(() => {});
+    });
+    if (outcome === "replacement session") {
+      expect(await screen.findByRole("heading", { name: "second" })).toBeVisible();
+      expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("New session C");
+      expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    } else {
+      await waitFor(() => expect(screen.getByRole("button", { name: "Discard draft" })).toBeEnabled());
+      expect(screen.getByRole("heading", { name: "first" })).toBeVisible();
+      expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Keep B during the fixed list read");
+      expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Next entry" })).toBeDisabled();
+      if (outcome !== "removed target") expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    }
+    expect(invoke.mock.calls.filter(([command]) => command === "set_work_protection")).toHaveLength(1);
+    expect(invoke.mock.calls.some(([command]) => command === "save_translation_revision" || command === "read_review_neighbor")).toBe(false);
+  } finally {
+    held.resolve(fixture.page);
+    stop(); cleanup();
+  }
+});
+
 it.each(["unchanged focus refresh", "semantic notification", "changed projection"] as const)("retains navigation confirmation only for an unchanged focus refresh (%s)", async mode => {
   seedSelectedTranslation();
   const original = invoke.getMockImplementation()!;

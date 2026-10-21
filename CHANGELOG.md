@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Keep next-entry navigation available after the editor first protects an entry.
+  Reconfirm the same list after that exact protection succeeds, while preserving
+  newer draft text and rejecting external changes or an uncertain response.
+
 - Show ordinary build preparation as in progress, reserving reconciliation guidance
   for uncertain responses. Distinguish translation file discovery errors
   from a successful empty folder without changing saved work or execution consent.

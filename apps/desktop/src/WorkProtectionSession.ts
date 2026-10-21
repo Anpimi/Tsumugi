@@ -37,8 +37,9 @@ export function useWorkProtectionSession(project: ProjectView, ports: { reserve:
   async function submit(request: ProtectionRequest, key: string) {
     const originalUnknown = currentState.current.pending?.request.actionId === request.actionId && currentState.current.pending.phase === "unknown";
     update({ pending: { request, key, phase: "pending" }, failure: null });
+    let receipt: Awaited<ReturnType<typeof workPlanCommands.setProtection>>;
     try {
-      await workPlanCommands.setProtection(request);
+      receipt = await workPlanCommands.setProtection(request);
     } catch(error) {
       if (mounted.current) {
         const uncertain = originalUnknown || hasUnknownOutcome(error);
@@ -47,19 +48,20 @@ export function useWorkProtectionSession(project: ProjectView, ports: { reserve:
       }
       throw error;
     }
-    if (!mounted.current) return;
+    if (!mounted.current) return null;
     update({ pending: null }); release();
     // A subsequent projection failure cannot undo a checked mutation acknowledgement.
     await reads.client.invalidateQueries({ queryKey: reads.key(protectionKey(request.unitId, request.locale, request.sourceRevisionId, request.selectionId ?? null)), exact: true, refetchType: "none" });
+    return receipt;
   }
   async function change(basis: ProtectionBasis, protectedValue: boolean, proof: () => boolean) {
-    if (!mounted.current || inFlight.current || currentState.current.pending || !sameContext(basis.request) || !projectRef.current.metadata.targetLocales.includes(basis.request.locale) || !proof()) return;
-    const token = ports.reserve(); if (!token) return;
+    if (!mounted.current || inFlight.current || currentState.current.pending || !sameContext(basis.request) || !projectRef.current.metadata.targetLocales.includes(basis.request.locale) || !proof()) return null;
+    const token = ports.reserve(); if (!token) return null;
     reservation.current = token; inFlight.current = true; update({ busy: true, failure: null });
     try {
       const actionId = await executionCommands.identity(context);
-      if (!mounted.current || !projectRef.current.metadata.targetLocales.includes(basis.request.locale) || !proof()) return;
-      await submit(Object.freeze({ ...basis.request, actionId, protected: protectedValue, confirmedRelease: !protectedValue }), basis.key);
+      if (!mounted.current || !projectRef.current.metadata.targetLocales.includes(basis.request.locale) || !proof()) return null;
+      return await submit(Object.freeze({ ...basis.request, actionId, protected: protectedValue, confirmedRelease: !protectedValue }), basis.key);
     } finally {
       inFlight.current = false; update({ busy: false });
       if (!currentState.current.pending) release();

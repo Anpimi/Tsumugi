@@ -1,5 +1,14 @@
 # Application versioning and changelog maintenance
 
+The translation editor reconfirms the original fixed list only after its own
+automatic protection returns a validated successful receipt. It preserves newer
+draft text and rejects changed source, selection, scope or external notifications.
+Explicit protection, uncertain-action recovery and mutation ownership stay with
+their existing owners. This changes no API, SDK, protocol, persisted format,
+dependency or version source. It stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and
+no additional bump.
+
 Build preparation distinguishes an ordinary in-flight response from an uncertain
 operation. Translation file discovery shows an empty result only after a
 successful read. Existing localized loading/error messages, exact-request recovery,

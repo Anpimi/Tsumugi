@@ -15,6 +15,7 @@ import { sourceCommands, type ContentPage, type ContentRow, type ContentScope } 
 import { translationCommands as commands, translationHistoryAfter, type TranslationHistory, type TranslationPreview, type TranslationPreviewRow, type TranslationRevision, type TranslationDecision } from "./translationCommands";
 import { useTranslationImportSession } from "./TranslationImportSession";
 import { WorkProtectionControl, editingProtectionScope } from "./WorkProtectionControl";
+import type { ProtectionBasis } from "./WorkProtectionSession";
 import { PluginTranslationControls } from "./PluginTranslationControls";
 import { TranslationCandidateDecisionFields } from "./TranslationCandidateDecisionFields";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
@@ -406,6 +407,39 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     return !!query && query === readyListRead.query && query.state.status === "success" && query.state.fetchStatus === "idle"
       && !query.state.isInvalidated && query.state.error === null && query.state.data === readyListRead.data
       && readEpoch(["source", "translation", "resources", "review"]) === readyListRead.epoch;
+  }
+  function prepareAutomaticProtectionConfirmation(basis: ProtectionBasis) {
+    const proof = readyListRead, intent = listIntent, editor = editorIntent;
+    if (!proof || !intent || proof.intent !== intent || !editor || !confirmedList()
+      || readyEditorRead !== editor.id || !snapshot || !checkedRead(editorKey(editor), snapshot)
+      || snapshot.target.unitId !== basis.request.unitId || snapshot.target.locale !== basis.request.locale
+      || snapshot.target.sourceRevisionId !== basis.request.sourceRevisionId || snapshot.target.selectionId !== basis.request.selectionId) return null;
+    const request = basis.request, viewEpoch = saveNextViewEpoch.current;
+    const unchanged = (current: () => boolean) => {
+      const view = findView.current, draft = draftSession.current();
+      return mounted.current && current() && !reads.retired && saveNextViewEpoch.current === viewEpoch
+        && view.open && view.tab === "edit" && !view.disabled && view.targetAvailable
+        && view.project.metadata.projectId === request.projectId && view.project.sessionToken === request.sessionToken
+        && viewMemory.read("translation", "listReadIntent") === intent && latestListRead.current === intent.id
+        && viewMemory.read("translation", "editorReadIntent") === editor && editor.unitId === request.unitId && editor.locale === request.locale
+        && draft?.unitId === request.unitId && draft.locale === request.locale && draft.sourceRevisionId === request.sourceRevisionId
+        && draft.baseSelectionId === request.selectionId && !draft.pending && !draft.pendingSelection;
+    };
+    return async (current: () => boolean) => {
+      if (!unchanged(current)) return;
+      setReadyListRead(null);
+      // Only this checked automatic mutation can request re-confirmation. Flush
+      // its change hint first, then retain the original fixed list scope and
+      // reject any subsequent semantic change during the fresh read.
+      await reads.synchronizeFresh();
+      if (!unchanged(current)) return;
+      const dependencies: ChangeScope[] = ["source", "translation", "resources", "review"];
+      const epoch = readEpoch(dependencies);
+      const page = await freshRead(listKey(intent), dependencies, () => readList(intent));
+      const query = reads.client.getQueryCache().find({ queryKey: reads.key(listKey(intent)), exact: true });
+      if (unchanged(current) && readEpoch(dependencies) === epoch && query && query === proof.query && checkedRead(listKey(intent), page)
+        && sameCommandValue(page, proof.data)) setReadyListRead({ intent, query, data: page, epoch });
+    };
   }
   function selectionSourceCurrent(value: ContentSelection) {
     return value.projectId === context.projectId && value.sessionToken === context.sessionToken && currentLocale(value.capture.locale)
@@ -1086,9 +1120,9 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   }
   async function navigateEntry(direction: -1 | 1, current: () => boolean, afterSave = false, revealEditor = paneIntent.captureEditorReveal()) {
     const locale = targetLocale;
-    if (!editorTarget || !listScope.current || !currentLocale(locale)) return;
+    if (!editorTarget || !listScope.current || !currentLocale(locale) || draftSession.protection.blocked()) return;
     const retained = draftSession.current();
-    const unchanged = () => current() && currentLocale(locale)
+    const unchanged = () => current() && currentLocale(locale) && !draftSession.protection.blocked()
       && draftSession.current()?.editSeq === retained?.editSeq && draftSession.current()?.text === retained?.text;
     const request = { ...context, unitId: editorTarget.unitId, locale, scopeId: listScope.current.id, direction };
     const key = ["translation-neighbor", request.unitId, locale, request.scopeId, direction, ++readSequence.current];
@@ -1333,7 +1367,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     const boundary = index >= 0 && (delta < 0 ? index === 0 && listAfter === 0
                       : index === (list?.rows.length ?? 0) - 1 && list?.nextOrdinal === null);
                     return <button key={delta} type="button" className="text-button"
-                      disabled={busy || readBusy || !targetAvailable || !!pendingSave || !confirmedList() || readyEditorRead !== editorIntent?.id || !editorTarget || !history || !list?.total || editorRead.isFetching || listRead.isFetching || !!editorRead.error || !!listRead.error || boundary}
+                      disabled={busy || readBusy || protectionBlocked || !targetAvailable || !!pendingSave || !confirmedList() || readyEditorRead !== editorIntent?.id || !editorTarget || !history || !list?.total || editorRead.isFetching || listRead.isFetching || !!editorRead.error || !!listRead.error || boundary}
                       onClick={() => void performRead(current => navigateEntry(delta, current))}>
                       {t(delta < 0 ? "workbench.previousEntry" : "workbench.nextEntry")}
                     </button>;
@@ -1370,6 +1404,7 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     selectionId={editorDraft.baseSelectionId} selectionText={editorDraft.baseText} open={open && tab === "edit"} disabled={disabled || !!pendingSave || !!pendingSelection}
                     draftBlocked={dirty || !!pendingSave || !!pendingSelection} run={perform} onBlockedChange={() => {}}
                     onEditingReadyChange={(scope, ready) => setEditingReady(before => before?.scope === scope && before.ready === ready ? before : { scope, ready })}
+                    onAutomaticProtectionStart={prepareAutomaticProtectionConfirmation}
                     onReturnFocus={() => { const layout = paneLayout.current; if (layout && !layout.editorVisible()) { layout.focusVisible(); return true; } return false; }} />
                   </div>
                   <div className="editor-save-bar"><details className="editor-save-help"><summary>{t("workbench.aboutSaving")}</summary><p>{t("translation.draftHelp")}</p></details><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave || !!pendingSelection} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div>
