@@ -216,13 +216,15 @@ During a save you can continue editing. A successful older save does not discard
 
 The internal Rust and desktop IPC interfaces remain experimental. Producer callers now obtain `DispatchRequest` from the execution runtime or store dispatch boundary rather than constructing its fields directly; the runtime supplies the private durable-budget channel. `ExecutionRuntime::register` and `ProjectStore::enqueue_execution` conservatively record `external-unknown` effects. A trusted host must explicitly use `register_read_only` / `enqueue_read_only_execution`, or `register_with_policy` for another reviewed effect contract. A producer's own claim or operation name cannot authorize replay. Persisted policies cannot be changed by resubmitting the same identity.
 
-Current development projects use schema 49 only. Durable budgets, reservations,
+Current development projects support only the
+[current database schema](../README.md#development). Durable budgets, reservations,
 ancestry, effect policies and exact continuation identities retain their original
-owners. Other development schemas are refused without an application upgrade,
-rebuild or reset; SQLite may complete its own hot-journal recovery. Preserve those
-directories and create a new project to reimport original source files. Existing
-attempts retain their captured host-reviewed policy. See the [README](../README.md#development)
-and [work plans](work-plans.md) for current compatibility and human-control boundaries.
+owners. Other development schemas are refused before application schema changes,
+without an automatic upgrade, rebuild or reset; SQLite may complete its own
+hot-journal recovery. Preserve those directories and create a new project to
+reimport original source files. Existing
+attempts retain their captured host-reviewed policy. See
+[work plans](work-plans.md) for the human-control boundaries.
 
 The Tasks view keeps an explicit resume/retry intent, selected items and original
 cancellation basis after a lost acknowledgement. Exact lookup or the same request

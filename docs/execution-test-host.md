@@ -38,7 +38,7 @@ Replaying a recorded request returns that same receipt before evaluating fresh e
 
 The old anonymous `recover_execution` route refuses resume/retry. It still owns outcome queries and output validation: query jobs remain session-owned and validation may commit individual saved results. They do not acquire continuation receipts or an exact replay guarantee from this change.
 
-Current projects use schema 32. Opening verifies the exact layout, frozen inputs, result references and continuation associations. Other development schemas are rejected before DDL, without a reset or automatic upgrade. Preserve an unsupported directory and reimport its original sources into a new project.
+Current projects support only the [current database schema](../README.md#development). Opening verifies the exact layout, frozen inputs, result references and continuation associations. Other development schemas are refused before application schema changes, without an automatic upgrade, rebuild or reset; SQLite may complete its own hot-journal recovery. Preserve an unsupported directory and reimport its original sources into a new project.
 
 ## Manual checks
 
