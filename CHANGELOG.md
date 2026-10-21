@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Keep keyboard focus on an entry list row while saving or reading. Block row
+  activation until the original operation permits it, without moving focus back
+  after the user chooses another control or workspace.
+
 - Keep next-entry navigation available after the editor first protects an entry.
   Reconfirm the same list after that exact protection succeeds, while preserving
   newer draft text and rejecting external changes or an uncertain response.

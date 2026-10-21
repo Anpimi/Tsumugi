@@ -52,14 +52,14 @@ function advanceFrame() {
 
 const noop = () => {};
 type TestHandle = ContentPaneLayoutHandle & { captureEditorReveal: () => () => void };
-function Content({ handle, composing = false, active = true, referencesOpen = true }: {
-  handle: Ref<TestHandle>; composing?: boolean; active?: boolean; referencesOpen?: boolean;
+function Content({ handle, composing = false, active = true, referencesOpen = true, entriesDisabled = false }: {
+  handle: Ref<TestHandle>; composing?: boolean; active?: boolean; referencesOpen?: boolean; entriesDisabled?: boolean;
 }) {
   const field = useRef<HTMLTextAreaElement>(null), layout = useRef<ContentPaneLayoutHandle>(null), intent = useContentPaneIntent();
   useImperativeHandle(handle, () => ({ captureEditorReveal: intent.captureEditorReveal,
     editorVisible: () => layout.current?.editorVisible() ?? false, focusVisible: () => layout.current?.focusVisible() }));
   return <ContentPaneLayout ref={layout} intent={intent} active={active} composing={composing} referencesOpen={referencesOpen} hasEditor editorFocus={field} onEditorVisibilityChange={noop}
-    list={<div className="translation-entry-list"><button className="translation-entry">Earlier entry</button><button className="translation-entry" aria-current="true">Selected entry</button></div>}
+    list={<div className="translation-entry-list"><button className="translation-entry" aria-disabled={entriesDisabled || undefined}>Earlier entry</button><button className="translation-entry" aria-current="true" aria-disabled={entriesDisabled || undefined}>Selected entry</button></div>}
     editor={<div className="translation-editor"><div className="translation-editor-content"><textarea aria-label="Kept draft" defaultValue="Original draft 日本語" ref={field}/></div><div className="editor-save-bar"><button>Save kept draft</button></div></div>}
     references={<details className="editor-references" open={referencesOpen}><summary>References</summary><p>Original reference</p></details>}/>;
 }
@@ -218,6 +218,15 @@ it("keeps composition visible and guards only composing separator keys, never th
   expect(ui.memory.read("translation", "paneLayout.wide.listWidth")).toBe(288); expect(ui.group("list").props.disabled).toBe(true);
   ui.measure(500); expect(field).toBeVisible(); expect(screen.getByRole("button", { name: "Entries" })).toBeDisabled();
   ui.rerender(ui.tree(true, { composing: false })); expect(field).toBeVisible();
+});
+
+it("uses the visible list container when hidden editor focus has no available row target", () => {
+  const ui = harness({ entriesDisabled: true }); ui.measure(1300, 600, 988);
+  const field = screen.getByRole("textbox", { name: "Kept draft" }); field.focus();
+  ui.measure(600);
+  expect(field).not.toBeVisible();
+  expect(screen.getByRole("button", { name: "Selected entry" }).closest("[data-panel]")).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Selected entry" })).not.toHaveFocus();
 });
 
 it("honors a later list choice over an asynchronous reveal and consumes same-pane reveals without later focus theft", async () => {

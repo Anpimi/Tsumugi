@@ -1340,6 +1340,96 @@ it("confirms a committed save with a malformed acknowledgement through one read 
   expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
 });
 
+async function startListFocusedSave(outcome: "saved" | "rejected" | "unknown" | "list-refresh-failed" = "saved") {
+  const original = invoke.getMockImplementation()!, save = deferred<unknown>(), resize = controlContentPaneGeometry();
+  let request: Record<string, unknown> | undefined, failList = false, commands!: WorkbenchCommands;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "save_translation_revision") { request = args.request; return save.promise; }
+    if (command === "read_translation_save_action" && outcome === "unknown") throw new Error("Saved action temporarily unavailable");
+    if (command === "read_review_summary_page") {
+      if (failList) throw new Error("Entry list temporarily unavailable");
+      const page = await original(command, args);
+      return { ...page, rows: [...page.rows, { ...page.rows[0], unitId: fixtureIdentity(217), nativeKey: "second" }], total: 2 };
+    }
+    return original(command, args);
+  });
+  const consumer = (value = project) => <><TranslationWorkbench project={value} disabled={false} />
+    <CommandsProbe capture={value => { commands = value; }} /></>;
+  const ui = render(consumer(), project), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "Submitted A");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+  const row = screen.getByRole("button", { name: "second" }); row.focus();
+  expect(row).toHaveFocus();
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "translation" as const };
+  act(() => { expect(commands.dispatch("translation.save", scope)).toBe(true); });
+  await waitFor(() => expect(request).toBeDefined());
+  async function settle() {
+    if (outcome === "rejected") save.reject({ ...errorFixture.errors[1], reason: "translation-selection" });
+    else {
+      const receipt = await original("save_translation_revision", { request: request! });
+      if (outcome === "unknown") save.reject({ code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true });
+      else { failList = outcome === "list-refresh-failed"; save.resolve(receipt); }
+    }
+  }
+  return { ui, user, row, editor, resize, consumer, scope, commands, settle,
+    request: () => request!, saves: () => invoke.mock.calls.filter(([name]) => name === "save_translation_revision") };
+}
+
+it.each(["saved", "rejected", "unknown", "list-refresh-failed"] as const)("keeps a pending save's list row keyboard reachable and blocks activation (%s)", async outcome => {
+  const { user, row, editor, commands, scope, settle, request, saves } = await startListFocusedSave(outcome);
+  expect(request()).toMatchObject({ unitId: fixtureIdentity(204), locale: "zh-CN", text: "Submitted A" });
+  // JSDOM does not blur a newly disabled focused button as WebKit does. Moving
+  // away and back must still reach this row through the real Tab sequence.
+  await user.tab(); expect(row).not.toHaveFocus();
+  await user.tab({ shift: true }); expect(row).toHaveFocus();
+  const readsBefore = invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot").length;
+  await user.click(row); await user.keyboard("{Enter}"); await user.keyboard(" ");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "first" })).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(readsBefore);
+  act(() => { expect(commands.dispatch("translation.save", scope)).toBe(false); });
+  expect(saves()).toHaveLength(1);
+  await act(async () => settle());
+  if (outcome === "saved") await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
+  else await screen.findByRole("alert");
+  expect(screen.getByRole("button", { name: "second" })).toBe(row); expect(row).toHaveFocus();
+  expect(editor).toHaveValue("Submitted A"); expect(saves()).toHaveLength(1);
+  if (outcome === "unknown") {
+    expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action").map(([, args]) => args.request)).toEqual([request()]);
+    expect(screen.getByRole("button", { name: "Check saved result" })).toBeEnabled();
+  }
+  if (outcome === "list-refresh-failed") expect(screen.getByRole("alert")).toHaveTextContent("Your revision was saved, but the entry list could not refresh");
+});
+
+it.each(["newer-input", "hidden-list", "replacement-session", "unmounted"] as const)("does not reclaim list focus from a later user context after save (%s)", async change => {
+  const { ui, user, row, editor, resize, consumer, settle, saves } = await startListFocusedSave();
+  let latest: HTMLElement;
+  if (change === "newer-input") { await user.type(editor, " plus newer B"); latest = editor; }
+  else if (change === "hidden-list") {
+    resize(ui.container.querySelector(".translation-columns")!, 600); await paintContentPanes();
+    expect(row).not.toBeVisible(); latest = editor; expect(latest).toHaveFocus();
+  } else {
+    if (change === "unmounted") ui.rerender(null);
+    else {
+      const replacement = { ...project, sessionToken: "replacement-session", metadata: { ...project.metadata, projectId: fixtureIdentity(901) } };
+      ui.rerender(consumer(replacement), replacement);
+      await screen.findByRole("button", { name: "first" });
+    }
+    latest = screen.getByRole("button", { name: "Project overview" }); latest.focus();
+  }
+  await act(async () => settle());
+  expect(latest).toHaveFocus(); expect(saves()).toHaveLength(1);
+  if (change === "newer-input") {
+    expect(editor).toHaveValue("Submitted A plus newer B");
+    expect(await screen.findByText(i18n.t("translation.savedNewerDraft"))).toBeVisible();
+  }
+  if (change === "hidden-list") expect(row).not.toBeVisible();
+});
+
 it("registers scoped save-and-next without a shortcut and dispatches the live command once", async () => {
   let commands!: WorkbenchCommands;
   const view = render(<><TranslationWorkbench project={project} disabled={false} />

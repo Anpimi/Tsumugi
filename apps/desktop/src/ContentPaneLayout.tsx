@@ -244,8 +244,8 @@ export function ContentPaneLayout({ list, editor, references, hasEditor, referen
     if (!active) return;
     if (editorVisible) (editorFocus.current ?? editorPane.current)?.focus({ preventScroll: true });
     else {
-      const current = listPane.current?.querySelector<HTMLElement>(".translation-entry[aria-current='true']:not(:disabled)")
-        ?? listPane.current?.querySelector<HTMLElement>(".translation-entry:not(:disabled), button:not(:disabled)");
+      const current = listPane.current?.querySelector<HTMLElement>(".translation-entry[aria-current='true']:not(:disabled):not([aria-disabled='true'])")
+        ?? listPane.current?.querySelector<HTMLElement>(".translation-entry:not(:disabled):not([aria-disabled='true']), button:not(:disabled):not([aria-disabled='true'])");
       (current ?? listPane.current)?.focus({ preventScroll: true });
     }
   }

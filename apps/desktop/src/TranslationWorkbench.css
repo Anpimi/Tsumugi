@@ -29,7 +29,9 @@
 .translation-entry-list { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
 .translation-entry-list ul { list-style: none; padding: 0; margin: 0; flex: 1; overflow: auto; }
 .translation-entry { display: grid; gap: 6px; width: 100%; padding: 12px; border: 0; border-bottom: 1px solid var(--border); text-align: left; color: var(--text); background: var(--surface); cursor: pointer; }
-.translation-entry:hover { background: var(--hover); }
+.translation-entry:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--hover); }
+.translation-entry[aria-disabled="true"] { cursor: default; opacity: .55; }
+.translation-entry[aria-disabled="true"]:focus-visible { opacity: 1; }
 .translation-entry[aria-current="true"] { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
 .translation-entry strong { overflow-wrap: anywhere; font: 400 .857143rem/1.5 var(--font-mono); color: var(--muted); }
 .entry-source, .entry-translation { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 1rem; line-height: 1.5; }

@@ -1087,9 +1087,15 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     readRunning.current = true; setReadBusy(true);
     setEditorActivation({ ...activation, expectedGeneration: generation.current, draftUnchanged });
   }
+  // Pending reads and saves keep entry buttons focusable; their activation
+  // still checks this live gate before opening or leaving an editor.
+  function editorChoiceAvailable() {
+    return businessGate(tab, true).enabled && !readBusy && !readRunning.current && !composing && targetAvailable;
+  }
   function chooseEditor(target: EditorTarget) {
-    if (!targetAvailable) return;
-    if (pendingSave || pendingSelection) { setFailure("outcome-unknown"); return; }
+    if (!editorChoiceAvailable()) return;
+    const retained = draftSession.current();
+    if (retained?.pending || retained?.pendingSelection) { setFailure("outcome-unknown"); return; }
     const revealEditor = paneIntent.captureEditorReveal();
     if (dirty) { setLeaveIntent({ kind: "switch", target, revealEditor }); return; }
     if (tab !== "edit") {
@@ -1347,7 +1353,9 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     title={contentSelection && !selectionMembers.has(row.unitId) ? t("workbench.outsideContentSelection") : undefined}
                     onChange={event => { const payload = contentRowPayload(row, event.target.checked); if (payload) commandRegistry.dispatch("translation.toggle-content-selection", commandScope, payload); }} />
                   <button className="translation-entry" aria-label={row.nativeKey}
-                  aria-current={displayedTarget?.unitId === row.unitId ? "true" : undefined} disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable} onClick={() => chooseEditor(listTarget(row))}>
+                  aria-current={displayedTarget?.unitId === row.unitId ? "true" : undefined}
+                  disabled={disabled || composing || protectionBlocked || !targetAvailable} aria-disabled={!editorChoiceAvailable() || undefined}
+                  onClick={() => chooseEditor(listTarget(row))}>
                   <span className="entry-source">{row.sourcePreview || t("translation.empty")}</span><strong>{row.nativeKey}</strong>
                   <span className="entry-translation">{row.translationPreview === null ? t("workbench.unselected") : row.translationPreview || t("translation.empty")}</span>
                   <span className="entry-status">{row.selectionId ? t("workbench.selected") : t("workbench.unselected")} · {reviewState(row)} · {qaState(row)}</span>

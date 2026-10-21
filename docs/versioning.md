@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Entry-list buttons retain keyboard focus during ordinary pending saves and reads.
+Their live activation gate still rejects busy, protected, composing, unavailable
+or uncertain work. The existing pane focus owner excludes unavailable rows when
+choosing a fallback, without restoring focus after newer user navigation. This
+changes no API, SDK, protocol, persisted format, dependency or version source. It
+stays in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1`
+batch, with bilingual Unreleased entries and no additional bump.
+
 The translation editor reconfirms the original fixed list only after its own
 automatic protection returns a validated successful receipt. It preserves newer
 draft text and rejects changed source, selection, scope or external notifications.
