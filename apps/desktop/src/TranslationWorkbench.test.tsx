@@ -631,6 +631,39 @@ async function importDeclaredTranslation(user: ReturnType<typeof userEvent.setup
   await user.click(await screen.findByRole("button", { name: "Review checked translation matches" }));
 }
 
+it.each(["empty", "failed"] as const)("distinguishes pending translation file discovery from a %s result", async outcome => {
+  const original = invoke.getMockImplementation()!;
+  let resolveFiles!: (files: string[]) => void, rejectFiles!: (reason: Error) => void;
+  const files = new Promise<string[]>((resolve, reject) => { resolveFiles = resolve; rejectFiles = reject; });
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) =>
+    command === "list_plugin_translation_files" ? files : original(command, args));
+  const user = userEvent.setup();
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(screen.getByRole("button", { name: "Import file" }));
+  await user.selectOptions(await screen.findByRole("combobox", { name: i18n.t("translationPlugin.package") }), `${translationPackage.packageDigest}:${translationView.resourceId}`);
+  await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") }), translationView.environmentDigest);
+  const choose = await screen.findByRole("button", { name: "Choose translation folder" });
+  await waitFor(() => expect(choose).toBeEnabled());
+  await user.click(choose);
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "list_plugin_translation_files")).toHaveLength(1));
+  expect(screen.getByText(i18n.t("execution.loading"))).toBeVisible();
+  expect(screen.queryByText(i18n.t("translation.noFiles"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Capture translation file" })).toBeDisabled();
+  await act(async () => {
+    if (outcome === "empty") resolveFiles([]);
+    else rejectFiles(new Error("Synthetic translation file discovery failure"));
+  });
+  if (outcome === "empty") expect(await screen.findByText(i18n.t("translation.noFiles"))).toBeVisible();
+  else {
+    expect(await screen.findByText(i18n.t("translationPlugin.failed"))).toBeVisible();
+    expect(screen.queryByText(i18n.t("translation.noFiles"))).not.toBeInTheDocument();
+  }
+  expect(screen.queryByText(i18n.t("execution.loading"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Capture translation file" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([name]) => name === "preflight_plugin_translation" || name === "start_plugin_translation")).toBe(false);
+});
+
 
 it("keeps the fixed import preview after complete consumer removal and session query garbage collection", async () => {
   const user = userEvent.setup();

@@ -179,6 +179,9 @@ it.each(["en-US", "zh-CN"])("shows the original captured runtime without unavail
   await ready(["zh-CN"], false, false);
   await screen.findByText(i18n.t("execution.working"));
   expect(screen.queryByText(i18n.t("releasePlugin.unavailable"))).not.toBeInTheDocument();
+  expect(screen.queryByText(i18n.t("releasePlugin.unknown"))).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: i18n.t("releasePlugin.reconcile") })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: i18n.t("releasePlugin.discard") })).not.toBeInTheDocument();
   await act(async () => { releasePreparation(); });
   await screen.findByText(i18n.t("releasePlugin.fixedBuild"));
   const runtime = screen.getAllByRole("combobox")

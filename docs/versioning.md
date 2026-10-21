@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Build preparation distinguishes an ordinary in-flight response from an uncertain
+operation. Translation file discovery shows an empty result only after a
+successful read. Existing localized loading/error messages, exact-request recovery,
+drafts, execution consent and mutation owners remain unchanged. This changes no
+API, SDK, protocol, persistent format, dependency or version source. It stays in
+the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+bilingual Unreleased entries and no additional bump.
+
 The sidebar Settings dialog opens the existing model connection manager. The
 manager and draft provider remain mounted, with the same read, mutation,
 uncertain-action recovery and exit-permit owners. Closing it returns keyboard

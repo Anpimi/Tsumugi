@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Show ordinary build preparation as in progress, reserving reconciliation guidance
+  for uncertain responses. Distinguish translation file discovery errors
+  from a successful empty folder without changing saved work or execution consent.
+
 - Open saved model connection settings from the sidebar Settings dialog, keeping
   connection drafts, uncertain actions and project preparation entries in place.
 
