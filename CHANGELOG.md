@@ -10,6 +10,9 @@ Current development compatibility is project schema 61 and internal member
 protocol 4. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Accept Core's canonical item order in multi-entry AI work-plan previews while
+  verifying complete, unique entry coverage and preserving the original selection.
+
 - Add a separate ChatGPT sign-in connection on macOS, with verified OpenID
   identity, protected Keychain credentials and independent account registrations.
   Subscription requests use the public Responses API through the existing Pi

@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+AI work-plan preparation accepts Core's canonical preview item order while
+retaining complete identity checks, the immutable preview and the user's original
+selection. This UI correction changes no API, schema, protocol, persisted format,
+dependency or version source. It stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and
+no additional bump.
+
 ChatGPT sign-in adds an explicit subscription connection with a non-secret
 account reference and a separate controlled Responses profile. macOS credentials
 are owned by Keychain and the trusted application OIDC boundary. API-key limits,

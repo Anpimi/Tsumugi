@@ -465,12 +465,13 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[],
       if (!live() || version !== basis.current || !available(capture.locale) || !sourceCurrent() || !toolsCurrent() || assisted && !connectionCurrent()) return;
       const result = await workPlanCommands.prepare({ ...capture, options, toolSelection }, selectedTools?.entries.map(tool => tool.view) ?? []);
       if (!live() || version !== basis.current || !available(capture.locale) || !sourceCurrent() || !toolsCurrent() || assisted && !connectionCurrent()) return;
-      // The plan's basis is canonicalized by Core; its AI preview retains the
-      // user's ordered selection. Verify complete coverage without rebinding it.
+      // Core may canonicalize the preview independently of the user's selection.
+      // Verify complete, unique coverage without rebinding either capture.
       const units=new Set(capture.unitIds);
       if (result.scope.length !== units.size || new Set(result.scope.map(unit=>unit.unitId)).size!==units.size
-        || result.scope.some(unit=>!units.has(unit.unitId)) || (result.preview && (result.preview.items.length!==capture.unitIds.length
-          || result.preview.items.some((item,index)=>item.unitId!==capture.unitIds[index])))) invalidAck();
+        || result.scope.some(unit=>!units.has(unit.unitId)) || (result.preview && (result.preview.items.length!==units.size
+          || new Set(result.preview.items.map(item=>item.unitId)).size!==units.size
+          || result.preview.items.some(item=>!units.has(item.unitId))))) invalidAck();
       update(value => ({ ...value,capture:{kind:"plan",value:fixed(result)},planId:null,attempt:null,checkedTask:null,started:null,startedPlan:null,consent:false,staleReason:null }));
       planControl.reset(); agent.reset(); component.reset();
       } finally { dispose(); if (candidateReadCleanup.current === dispose) candidateReadCleanup.current = null; }
