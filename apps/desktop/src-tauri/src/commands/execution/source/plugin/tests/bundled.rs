@@ -1,7 +1,7 @@
 //! Fixed application packages use the real setup, Host and Core boundaries.
 //! Only the window transport and directory picker are synthetic.
 use super::{
-    native::{call, completed, consents, scoped},
+    native::{call, completed, consent, consents, scoped},
     *,
 };
 use std::{
