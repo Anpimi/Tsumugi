@@ -5,6 +5,16 @@
       "AiConfig": {
         "additionalProperties": false,
         "properties": {
+          "chatgptAccount": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "concurrency": {
             "format": "uint32",
             "maximum": 4294967295,
@@ -559,6 +569,16 @@
       "AiConfig": {
         "additionalProperties": false,
         "properties": {
+          "chatgptAccount": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "concurrency": {
             "format": "uint32",
             "maximum": 4294967295,

@@ -2,6 +2,7 @@
 //! and independently consented tool boundary. No plugin caller is fabricated.
 use super::*;
 mod coordination;
+mod completion;
 pub(super) mod environment;
 #[path = "member_guidance.rs"]
 mod tool_guidance;
@@ -418,7 +419,9 @@ impl MemberFactory {
                 profile: MemberProfile {
                     endpoint: prompt.config.endpoint.clone(),
                     model: prompt.config.model.clone(),
-                    token_field: if prompt.config.token_field == "max_tokens" {
+                    token_field: if prompt.config.is_chatgpt_subscription() {
+                        TokenField::ChatGptSubscription
+                    } else if prompt.config.token_field == "max_tokens" {
                         TokenField::MaxTokens
                     } else {
                         TokenField::MaxCompletionTokens
@@ -550,6 +553,9 @@ fn assistant_text(messages: &Value) -> Result<String, ExecutionError> {
         .as_array()
         .ok_or_else(|| fail(ErrorCode::OutputInvalid, "member-result"))?
     {
+        // Pi keeps the provider's reasoning carrier for stateless replay. It
+        // is not candidate text and is never adopted as a translation.
+        if part["type"] == "thinking" { continue; }
         if part["type"] != "text" {
             return Err(fail(ErrorCode::OutputInvalid, "member-result"));
         }

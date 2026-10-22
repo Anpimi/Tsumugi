@@ -2,6 +2,14 @@
 
 export type ExecutionId = string;
 export type UnsignedDecimal = string;
+export type ChatGptAccountIssue =
+  | "login_failed"
+  | "login_expired"
+  | "login_cancelled"
+  | "storage_unavailable"
+  | "session_superseded"
+  | "reauthentication_required"
+  | "remote_revocation_unconfirmed";
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -116,6 +124,9 @@ export type CommandStage =
 
 export interface Responses {
   action: ModelConnectionReceipt | null;
+  chatGptCatalog: ChatGptModelCatalog;
+  chatGptLogin: ChatGptLoginView;
+  chatGptStatus: ChatGptAccountStatus;
   connection: AiConnection;
   error: CommandError;
   receipt: ModelConnectionReceipt;
@@ -144,10 +155,42 @@ export interface ModelConnectionProfile {
  * remain in the separately captured AiConfig; this value grants no execution.
  */
 export interface AiConnection {
+  chatgptAccount?: ExecutionId | null;
   credentialEnv: string;
   endpoint: string;
   model: string;
   tokenField: string;
+}
+export interface ChatGptModelCatalog {
+  account: ExecutionId;
+  models: ChatGptModelView[];
+}
+export interface ChatGptModelView {
+  id: string;
+  label: string;
+}
+export interface ChatGptLoginView {
+  authorizationUrl: string;
+  /**
+   * Unix milliseconds. The listener also enforces a monotonic deadline.
+   */
+  expiresAt: number;
+  id: ExecutionId;
+}
+export interface ChatGptAccountStatus {
+  account: ChatGptAccountView | null;
+  issue: ChatGptAccountIssue | null;
+  login: ChatGptLoginView | null;
+  registrations: ChatGptRegistrationView[];
+}
+export interface ChatGptAccountView {
+  id: ExecutionId;
+  label: string;
+  registration: ExecutionId;
+}
+export interface ChatGptRegistrationView {
+  id: ExecutionId;
+  label: string;
 }
 export interface CommandError {
   code: CommandErrorCode;

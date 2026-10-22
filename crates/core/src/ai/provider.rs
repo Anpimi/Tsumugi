@@ -16,6 +16,7 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderProtocol {
     ChatCompletionsJson,
+    ChatGptResponses,
 }
 
 /// Read-only capability description for the configured compatibility profile.
@@ -37,11 +38,12 @@ impl ProviderProfile {
         Self::parameters(&config.token_field)
     }
     pub(crate) fn parameters(token_field: &str) -> Result<Self, ExecutionError> {
-        if !["max_tokens", "max_completion_tokens"].contains(&token_field) {
+        if !["max_tokens", "max_completion_tokens", "chatgpt_subscription"].contains(&token_field) {
             return Err(error(ErrorCode::InvalidInput, "ai-token-field"));
         }
         Ok(Self {
-            protocol: ProviderProtocol::ChatCompletionsJson,
+            protocol: if token_field == "chatgpt_subscription" { ProviderProtocol::ChatGptResponses }
+                else { ProviderProtocol::ChatCompletionsJson },
             output_token_field: token_field.to_owned(),
             context_tokens: None,
             max_prompt_bytes: 32768,
@@ -131,11 +133,42 @@ struct ConnectionKey {
     // Proxy environment is part of the connection configuration, never logged.
     proxies: Vec<Option<String>>,
 }
+pub const CHATGPT_RESPONSES_ENDPOINT: &str = "https://api.openai.com/v1/responses";
+
+/// Trusted application credential owner. Tokens never enter project or member IPC.
+pub trait SubscriptionCredentials: Send + Sync {
+    fn access_token(&self, account: ExecutionId) -> Result<String, ExecutionError>;
+    fn check_active(&self, account: ExecutionId) -> Result<(), ExecutionError>;
+}
+
+/// Pi is the sole Responses serializer/parser, including ordinary completions.
+pub trait CompletionExecutor: Send + Sync {
+    fn complete(&self, request: DispatchRequest, cancellation: Cancellation,
+        service: std::sync::Arc<ProviderService>, config: AiConfig, prompt: CompletionPrompt)
+        -> Result<super::ProviderCompletion, ExecutionError>;
+}
+#[derive(Clone, Debug)]
+pub struct CompletionPrompt { pub system: String, pub input: String }
+impl CompletionPrompt {
+    pub(crate) fn capture(body: &serde_json::Value) -> Result<Self, ExecutionError> {
+        let messages = body["messages"].as_array().filter(|messages| messages.len() == 2)
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "ai-completion-prompt"))?;
+        if messages[0]["role"] != "system" || messages[1]["role"] != "user" {
+            return Err(error(ErrorCode::InvalidInput, "ai-completion-prompt"));
+        }
+        let text = |index: usize| messages[index]["content"].as_str().map(str::to_owned)
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "ai-completion-prompt"));
+        Ok(Self { system: text(0)?, input: text(1)? })
+    }
+}
+
 #[derive(Default)]
 pub struct ProviderService {
     clients: Mutex<BTreeMap<ConnectionKey, reqwest::Client>>,
     windows: Mutex<BTreeMap<String, VecDeque<Instant>>>,
     io: OnceLock<tokio::runtime::Runtime>,
+    subscription_credentials: Option<std::sync::Arc<dyn SubscriptionCredentials>>,
+    completion_executor: OnceLock<std::sync::Weak<dyn CompletionExecutor>>,
 }
 pub(crate) struct HttpResponse {
     pub status: reqwest::StatusCode,
@@ -144,6 +177,56 @@ pub(crate) struct HttpResponse {
     pub body: Vec<u8>,
 }
 impl ProviderService {
+    pub fn with_subscription_credentials(credentials: std::sync::Arc<dyn SubscriptionCredentials>) -> Self {
+        Self { subscription_credentials: Some(credentials), ..Self::default() }
+    }
+    pub fn set_completion_executor(&self, executor: std::sync::Weak<dyn CompletionExecutor>)
+        -> Result<(), ExecutionError> {
+        self.completion_executor.set(executor)
+            .map_err(|_| error(ErrorCode::DependencyConflict, "ai-completion-runtime"))
+    }
+    pub(super) fn execute_subscription_completion(self: &std::sync::Arc<Self>, request: &DispatchRequest,
+        cancel: &Cancellation, config: &AiConfig, body: serde_json::Value)
+        -> Result<super::ProviderCompletion, ExecutionError> {
+        let prompt = CompletionPrompt::capture(&body)?;
+        let executor = self.completion_executor.get().and_then(std::sync::Weak::upgrade)
+            .ok_or_else(|| error(ErrorCode::DependencyConflict, "ai-completion-runtime"))?;
+        let output = executor.complete(request.clone(), cancel.clone(), self.clone(), config.clone(), prompt)?;
+        self.check_completed_authority(request, cancel, config)?;
+        if output.requests != 1 || output.content.len() > ProviderProfile::compatible(config)?.max_output_bytes
+            || output.usage.is_none() && !output.usage_incomplete
+            || output.usage.as_ref().is_some_and(|usage| usage.prompt_tokens > i64::MAX as u64
+                || usage.completion_tokens > i64::MAX as u64 || usage.validate_aggregate(output.usage_incomplete).is_err()) {
+            return Err(error(ErrorCode::OutputInvalid, "ai-completion-output"));
+        }
+        Ok(output)
+    }
+    pub(super) fn check_subscription(&self, config: &AiConfig) -> Result<(), ExecutionError> {
+        if let Some(account) = config.chatgpt_account {
+            self.subscription_credentials.as_ref()
+                .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-subscription-account"))?
+                .check_active(account)?;
+        }
+        Ok(())
+    }
+
+    /// The same authority gate runs before send, while awaiting HTTP and after
+    /// response. Only an in-flight request has an uncertain external outcome.
+    pub(super) fn check_transport_authority(&self, request: &DispatchRequest,
+        config: &AiConfig, http_started: bool) -> Result<(), ExecutionError> {
+        request.check_service_dispatch().and_then(|()| self.check_subscription(config))
+            .map_err(|failure| if http_started {
+                error(ErrorCode::OutcomeUnknown, "ai-service-revoked-after-dispatch")
+            } else { failure })
+    }
+    pub(super) fn check_completed_authority(&self, request: &DispatchRequest,
+        cancel: &Cancellation, config: &AiConfig) -> Result<(), ExecutionError> {
+        if cancel.is_requested() { return Err(error(ErrorCode::Cancelled, "ai-cancelled")); }
+        // HTTP and usage have already completed. Withhold adoption after a
+        // logout without relabelling positively observed usage as unknown.
+        self.check_transport_authority(request, config, false)
+    }
+
     pub(crate) fn client(
         &self,
         config: &AiConfig,
@@ -186,7 +269,12 @@ impl ProviderService {
         clients.insert(key, client.clone());
         Ok(client)
     }
-    pub(crate) fn credential(config: &AiConfig) -> Result<Option<String>, ExecutionError> {
+    pub(crate) fn credential(&self, config: &AiConfig) -> Result<Option<String>, ExecutionError> {
+        if let Some(account) = config.chatgpt_account {
+            self.check_subscription(config)?;
+            return self.subscription_credentials.as_ref().unwrap().access_token(account)
+                .and_then(|token| if token.is_empty() { Err(error(ErrorCode::Unauthorized, "ai-credential")) } else { Ok(Some(token)) });
+        }
         if config.credential_env.is_empty() {
             return Ok(None);
         }
@@ -234,15 +322,10 @@ impl ProviderService {
                 .timeout(timeout).body(body);
             if let Some(key) = key { call = call.bearer_auth(key); }
             let http_started = Cell::new(false);
-            let check_dispatch = || request.check_service_dispatch().map_err(|failure| {
-                if http_started.get() {
-                    // After entering HTTP, revocation cannot prove that nothing
-                    // was sent or charged. Drop the wait and retain uncertainty.
-                    error(ErrorCode::OutcomeUnknown, "ai-service-revoked-after-dispatch")
-                } else { failure }
-            });
+            let check_dispatch = || self.check_transport_authority(request, config, http_started.get());
             let io = async {
                 request.check_service_dispatch()?;
+                self.check_subscription(config)?;
                 http_started.set(true);
                 let mut response = call.send().await
                     .map_err(|_| error(ErrorCode::OutcomeUnknown, "ai-network-unknown"))?;

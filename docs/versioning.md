@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+ChatGPT sign-in adds an explicit subscription connection with a non-secret
+account reference and a separate controlled Responses profile. macOS credentials
+are owned by Keychain and the trusted application OIDC boundary. API-key limits,
+project schema 61, SDK/Process and WorkPlan identities remain unchanged. Internal
+member protocol advances from 3 to 4; regenerate contracts and rebuild the bundled
+member runtime together. New OpenID Connect and macOS Keychain dependencies are
+locked with the application. This remains the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and
+no additional version bump or historical migration.
+
 The macOS translation editor preserves original clipboard Unicode through an
 explicit paste gesture. Pending input uses the existing draft mutation owner and
 project exit coordination; newer input, cancellation and read failure retain the

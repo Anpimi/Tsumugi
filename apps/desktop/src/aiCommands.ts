@@ -1,5 +1,5 @@
 import { checkedInvoke } from "./ipc";
-import { sameConnection, sameConnectionReference } from "./connectionCommands";
+import { sameConnection, sameConnectionReference, type AiConnection, type ModelConnectionReference } from "./connectionCommands";
 import type { AiConfig, AiPreviewRequest, AiStartRequest, AiReadRequest, AiEffectRetryRequest } from "./generated/ai.requests";
 import * as validators from "./generated/ai.validators";
 import type { EditorTarget } from "./TranslationWorkbench";
@@ -11,21 +11,40 @@ export type AiStart = AiStartRequest;
 export const defaultAiConfig:AiConfig={endpoint:"",model:"",credentialEnv:"OPENAI_API_KEY",tokenField:"max_tokens",maxItems:20,concurrency:1,maxRequests:20,maxOutputTokens:2000,maxRetries:0,timeoutSeconds:60,shareTerms:false,shareContext:false,contextStrategy:null,sourceContext:{extracted:false,inferred:false,neighbors:false,maxBytes:16384,maxItems:128}};
 export const aiTarget=(item:AiItem):EditorTarget=>({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,key:item.nativeKey,sourceText:item.sourceText});
 const configurationFields = ["endpoint", "model", "credentialEnv", "tokenField", "maxItems", "concurrency", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds", "shareTerms", "shareContext"] as const;
+export const isChatGptSubscription = (config: Pick<AiConfig, "tokenField">) => config.tokenField === "chatgpt_subscription";
+/** Subscription requests have no output-token parameter or automatic retries.
+ * Returning to an API connection restores explicit legal API limits. */
+export function connectionAiConfig(before: AiConfig, connection: AiConnection, connectionProfile: ModelConnectionReference | null): AiConfig {
+  const subscription = isChatGptSubscription(connection);
+  const previous = { ...before };
+  delete previous.chatgptAccount;
+  return { ...previous, ...connection, connectionProfile,
+    maxOutputTokens: subscription ? 0 : isChatGptSubscription(before) ? defaultAiConfig.maxOutputTokens : before.maxOutputTokens,
+    maxRetries: subscription ? 0 : isChatGptSubscription(before) ? defaultAiConfig.maxRetries : before.maxRetries };
+}
 const sourceContextFields = ["extracted", "inferred", "neighbors", "maxBytes", "maxItems"] as const;
 export const sourceContextMinBytes = new TextEncoder().encode(JSON.stringify({facts:[],neighbors:[]})).length;
 export function validSourceContextSelection(value: AiConfig["sourceContext"]): boolean {
   return Number.isInteger(value.maxBytes) && value.maxBytes >= sourceContextMinBytes && value.maxBytes <= 16384
     && Number.isInteger(value.maxItems) && value.maxItems >= 1 && value.maxItems <= 128;
 }
+export const aiNumericLimits = [["maxItems", 1, 100], ["concurrency", 1, 2], ["maxRequests", 1, 300],
+  ["maxOutputTokens", 1, 16384], ["maxRetries", 0, 2], ["timeoutSeconds", 1, 120]] as const;
+export function validAiLimits(config: AiConfig): boolean {
+  return aiNumericLimits.every(([key, min, max]) => isChatGptSubscription(config) && (key === "maxOutputTokens" || key === "maxRetries")
+    ? config[key] === 0 : Number.isInteger(config[key]) && config[key] >= min && config[key] <= max)
+    && validSourceContextSelection(config.sourceContext);
+}
 /** A profile reference is part of the captured proof, even for equal defaults. */
 export function sameAiConfig(left: AiConfig, right: AiConfig): boolean {
   return configurationFields.every(key => left[key] === right[key])
+    && (left.chatgptAccount ?? null) === (right.chatgptAccount ?? null)
     && sourceContextFields.every(key => left.sourceContext[key] === right.sourceContext[key])
     && sameContextStrategy(left.contextStrategy, right.contextStrategy)
     && sameConnectionReference(left.connectionProfile, right.connectionProfile);
 }
-/** Manual default edits become a one-time connection. Budgets and sharing keep
- * a saved reference when its four defaults are unchanged. */
+/** Manual connection edits become a one-time connection. Budgets and sharing
+ * keep a saved reference when the captured connection identity is unchanged. */
 export function editedAiConfig(before: AiConfig, next: AiConfig): AiConfig {
   let value = next.connectionProfile != null && sameConnectionReference(before.connectionProfile, next.connectionProfile) && !sameConnection(before, next)
     ? { ...next, connectionProfile: null } : next;

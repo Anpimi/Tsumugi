@@ -59,7 +59,7 @@ export type ExecutionId = string;
  * This interface was referenced by `MemberFrame`'s JSON-Schema
  * via the `definition` "TokenField".
  */
-export type TokenField = "max_tokens" | "max_completion_tokens";
+export type TokenField = "max_tokens" | "max_completion_tokens" | "chatgpt_subscription";
 /**
  * This interface was referenced by `MemberFrame`'s JSON-Schema
  * via the `definition` "MemberCall".

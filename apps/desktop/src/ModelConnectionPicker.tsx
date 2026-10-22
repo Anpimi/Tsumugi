@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { enUS } from "./i18n/en-US";
 import { connectionConfigCurrent, connectionReadOptions, currentConnections, useApplicationQueryClient } from "./ApplicationReadProvider";
 import { CommandFailureDetails, commandFailure } from "./CommandFailure";
-import type { AiConfig } from "./aiCommands";
+import { isChatGptSubscription, type AiConfig } from "./aiCommands";
 import type { ConnectionReadView } from "./connectionCommands";
 import type { PlanOptions } from "./generated/ai.requests";
 
@@ -34,7 +34,7 @@ export function ModelConnectionPicker({ config, label, active, disabled, editSeq
     }}>
       <option value="">{t("connections.once")}</option>
       {linked && !current ? <option value="captured" disabled>{t("connections.capturedChoice", { defaultValue: enUS.connections.capturedChoice, model: config.model })}</option> : null}
-      {profiles.map(profile => <option key={profile.id} value={profile.id} disabled={!view}>{profile.name} · {profile.connection.model}</option>)}
+      {profiles.map(profile => <option key={profile.id} value={profile.id} disabled={!view}>{profile.name} · {profile.connection.model}{isChatGptSubscription(profile.connection) ? ` · ${t("connections.chatgpt.connection")}` : ""}</option>)}
     </select></label>
     <div className="execution-actions">
       <button type="button" className="secondary-button" disabled={query.isFetching} onClick={() => void client.fetchQuery(connectionReadOptions()).catch(() => {})}>{t("connections.refresh")}</button>
@@ -51,11 +51,18 @@ export function ModelConnectionPicker({ config, label, active, disabled, editSeq
 export function PreparationBudgetSummary({ config, perRequest = false, policy, team = false }: { config: AiConfig; perRequest?: boolean; policy?: PlanOptions["teamDiscussions"]; team?: boolean }) {
   const { t } = useTranslation();
   const complete = [config.maxItems,config.maxRequests,config.concurrency,config.maxOutputTokens,config.maxRetries,config.timeoutSeconds].every(Number.isFinite);
-  const message = !complete ? "incompleteBudget" : perRequest ? "requestSummary" : "invocationSummary";
+  const message = !complete ? "incompleteBudget" : isChatGptSubscription(config) ? perRequest ? "subscriptionRequestSummary" : "subscriptionInvocationSummary" : perRequest ? "requestSummary" : "invocationSummary";
   const sharing = config.shareTerms && config.shareContext ? "connections.sharingBoth" : config.shareTerms ? "connections.sharingTerms" : config.shareContext ? "connections.sharingContext" : "connections.sharingNone";
   return <section className="preparation-budget-summary" aria-label={t("connections.invocationSummaryTitle")}>
     <p>{t(`connections.${message}`, { defaultValue: enUS.connections[message], items: config.maxItems, requests: config.maxRequests, concurrency: config.concurrency, tokens: config.maxOutputTokens, retries: config.maxRetries, timeout: config.timeoutSeconds })}</p>
     {team ? <p>{t("ai.team.templateHelp")}</p> : <><p>{t(sharing)}</p><SourceContextSelectionSummary value={config.sourceContext}/></>}
     <p>{t(team ? policy?.profile === "current-plan-2" ? "ai.team.artifactCostUnknown" : "ai.team.costUnknown" : policy?.profile === "current-plan-2" ? "ai.discussions.artifactCostUnknown" : policy ? "ai.discussions.costUnknown" : "ai.costUnknown")}</p>
   </section>;
+}
+
+export function CapturedRequestLimits({ config, member = false }: { config: AiConfig; member?: boolean }) {
+  const { t } = useTranslation();
+  const key = isChatGptSubscription(config) ? member ? "connections.subscriptionMemberSummary" : "connections.subscriptionRequestSummary"
+    : member ? "ai.team.capturedMemberLimits" : "connections.requestSummary";
+  return <p>{t(key, { requests: String(config.maxRequests), tokens: String(config.maxOutputTokens), retries: String(config.maxRetries), timeout: String(config.timeoutSeconds) })}</p>;
 }

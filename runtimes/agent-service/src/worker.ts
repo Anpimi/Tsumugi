@@ -53,6 +53,19 @@ function wireEvent(event: AgentEvent) {
 
 function observedUsage(event: unknown): Usage | null | undefined {
   if (!object(event)) return undefined;
+  if (["response.completed", "response.failed", "response.incomplete"].includes(String(event.type))) {
+    const response = object(event.response) ? event.response : undefined;
+    const raw = field(response, "usage");
+    if (!object(raw)) return null;
+    const input = field(raw, "input_tokens"), output = field(raw, "output_tokens");
+    if (!tokens(input) || !tokens(output)) return null;
+    const inputDetails = object(raw.input_tokens_details) ? raw.input_tokens_details : undefined;
+    const outputDetails = object(raw.output_tokens_details) ? raw.output_tokens_details : undefined;
+    const detail = (value: unknown, total: number) => tokens(value) && value <= total ? value.toString(10) : null;
+    return { promptTokens: input, completionTokens: output,
+      cacheReadTokens: detail(field(inputDetails, "cached_tokens"), input), cacheWriteTokens: null,
+      reasoningTokens: detail(field(outputDetails, "reasoning_tokens"), output) };
+  }
   const choice = Array.isArray(event.choices) && object(event.choices[0]) ? event.choices[0] : undefined;
   if (!Object.hasOwn(event, "usage") && !(choice && Object.hasOwn(choice, "usage"))) return undefined;
   // Follow Pi's current Chat Completions carrier priority, before its usage
@@ -218,17 +231,26 @@ class Worker {
       throw new Error("Invalid captured model capacity");
     }
     const endpoint = new URL(start.profile.endpoint);
-    if (!endpoint.pathname.endsWith("/chat/completions")) throw new Error("Unsupported controlled endpoint");
-    const model: Model<"openai-completions"> = {
-      id: start.profile.model, name: start.profile.model, api: "openai-completions", provider: "controlled",
-      baseUrl: endpoint.href.slice(0, -"/chat/completions".length), reasoning: false, input: ["text"],
-      // Zero is unknown model metadata, never a capacity promise or a trigger
-      // for automatic truncation/compaction. The captured profile owns bounds.
+    const subscription = start.profile.tokenField === "chatgpt_subscription";
+    if (subscription ? endpoint.href !== "https://api.openai.com/v1/responses" || start.profile.maxOutputTokens !== 0
+      : !endpoint.pathname.endsWith("/chat/completions") || start.profile.maxOutputTokens < 1 || start.profile.maxOutputTokens > 16384) {
+      throw new Error("Unsupported controlled endpoint or output limit");
+    }
+    const common = {
+      id: start.profile.model, name: start.profile.model, input: ["text"] as ("text")[], reasoning: false,
+      // Zero is unknown metadata; subscription requests are bounded by request
+      // count and plan quota. Pi omits the unsupported output-token parameter.
       contextWindow: start.profile.contextTokens ?? 0, maxTokens: start.profile.maxOutputTokens,
-      // Pi requires a calculation profile. Zero prices mean unpriced metadata;
-      // only raw provider usage is sent as an authoritative budget receipt.
+      // These are unpriced metadata, never a statement of subscription charges.
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      compat: { maxTokensField: start.profile.tokenField, supportsDeveloperRole: false, supportsStore: false },
+    };
+    const model: Model<"openai-completions"> | Model<"openai-responses"> = subscription ? {
+      ...common, api: "openai-responses", provider: "openai", baseUrl: "https://api.openai.com/v1",
+      compat: { supportsDeveloperRole: false, supportsMaxOutputTokens: false },
+    } : {
+      ...common, api: "openai-completions", provider: "controlled",
+      baseUrl: endpoint.href.slice(0, -"/chat/completions".length),
+      compat: { maxTokensField: start.profile.tokenField as "max_tokens" | "max_completion_tokens", supportsDeveloperRole: false, supportsStore: false },
     };
     const names = new Set<string>();
     const tools: AgentTool[] = start.tools.map(tool => {

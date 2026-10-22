@@ -6,6 +6,16 @@
         "additionalProperties": false,
         "description": "Non-secret saved connection defaults. Invocation scope, sharing and budgets\nremain in the separately captured AiConfig; this value grants no execution.",
         "properties": {
+          "chatgptAccount": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "credentialEnv": {
             "type": "string"
           },
@@ -24,6 +34,46 @@
           "model",
           "credentialEnv",
           "tokenField"
+        ],
+        "type": "object"
+      },
+      "ChatGptAccountRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "type": "object"
+      },
+      "ChatGptBeginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "registration": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ChatGptSessionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionId"
         ],
         "type": "object"
       },
@@ -204,6 +254,15 @@
       "change": {
         "$ref": "#/definitions/ModelConnectionChange"
       },
+      "chatGptAccount": {
+        "$ref": "#/definitions/ChatGptAccountRequest"
+      },
+      "chatGptBegin": {
+        "$ref": "#/definitions/ChatGptBeginRequest"
+      },
+      "chatGptSession": {
+        "$ref": "#/definitions/ChatGptSessionRequest"
+      },
       "resolve": {
         "$ref": "#/definitions/ConnectionResolveRequest"
       },
@@ -215,7 +274,10 @@
       "snapshot",
       "change",
       "action",
-      "resolve"
+      "resolve",
+      "chatGptBegin",
+      "chatGptSession",
+      "chatGptAccount"
     ],
     "title": "Requests",
     "type": "object",
@@ -229,6 +291,16 @@
         "additionalProperties": false,
         "description": "Non-secret saved connection defaults. Invocation scope, sharing and budgets\nremain in the separately captured AiConfig; this value grants no execution.",
         "properties": {
+          "chatgptAccount": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "credentialEnv": {
             "type": "string"
           },
@@ -247,6 +319,160 @@
           "model",
           "credentialEnv",
           "tokenField"
+        ],
+        "type": "object"
+      },
+      "ChatGptAccountIssue": {
+        "enum": [
+          "login_failed",
+          "login_expired",
+          "login_cancelled",
+          "storage_unavailable",
+          "session_superseded",
+          "reauthentication_required",
+          "remote_revocation_unconfirmed"
+        ],
+        "type": "string"
+      },
+      "ChatGptAccountStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ChatGptAccountView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ChatGptAccountIssue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "login": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ChatGptLoginView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "registrations": {
+            "items": {
+              "$ref": "#/definitions/ChatGptRegistrationView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "account",
+          "registrations",
+          "login",
+          "issue"
+        ],
+        "type": "object"
+      },
+      "ChatGptAccountView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "label": {
+            "type": "string"
+          },
+          "registration": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "id",
+          "registration",
+          "label"
+        ],
+        "type": "object"
+      },
+      "ChatGptLoginView": {
+        "additionalProperties": false,
+        "properties": {
+          "authorizationUrl": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "description": "Unix milliseconds. The listener also enforces a monotonic deadline.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "id",
+          "authorizationUrl",
+          "expiresAt"
+        ],
+        "type": "object"
+      },
+      "ChatGptModelCatalog": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/definitions/ChatGptModelView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "account",
+          "models"
+        ],
+        "type": "object"
+      },
+      "ChatGptModelView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "type": "object"
+      },
+      "ChatGptRegistrationView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
         ],
         "type": "object"
       },
@@ -972,6 +1198,15 @@
           }
         ]
       },
+      "chatGptCatalog": {
+        "$ref": "#/definitions/ChatGptModelCatalog"
+      },
+      "chatGptLogin": {
+        "$ref": "#/definitions/ChatGptLoginView"
+      },
+      "chatGptStatus": {
+        "$ref": "#/definitions/ChatGptAccountStatus"
+      },
       "connection": {
         "$ref": "#/definitions/AiConnection"
       },
@@ -990,6 +1225,9 @@
       "receipt",
       "action",
       "connection",
+      "chatGptStatus",
+      "chatGptLogin",
+      "chatGptCatalog",
       "error"
     ],
     "title": "Responses",

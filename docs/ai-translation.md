@@ -43,11 +43,34 @@ AI translation and Arena comparison are working areas in the sidebar. Connection
 
 Open a project with current source content and choose **AI translation**. Choose the working mode of each stage: understanding, resources, translation, checks and delivery. Manual and skipped stages require no model. Choosing manual translation hides connection and sharing settings; **Prepare manual plan** captures the selected entries and language and offers their manual editors. Glossary and context, Review and QA, and Build and export provide the other manual stages. AI assistance generates candidates. New preparations recommend saving candidates with their authorized checks while keeping selection manual. Checks can also be manual; an explicit selection policy separately permits choosing eligible translations. Resource adoption and delivery remain separate manual actions.
 
-For AI-assisted translation, select a connection preset or enter a custom full Chat Completions URL, model and API key environment variable name. Presets supply editable connection defaults; choose a model explicitly. For a service without authentication, clear the environment variable name. Set credentials in the environment before launching the desktop application; never paste a key into a URL or into the name field.
+For AI-assisted translation, choose a saved model connection or configure an
+API-key connection. On macOS, Settings also offers **Continue with ChatGPT**.
+Sign in and authorize Tsumugi in your system browser, then explicitly refresh
+the selected account's model list and save a connection using that account.
+Each account or workspace registration remains distinct, including registrations
+with the same email. Returning sign-in reuses its registration. A new login does
+not revive an older prepared request; select the new account and prepare again.
+Credentials stay in macOS Keychain, outside projects, plugins and the member
+runtime. Signing out stops local account use and attempts remote revocation;
+if revocation cannot be confirmed, disconnect Tsumugi in ChatGPT Settings.
+
+ChatGPT connections consume your authorized plan allowance and applicable
+credits. They use the official public Responses endpoint and have **no hard
+output-token cap**. Request count, concurrency, timeout and encoded input/output
+limits still apply; automatic retries are disabled. Reported tokens are recorded,
+but do not prove a dollar charge or unlimited access. Review and manage app usage
+in [ChatGPT Settings](https://chatgpt.com/#settings). Signing in or seeing a model
+in the directory does not prove that a particular request will be permitted.
+
+For an API-key connection, select a preset or enter a custom full Chat Completions
+URL, model and credential environment variable name. Presets supply editable
+defaults; choose a model explicitly. For a service without authentication, clear
+the environment variable name. Set credentials in the environment before launching
+the desktop application; never paste a key into a URL or into the name field.
 
 Remote endpoints require HTTPS. HTTP is allowed only for loopback endpoints. URL credentials, query strings, fragments and redirects are rejected. Choose the token field expected by the service: `max_tokens` or `max_completion_tokens`; the client does not silently switch fields or providers.
 
-The default budget is 20 selected units, concurrency 1, at most 20 requests, 2,000 output tokens per request, no automatic retries and a 60-second request timeout. You can edit the limits within the bounds shown in the form. Retries are limited to 429 and 503 responses and consume the same persistent request budget. Valid Retry-After delta seconds and HTTP dates are honored up to five seconds; a longer delay stops this attempt rather than sending early. Other retry delays use bounded exponential backoff and jitter. A network interruption or timeout is recorded as an unknown outcome and is never automatically retried. Cost and complete usage may be unknown even when a candidate succeeds.
+The API-key default budget is 20 selected units, concurrency 1, at most 20 requests, 2,000 output tokens per request, no automatic retries and a 60-second request timeout. You can edit the limits within the bounds shown in the form. Retries are limited to 429 and 503 responses and consume the same persistent request budget. Valid Retry-After delta seconds and HTTP dates are honored up to five seconds; a longer delay stops this attempt rather than sending early. Other retry delays use bounded exponential backoff and jitter. A network interruption or timeout is recorded as an unknown outcome and is never automatically retried. Cost and complete usage may be unknown even when a candidate succeeds.
 
 Connections are reused across AI and Arena requests with the same endpoint, timeout and proxy environment. Credentials are resolved for each dispatched request and attached only to that request. The current compatibility profile supports Chat Completions JSON text with the explicitly chosen token field, a 32 KiB shared prompt, 64 KiB response and 32 KiB embedded model output. Model context capacity is unknown; remote cancellation and remote outcome queries are unavailable.
 
@@ -77,7 +100,7 @@ Source coordinates, artifact identities and revision evidence stay local.
 Accepted execution and recovery retain the original capture, sharing choices and
 deadlines; editing a choice requires a new preview and confirmation.
 
-Requests contain text only: a fixed translation system instruction and a user message containing JSON text. No files, images, audio or tools are sent. The service must return a single assistant choice with `finish_reason: "stop"` and JSON content containing exactly `unitId`, `targetLocale` and `text`, copying the supplied identity and locale. The client validates output locally; it does not request a server-side JSON Schema mode.
+Direct requests contain text only: a fixed translation instruction and a user message containing JSON text. No files, images, audio or tools are sent. ChatGPT subscriptions must reach a successful `response.completed` event; Chat Completions must return a single assistant choice with `finish_reason: "stop"`. Both require JSON content containing exactly `unitId`, `targetLocale` and `text`, copying the supplied identity and locale. The client validates output locally; it does not request a server-side JSON Schema mode.
 
 Results are saved per unit. **Save candidate** adds an immutable AI revision to the ordinary translation history without selecting it or approving it. **Compare and select in editor** lets you compare, select, edit and run the normal checks. Manual saves and selections protect the entry from automatic selection. The editor displays this protection and requires a separate, scoped confirmation to release it; unsaved drafts and pending saves block release. Changed source or removed target languages prevent stale candidate adoption. Automatic plans show saving, checking, checked, selected or blocked states beside each result. Checked candidates retain complete findings and execution evidence without changing the selected translation, current QA or human approval. Checking completed does not mean all checks passed. Protected entries and check findings retain the candidate and mechanical evidence. Policy receipts describe past work without asserting the current selection or human approval. A permitted storage retry checks durable evidence and reuses its original action identities, without another provider request.
 

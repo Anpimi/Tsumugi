@@ -2,5 +2,5 @@
 export const MEMBER_PROFILE = {
   "maxFrameBytes": 25231360,
   "maxSessionBytes": 67108864,
-  "protocolVersion": 3
+  "protocolVersion": 4
 } as const;

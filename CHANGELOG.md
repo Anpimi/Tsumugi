@@ -7,8 +7,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 ## [Unreleased]
 
 Current development compatibility is project schema 61 and internal member
-protocol 3. Earlier format numbers below describe feature introduction baselines
+protocol 4. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
+
+- Add a separate ChatGPT sign-in connection on macOS, with verified OpenID
+  identity, protected Keychain credentials and independent account registrations.
+  Subscription requests use the public Responses API through the existing Pi
+  runtime and persistent request controls. They have no hard output-token cap;
+  API-key connections retain their existing limits. Record reported token usage
+  without claiming a dollar charge. Regenerate internal member contracts and
+  rebuild the matching runtime for protocol 4.
 
 - Preserve original Unicode when pasting into the translation editor on macOS.
   Keep newer input and the original draft when a paste is cancelled or cannot be

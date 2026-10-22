@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { FrameDecoder, decodeFrame, encodeFrame } from "../dist/agent-service/src/codec.js";
 import { MEMBER_PROFILE } from "../dist/agent-service/src/generated/profile.js";
+import { responsesSse } from "./responses-fixture.mjs";
 
 const workerPath = process.env.TSUMUGI_MEMBER_WORKER ?? fileURLToPath(new URL("../dist/agent-service/src/worker.js", import.meta.url));
 if (!isAbsolute(workerPath)) throw new Error("TSUMUGI_MEMBER_WORKER must be an absolute artifact path");
@@ -80,6 +81,49 @@ const usageInChoice = (usage, top = {}) => ({ id: "synthetic", object: "chat.com
   choices: [{ index: 0, delta: {}, finish_reason: null, usage }] });
 const knownUsage = (promptTokens, completionTokens, cacheReadTokens = null, cacheWriteTokens = null, reasoningTokens = null) => ({
   promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens,
+});
+
+test("subscription worker preserves actual terminal usage without output-cap or pricing claims", async t => {
+  for (const [terminal, usage, expected] of [
+    ["completed", { input_tokens: 100, output_tokens: 20000, input_tokens_details: { cached_tokens: 30 }, output_tokens_details: { reasoning_tokens: 400 } }, knownUsage(100, 20000, "30", null, "400")],
+    ["incomplete", { input_tokens: 0, output_tokens: 0, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } }, knownUsage(0, 0, "0", null, "0")],
+    ["failed", { input_tokens: 20, output_tokens: 3 }, knownUsage(20, 3)],
+    ["completed", { input_tokens: 20 }, null],
+    ["completed", undefined, null],
+  ]) {
+    await t.test(`${terminal}: ${JSON.stringify(usage)}`, async t => {
+      const state = { requests: [], http: [], usage: [] };
+      const parent = fixture(t, async (frame, { reply }) => {
+        if (frame.body.kind !== "request") return;
+        const call = frame.body.call;
+        if (call.method === "http") {
+          state.http.push(call);
+          const body = JSON.parse(call.body);
+          assert.equal(call.endpoint, "https://api.openai.com/v1/responses");
+          assert.equal(body.store, false); assert.equal(body.stream, true);
+          assert.equal(body.input[0].role, "developer");
+          assert.equal(body.input.some(message => message.role === "system"), false);
+          for (const key of ["max_output_tokens", "max_completion_tokens", "max_tokens", "temperature"]) assert.equal(Object.hasOwn(body, key), false);
+          reply(frame, { kind: "http", requestId: call.requestId, status: 200, contentType: "text/event-stream", body: responsesSse({ terminal, usage }) });
+        } else {
+          if (call.method === "usage") state.usage.push(call);
+          ordinaryReply(frame, reply, state);
+        }
+      });
+      parent.send(start({ context: [], maxTurns: 1,
+        profile: { endpoint: "https://api.openai.com/v1/responses", model: "synthetic-subscription", tokenField: "chatgpt_subscription", maxOutputTokens: 0, contextTokens: null } }));
+      await parent.wait(frames => frames.some(frame => frame.body.kind === "result"));
+      assert.equal(state.http.length, 1);
+      assert.equal(state.usage.length, 1);
+      assert.deepEqual(state.usage[0].usage, expected);
+      assert.equal(state.usage[0].requestId, state.requests[0]);
+      const last = parent.frames.find(frame => frame.body.kind === "result").body.messages.at(-1);
+      if (terminal === "completed") assert.equal(last.stopReason, "stop");
+      else assert.notEqual(last.stopReason, "stop");
+      assertNoNormalizedAssistantUsage(parent.frames);
+      parent.send({ kind: "close" }); assert.equal((await parent.ended).code, 0);
+    });
+  }
 });
 function assertNoNormalizedAssistantUsage(frames) {
   let assistants = 0;

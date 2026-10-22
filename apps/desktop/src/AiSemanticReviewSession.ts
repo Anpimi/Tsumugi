@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type SetStateAction } from "react";
-import { defaultAiConfig, editedAiConfig, sameAiConfig, type AiConfig } from "./aiCommands";
+import { connectionAiConfig, defaultAiConfig, editedAiConfig, sameAiConfig, type AiConfig } from "./aiCommands";
 import { aiSemanticReviewCommands, type AiSemanticReviewPrepared, type AiSemanticReviewRule, type AiSemanticReviewTarget } from "./aiSemanticReviewCommands";
 import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
 import type { ConnectionReadView } from "./connectionCommands";
@@ -71,7 +71,7 @@ export function useAiSemanticReviewSession(project: ProjectView, target: ReviewT
     if (!view || connections.current() !== view) return false;
     const profile = view.snapshot.profiles.find(value => value.id === id && !value.archived), reference = view.references.find(value => value.profileId === id);
     if (!profile || !reference) return false;
-    setConfig(before => ({ ...before, ...profile.connection, connectionProfile: reference }));
+    setConfig(before => connectionAiConfig(before, profile.connection, reference));
     update(before => ({ ...before, presetName: "custom" })); return true;
   }
   function preparationCurrent(value: Preparation) {

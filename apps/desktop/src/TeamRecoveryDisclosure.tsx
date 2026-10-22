@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { CapturedRequestLimits } from "./ModelConnectionPicker";
 import { AiPreviewItems } from "./AiPreviewItems";
 import { AiProviderBudget } from "./AiUsage";
 import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
@@ -30,7 +31,7 @@ export function TeamRecoveryDisclosure({ plan, preview, unresolvedWork, onOpenTa
       const input = preview.memberPreviews.find(value => value.memberId === member.memberId)!;
       return <section key={member.memberId} aria-label={member.displayName}><h5>{member.displayName}</h5><pre className="ai-text">{member.role}</pre>
         <p>{t("ai.discussions.destination", { endpoint: member.config.endpoint, model: member.config.model })}</p>
-        <p>{t("ai.team.capturedMemberLimits", { requests: String(member.config.maxRequests), tokens: String(member.config.maxOutputTokens), timeout: String(member.config.timeoutSeconds), retries: String(member.config.maxRetries) })}</p>
+        <CapturedRequestLimits config={member.config} member/>
         <p>{t("ai.team.allowedKinds", { kinds: member.kinds.map(kind => t(`ai.team.workKinds.${kind}`)).join(", ") })}</p>
         <p>{t("ai.team.allowedEntries", { entries: member.unitIds.map(id => names.get(id) ?? "").join(", ") })}</p>
         <ToolGuidanceSharing plan={plan} config={member.config} toolHandles={member.toolHandles}/>

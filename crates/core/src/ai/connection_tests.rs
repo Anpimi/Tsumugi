@@ -8,6 +8,7 @@ fn capture_profile(store: &ModelConnectionStore) -> AiConfig {
         model: "Synthetic model".into(),
         credential_env: String::new(),
         token_field: "max_tokens".into(),
+        chatgpt_account: None,
     };
     store
         .change(&ModelConnectionChange {

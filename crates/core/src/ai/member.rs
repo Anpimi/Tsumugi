@@ -90,8 +90,7 @@ pub(super) fn validate_output(
     if output.requests > config.max_requests
         || output.usage.is_none() && !output.usage_incomplete
         || output.usage.as_ref().is_some_and(|usage| {
-            usage.completion_tokens
-                > u64::from(config.max_output_tokens) * u64::from(output.requests)
+            config.output_tokens_exceeded(usage.completion_tokens, output.requests)
         })
     {
         return Err(error(ErrorCode::OutputInvalid, "member-output"));

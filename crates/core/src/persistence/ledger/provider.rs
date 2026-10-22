@@ -10,15 +10,41 @@ fn decode_usage(bytes: &[u8]) -> Result<Usage, ExecutionError> {
     Ok(usage)
 }
 
-fn captured_member_config(input: &FixedInput) -> Result<crate::ai::AiConfig, ExecutionError> {
-    if input.envelope().operation == crate::ai::team::OPERATION {
-        return Ok(crate::ai::team::settings(input)?.config);
+fn validate_request_capture(input: &FixedInput, item: ExecutionId, capture: &ProviderRequestCapture)
+    -> Result<(), ExecutionError> {
+    use crate::ai::{self, provider::CompletionPrompt};
+    let (config, prompt) = match input.envelope().operation.as_str() {
+        ai::team::OPERATION => (ai::team::settings(input)?.config, None),
+        ai::OPERATION => {
+            let settings = ai::settings(input)?;
+            let prompt = if settings.agent.is_none() {
+                Some(ai::request_body(&settings.config, &ai::item_payload(input, item)?)?)
+            } else { None };
+            (settings.config, prompt)
+        }
+        ai::arena::OPERATION => {
+            let settings = ai::arena::settings(input)?;
+            let item = ai::arena::item_payload(input, item)?;
+            let config = settings.config.request_config(item.slot)?;
+            let prompt = ai::request_body(&config, &item.item)?;
+            (config, Some(prompt))
+        }
+        ai::semantic_review::OPERATION => {
+            let settings = ai::semantic_review::settings(input)?;
+            let item = ai::semantic_review::item_payload(input, item)?;
+            let prompt = ai::semantic_review::request_body(&settings.config, &settings.rules, &item)?;
+            (settings.config, Some(prompt))
+        }
+        _ => return Err(error(ErrorCode::Unauthorized, "member-dispatch")),
+    };
+    capture.validate(&config)?;
+    if let Some(prompt) = prompt {
+        if !config.is_chatgpt_subscription() {
+            return Err(error(ErrorCode::Unauthorized, "ai-completion-profile"));
+        }
+        capture.validate_completion(&CompletionPrompt::capture(&prompt)?)?;
     }
-    let settings = crate::ai::settings(input)?;
-    if settings.agent.is_none() {
-        return Err(error(ErrorCode::Unauthorized, "member-dispatch"));
-    }
-    Ok(settings.config)
+    Ok(())
 }
 
 fn team_budget_limit(input: &FixedInput) -> Result<u32, ExecutionError> {
@@ -172,9 +198,8 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
                 if codec::digest(&bytes) != digest { return Err(error(ErrorCode::CorruptLedger, "provider-request-capture")); }
                 let capture: ProviderRequestCapture = codec::decode(&bytes, 131072).map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
                 let input = load_input(c, parse_id(attempt)?)?;
-                let config = captured_member_config(&input)
-                    .map_err(|_| error(ErrorCode::CorruptLedger, "provider-member-association"))?;
-                capture.validate(&config).map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
+                validate_request_capture(&input, item, &capture)
+                    .map_err(|_| error(ErrorCode::CorruptLedger, "provider-request-capture"))?;
                 crate::persistence::validate_team_provider_view_history_in(c, &input, item, capture.team_view.as_ref())
                     .map_err(|_| error(ErrorCode::CorruptLedger, "provider-team-view"))?;
                 crate::persistence::application::coordination::validate_provider_view_history_in(
@@ -544,7 +569,7 @@ impl ProjectStore {
         capture: Option<&ProviderRequestCapture>,
     ) -> Result<(), ExecutionError> {
         let captured = if let Some(capture) = capture {
-            capture.validate(&captured_member_config(&request.input)?)?;
+            validate_request_capture(&request.input, request.item_id, capture)?;
             Some(codec::encode(capture, 131072)?)
         } else { None };
         let digest = captured.as_ref().map(|bytes| codec::digest(bytes));

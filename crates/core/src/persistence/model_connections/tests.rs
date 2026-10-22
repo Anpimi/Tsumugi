@@ -9,6 +9,7 @@ fn connection(model: &str) -> AiConnection {
         model: model.into(),
         credential_env: "SYNTHETIC_KEY_REFERENCE".into(),
         token_field: "max_tokens".into(),
+        chatgpt_account: None,
     }
 }
 fn setup() -> (tempfile::TempDir, ModelConnectionStore) {

@@ -136,8 +136,7 @@ impl TeamWorkSeed {
             || requests > self.config().max_requests
             || usage.is_none() && !usage_incomplete
             || usage.as_ref().is_some_and(|u| {
-                u.completion_tokens
-                    > u64::from(self.config().max_output_tokens) * u64::from(requests)
+                self.config().output_tokens_exceeded(u.completion_tokens, requests)
                     || u.validate_aggregate(usage_incomplete).is_err()
             })
         {
@@ -206,9 +205,12 @@ impl Runner for TeamWorkRunner {
         cancel: Cancellation,
         results: ResultSender,
     ) -> Result<(), ExecutionError> {
-        let outcome = self
-            .executor
-            .execute(request.clone(), cancel, self.service.clone());
+        let outcome = (|| {
+            let config = settings(&request.input)?.config;
+            let output = self.executor.execute(request.clone(), cancel.clone(), self.service.clone())?;
+            self.service.check_completed_authority(&request, &cancel, &config)?;
+            Ok(output)
+        })();
         send_outcome(request, results, outcome)
     }
 }

@@ -29,6 +29,8 @@ pub struct AiConnection {
     pub model: String,
     pub credential_env: String,
     pub token_field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chatgpt_account: Option<ExecutionId>,
 }
 
 impl AiConnection {
@@ -38,6 +40,7 @@ impl AiConnection {
             model: config.model.clone(),
             credential_env: config.credential_env.clone(),
             token_field: config.token_field.clone(),
+            chatgpt_account: config.chatgpt_account,
         }
     }
 
@@ -46,6 +49,11 @@ impl AiConnection {
         config.model.clone_from(&self.model);
         config.credential_env.clone_from(&self.credential_env);
         config.token_field.clone_from(&self.token_field);
+        config.chatgpt_account = self.chatgpt_account;
+        if self.chatgpt_account.is_some() {
+            config.max_output_tokens = 0;
+            config.max_retries = 0;
+        }
     }
 
     pub fn validate(&self) -> Result<(), ExecutionError> {
@@ -77,6 +85,8 @@ pub struct AiConfig {
     pub model: String,
     pub credential_env: String,
     pub token_field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chatgpt_account: Option<ExecutionId>,
     pub max_items: u32,
     pub concurrency: u32,
     pub max_requests: u32,
@@ -96,6 +106,7 @@ impl Default for AiConfig {
             model: String::new(),
             credential_env: "OPENAI_API_KEY".into(),
             token_field: "max_tokens".into(),
+            chatgpt_account: None,
             max_items: 20,
             concurrency: 1,
             max_requests: 20,
@@ -118,6 +129,13 @@ fn context_strategy_schema(generator: &mut schemars::SchemaGenerator) -> schemar
     <Option<crate::ContextStrategyReference> as schemars::JsonSchema>::json_schema(generator)
 }
 impl AiConfig {
+    pub fn is_chatgpt_subscription(&self) -> bool { self.chatgpt_account.is_some() }
+
+    pub(crate) fn output_tokens_exceeded(&self, tokens: u64, requests: u32) -> bool {
+        !self.is_chatgpt_subscription()
+            && tokens > u64::from(self.max_output_tokens) * u64::from(requests)
+    }
+
     pub fn validate(&self) -> Result<(), ExecutionError> {
         self.source_context.validate()?;
         if let Some(reference) = &self.connection_profile {
@@ -161,10 +179,22 @@ impl AiConfig {
             return Err(error(ErrorCode::InvalidInput, "ai-credential"));
         }
         provider::ProviderProfile::parameters(&self.token_field)?;
+        if self.is_chatgpt_subscription() {
+            if self.endpoint != provider::CHATGPT_RESPONSES_ENDPOINT
+                || !self.credential_env.is_empty()
+                || self.token_field != "chatgpt_subscription"
+                || self.max_output_tokens != 0
+                || self.max_retries != 0
+            {
+                return Err(error(ErrorCode::InvalidInput, "ai-subscription-profile"));
+            }
+        } else if self.token_field == "chatgpt_subscription" {
+            return Err(error(ErrorCode::InvalidInput, "ai-subscription-account"));
+        }
         if !(1..=100).contains(&self.max_items)
             || !(1..=2).contains(&self.concurrency)
             || !(1..=300).contains(&self.max_requests)
-            || !(1..=16384).contains(&self.max_output_tokens)
+            || (!self.is_chatgpt_subscription() && !(1..=16384).contains(&self.max_output_tokens))
             || self.max_retries > 2
             || !(1..=120).contains(&self.timeout_seconds)
         {
@@ -437,12 +467,12 @@ pub fn request_body(config: &AiConfig, item: &AiItem) -> Result<Value, Execution
     validate_source_context(config, item, None)?;
     let profile = provider::ProviderProfile::parameters(&config.token_field)?;
     let content = prompt_content(config, item)?;
-    let mut body = match profile.protocol {
-        provider::ProviderProtocol::ChatCompletionsJson => {
-            json!({"model":config.model,"stream":false,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]})
-        }
-    };
-    body[&profile.output_token_field] = config.max_output_tokens.into();
+    // This is the captured completion prompt. Pi serializes the subscription
+    // profile; it is never sent as Chat Completions to the Responses endpoint.
+    let mut body = json!({"model":config.model,"stream":false,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]});
+    if !config.is_chatgpt_subscription() {
+        body[&profile.output_token_field] = config.max_output_tokens.into();
+    }
     Ok(body)
 }
 
@@ -529,6 +559,7 @@ impl AiRunner {
                 .ok_or_else(|| error(ErrorCode::DependencyConflict, "member-runtime"))?;
             request.check_service_dispatch()?;
             let output = executor.execute(request.clone(), cancel.clone(), self.service.clone())?;
+            self.service.check_completed_authority(request, cancel, &s.config)?;
             member::validate_output(&s.config, &item, &output)?;
             return Ok(output);
         }
@@ -580,14 +611,15 @@ fn decode_model_output(
 
 /// The original provider transport owns reservations, retry accounting and
 /// uncertain dispatches. Operation adapters validate their own typed content.
-pub(super) struct ProviderCompletion {
+#[derive(Debug)]
+pub struct ProviderCompletion {
     pub content: String,
     pub usage: Option<Usage>,
     pub requests: u32,
     pub usage_incomplete: bool,
 }
 pub(super) fn execute_completion(
-    service: &provider::ProviderService,
+    service: &Arc<provider::ProviderService>,
     request: &DispatchRequest,
     cancel: &Cancellation,
     config: &AiConfig,
@@ -599,11 +631,17 @@ pub(super) fn execute_completion(
             .provider
             .as_ref()
             .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-budget-host"))?;
+        if cancel.is_requested() {
+            return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
+        }
+        if config.is_chatgpt_subscription() {
+            return service.execute_subscription_completion(request, cancel, config, body);
+        }
         for retry in 0..=config.max_retries {
             if cancel.is_requested() {
                 return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
             }
-            let key = provider::ProviderService::credential(config)?;
+            let key = service.credential(config)?;
             service.wait_rate(config, cancel)?;
             let reservation = budget.reserve(config.max_requests, cancel)?;
             if cancel.is_requested() {
