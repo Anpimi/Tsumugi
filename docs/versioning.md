@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+macOS account storage retains its existing Keychain item and atomic vault owner.
+Serialized background operations temporarily disallow Keychain UI within this
+process, restore the prior policy, and report denied access for explicit recovery.
+The exact already-locked Security framework wrapper is now a direct dependency.
+There is no account-store migration, API/schema/protocol change or version-source
+change. This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with bilingual Unreleased entries and no additional bump.
+
 AI work-plan preparation accepts Core's canonical preview item order while
 retaining complete identity checks, the immutable preview and the user's original
 selection. This UI correction changes no API, schema, protocol, persisted format,

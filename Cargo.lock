@@ -5116,6 +5116,7 @@ dependencies = [
  "rmcp",
  "rusqlite",
  "schemars 1.2.2",
+ "security-framework 3.7.0",
  "semver",
  "serde",
  "serde_json",

@@ -6,6 +6,7 @@ struct MemoryStorage {
     value: Arc<Mutex<Vault>>,
     fail: Arc<AtomicBool>,
     reads: Arc<AtomicUsize>,
+    writes: Arc<AtomicUsize>,
 }
 impl storage::CredentialStorage for MemoryStorage {
     fn load(&self) -> Result<Vault, ExecutionError> {
@@ -14,6 +15,7 @@ impl storage::CredentialStorage for MemoryStorage {
         Ok(self.value.lock().unwrap().clone())
     }
     fn save(&self, vault: &Vault) -> Result<(), ExecutionError> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
         storage::validate_fixture(vault)?;
         if self.fail.load(Ordering::SeqCst) { return Err(storage_error()); }
         *self.value.lock().unwrap() = vault.clone();
@@ -33,7 +35,7 @@ impl oauth::Remote for RejectRemote {
 
 fn memory(vault: Vault) -> MemoryStorage {
     MemoryStorage { value:Arc::new(Mutex::new(vault)), fail:Arc::new(AtomicBool::new(false)),
-        reads:Arc::new(AtomicUsize::new(0)) }
+        reads:Arc::new(AtomicUsize::new(0)), writes:Arc::new(AtomicUsize::new(0)) }
 }
 fn owner(storage: MemoryStorage, remote: impl oauth::Remote + 'static) -> ChatGptAccounts {
     ChatGptAccounts { state:Mutex::new(AccountState::default()), rotation:Mutex::new(()),
@@ -68,6 +70,26 @@ fn synthetic_constructor_and_offline_status_never_create_external_credentials() 
     owner.status().unwrap();
     assert_eq!(storage.reads.load(Ordering::SeqCst),1);
     assert!(ChatGptAccounts::synthetic().status().unwrap().account.is_none());
+}
+
+#[test]
+fn initial_storage_denial_preserves_the_saved_account_and_allows_explicit_read_retry() {
+    let account = ExecutionId::new();
+    let storage = memory(vault(vec![registration(account,"oaiapp_original",false)],account));
+    storage.fail.store(true, Ordering::SeqCst);
+    let owner = owner(storage.clone(),RejectRemote);
+    for error in [owner.status().unwrap_err(), owner.check_active(account).unwrap_err(),
+        owner.access_token(account).unwrap_err()] {
+        assert_eq!(error.stage,"chatgpt-secure-storage");
+    }
+    assert!(owner.lock().unwrap().vault.is_none());
+    assert_eq!(storage.value.lock().unwrap().active,Some(account));
+    assert_eq!(storage.writes.load(Ordering::SeqCst),0);
+    storage.fail.store(false, Ordering::SeqCst);
+    assert_eq!(owner.status().unwrap().account.unwrap().id,account);
+    assert_eq!(owner.access_token(account).unwrap(),"synthetic-access");
+    assert_eq!(storage.reads.load(Ordering::SeqCst),4);
+    assert_eq!(storage.writes.load(Ordering::SeqCst),0);
 }
 
 #[test]

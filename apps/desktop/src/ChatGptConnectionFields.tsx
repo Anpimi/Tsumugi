@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useApplicationQueryClient } from "./ApplicationReadProvider";
 import { chatGptCommands, type ChatGptAccountStatus, type ChatGptLoginView, type ChatGptModelCatalog } from "./ChatGptCommands";
-import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
+import { CommandFailureDetails, commandFailure, failureReason, type CommandFailure } from "./CommandFailure";
 import type { AiConnection } from "./connectionCommands";
 
 const accountKey = ["application", "chatgpt", "account"] as const;
@@ -32,6 +32,8 @@ export function ChatGptConnectionFields({ connection, disabled, onChange, modelI
   const subscription = connection.tokenField === "chatgpt_subscription";
   const selected = !!account && account.id === connection.chatgptAccount;
   const models = catalog && catalog.account === connection.chatgptAccount ? catalog.models : null;
+  const readFailure = query.isError ? commandFailure(query.error) : null;
+  const storageUnavailable = [readFailure, failure].some(value => failureReason(value) === "chatgpt-secure-storage");
   function accept(status: ChatGptAccountStatus) { client.setQueryData(accountKey, status); }
   async function action(work: () => Promise<void>) {
     if (running.current || disabled) return;
@@ -92,8 +94,9 @@ export function ChatGptConnectionFields({ connection, disabled, onChange, modelI
         const next = await chatGptCommands.cancel(id); if (alive.current) { accept(next); setPending(null); }
       }); }}>{t("connections.chatgpt.cancel")}</button></div> : null}
     {status?.issue ? <p role="status">{t(`connections.chatgpt.issues.${status.issue}`)}</p> : null}
-    {query.isError ? <div role="alert"><p>{t("connections.chatgpt.readFailed")}</p><CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
+    {query.isError ? <div role="alert"><p>{t("connections.chatgpt.readFailed")}</p><CommandFailureDetails failure={readFailure}/></div> : null}
     {failure ? <div role="alert"><p>{t("connections.chatgpt.actionFailed")}</p><CommandFailureDetails failure={failure}/></div> : null}
+    {storageUnavailable ? <p>{t("connections.chatgpt.storageHelp")}</p> : null}
     <p>{t("connections.chatgpt.logoutHelp")}</p>
     {subscription ? <>
       <p>{t(selected ? "connections.chatgpt.selected" : "connections.chatgpt.accountUnavailable", { account: account?.label ?? "" })}</p>

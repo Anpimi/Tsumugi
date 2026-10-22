@@ -7,6 +7,33 @@ use std::{
 
 const MAX_VAULT_BYTES: usize = 1024 * 1024;
 
+#[cfg(target_os = "macos")]
+fn noninteractive<T>(
+    operation: impl FnOnce() -> Result<T, ExecutionError>,
+) -> Result<T, ExecutionError> {
+    use security_framework::os::macos::keychain::SecKeychain;
+
+    // Legacy Keychain UI policy belongs to this process. Serialize our secure
+    // store operations and restore the prior policy before releasing this lock.
+    // A per-query SecItem flag does not cover legacy Keychain access reliably.
+    static OPERATIONS: Mutex<()> = Mutex::new(());
+    let _operation = OPERATIONS.lock().map_err(|_| storage_error())?;
+    let allowed = SecKeychain::user_interaction_allowed().map_err(|_| storage_error())?;
+    let interaction = if allowed {
+        Some(SecKeychain::disable_user_interaction().map_err(|_| storage_error())?)
+    } else {
+        // The framework guard restores true on drop; do not create it when the
+        // process already disallows interaction.
+        None
+    };
+    let result = operation();
+    drop(interaction);
+    if SecKeychain::user_interaction_allowed().map_err(|_| storage_error())? != allowed {
+        return Err(storage_error());
+    }
+    result
+}
+
 pub(super) trait CredentialStorage: Send + Sync {
     fn load(&self) -> Result<Vault, ExecutionError>;
     fn save(&self, vault: &Vault) -> Result<(), ExecutionError>;
@@ -26,12 +53,17 @@ pub(super) struct KeychainStorage {
 
 impl KeychainStorage {
     pub(super) fn new(directory: &Path) -> Self {
-        Self { directory: directory.into(), installation: Mutex::new(None) }
+        Self {
+            directory: directory.into(),
+            installation: Mutex::new(None),
+        }
     }
 
     fn host(&self) -> Result<ExecutionId, ExecutionError> {
         let mut installation = self.installation.lock().map_err(|_| storage_error())?;
-        if let Some(lease) = installation.as_ref() { return Ok(lease.host); }
+        if let Some(lease) = installation.as_ref() {
+            return Ok(lease.host);
+        }
         std::fs::create_dir_all(&self.directory).map_err(|_| storage_error())?;
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
@@ -40,7 +72,8 @@ impl KeychainStorage {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(self.directory.join("chatgpt-accounts.lock"))
+        let mut file = options
+            .open(self.directory.join("chatgpt-accounts.lock"))
             .map_err(|_| storage_error())?;
         file.try_lock().map_err(|error| match error {
             std::fs::TryLockError::WouldBlock => failure(ErrorCode::Busy, "chatgpt-account-owner"),
@@ -49,11 +82,15 @@ impl KeychainStorage {
         // This file contains only a random, non-secret installation identity.
         // Credentials are never written to it or to any application data file.
         let mut raw = String::new();
-        (&mut file).take(65).read_to_string(&mut raw).map_err(|_| storage_error())?;
+        (&mut file)
+            .take(65)
+            .read_to_string(&mut raw)
+            .map_err(|_| storage_error())?;
         let host = if raw.is_empty() {
             let host = ExecutionId::new();
             file.seek(SeekFrom::Start(0)).map_err(|_| storage_error())?;
-            file.write_all(host.to_string().as_bytes()).map_err(|_| storage_error())?;
+            file.write_all(host.to_string().as_bytes())
+                .map_err(|_| storage_error())?;
             file.sync_all().map_err(|_| storage_error())?;
             host
         } else {
@@ -75,12 +112,17 @@ impl CredentialStorage for KeychainStorage {
         #[cfg(target_os = "macos")]
         {
             let host = self.host()?;
-            let bytes = match self.entry(host)?.get_secret() {
-                Ok(bytes) => bytes,
-                Err(keyring::Error::NoEntry) => return Ok(Vault::empty(host)),
-                Err(_) => return Err(storage_error()),
+            let bytes = noninteractive(|| match self.entry(host)?.get_secret() {
+                Ok(bytes) => Ok(Some(bytes)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(_) => Err(storage_error()),
+            })?;
+            let Some(bytes) = bytes else {
+                return Ok(Vault::empty(host));
             };
-            if bytes.len() > MAX_VAULT_BYTES { return Err(storage_error()); }
+            if bytes.len() > MAX_VAULT_BYTES {
+                return Err(storage_error());
+            }
             let vault: Vault = serde_json::from_slice(&bytes).map_err(|_| storage_error())?;
             validate(&vault, host)?;
             Ok(vault)
@@ -99,10 +141,16 @@ impl CredentialStorage for KeychainStorage {
             let host = self.host()?;
             validate(vault, host)?;
             let bytes = serde_json::to_vec(vault).map_err(|_| storage_error())?;
-            if bytes.len() > MAX_VAULT_BYTES { return Err(storage_error()); }
+            if bytes.len() > MAX_VAULT_BYTES {
+                return Err(storage_error());
+            }
             // A single Keychain item replaces the complete document in one
             // secure-store operation, including every rotating token field.
-            self.entry(host)?.set_secret(&bytes).map_err(|_| storage_error())
+            noninteractive(|| {
+                self.entry(host)?
+                    .set_secret(&bytes)
+                    .map_err(|_| storage_error())
+            })
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -120,24 +168,41 @@ fn validate(vault: &Vault, host: ExecutionId) -> Result<(), ExecutionError> {
     let mut clients = std::collections::BTreeSet::new();
     let mut accounts = std::collections::BTreeSet::new();
     for record in &vault.registrations {
-        if !registrations.insert(record.id) || !clients.insert(record.client_id.as_str()) ||
-            !oauth::valid_client_id(&record.client_id) || !bounded_text(&record.subject, 1024) ||
-            !bounded_text(&record.label, 384)
-        { return Err(storage_error()); }
+        if !registrations.insert(record.id)
+            || !clients.insert(record.client_id.as_str())
+            || !oauth::valid_client_id(&record.client_id)
+            || !bounded_text(&record.subject, 1024)
+            || !bounded_text(&record.label, 384)
+        {
+            return Err(storage_error());
+        }
         if let Some(credentials) = &record.credentials {
-            if !accounts.insert(credentials.account) ||
-                !oauth::valid_token(&credentials.access_token) ||
-                !oauth::valid_token(&credentials.refresh_token) ||
-                !oauth::valid_token(&credentials.id_token) ||
-                !bounded_text(&credentials.nonce, 256) ||
-                !oauth::has_inference_scopes(&credentials.scopes) ||
-                credentials.scopes.len() > 32 || credentials.scopes.iter().any(|scope| !bounded_text(scope, 256)) ||
-                credentials.expires_at == 0 ||
-                credentials.earliest_refresh_at.is_some_and(|at| at > credentials.expires_at)
-            { return Err(storage_error()); }
+            if !accounts.insert(credentials.account)
+                || !oauth::valid_token(&credentials.access_token)
+                || !oauth::valid_token(&credentials.refresh_token)
+                || !oauth::valid_token(&credentials.id_token)
+                || !bounded_text(&credentials.nonce, 256)
+                || !oauth::has_inference_scopes(&credentials.scopes)
+                || credentials.scopes.len() > 32
+                || credentials
+                    .scopes
+                    .iter()
+                    .any(|scope| !bounded_text(scope, 256))
+                || credentials.expires_at == 0
+                || credentials
+                    .earliest_refresh_at
+                    .is_some_and(|at| at > credentials.expires_at)
+            {
+                return Err(storage_error());
+            }
         }
     }
-    if vault.active.is_some_and(|account| !accounts.contains(&account)) { return Err(storage_error()); }
+    if vault
+        .active
+        .is_some_and(|account| !accounts.contains(&account))
+    {
+        return Err(storage_error());
+    }
     Ok(())
 }
 
@@ -146,4 +211,38 @@ pub(super) fn bounded_text(value: &str, limit: usize) -> bool {
 }
 
 #[cfg(test)]
-pub(super) fn validate_fixture(vault: &Vault) -> Result<(), ExecutionError> { validate(vault, vault.host) }
+pub(super) fn validate_fixture(vault: &Vault) -> Result<(), ExecutionError> {
+    validate(vault, vault.host)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use security_framework::os::macos::keychain::SecKeychain;
+
+    #[test]
+    fn secure_storage_policy_disallows_ui_and_restores_success_and_failure() {
+        let before = SecKeychain::user_interaction_allowed().unwrap();
+        assert_eq!(
+            noninteractive(|| {
+                assert!(!SecKeychain::user_interaction_allowed().unwrap());
+                Ok(7)
+            })
+            .unwrap(),
+            7
+        );
+        assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), before);
+        let error = noninteractive::<()>(|| {
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+            Err(storage_error())
+        })
+        .unwrap_err();
+        assert_eq!(error.stage, "chatgpt-secure-storage");
+        assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), before);
+        let outer = before.then(|| SecKeychain::disable_user_interaction().unwrap());
+        noninteractive(|| Ok(())).unwrap();
+        assert!(!SecKeychain::user_interaction_allowed().unwrap());
+        drop(outer);
+        assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), before);
+    }
+}

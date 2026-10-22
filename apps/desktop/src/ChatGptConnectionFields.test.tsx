@@ -109,3 +109,23 @@ it("rejects malformed account status without changing the retained connection", 
   expect(screen.getByLabelText("Draft connection")).toHaveTextContent(oldAccountId);
   expect(screen.queryByText("synthetic-untrusted-value")).not.toBeInTheDocument();
 });
+
+it.each(["en-US", "zh-CN"])("recovers from protected storage denial only after an explicit read in %s", async locale => {
+  await i18n.changeLanguage(locale);
+  invoke.mockRejectedValueOnce({ code: "storage-failed", reason: "chatgpt-secure-storage" });
+  const user = userEvent.setup(); setup();
+  await user.type(screen.getByLabelText("Draft note"), "Preserved B 日本語");
+  const read = screen.getByRole("button", { name: i18n.t("connections.chatgpt.check") });
+  await user.click(read);
+  await screen.findByText(i18n.t("connections.chatgpt.storageHelp"));
+  expect(read).toBeEnabled();
+  expect(screen.getByLabelText("Draft note")).toHaveValue("Preserved B 日本語");
+  expect(screen.getByLabelText("Draft connection")).toHaveTextContent(oldAccountId);
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_chatgpt_account"]);
+  await user.click(read);
+  await screen.findByText(i18n.t("connections.chatgpt.signedIn", { account: "Synthetic account 日本語" }));
+  expect(screen.queryByText(i18n.t("connections.chatgpt.storageHelp"))).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Draft note")).toHaveValue("Preserved B 日本語");
+  expect(screen.getByLabelText("Draft connection")).toHaveTextContent(oldAccountId);
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_chatgpt_account", "read_chatgpt_account"]);
+});

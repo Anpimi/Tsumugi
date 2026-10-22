@@ -54,3 +54,4 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem", "Wi
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "=0.2.189"
 keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
+security-framework = "=3.7.0"

@@ -10,6 +10,10 @@ Current development compatibility is project schema 61 and internal member
 protocol 4. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.
 
+- Fail protected-account storage access promptly when macOS requires Keychain
+  interaction, preserving credentials and connection drafts for explicit recovery.
+  Background reads and token updates no longer wait for an authentication dialog.
+
 - Accept Core's canonical item order in multi-entry AI work-plan previews while
   verifying complete, unique entry coverage and preserving the original selection.
 

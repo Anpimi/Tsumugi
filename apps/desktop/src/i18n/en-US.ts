@@ -531,6 +531,7 @@ connections: {
     "closeHelp": "Closing this panel stops waiting here. Use Cancel sign-in to stop the pending sign-in.",
     "cancel": "Cancel sign-in",
     "readFailed": "Account status could not be read. Your connection draft is kept.",
+    "storageHelp": "Restore this application’s access to the login keychain, then choose Read account status. Background operations do not open Keychain authentication dialogs. Reading status does not sign in, retry generation or replace your connection draft.",
     "actionFailed": "The account action could not be confirmed. Read account status before trying again.",
     "logoutHelp": "Signing out removes this application’s selected credentials. Saved connections and captured tasks keep their account references and require a new explicit account choice after a later sign-in.",
     "accountReference": "Saved ChatGPT account reference",
