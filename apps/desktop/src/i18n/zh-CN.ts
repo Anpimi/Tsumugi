@@ -490,7 +490,7 @@ connections: {
   "advancedScheme": "方案 {{number}} 的连接与请求上限",
   "open": "连接设置",
   "title": "模型连接档案",
-  "description": "为本应用保存有名称的 Chat Completions 兼容连接默认值。每次准备仍独立选择范围、分享项和预算。",
+  "description": "为本应用保存有名称的 ChatGPT 登录或 API Key 连接默认值。每次准备仍独立选择范围、分享项和预算。",
   "close": "关闭并保留草稿",
   "savedProfiles": "已保存连接",
   "editProfile": "连接草稿",

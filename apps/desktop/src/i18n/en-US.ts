@@ -487,7 +487,7 @@ connections: {
   "advancedScheme": "Connection and request limits for scheme {{number}}",
   "open": "Connection settings",
   "title": "Model connections",
-  "description": "Save named Chat Completions-compatible connection defaults for this application. Request scope, sharing and budgets are chosen separately for each preparation.",
+  "description": "Save named ChatGPT sign-in or API-key connection defaults for this application. Request scope, sharing and budgets are chosen separately for each preparation.",
   "close": "Close and keep draft",
   "savedProfiles": "Saved connections",
   "editProfile": "Connection draft",
