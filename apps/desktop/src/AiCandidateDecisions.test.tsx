@@ -363,6 +363,32 @@ async function openProduction(manual = false) {
   return { handle, user };
 }
 
+it.each(["inspected", "rejected"] as const)("opens the AI source entry in the manual editor after the %s candidate cached an equal snapshot", async phase => {
+  const original = invoke.getMockImplementation()!, snapshots: ReturnType<typeof editor>[] = [];
+  invoke.mockImplementation(async (command, args) => {
+    if (command !== "read_review_editor_snapshot") return original(command, args);
+    const snapshot = structuredClone(editor()); snapshots.push(snapshot); return snapshot;
+  });
+  const { user } = await openProduction();
+  if (phase === "rejected") {
+    await user.click(screen.getByRole("button", { name: i18n.t("candidateDecisions.reject") }));
+    await screen.findByText(i18n.t("candidateDecisions.rejectedRecorded"));
+    await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("candidateDecisions.restore") })).toBeEnabled());
+  }
+  const cached = snapshots.at(-1)!;
+  const readsBefore = snapshots.length;
+  await user.click(screen.getByRole("button", { name: i18n.t("ai.workspace.editEntry", { key: "first" }) }));
+  await waitFor(() => expect(snapshots.length).toBeGreaterThan(readsBefore));
+  expect(snapshots[readsBefore]).toEqual(cached); expect(snapshots[readsBefore]).not.toBe(cached);
+  await screen.findByRole("heading", { level: 1, name: i18n.t("translation.title") });
+  expect(await screen.findByRole("textbox", { name: i18n.t("translation.draft") })).toHaveValue("");
+  expect(screen.getAllByText(item.sourceText).length).toBeGreaterThan(0);
+  expect(revision.candidateDecision?.request.disposition ?? null).toBe(phase === "rejected" ? "rejected" : null);
+  expect(calls("decide_translation_candidate")).toHaveLength(phase === "rejected" ? 1 : 0);
+  expect(calls("save_translation_revision")).toHaveLength(0); expect(calls("select_translation_revision")).toHaveLength(0);
+  expect(calls("prepare_work_plan")).toHaveLength(0); expect(calls("start_work_plan")).toHaveLength(0);
+});
+
 it("keeps original recovery visible through real session navigation and project exit with no manual draft", async () => {
   const original = invoke.getMockImplementation()!; let receipt: CandidateDecision | null = null, lookups = 0;
   invoke.mockImplementation(async (command, args) => {

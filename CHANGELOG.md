@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Keep manual editing reachable after inspecting or rejecting an AI candidate,
+  including when a fresh read reuses an equal cached editor snapshot.
+  Preserve the candidate decision and existing draft safeguards.
+
 - Accept Core's canonical item order in multi-entry AI work-plan previews while
   verifying complete, unique entry coverage and preserving the original selection.
 

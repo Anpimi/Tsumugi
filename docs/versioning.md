@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Ordinary translation navigation uses the existing query cache's shared snapshot
+and accepts the draft only after the final navigation checks. Manual editing
+remains reachable after candidate inspection or rejection, without changing
+candidate decisions, query sharing, write permissions, API, schema, protocol,
+persisted format, dependencies or version sources. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no additional bump;
+bilingual Unreleased entries describe the correction.
+
 AI work-plan preparation accepts Core's canonical preview item order while
 retaining complete identity checks, the immutable preview and the user's original
 selection. This UI correction changes no API, schema, protocol, persisted format,

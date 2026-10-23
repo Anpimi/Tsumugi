@@ -718,29 +718,37 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
       setFailure("navigation-edited"); return false;
     }
     const key = reads.key(["editor-snapshot", destination.target.unitId, destination.locale]);
-    const snapshot = await reads.client.fetchQuery({ queryKey: key, staleTime: 0,
+    await reads.client.fetchQuery({ queryKey: key, staleTime: 0,
       meta: { scopes: ["source", "translation", "resources", "review"] },
       queryFn: () => reviewCommands.editorSnapshot({ ...scope, unitId: destination.target.unitId, locale: destination.locale }) });
-    const checked = reads.client.getQueryState(key);
-    if (!current() || !committed.current.project.metadata.targetLocales.includes(destination.locale)
-      || committed.current.project.metadata.sourceLocale !== value.metadata.sourceLocale
-      || checked?.status !== "success" || checked.fetchStatus !== "idle" || checked.isInvalidated || reads.client.getQueryData(key) !== snapshot
-      || translation.protection.blocked() || translation.current()?.editSeq !== draft?.editSeq || translation.current()?.text !== draft?.text
-      || imports.current().busy || imports.hasPending() || imports.hasActive()) return false;
+    // Query may retain an equal cached snapshot through structural sharing.
+    // Capture its actual identity and defer the draft update until navigation settles.
+    const query = reads.client.getQueryCache().find({ queryKey: key, exact: true });
+    const snapshot = reads.client.getQueryData<ReviewEditorSnapshot>(key), version = query?.state.dataUpdateCount;
+    const fresh = () => current() && committed.current.project.metadata.targetLocales.includes(destination.locale)
+      && committed.current.project.metadata.sourceLocale === value.metadata.sourceLocale
+      && !!query && reads.client.getQueryCache().find({ queryKey: key, exact: true }) === query
+      && query.state.status === "success" && query.state.fetchStatus === "idle" && query.state.error === null
+      && !query.state.isInvalidated && query.state.dataUpdateCount === version && query.state.data === snapshot
+      && !translation.protection.blocked() && translation.current()?.editSeq === draft?.editSeq && translation.current()?.text === draft?.text
+      && !imports.current().busy && !imports.hasPending() && !imports.hasActive();
+    if (!snapshot || !fresh()) return false;
     if (snapshot.target.unitId !== destination.target.unitId || snapshot.target.locale !== destination.locale
       || snapshot.translations.unitId !== destination.target.unitId || snapshot.translations.locale !== destination.locale) throw new Error("Invalid editor destination");
     const target = snapshot.target;
     if (destination.suggestedText !== undefined && target.sourceRevisionId !== destination.target.sourceRevisionId) {
       setFailure("source-changed"); return false;
     }
-    if (!translation.begin({ unitId: target.unitId, locale: destination.locale, sourceRevisionId: target.sourceRevisionId,
-      key: target.nativeKey, sourceText: target.sourceText }, snapshot.translations.current, snapshot.translations.currentText, destination.suggestedText)) return false;
-    committed.current.view.memory.write("translation", "tab", "edit");
-    committed.current.view.memory.write("translation", "targetLocale", destination.locale);
-    committed.current.view.memory.write("translation", "returnToAi", destination.returnTo === "ai");
-    committed.current.view.memory.write("translation", "reviewReturn", null);
-    committed.current.view.memory.write("translation", "diagnosticAnchor", null);
-    return true;
+    return () => {
+      if (!fresh() || !translation.begin({ unitId: target.unitId, locale: destination.locale, sourceRevisionId: target.sourceRevisionId,
+        key: target.nativeKey, sourceText: target.sourceText }, snapshot.translations.current, snapshot.translations.currentText, destination.suggestedText)) return false;
+      committed.current.view.memory.write("translation", "tab", "edit");
+      committed.current.view.memory.write("translation", "targetLocale", destination.locale);
+      committed.current.view.memory.write("translation", "returnToAi", destination.returnTo === "ai");
+      committed.current.view.memory.write("translation", "reviewReturn", null);
+      committed.current.view.memory.write("translation", "diagnosticAnchor", null);
+      return true;
+    };
   }
   function blocked(area: WorkspaceArea) {
     const memory = committed.current.view.memory;
