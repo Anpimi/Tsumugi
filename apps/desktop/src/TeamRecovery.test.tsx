@@ -164,6 +164,63 @@ it("distinguishes stopped producers from mismatched recovery observations", asyn
   expect(screen.getByRole("button", { name: i18n.t("ai.recovery.edit") })).toBeDisabled();
 });
 
+it.each(["host-callbacks", "producers", "team-read"] as const)("preserves a recovery preview through transient %s readiness during its own preparation", async transient => {
+  render(<Harness/>, project); const user = await editing(), original = invoke.getMockImplementation()!;
+  const prepared = deferred<WorkPlanTeamRecoveryPreviewView>(), teamRead = deferred<typeof source.view>();
+  let request: WorkPlanTeamRecoveryPrepareRequest | null = null, holdTeamRead = false;
+  invoke.mockImplementation((command, payload) => {
+    if (command === "prepare_work_plan_team_recovery" && validators.validateRequestWorkPlanTeamRecoveryPrepare(payload.request)) {
+      request = payload.request; return prepared.promise;
+    }
+    if (command === "read_work_plan_team_execution" && holdTeamRead) return teamRead.promise;
+    return original(command, payload);
+  });
+  try {
+    await user.click(screen.getByRole("button", { name: i18n.t("ai.recovery.prepare") }));
+    await waitFor(() => expect(request).not.toBeNull());
+    if (transient === "host-callbacks") source.state.hostCallbacksDrained = false;
+    else if (transient === "producers") source.state.runtime!.producersDrained = false;
+    else holdTeamRead = true;
+    await refreshWorkbenchReads(["execution"]);
+    await screen.findByText(i18n.t(transient === "team-read" ? "ai.recovery.refreshRequired" : "ai.recovery.draining"));
+    const captured = teamRecoveryPreviewFixture(request!, source);
+    await act(async () => { prepared.resolve(captured); });
+    await waitFor(() => expect(owner.recovery.current().preparing).toBe(false));
+    expect(owner.recovery.current().capture?.value).toEqual(captured);
+    expect(screen.getByRole("region", { name: i18n.t("ai.recovery.previewTitle") })).toBeVisible();
+    const consent = screen.getByRole("checkbox", { name: i18n.t("ai.recovery.consent") }); expect(consent).toBeDisabled();
+    const authorize = screen.getByRole("button", { name: i18n.t("ai.recovery.authorize") }); expect(authorize).toBeDisabled();
+    await user.click(authorize); expect(calls("authorize_work_plan_team_recovery")).toHaveLength(0);
+    if (transient === "team-read") {
+      holdTeamRead = false; await act(async () => { teamRead.resolve(structuredClone(source.view)); });
+    } else {
+      source.state.hostCallbacksDrained = true; source.state.runtime!.producersDrained = true;
+      await user.click(screen.getByRole("button", { name: i18n.t("ai.recovery.refresh") }));
+    }
+    await waitFor(() => expect(consent).toBeEnabled()); expect(consent).not.toBeChecked();
+    expect(owner.recovery.current().capture?.value).toEqual(captured);
+    await user.click(consent); await waitFor(() => expect(authorize).toBeEnabled());
+    expect(calls("prepare_work_plan_team_recovery")).toHaveLength(1);
+    expect(calls("authorize_work_plan_team_recovery")).toHaveLength(0);
+    expect(screen.getByRole("textbox", { name: i18n.t("ai.recovery.instructions") })).toHaveValue("Human A: revisit the original rejected claim.");
+  } finally {
+    teamRead.resolve(structuredClone(source.view));
+  }
+});
+it.each(["lease", "effective-version", "team-view", "capacity"] as const)("invalidates a recovery preview for confirmed %s changes after transient readiness", async changed => {
+  render(<Harness/>, project); const user = await prepare();
+  expect(owner.recovery.current().capture).not.toBeNull();
+  if (changed === "lease") source.state.state.lease = { ...source.state.state.lease, generation: "3" };
+  else if (changed === "effective-version") source.state.state.effectiveVersion = { ...source.state.state.effectiveVersion, digest: "c".repeat(64) };
+  else if (changed === "team-view") source.view.effectiveVersion = { ...source.view.effectiveVersion, digest: "c".repeat(64) };
+  else exhaustRecoveryCapacity("budget");
+  await user.click(screen.getByRole("button", { name: i18n.t("ai.recovery.refresh") }));
+  await waitFor(() => expect(owner.recovery.current().capture).toBeNull());
+  expect(screen.queryByRole("region", { name: i18n.t("ai.recovery.previewTitle") })).not.toBeInTheDocument();
+  expect(owner.recovery.current().draft!.instructions).toBe("Human A: revisit the original rejected claim.");
+  expect(calls("authorize_work_plan_team_recovery")).toHaveLength(0);
+});
+
 it("requires actual drain and a live original deadline, refreshes readiness without granting consent and preserves stable member identity", async () => {
   source.state.runtime!.producersDrained = false; render(<Harness/>, project);
   const button = await screen.findByRole("button", { name: i18n.t("ai.recovery.edit") }); expect(button).toBeDisabled();

@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+Team-recovery previews distinguish immutable captured basis from temporary
+readiness while their own preparation is finishing. Transient cleanup or a
+companion read no longer discards a valid preview; current drain, basis, scope,
+connection, deadline, capacity and explicit consent still gate authorization.
+This frontend correction changes no API, schema or dependency and uses the
+existing bilingual Unreleased boundary without a local QA version bump.
+
 Bounded-team recovery checks the original activation, completion and request
 capacity before offering a new preparation, and explains exhaustion separately
 from draining or stale evidence. Core limits and uncertain-action recovery remain

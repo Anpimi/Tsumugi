@@ -6,6 +6,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Keep a team-recovery preview while temporary cleanup or a companion read is
+  pending; require current readiness before allowing its explicit authorization.
+
 - Explain when a team's original activation, completion or request capacity is
   exhausted before offering recovery; retain history and uncertain-action recovery.
 

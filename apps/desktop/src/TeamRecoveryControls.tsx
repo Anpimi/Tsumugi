@@ -43,11 +43,18 @@ export function TeamRecoveryControls({ context, status, session, open, disabled,
   const canPrepare = !!observation && !!view && !!limits && teamRecoveryAvailable(observation, limits) && jsonIdentity(view.effectiveVersion) === jsonIdentity(observation.state.effectiveVersion);
   const problem = observation && observation.state.unresolvedWork.length > 16 ? "unresolvedLimit" : draft && view
     ? observation?.state.unresolvedWork.some(reference => !draft.priorWork.some(value => jsonIdentity(value) === jsonIdentity(reference))) ? "unresolved" : recoveryDraftProblem(draft, plan, view) : null;
-  const basisCurrent = !!capture && !!observation && canPrepare && jsonIdentity(observation.state.lease) === jsonIdentity(capture.value.preview.baseLease)
+  const observationMatchesCapture = !!capture && !!observation && jsonIdentity(observation.state.lease) === jsonIdentity(capture.value.preview.baseLease)
     && jsonIdentity(observation.state.effectiveVersion) === jsonIdentity(capture.value.preview.baseEffectiveVersion);
+  const basisCurrent = canPrepare && observationMatchesCapture;
+  // Preparation owns a temporary Host callback. Its drain observation, or a
+  // still-loading companion read, blocks authorization without changing basis.
+  const captureOutdated = !!capture && (observation && (!observationMatchesCapture || capacityExhausted
+    || observation.runtime?.originalDeadlineAvailable !== true || BigInt(observation.state.expiresAtMs) <= BigInt(Date.now())
+    || observation.state.state !== "paused" && observation.state.state !== "taken-over")
+    || view && jsonIdentity(view.effectiveVersion) !== jsonIdentity(capture.value.preview.baseEffectiveVersion));
   const captureKey = capture ? jsonIdentity([capture.value.preview.digest, capture.value.tools, capture.value.checkers]) : null;
   useEffect(() => { setToolConsent(false); setCheckerConsent([]); setApplicationsConsent([]); }, [captureKey]);
-  useEffect(() => { if (capture && (!session.connectionCurrent() || observation && !basisCurrent)) session.invalidateCapture(); });
+  useEffect(() => { if (capture && (!session.connectionCurrent() || captureOutdated)) session.invalidateCapture(); });
   useEffect(() => {
     if (!open || !read.data) return;
     const remaining = BigInt(read.data.state.expiresAtMs) - BigInt(Date.now()) + 1n;
