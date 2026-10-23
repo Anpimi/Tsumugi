@@ -126,6 +126,32 @@
       },
       "handling": "required",
       "payloadUtf8": "{\"version\":1,\"policy\":\"webvtt-cue/1\",\"nativeId\":\"Second\",\"timing\":\"00:01.000 --> 00:02.000\",\"settings\":[],\"layoutDigest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}"
+    },
+    {
+      "target": {
+        "kind": "occurrence",
+        "id": "occurrence-0"
+      },
+      "schema": {
+        "id": "tsumugi.source-context-facts",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "handling": "required",
+      "payloadUtf8": "{\"facts\":[{\"id\":\"time\",\"kind\":\"time\",\"text\":\"00:00.000 --> 00:01.000\",\"origin\":{\"kind\":\"extracted\",\"sources\":[{\"artifactId\":\"captured-artifact\",\"range\":{\"encoding\":\"utf8-byte\",\"start\":19,\"end\":42}}]}}]}"
+    },
+    {
+      "target": {
+        "kind": "occurrence",
+        "id": "occurrence-1"
+      },
+      "schema": {
+        "id": "tsumugi.source-context-facts",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "handling": "required",
+      "payloadUtf8": "{\"facts\":[{\"id\":\"time\",\"kind\":\"time\",\"text\":\"00:01.000 --> 00:02.000\",\"origin\":{\"kind\":\"extracted\",\"sources\":[{\"artifactId\":\"captured-artifact\",\"range\":{\"encoding\":\"utf8-byte\",\"start\":88,\"end\":111}}]}}]}"
     }
   ]
 }
