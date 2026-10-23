@@ -6,6 +6,35 @@ installed package/runtime settings and Core execution ledger. The application
 owns discovery, session authorization and execution consent; each package owns
 its original capability, domain input/output/error contracts and guidance.
 
+## Declared reference-query views
+
+A JavaScript component can declare a host-rendered `Ui` with
+`slot: "reference-query"` and `tsumugi.capability-tool-declaration` schema/behavior
+`1/1`. The Host selects the unique Resource with that exact schema in the same
+captured package and component. Its tool must select a query capability from that
+component and supply the existing bounded `query` presentation. Missing or multiple
+Resources, duplicate same-component slot/schema views and unsupported slots or
+versions are refused; names and registration order cannot choose a match.
+
+`read_plugin_ui` accepts `{ package, uiId }` and returns the exact package,
+component, Ui, Resource, tool binding and installed settings revision. It reads
+the original enabled/approved installation and rechecks that revision after
+interpreting the immutable package. It captures no runtime and runs no code.
+The view then uses `read_plugin_tool` and the original execution workflow below;
+Ui and tool bindings must agree. No new permission, executor or task ledger is
+introduced.
+
+In **Resources → Reference queries**, declared views use the same standard text,
+target, meaning, preview and consent controls. Multiple packages require an
+explicit choice. Unsupported or invalid declarations do not fall back to a
+Resource from that component. Resource-only packages retain their existing query
+entry. Updating, disabling or uninstalling a package makes its old view unavailable;
+a late read cannot restore it. The original draft and uncertain-action recovery
+remain available without restoring execution authority. Plugins supply no DOM,
+CSS, application state or native bridge access through this slot.
+
+## Query controls and execution
+
 An optional SDK `query` presentation supplies a bounded fixed input template,
 explicit target and category choices, and reference-result columns. The public
 SDK's `createToolQuery` helper constructs original single or batch payloads and

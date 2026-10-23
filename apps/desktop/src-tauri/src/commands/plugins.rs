@@ -32,6 +32,7 @@ pub(super) mod runtimes;
 pub(super) mod sources;
 pub(super) mod tools;
 pub(super) mod translations;
+pub(super) mod ui;
 pub use builds::{PluginBuildRequest, PluginBuildView};
 pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -57,6 +58,7 @@ pub use runtimes::{
 pub use sources::{PluginSourceRequest, PluginSourceView};
 pub use tools::{PluginToolRequest, PluginToolView};
 pub use translations::{PluginTranslationRequest, PluginTranslationView};
+pub use ui::{PluginUiRequest, PluginUiView};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -47,6 +47,7 @@ macro_rules! handlers {
         super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build,
         super::plugins::translations::read_plugin_translation,
         super::plugins::tools::read_plugin_tool,
+        super::plugins::ui::read_plugin_ui,
         super::plugins::generation::read_plugin_generation_component,
         super::plugins::reviews::text::read_plugin_text_review, super::plugins::reviews::text::read_plugin_text_reviews,
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,

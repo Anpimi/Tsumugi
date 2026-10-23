@@ -251,6 +251,7 @@ export interface Responses {
   textReviews: PluginTextReviewListView;
   tool: PluginToolView;
   translation: PluginTranslationView;
+  ui: PluginUiView;
 }
 /**
  * Captured declaration data for one selected capability. Requested permissions
@@ -1306,4 +1307,13 @@ export interface TranslationMaterialDeclaration {
   logicalDirectory: string;
   maxBytes: number;
   role: string;
+}
+export interface PluginUiView {
+  binding: CapabilityToolBinding;
+  componentId: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+  settingsRevision: UnsignedDecimal;
+  slot: string;
+  uiId: string;
 }

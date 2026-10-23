@@ -21,6 +21,7 @@ export declare function validateRequestSource(value: unknown): value is Requests
 export declare function validateRequestTextReview(value: unknown): value is Requests["textReview"];
 export declare function validateRequestTool(value: unknown): value is Requests["tool"];
 export declare function validateRequestTranslation(value: unknown): value is Requests["translation"];
+export declare function validateRequestUi(value: unknown): value is Requests["ui"];
 export declare function validateRequestUninstall(value: unknown): value is Requests["uninstall"];
 export declare function validateResponseBinding(value: unknown): value is Responses["binding"];
 export declare function validateResponseBuild(value: unknown): value is Responses["build"];
@@ -39,3 +40,4 @@ export declare function validateResponseTextReview(value: unknown): value is Res
 export declare function validateResponseTextReviews(value: unknown): value is Responses["textReviews"];
 export declare function validateResponseTool(value: unknown): value is Responses["tool"];
 export declare function validateResponseTranslation(value: unknown): value is Responses["translation"];
+export declare function validateResponseUi(value: unknown): value is Responses["ui"];

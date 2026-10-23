@@ -182,6 +182,10 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
     await operation(async () => {
       setIntent(next);
       await Promise.all([client.cancelQueries({ queryKey: inventoryKey, exact: true }), client.cancelQueries({ queryKey: repositoriesKey, exact: true })]);
+      if (next.kind !== "repository-refresh" && next.kind !== "repository-resume") {
+        // Readers must not use the previous installed roster while settings are changing.
+        await client.invalidateQueries({ queryKey: inventoryKey, exact: true, refetchType: "none" });
+      }
       try {
         if (next.kind === "repository-refresh" || next.kind === "repository-resume") {
           const result = next.kind === "repository-refresh" ? await pluginCommands.refreshRepository(next.request, next.selection) : await pluginCommands.resumeRepository(next.request);

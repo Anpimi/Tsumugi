@@ -583,7 +583,7 @@ toolQuery: {
 
   title: "参考查询",
   help: "在已安装参考包中查询明确选定的含义。每段文本分别查询，结果仅作为参考。",
-  provider: "参考包", chooseProvider: "选择参考包", refresh: "刷新参考包",
+  provider: "参考包", chooseProvider: "选择参考包", providerUnavailable: "已选参考包不再可用，查询文本仍已保留。", unsupportedView: "{{provider}} 的参考查询视图格式暂不受支持。请更新此扩展；查询文本已保留。", refresh: "刷新参考包",
   noPresentation: "此工具没有可用的文本查询声明，请选择其他参考包。",
   unavailable: "请在扩展中启用参考包并批准其运行环境。包不可用时，输入文本仍保留在这里。",
   inputs: "查询文本", text: "查询文本 {{position}}", remove: "移除查询 {{position}}", add: "添加另一条查询",

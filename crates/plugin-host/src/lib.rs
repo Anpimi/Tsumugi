@@ -22,6 +22,7 @@ mod service;
 mod session;
 mod staging;
 mod tree;
+mod ui;
 #[cfg(windows)]
 mod windows_security;
 pub use native_runtime::CapturedNativeRuntime;
@@ -43,6 +44,7 @@ pub use runtime::{
 };
 pub use service::*;
 pub use session::*;
+pub use ui::ReferenceQueryUi;
 
 pub use candidate_archive::MAX_PACKAGE_ARCHIVE_BYTES;
 pub use host_error::{HostError, HostResult};

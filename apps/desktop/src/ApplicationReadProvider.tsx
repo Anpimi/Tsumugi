@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState, useSyncExt
 import { QueryClient, matchQuery } from "@tanstack/react-query";
 import { connectionCommands, sameConnection, sameConnectionReference, type ConnectionReadView } from "./connectionCommands";
 import type { AiConfig } from "./aiCommands";
+import type { PluginInventoryView } from "./pluginCommands";
 
 const ApplicationReads = createContext<{ client: QueryClient; pluginReadReservations: Set<() => boolean> } | null>(null);
 export const connectionReadKey = ["application", "connections", "current"] as const;
@@ -62,6 +63,10 @@ export function currentConnections(client: QueryClient): ConnectionReadView | un
   const value = client.getQueryState<ConnectionReadView>(connectionReadKey);
   return value?.status === "success" && value.fetchStatus === "idle" && !value.isInvalidated && value.error === null ? value.data : undefined;
 }
+export function currentPlugins(client: QueryClient): PluginInventoryView | undefined {
+  const value = client.getQueryState<PluginInventoryView>(pluginInventoryReadKey);
+  return value?.status === "success" && value.fetchStatus === "idle" && !value.isInvalidated && value.error === null ? value.data : undefined;
+}
 /** The cache owns facts; this subscription does not copy them into a draft. */
 export function useConnectionFacts() {
   const client = useApplicationQueryClient();
@@ -75,6 +80,19 @@ export function useConnectionFacts() {
   const snapshot = useCallback(() => client.getQueryState<ConnectionReadView>(connectionReadKey), [client]);
   const state = useSyncExternalStore(subscribe, snapshot, snapshot);
   return { client, state, current: () => currentConnections(client) };
+}
+/** Installed plugin facts have one application owner, shared with Extensions. */
+export function usePluginFacts() {
+  const owner = useContext(ApplicationReads);
+  if (!owner) throw new Error("ApplicationReadProvider is required");
+  const { client } = owner;
+  const subscribe = useCallback((changed: () => void) => client.getQueryCache().subscribe(event => {
+    if ((event.type === "updated" || event.type === "removed")
+      && matchQuery({ queryKey: pluginInventoryReadKey, exact: true }, event.query)) changed();
+  }), [client]);
+  const snapshot = useCallback(() => client.getQueryState<PluginInventoryView>(pluginInventoryReadKey), [client]);
+  const state = useSyncExternalStore(subscribe, snapshot, snapshot);
+  return { client, state, current: () => currentPlugins(client), reserved: () => [...owner.pluginReadReservations].some(check => check()) };
 }
 export function connectionConfigCurrent(view: ConnectionReadView | undefined, config: AiConfig): boolean {
   const reference = config.connectionProfile;

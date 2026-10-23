@@ -501,6 +501,22 @@
         ],
         "type": "object"
       },
+      "PluginUiRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "uiId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "uiId"
+        ],
+        "type": "object"
+      },
       "PluginUninstallRequest": {
         "additionalProperties": false,
         "properties": {
@@ -620,6 +636,9 @@
       "translation": {
         "$ref": "#/definitions/PluginTranslationRequest"
       },
+      "ui": {
+        "$ref": "#/definitions/PluginUiRequest"
+      },
       "uninstall": {
         "$ref": "#/definitions/PluginUninstallRequest"
       }
@@ -644,6 +663,7 @@
       "translation",
       "build",
       "tool",
+      "ui",
       "generationComponent",
       "textReview"
     ],
@@ -2944,6 +2964,42 @@
         ],
         "type": "object"
       },
+      "PluginUiView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityToolBinding"
+          },
+          "componentId": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "slot": {
+            "type": "string"
+          },
+          "uiId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "package",
+          "componentId",
+          "uiId",
+          "slot",
+          "resourceId",
+          "binding"
+        ],
+        "type": "object"
+      },
       "PluginUninstallView": {
         "additionalProperties": false,
         "description": "An observation of the original retained removal journal. Sealed metadata is\nnot confirmation of an uncertain command's filesystem durability.",
@@ -3754,6 +3810,9 @@
       },
       "translation": {
         "$ref": "#/definitions/PluginTranslationView"
+      },
+      "ui": {
+        "$ref": "#/definitions/PluginUiView"
       }
     },
     "required": [
@@ -3770,6 +3829,7 @@
       "translation",
       "build",
       "tool",
+      "ui",
       "generationComponent",
       "textReview",
       "textReviews",

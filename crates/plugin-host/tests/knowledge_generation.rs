@@ -25,12 +25,26 @@ fn missing_generation_service_refuses_only_its_component_before_staging() {
                 .expect("independently approved generation package digest required");
             let image = PackageImage::capture_directory(&selected, &digest, || true).unwrap();
             assert_eq!(image.manifest().manifest().plugin.id, "philosophy");
+            let ui = image.reference_query_ui("reference-query").unwrap();
+            assert_eq!(ui.component_id, "knowledge");
+            assert_eq!(ui.ui_id, "reference-query");
+            assert_eq!(ui.slot, "reference-query");
+            assert_eq!(ui.resource_id, "agent-query-tool");
+            assert_eq!(
+                ui.binding.capability.provider.plugin,
+                image.manifest().manifest().plugin
+            );
+            assert_eq!(ui.binding.capability.provider.package_digest, digest);
+            assert_eq!(ui.binding.capability.provider.component_id, "knowledge");
+            assert_eq!(ui.binding.capability.provider.contribution_id, "query");
             let generation = sdk::bind_capability(
                 image.manifest(),
                 "generation-delegate",
                 image.package_digest(),
             )
             .unwrap();
+            assert_eq!(generation.provider.plugin, ui.binding.capability.provider.plugin);
+            assert_eq!(generation.provider.package_digest, ui.binding.capability.provider.package_digest);
             assert_eq!(generation.provider.component_id, "generation");
             assert_eq!(
                 generation.declaration.contract,
@@ -92,6 +106,7 @@ fn missing_generation_service_refuses_only_its_component_before_staging() {
                 std::fs::create_dir(directory).unwrap();
             }
             let tool = image.capability_tool("agent-query-tool").unwrap();
+            assert_eq!(ui.binding, tool);
             let query = tool
                 .declaration
                 .query
@@ -212,6 +227,7 @@ fn missing_generation_service_refuses_only_its_component_before_staging() {
                 resource
             );
             assert_eq!(image.skill_bytes("concept-review").unwrap(), skill);
+            assert_eq!(image.reference_query_ui("reference-query").unwrap(), ui);
             official::close_and_reap(&mut checker).await;
             official::close_and_reap(&mut session).await;
             for directory in [&query_stages, &refused_stages, &check_stages] {

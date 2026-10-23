@@ -201,6 +201,7 @@ fn actual_knowledge_worker_obeys_original_work_plan_grant_and_control() {
         binding,
         resource_id: "agent-query-tool".into(),
         settings_revision: 1u64.into(),
+        application_capabilities: vec![],
         package_origin: serde_json::json!({"sourceId":"explicit-test","publisherId":"reviewed-public-source"}),
         runtime_origin: serde_json::json!({"sourceId":"explicit-test","publisherId":"reviewed-public-source"}),
         target: "zh-CN".into(),
@@ -252,6 +253,7 @@ fn actual_knowledge_worker_obeys_original_work_plan_grant_and_control() {
                 unsandboxed_execution: true,
                 application_execution: false,
             },
+            BTreeMap::new(),
         )
         .unwrap();
     store
@@ -386,11 +388,21 @@ fn actual_knowledge_package_reopens_resources_and_runs_original_query_and_check_
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
             let temporary = OwnedTemporary::new();
         let image = official::installed(temporary.path(), "philosophy");
+        let ui = image.reference_query_ui("reference-query").unwrap();
+        assert_eq!(ui.component_id, "knowledge");
+        assert_eq!(ui.ui_id, "reference-query");
+        assert_eq!(ui.slot, "reference-query");
+        assert_eq!(ui.resource_id, "agent-query-tool");
+        assert_eq!(ui.binding.capability.provider.plugin, image.manifest().manifest().plugin);
+        assert_eq!(ui.binding.capability.provider.package_digest, image.package_digest());
+        assert_eq!(ui.binding.capability.provider.component_id, "knowledge");
+        assert_eq!(ui.binding.capability.provider.contribution_id, "query");
         let resource = image.resource_bytes("terminology", &contract("org.tsumugi.examples.terminology-resource")).unwrap();
         let body: serde_json::Value = serde_json::from_slice(resource).unwrap();
         assert_eq!(body["authority"], "unadopted-editorial-suggestion");
         assert!(std::str::from_utf8(image.skill_bytes("concept-review").unwrap()).unwrap().contains("grants no tools"));
         let tool = image.capability_tool("agent-query-tool").unwrap();
+        assert_eq!(ui.binding, tool);
         assert_eq!(tool.declaration.capability_id, "query");
         assert_eq!(tool.declaration.supporting_resources, vec!["terminology"]);
         assert_eq!(tool.declaration.skill.as_deref(), Some("concept-review"));
@@ -495,6 +507,7 @@ fn actual_knowledge_package_reopens_resources_and_runs_original_query_and_check_
         let closed = checker.close().await;
         assert!(closed.cooperative_acknowledgement && closed.direct_child_reaped);
         assert_eq!(image.resource_bytes("terminology", &contract("org.tsumugi.examples.terminology-resource")).unwrap(), resource);
+        assert_eq!(image.reference_query_ui("reference-query").unwrap(), ui);
     });
 }
 

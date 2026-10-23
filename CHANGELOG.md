@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Support declared, host-rendered reference-query views from the same component
+  and package as their tool Resource. Reuse the existing query controls and
+  execution consent, reject ambiguous bindings and preserve drafts and uncertain
+  actions when extensions change.
+
 Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
 within this same undistributed batch.

@@ -25,6 +25,7 @@ export interface Requests {
   textReview: PluginTextReviewRequest;
   tool: PluginToolRequest;
   translation: PluginTranslationRequest;
+  ui: PluginUiRequest;
   uninstall: PluginUninstallRequest;
 }
 export interface PluginApprovalRemovalRequest {
@@ -478,6 +479,10 @@ export interface PluginTranslationRequest {
   environmentDigest: string;
   package: PluginPackageRequest;
   resourceId: string;
+}
+export interface PluginUiRequest {
+  package: PluginPackageRequest;
+  uiId: string;
 }
 export interface PluginUninstallRequest {
   actionId: ExecutionId;

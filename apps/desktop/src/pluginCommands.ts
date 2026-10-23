@@ -1,6 +1,6 @@
 import { checkedInvoke } from "./ipc";
-import { validateResponseInventory, validateResponseCandidate, validateResponsePackCandidate, validateResponseRepositorySelection, validateResponseRepositorySources, validateResponseRepositoryVerified, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation, validateResponseTool, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
-import type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest, PluginTextReviewRequest } from "./generated/plugins.requests";
+import { validateResponseInventory, validateResponseCandidate, validateResponsePackCandidate, validateResponseRepositorySelection, validateResponseRepositorySources, validateResponseRepositoryVerified, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation, validateResponseTool, validateResponseUi, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
+import type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest, PluginUiRequest, PluginTextReviewRequest } from "./generated/plugins.requests";
 import type { ReviewCheckRequest } from "./generated/review.requests";
 import type { PluginInventoryView, PluginPackageDetailsView } from "./generated/plugins.responses";
 import { validateResponseGenerationComponent } from "./generated/plugins.validators";
@@ -10,8 +10,8 @@ export type { PluginGenerationComponentView } from "./generated/plugins.response
 export type PluginTextReviewSelection = ReviewCheckRequest["advisoryChecks"][number];
 export type { PluginTextReviewRequest } from "./generated/plugins.requests";
 export type { PluginTextReviewView, PluginTextReviewListView, PluginTextReviewListEntry } from "./generated/plugins.responses";
-export type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest } from "./generated/plugins.requests";
-export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest, PluginSourceView, PluginBuildView, PluginTranslationView, PluginToolView } from "./generated/plugins.responses";
+export type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest, PluginUiRequest } from "./generated/plugins.requests";
+export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest, PluginSourceView, PluginBuildView, PluginTranslationView, PluginToolView, PluginUiView } from "./generated/plugins.responses";
 
 import type { PluginPackInstallRequest } from "./generated/plugins.requests";
 import type { PluginRepositoryRefreshRequest, PluginRepositoryResumeRequest, PluginRepositoryInstallRequest } from "./generated/plugins.requests";
@@ -94,6 +94,7 @@ export const pluginCommands = {
   translation: (request: PluginTranslationRequest) => checkedInvoke("read_plugin_translation", request, validateResponseTranslation),
   source: (request: PluginSourceRequest) => checkedInvoke("read_plugin_source", request, validateResponseSource),
   tool: (request: PluginToolRequest) => checkedInvoke("read_plugin_tool", request, validateResponseTool),
+  ui: (request: PluginUiRequest) => checkedInvoke("read_plugin_ui", request, validateResponseUi),
   generationComponent: async (request: PluginGenerationComponentRequest) => {
     const view = await checkedInvoke("read_plugin_generation_component", request, validateResponseGenerationComponent);
     const expected = request.provider;

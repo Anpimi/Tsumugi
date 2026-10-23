@@ -582,6 +582,8 @@ toolQuery: {
   help: "Look up explicitly selected meanings in an installed reference package. Each text is a separate query; results remain references.",
   provider: "Reference package",
   chooseProvider: "Choose a reference package",
+  providerUnavailable: "The selected reference package is no longer available. Your query text is kept.",
+  unsupportedView: "{{provider}} uses an unsupported reference query view schema. Update this extension; your query text is kept.",
   refresh: "Refresh reference packages",
   noPresentation: "This tool has no usable text-query presentation. Select another reference package.",
   unavailable: "Enable a reference package in Extensions and approve its runtime. Your text stays here while the package is unavailable.",

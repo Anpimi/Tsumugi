@@ -5,16 +5,18 @@ import type { PluginToolQuerySession, ToolQueryIntent } from "./PluginToolQueryS
 import { useEffect, useLayoutEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { createToolQuery, ToolQueryError, type ToolQueryPresentation } from "../../../crates/plugin-sdk/javascript/tool-query.mjs";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type PluginToolPrepareRequest, type PluginToolPreflight, type PluginToolDiscardRequest, type CancelRequest } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
-import { pluginCommands, type PluginToolRequest, type PluginToolView } from "./pluginCommands";
+import { pluginCommands, type PluginToolRequest, type PluginToolView, type PluginUiView } from "./pluginCommands";
 import { matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
 import { PluginPermissions } from "./PluginPermissions";
-import { jsonIdentity, queryField as field, matchesTool as matches, readPluginToolChoices } from "./pluginToolChoices";
+import { jsonIdentity, queryField as field, matchesTool as matches, readReferenceQueryChoices } from "./pluginToolChoices";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { currentPlugins, pluginInventoryReadKey, usePluginFacts } from "./ApplicationReadProvider";
 
 export interface ToolQueryState { busy: boolean; pending: boolean; hasDraft: boolean }
 export interface ToolQueryHandle { allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>; addText: (text: string) => boolean }
@@ -25,6 +27,16 @@ function presentation(view: PluginToolView | undefined): { value: ToolQueryPrese
   catch { return { value: null, failed: true }; }
 }
 
+function matchesUi(view: PluginUiView, choice: { package: PluginToolRequest["package"]; componentId: string; uiId: string | null; settingsRevision: string }): boolean {
+  const provider = view.binding.capability.provider;
+  return choice.uiId !== null && view.uiId === choice.uiId && view.componentId === choice.componentId
+    && view.slot === "reference-query" && view.settingsRevision === choice.settingsRevision && !!view.resourceId
+    && view.package.packageDigest === choice.package.packageDigest
+    && jsonIdentity(view.package.plugin) === jsonIdentity(choice.package.plugin)
+    && provider.componentId === choice.componentId && provider.packageDigest === choice.package.packageDigest
+    && jsonIdentity(provider.plugin) === jsonIdentity(choice.package.plugin);
+}
+
 /** Shared SDK input construction, original execution consent and ledger reads.
  * Drafts survive hidden panels; references never become project mutations. */
 export function PluginToolQueries({ project, session, open, disabled, onState, onAttention, ref }: {
@@ -32,6 +44,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
   onState: (state: ToolQueryState) => void; onAttention: () => void; ref?: Ref<ToolQueryHandle>;
 }) {
   const { t } = useTranslation(), context = executionContext(project), reads = useSessionReads(), registry = useWorkbenchCommands();
+  const pluginFacts = usePluginFacts();
   const commandScope = { ...context, area: "resources" as const };
   const { choiceKey, runtimeKey, refresh, rows, target, selections, capture, run, consent, submittedSequence, pending, busy, failure, inputFailure } = session.state;
   const { setChoiceKey, setRuntimeKey, setRefresh, setRows, setTarget, setSelections, setCapture, setConsent, setApplicationConsent, setFailure,
@@ -41,28 +54,74 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
   const leaveIntent = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null), leaveTrigger = useRef<HTMLElement | null>(null);
   const errorRegion = useRef<HTMLDivElement>(null);
-  const inventoryKey = ["tool-query-inventory", refresh] as const;
-  const inventory = useSessionQuery({ key: inventoryKey, scopes: [], enabled: open && !disabled,
-    read: readPluginToolChoices });
-  const choices = inventory.data?.choices ?? [], effectiveChoice = choiceKey || (choices.length === 1 ? choices[0].key : "");
+  const pluginInventory = useQuery({ queryKey: pluginInventoryReadKey, enabled: open && !disabled && !pluginFacts.reserved(),
+    queryFn: async ({ signal }) => {
+      if (pluginFacts.reserved()) throw new Error("Plugin settings read is reserved");
+      const value = await pluginCommands.inventory();
+      if (signal.aborted) throw new Error("Plugin inventory read cancelled");
+      return value;
+    } }, pluginFacts.client);
+  const currentInventory = pluginFacts.current();
+  const inventoryKey = ["tool-query-inventory", refresh, currentInventory?.settingsRevision, pluginFacts.state?.dataUpdateCount] as const;
+  const inventory = useSessionQuery({ key: inventoryKey, scopes: [], enabled: open && !disabled && !pluginFacts.reserved() && !!currentInventory,
+    read: () => {
+      const snapshot = currentPlugins(pluginFacts.client);
+      if (!snapshot) throw new Error("Plugin inventory changed");
+      return readReferenceQueryChoices(snapshot, `${project.metadata.projectId}:${project.sessionToken}`,
+        () => !pluginFacts.reserved() && currentPlugins(pluginFacts.client) === snapshot);
+    } });
+  const inventoryReadState = reads.client.getQueryState(reads.key(inventoryKey));
+  const choices = currentInventory && inventoryReadState?.status === "success" && inventoryReadState.fetchStatus === "idle"
+    && !inventoryReadState.isInvalidated && inventoryReadState.data === inventory.data && !inventory.isFetching && !inventory.isError
+    && inventory.data?.settingsRevision === currentInventory.settingsRevision ? inventory.data.choices : [];
+  const unsupportedViews = choices === inventory.data?.choices ? inventory.data.unsupportedViews : [];
+  const effectiveChoice = choiceKey || (choices.length === 1 ? choices[0].key : "");
   const choice = choices.find(item => item.key === effectiveChoice);
   const runtimes = matchingPluginEnvironments(inventory.data?.runtimes ?? [], choice?.runtimeKinds ?? []);
   const effectiveRuntime = runtimeKey || (runtimes.length === 1 ? runtimes[0].environmentDigest : "");
-  const toolRequest: PluginToolRequest | null = choice && effectiveRuntime ? { package: choice.package, resourceId: choice.resourceId, environmentDigest: effectiveRuntime } : null;
-  const environmentKey = ["tool-query-environment", effectiveChoice, effectiveRuntime, refresh, inventory.dataUpdatedAt] as const;
-  const environment = useSessionQuery({ key: environmentKey, scopes: [],
-    enabled: open && !disabled && !!toolRequest && runtimes.some(item => item.environmentDigest === effectiveRuntime) && !inventory.error && !inventory.isFetching,
+  const uiRequest = choice?.kind === "ui" && choice.uiId ? { package: choice.package, uiId: choice.uiId } : null;
+  const uiKey = ["tool-query-ui", effectiveChoice, inventory.dataUpdatedAt] as const;
+  const ui = useSessionQuery({ key: uiKey, scopes: [], enabled: open && !disabled && !pluginFacts.reserved() && !!uiRequest && !!currentInventory,
     read: async () => {
-      if (!toolRequest) throw new Error("Missing tool choice");
-      const value = await pluginCommands.tool(toolRequest);
-      if (!matches(value, toolRequest)) throw new Error("Tool environment identity changed");
+      if (!uiRequest || !choice) throw new Error("Missing reference view choice");
+      if (pluginFacts.reserved()) throw new Error("Plugin settings read is reserved");
+      const value = await pluginCommands.ui(uiRequest);
+      if (!matchesUi(value, choice)) throw new Error("Reference view identity changed");
       return value;
     } });
-  const available = useMemo(() => presentation(environment.data), [environment.data]), query = available.value?.query;
+  const uiReadState = reads.client.getQueryState(reads.key(uiKey));
+  const uiView = choice?.kind === "ui" && uiReadState?.status === "success" && uiReadState.fetchStatus === "idle"
+    && !uiReadState.isInvalidated && uiReadState.data === ui.data && ui.data && !ui.isFetching && !ui.error && matchesUi(ui.data, choice) ? ui.data : null;
+  const resourceId = choice?.kind === "resource" ? choice.resourceId : uiView?.resourceId;
+  const toolRequest: PluginToolRequest | null = choice && resourceId && effectiveRuntime
+    ? { package: choice.package, resourceId, environmentDigest: effectiveRuntime } : null;
+  const environmentKey = ["tool-query-environment", effectiveChoice, effectiveRuntime, refresh, inventory.dataUpdatedAt, ui.dataUpdatedAt] as const;
+  const environment = useSessionQuery({ key: environmentKey, scopes: [],
+    enabled: open && !disabled && !pluginFacts.reserved() && !!toolRequest && runtimes.some(item => item.environmentDigest === effectiveRuntime)
+      && !inventory.error && !inventory.isFetching && !!currentInventory && (choice?.kind !== "ui" || !!uiView),
+    read: async () => {
+      if (!toolRequest) throw new Error("Missing tool choice");
+      if (pluginFacts.reserved()) throw new Error("Plugin settings read is reserved");
+      const value = await pluginCommands.tool(toolRequest);
+      if (!matches(value, toolRequest) || value.settingsRevision !== choice?.settingsRevision
+        || (choice?.kind === "ui" && (!uiView || jsonIdentity(value.binding) !== jsonIdentity(uiView.binding)))) {
+        throw new Error("Tool environment identity changed");
+      }
+      return value;
+    } });
+  const environmentReadState = reads.client.getQueryState(reads.key(environmentKey));
+  const currentTool = currentInventory && environmentReadState?.status === "success" && environmentReadState.fetchStatus === "idle"
+    && !environmentReadState.isInvalidated && environmentReadState.data === environment.data
+    && !inventory.isFetching && !ui.isFetching && !environment.isFetching && !environment.error
+    && choice && environment.data?.settingsRevision === choice.settingsRevision
+    && (choice.kind !== "ui" || uiView && jsonIdentity(environment.data?.binding) === jsonIdentity(uiView.binding))
+    ? environment.data : undefined;
+  const available = useMemo(() => presentation(currentTool), [currentTool]), query = available.value?.query;
   const defaultTarget = query ? field(query.inputTemplate, query.target.path) : undefined;
   const effectiveTarget = target || (typeof defaultTarget === "string" ? defaultTarget : "");
-  const unavailable = !toolRequest || !runtimes.some(item => item.environmentDigest === effectiveRuntime) || !available.value || !!inventory.error || !!environment.error;
-  const environmentChanged = !!capture && (!environment.data || jsonIdentity(environment.data) !== jsonIdentity(capture.review.tool));
+  const unavailable = !toolRequest || !runtimes.some(item => item.environmentDigest === effectiveRuntime) || !available.value
+    || !!pluginInventory.error || !!inventory.error || !!ui.error || !!environment.error;
+  const environmentChanged = !!capture && (!currentTool || jsonIdentity(currentTool) !== jsonIdentity(capture.review.tool));
   const changed = !!capture && capture.sequence !== draftSequence.current;
   const visibleRun = pending?.kind === "start" ? { review: pending.review, sequence: pending.sequence } : run;
   const attemptId = visibleRun?.review.attemptId ?? null;
@@ -88,10 +147,15 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     return !!known && known.taskId === taskId && known.attemptId === attemptId && known.operation === "plugin-tool-query";
   }
   function environmentCurrent() {
+    const pluginState = pluginFacts.client.getQueryState(pluginInventoryReadKey);
     const inventoryState = reads.client.getQueryState(reads.key(inventoryKey));
+    const uiState = choice?.kind === "ui" ? reads.client.getQueryState(reads.key(uiKey)) : null;
     const environmentState = reads.client.getQueryState(reads.key(environmentKey));
-    return inventoryState?.status === "success" && inventoryState.fetchStatus === "idle" && !inventoryState.isInvalidated && inventoryState.data === inventory.data
-      && environmentState?.status === "success" && environmentState.fetchStatus === "idle" && !environmentState.isInvalidated && environmentState.data === environment.data;
+    return !pluginFacts.reserved() && pluginState?.status === "success" && pluginState.fetchStatus === "idle" && !pluginState.isInvalidated
+      && pluginState.data === currentInventory && currentPlugins(pluginFacts.client) === currentInventory
+      && inventoryState?.status === "success" && inventoryState.fetchStatus === "idle" && !inventoryState.isInvalidated && inventoryState.data === inventory.data
+      && (choice?.kind !== "ui" || uiState?.status === "success" && uiState.fetchStatus === "idle" && !uiState.isInvalidated && uiState.data === uiView)
+      && environmentState?.status === "success" && environmentState.fetchStatus === "idle" && !environmentState.isInvalidated && environmentState.data === currentTool;
   }
   const output = useSessionQuery({ key: ["tool-query-output", attemptId, ...resultIds], scopes: ["execution"], enabled: open && !!attemptId && !busy && !!resultIds.length,
     read: async () => {
@@ -105,15 +169,16 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; leaveResolver.current?.(false); }; }, []);
   useEffect(() => { onState({ busy: busy || working, pending: !!pending, hasDraft }); }, [busy, working, !!pending, hasDraft, onState]);
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
-  useEffect(() => { const error = inventory.error ?? environment.error ?? detail.error ?? output.error; if (error) setFailure(commandFailure(error)); }, [inventory.error, environment.error, detail.error, output.error]);
+  useEffect(() => { const error = pluginInventory.error ?? inventory.error ?? ui.error ?? environment.error ?? detail.error ?? output.error;
+    if (error) setFailure(commandFailure(error)); }, [pluginInventory.error, inventory.error, ui.error, environment.error, detail.error, output.error]);
 
   async function prepare(current: () => boolean) {
     const helper = available.value;
-    if (!helper || !environment.data || !toolRequest || unavailable) return;
+    if (!helper || !currentTool || !toolRequest || unavailable) return;
     const sequence = draftSequence.current;
     const payloads = rows.map(row => helper.prepare({ text: row.text, target: effectiveTarget, selections }));
     const id = await executionCommands.identity(context);
-    if (current() && environmentCurrent()) await submit({ kind: "prepare", request: { ...context, tool: toolRequest, attemptId: id, payloads }, view: environment.data, sequence }, current);
+    if (current() && environmentCurrent()) await submit({ kind: "prepare", request: { ...context, tool: toolRequest, attemptId: id, payloads }, view: currentTool, sequence }, current);
   }
   async function start(current: () => boolean) {
     if (!capture || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest || !applicationReady()) return;
@@ -150,8 +215,8 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     if (mounted.current && answer !== null) answerLeave(answer && !!leaveIntent.current?.()
       && draftSequence.current === settledSequence && !session.blocked());
   }
-  const preparationPayload: ResourceToolPreparationCommandPayload | undefined = toolRequest && environment.data
-    ? { kind: "resource-tool-preparation", editSeq: draftSequence.current, tool: toolRequest, view: environment.data } : undefined;
+  const preparationPayload: ResourceToolPreparationCommandPayload | undefined = toolRequest && currentTool
+    ? { kind: "resource-tool-preparation", editSeq: draftSequence.current, tool: toolRequest, view: currentTool } : undefined;
   const capturePayload: ResourceToolCaptureCommandPayload | undefined = capture
     ? { kind: "resource-tool-capture", editSeq: capture.sequence, attemptId: capture.review.attemptId, inputDigest: capture.review.inputDigest } : undefined;
   const applicationBasis = capture?.review.applicationScope ?? null;
@@ -187,7 +252,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
   }
   function preparationAvailability(payload?: ResourceToolPreparationCommandPayload): CommandAvailability {
     const base = baseAvailability(); if (!base.enabled) return base;
-    return payload && preparationPayload && !session.current().pending && !working && !unavailable && !inventory.isFetching && !environment.isFetching && environmentCurrent()
+    return payload && preparationPayload && !session.current().pending && !working && !unavailable && !pluginInventory.isFetching && !inventory.isFetching && !ui.isFetching && !environment.isFetching && environmentCurrent()
       && payload.editSeq === draftSequence.current && jsonIdentity(payload.tool) === jsonIdentity(preparationPayload.tool)
       && jsonIdentity(payload.view) === jsonIdentity(preparationPayload.view) ? { enabled: true } : { enabled: false, reason: "unavailable" };
   }
@@ -195,7 +260,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     const base = baseAvailability(); if (!base.enabled) return base;
     const fixed = session.current().capture;
     return payload && fixed && !session.current().pending && payload.attemptId === fixed.review.attemptId && payload.inputDigest === fixed.review.inputDigest
-      && payload.editSeq === fixed.sequence && (!starting || !changed && !environmentChanged && !unavailable && !inventory.isFetching && !environment.isFetching && environmentCurrent()
+      && payload.editSeq === fixed.sequence && (!starting || !changed && !environmentChanged && !unavailable && !pluginInventory.isFetching && !inventory.isFetching && !ui.isFetching && !environment.isFetching && environmentCurrent()
         && fixed.sequence === draftSequence.current && session.current().consent === fixed.review.inputDigest && applicationReady())
       ? { enabled: true } : { enabled: false, reason: "unavailable" };
   }
@@ -249,7 +314,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     try { return runPresentation.entries(result.output); } catch { return null; }
   }
   return <>
-    <section hidden={!open} aria-label={t("toolQuery.title")} aria-busy={busy || inventory.isFetching || environment.isFetching}>
+    <section hidden={!open} aria-label={t("toolQuery.title")} aria-busy={busy || pluginInventory.isFetching || inventory.isFetching || ui.isFetching || environment.isFetching}>
       <TaskCancellationFeedback origin="resources" taskId={taskId} disabled={disabled} visible={open} retryCommand={{ available: intent => retryCancelAvailability({ ...intent, kind: "execution-cancellation-retry" }).enabled,
         dispatch: intent => { registry.dispatch("resource.retry-tool-cancellation", commandScope, { ...intent, kind: "execution-cancellation-retry" }); } }} checkCommand={{available:intent=>retryCancelAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,
           dispatch:intent=>{registry.dispatch("resource.check-tool-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
@@ -259,16 +324,22 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
         <button type="button" className="secondary-button" disabled={detail.isFetching} onClick={() => void detail.refetch()}>{t("toolQuery.retryRead")}</button></div> : null}
       {output.error ? <div role="alert"><p>{t("toolQuery.outputReadFailed")}</p><CommandFailureDetails failure={commandFailure(output.error)} />
         <button type="button" className="secondary-button" disabled={output.isFetching} onClick={() => void output.refetch()}>{t("toolQuery.retryRead")}</button></div> : null}
-      {inventory.isFetching || environment.isFetching || busy || working ? <p role="status">{t("execution.working")}</p> : null}
+      {pluginInventory.isFetching || inventory.isFetching || ui.isFetching || environment.isFetching || busy || working ? <p role="status">{t("execution.working")}</p> : null}
       <label className="source-field">{t("toolQuery.provider")}<select value={effectiveChoice} disabled={locked || !!capture || working} onChange={event => { setChoiceKey(event.target.value); setRuntimeKey(""); setTarget(""); setSelections([]); edit(); }}>
-        <option value="">{t("toolQuery.chooseProvider")}</option>{choices.map(value => <option key={value.key} value={value.key}>{value.label}</option>)}
+        <option value="">{t("toolQuery.chooseProvider")}</option>
+        {choiceKey && !choice ? <option value={choiceKey}>{t("toolQuery.providerUnavailable")}</option> : null}
+        {choices.map(value => <option key={value.key} value={value.key}>{value.label}</option>)}
       </select></label>
+      {unsupportedViews.map(value => <p key={value} role="status">{t("toolQuery.unsupportedView", { provider: value })}</p>)}
       <label className="source-field">{t("sourcePlugin.runtime")}<select value={effectiveRuntime} disabled={locked || !!capture || working} onChange={event => { setRuntimeKey(event.target.value); edit(); }}>
         <option value="">{t("sourcePlugin.chooseRuntime")}</option>{runtimes.map(value => <option key={value.environmentDigest} value={value.environmentDigest}>{t(value.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(value.environment), system: value.environment.platform.operatingSystem, architecture: value.environment.platform.architecture })}</option>)}
       </select></label>
-      <button className="secondary-button" disabled={locked} onClick={() => { setConsent(null); setFailure(null); setRefresh(value => value + 1); reads.invalidate(["execution"]); }}>{t("toolQuery.refresh")}</button>
-      {unavailable && !inventory.isFetching && !environment.isFetching ? <p role="status">{t(available.failed ? "toolQuery.noPresentation" : "toolQuery.unavailable")}</p> : null}
-      {query ? <><h4>{environment.data?.binding.declaration.title}</h4><p>{environment.data?.binding.declaration.description}</p>
+      <button className="secondary-button" disabled={locked || pluginInventory.isFetching} onClick={() => {
+        setConsent(null); setFailure(null); setRefresh(value => value + 1); void pluginInventory.refetch(); reads.invalidate(["execution"]);
+      }}>{t("toolQuery.refresh")}</button>
+      {unavailable && !pluginInventory.isFetching && !inventory.isFetching && !ui.isFetching && !environment.isFetching
+        ? <p role="status">{t(available.failed ? "toolQuery.noPresentation" : "toolQuery.unavailable")}</p> : null}
+      {query ? <><h4>{currentTool?.binding.declaration.title}</h4><p>{currentTool?.binding.declaration.description}</p>
         <label className="source-field">{query.target.label}<select value={effectiveTarget} disabled={draftLocked} onChange={event => { setTarget(event.target.value); edit(); }}>{query.target.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><p>{query.target.description}</p>
         <fieldset disabled={draftLocked}><legend>{query.selections.label}</legend><p>{query.selections.description}</p>
           {query.selections.options.map(option => <label className="source-check" key={option.value}><input type="checkbox" checked={selections.includes(option.value)} onChange={event => { setSelections(values => event.target.checked ? [...values, option.value] : values.filter(value => value !== option.value)); edit(); }} />{option.label}<span>{option.description}</span></label>)}

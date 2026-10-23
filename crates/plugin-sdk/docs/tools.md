@@ -43,6 +43,18 @@ trusted. Application discovery, current component availability, execution
 authorization and complete product journeys are separate integration work.
 
 
+## Host-rendered Ui selector
+
+The existing manifest `Ui { slot, schema }` shape can select the Host's bounded
+`reference-query` slot with this tool Resource's exact `1/1` contract. Ui ownership
+remains JavaScript-only. `PackageImage::reference_query_ui` requires one Resource
+in that same captured package and component, the original query capability in
+that component, and the bounded presentation below. It rejects ambiguous or
+unsupported bindings rather than choosing a Resource by name or manifest order.
+This adds no SDK wire fields or runtime permission. See the
+[Desktop consumer](../../../docs/plugin-tools.md#declared-reference-query-views)
+for installed-currentness, display lifecycle and the original execution consent.
+
 ## Bounded text-query presentation
 
 A tool can additionally declare `query`, a finite reference-query presentation.

@@ -112,6 +112,7 @@ struct PluginRequests {
     translation: plugins::PluginTranslationRequest,
     build: plugins::PluginBuildRequest,
     tool: plugins::PluginToolRequest,
+    ui: plugins::PluginUiRequest,
     generation_component: plugins::PluginGenerationComponentRequest,
     text_review: plugins::PluginTextReviewRequest,
 }
@@ -132,6 +133,7 @@ struct PluginResponses {
     translation: plugins::PluginTranslationView,
     build: plugins::PluginBuildView,
     tool: plugins::PluginToolView,
+    ui: plugins::PluginUiView,
     generation_component: plugins::PluginGenerationComponentView,
     text_review: plugins::PluginTextReviewView,
     text_reviews: plugins::PluginTextReviewListView,

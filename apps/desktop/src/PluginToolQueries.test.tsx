@@ -1,4 +1,5 @@
 import { createRef, useLayoutEffect } from "react";
+import type { QueryClient } from "@tanstack/react-query";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -10,6 +11,7 @@ import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSuppo
 import { nativeInventory, nativePackage, nativeEnvironment, nativeDigest, nativeOrigin } from "./testSupport/pluginNativeFixture";
 import type { PluginToolView } from "./pluginCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { pluginInventoryReadKey, useApplicationQueryClient } from "./ApplicationReadProvider";
 import { i18n } from "./i18n";
 import { SessionNavigation, type SessionExitPermit } from "./sessionNavigation";
 import type { ProjectView } from "./projectCommands";
@@ -27,15 +29,33 @@ let outputs: Map<string, ExecutionOutputView>, startUnknown: boolean, malformedO
 let holdPreparation: Promise<void> | null, holdStartRead: Promise<void> | null;
 let startBeforeEnqueue: boolean, startReadMode: "normal" | "error" | "invalid";
 let applicationMode: boolean, nativeMode: boolean, instanceState: "reserved" | "active" | "stopping" | "stopped", unknownStop: boolean;
+let declaredUi: boolean, holdUiRead: Promise<void> | null;
 const applicationBasis = { instanceId: fixtureIdentity(1900), activationGeneration: 1 };
+function referencePackage() {
+  const value = nativeMode ? nativePackage(toolQueryPackage) : structuredClone(toolQueryPackage);
+  return declaredUi ? { ...value, manifest: { ...value.manifest, contributions: [...value.manifest.contributions,
+    { id: "query-panel", componentId: value.manifest.contributions[0].componentId,
+      contribution: { kind: "ui" as const, slot: "reference-query", schema: { id: "tsumugi.capability-tool-declaration", schemaVersion: 1, behaviorVersion: 1 } } }] } } : value;
+}
+function selectedUi() {
+  const tool = selectedTool();
+  return { settingsRevision: inventory.settingsRevision,
+    package: { plugin: tool.binding.capability.provider.plugin, packageDigest: tool.binding.capability.provider.packageDigest },
+    componentId: tool.binding.capability.provider.componentId, uiId: "query-panel", slot: "reference-query", resourceId: tool.resourceId,
+    binding: structuredClone(tool.binding) };
+}
 function selectedTool(): PluginToolView {
   return { ...structuredClone(toolQueryView), componentScope: applicationMode ? "application" : "project",
+    ...(declaredUi ? { binding: { ...structuredClone(toolQueryView.binding), capability: {
+      ...structuredClone(toolQueryView.binding.capability), provider: { ...toolQueryView.binding.capability.provider,
+        componentId: toolQueryPackage.manifest.contributions[0].componentId } } } } : {}),
     ...(nativeMode ? { environment: nativeEnvironment, environmentDigest: nativeDigest, runtimeOrigin: nativeOrigin } : {}) };
 }
 
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   applicationMode = false; nativeMode = false; instanceState = "reserved"; unknownStop = false;
+  declaredUi = false; holdUiRead = null;
   serial = 901; inventory = structuredClone(toolQueryInventory); prepared = null; detail = null;
   outputs = new Map(); startUnknown = false; malformedOutput = false; queued = false; holdPreparation = null; holdStartRead = null;
   startBeforeEnqueue = false; startReadMode = "normal";
@@ -46,7 +66,8 @@ beforeEach(async () => {
       case "read_content_scope": return { revision: "0", currentSnapshot: null };
       case "read_terms": case "list_resource_captures": return [];
       case "read_plugin_inventory": return structuredClone(inventory);
-      case "read_plugin_package": return nativeMode ? nativePackage(toolQueryPackage) : structuredClone(toolQueryPackage);
+      case "read_plugin_package": return referencePackage();
+      case "read_plugin_ui": if (holdUiRead) await holdUiRead; return selectedUi();
       case "read_plugin_tool": return selectedTool();
       case "read_application_plugin_instance": return { basis: structuredClone(applicationBasis), state: instanceState };
       case "stop_application_plugin_instance": {
@@ -110,10 +131,10 @@ afterEach(cleanup);
 
 async function open(presentation = true) {
   const user = userEvent.setup(), ref = createRef<ResourceHandle>();
-  let commands!: WorkbenchCommands, owner!: ReturnType<typeof useResourceDraftSession>;
+  let commands!: WorkbenchCommands, owner!: ReturnType<typeof useResourceDraftSession>, applicationReads!: QueryClient;
   function Probe() {
-    const currentCommands = useWorkbenchCommands(), currentOwner = useResourceDraftSession();
-    useLayoutEffect(() => { commands = currentCommands; owner = currentOwner; });
+    const currentCommands = useWorkbenchCommands(), currentOwner = useResourceDraftSession(), client = useApplicationQueryClient();
+    useLayoutEffect(() => { commands = currentCommands; owner = currentOwner; applicationReads = client; });
     return null;
   }
   const ui = (currentProject = project) => <><ResourceWorkbench ref={ref} project={currentProject} disabled={false} onOpenTranslation={() => true} /><Probe /></>;
@@ -124,7 +145,7 @@ async function open(presentation = true) {
     await screen.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
     await user.click(screen.getByRole("checkbox", { name: /^Term 👩🏽‍💻/ }));
   }
-  return { user, ref, view, ui, commands: () => commands, owner: () => owner.tool, resources: () => owner };
+  return { user, ref, view, ui, commands: () => commands, owner: () => owner.tool, resources: () => owner, applicationReads: () => applicationReads };
 }
 function exitNavigation(handle: Awaited<ReturnType<typeof open>>) {
   return new SessionNavigation({ live: () => true, area: () => "resources", show: () => {},
@@ -145,6 +166,141 @@ async function start(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
   await user.click(screen.getByRole("button", { name: "Run reference queries" }));
 }
+
+it("mounts a declared reference view once and uses the original query review and consent", async () => {
+  declaredUi = true;
+  const { user, commands } = await open();
+  const provider = screen.getByRole("combobox", { name: "Reference package" });
+  expect(within(provider).getAllByRole("option")).toHaveLength(2);
+  expect(within(provider).getByRole("option", { name: /query-panel/ })).toBeVisible();
+  expect(within(provider).queryByRole("option", { name: /agent-query-tool/ })).toBeNull();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_plugin_ui")).toHaveLength(1);
+  expect(invoke.mock.calls.find(([command]) => command === "read_plugin_ui")?.[1].request).toEqual({
+    package: { plugin: toolQueryPackage.manifest.plugin, packageDigest: toolQueryPackage.packageDigest }, uiId: "query-panel" });
+  const registered = commands().list({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "resources" });
+  expect(registered.filter(command => command.id === "resource.prepare-tool")).toHaveLength(1);
+  expect(registered.some(command => command.id.startsWith("ui."))).toBe(false);
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "declared query");
+  await review(user);
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
+  await start(user);
+  await screen.findByRole("region", { name: "Query results" });
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_plugin_tool")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+});
+
+it("keeps the original unknown start and query draft for a declared view", async () => {
+  declaredUi = true;
+  const { user, owner } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "original declared query 👩🏽‍💻");
+  await review(user);
+  startBeforeEnqueue = true;
+  await start(user);
+  await screen.findByRole("button", { name: i18n.t("execution.retryPluginStart") });
+  expect(owner().current().pending?.kind).toBe("start");
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("original declared query 👩🏽‍💻");
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_plugin_ui")).toHaveLength(1);
+});
+
+it("refuses a rejected declared view without exposing its resource as a fallback", async () => {
+  declaredUi = true;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_plugin_ui"
+    ? Promise.reject(new Error("Ambiguous reference view")) : original(command, args));
+  const { user } = await open(false);
+  await screen.findByText(i18n.t("toolQuery.failed"));
+  const provider = screen.getByRole("combobox", { name: "Reference package" });
+  expect(within(provider).getAllByRole("option")).toHaveLength(2);
+  expect(within(provider).queryByRole("option", { name: /agent-query-tool/ })).toBeNull();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "kept after refusal");
+  expect(screen.getByRole("button", { name: "Review queries" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_tool" || command === "prepare_plugin_tool")).toBe(false);
+});
+
+it("sends two views in one component to the host and shows its ambiguity rejection", async () => {
+  declaredUi = true;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_package") {
+      const value = referencePackage();
+      return Promise.resolve({ ...value, manifest: { ...value.manifest, contributions: [...value.manifest.contributions,
+        { id: "alternate-query-panel", componentId: value.manifest.contributions[0].componentId,
+          contribution: { kind: "ui", slot: "reference-query", schema: { id: "tsumugi.capability-tool-declaration", schemaVersion: 1, behaviorVersion: 1 } } }] } });
+    }
+    if (command === "read_plugin_ui") return Promise.reject({ code: "invalid-input", stage: "read", outcome: "rejected",
+      reason: "ambiguous-reference-query-ui", recoveryRequired: false });
+    return original(command, args);
+  });
+  const { user } = await open(false);
+  const provider = screen.getByRole("combobox", { name: "Reference package" });
+  await waitFor(() => expect(within(provider).getAllByRole("option")).toHaveLength(3));
+  expect(provider).toHaveValue("");
+  expect(within(provider).getByRole("option", { name: / · query-panel$/ })).toBeVisible();
+  expect(within(provider).getByRole("option", { name: /alternate-query-panel$/ })).toBeVisible();
+  expect(within(provider).queryByRole("option", { name: /agent-query-tool/ })).toBeNull();
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_ui")).toBe(false);
+  await user.selectOptions(provider, within(provider).getByRole("option", { name: /alternate-query-panel$/ }));
+  await screen.findByText(i18n.t("toolQuery.failed"));
+  await user.click(screen.getByText(i18n.t("execution.diagnostic")));
+  expect(screen.getByText("ambiguous-reference-query-ui")).toBeVisible();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_plugin_ui")).toHaveLength(1);
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_tool" || command === "prepare_plugin_tool")).toBe(false);
+  expect(screen.getByRole("button", { name: "Review queries" })).toBeDisabled();
+});
+
+it("explains an unsupported reference view without exposing its resource", async () => {
+  declaredUi = true;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command !== "read_plugin_package") return original(command, args);
+    const value = referencePackage();
+    return Promise.resolve({ ...value, manifest: { ...value.manifest, contributions: value.manifest.contributions.map(item => item.id === "query-panel"
+      ? { ...item, contribution: { ...item.contribution, schema: { id: "tsumugi.capability-tool-declaration", schemaVersion: 2, behaviorVersion: 1 } } }
+      : item) } });
+  });
+  await open(false);
+  expect(await screen.findByText(i18n.t("toolQuery.unsupportedView", { provider: `${toolQueryPackage.manifest.plugin.id} ${toolQueryPackage.manifest.plugin.version} · query-panel` }))).toBeVisible();
+  const provider = screen.getByRole("combobox", { name: "Reference package" });
+  expect(within(provider).getAllByRole("option")).toHaveLength(1);
+  expect(within(provider).queryByRole("option", { name: /agent-query-tool/ })).toBeNull();
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_ui" || command === "read_plugin_tool")).toBe(false);
+});
+
+it("requires an explicit provider when two declared views are installed", async () => {
+  declaredUi = true;
+  const other = { ...inventory.packages[0], plugin: { ...inventory.packages[0].plugin, id: "other-reference" }, packageDigest: "d".repeat(64) };
+  inventory.packages.push(other); inventory.packageDecisions.push({ plugin: other.plugin, packageDigest: other.packageDigest, origin: other.origin, enabled: true });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_plugin_package"
+    ? Promise.resolve({ ...referencePackage(), packageDigest: (args.request as { packageDigest: string }).packageDigest,
+      manifest: { ...referencePackage().manifest, plugin: (args.request as { plugin: object }).plugin } }) : original(command, args));
+  const { user } = await open(false), provider = screen.getByRole("combobox", { name: "Reference package" });
+  await waitFor(() => expect(within(provider).getAllByRole("option")).toHaveLength(3));
+  expect(provider).toHaveValue("");
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_ui")).toBe(false);
+  await user.selectOptions(provider, within(provider).getByRole("option", {
+    name: `${toolQueryPackage.manifest.plugin.id} ${toolQueryPackage.manifest.plugin.version} · query-panel` }));
+  await screen.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_plugin_ui")).toHaveLength(1);
+});
+
+it("cannot resurrect a late view after disabling its package and keeps the query draft", async () => {
+  declaredUi = true;
+  let finish!: () => void;
+  holdUiRead = new Promise<void>(resolve => { finish = resolve; });
+  const { user, applicationReads } = await open(false);
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_plugin_ui")).toHaveLength(1));
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "unsaved reference text");
+  const disabled = structuredClone(inventory);
+  disabled.packageDecisions[0].enabled = false;
+  disabled.settingsRevision = "2";
+  await act(async () => { applicationReads().setQueryData(pluginInventoryReadKey, disabled); finish(); });
+  await screen.findByText(i18n.t("toolQuery.unavailable"));
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("unsaved reference text");
+  expect(screen.getByRole("button", { name: "Review queries" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_tool" || command === "prepare_plugin_tool")).toBe(false);
+});
 
 it("runs explicit Unicode single/batch inputs and pairs reversed ledger items with their own reference results", async () => {
   const { user } = await open();

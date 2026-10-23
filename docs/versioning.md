@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+Declared reference-query Ui contributions now select the existing host-rendered
+tool controls through an exact same-package, same-component Resource binding.
+A new read-only Desktop IPC command rechecks installed approval, enablement and
+settings revision; the original runtime, execution consent, draft and task owners
+remain authoritative. This adds a Host API and Desktop read command without
+changing SDK declaration/wire fields, SDK archives, process protocol, persistent
+formats, dependencies or version sources. The whole undistributed application
+`0.2.0-alpha.1` / SDK and plugin `0.1.0-alpha.1` batch already targets new
+functionality and remains Unreleased, so no additional bump is needed. Bilingual
+Unreleased entries describe the change; new same-version package bytes require
+separate review and do not replace existing installations automatically.
+
 The macOS translation editor preserves original clipboard Unicode through an
 explicit paste gesture. Pending input uses the existing draft mutation owner and
 project exit coordination; newer input, cancellation and read failure retain the
