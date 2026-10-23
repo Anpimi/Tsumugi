@@ -1,5 +1,7 @@
 export const strategyEn = {
   checkingSaved: "Checking the original saved strategy result…",
+  checksIncomplete: "The future default was not changed because some comparison results are missing independent QA. Complete the required QA for both slots of every evaluation entry, then try again.",
+  noImprovement: "The future default was not changed: none of the saved holdout comparisons prefers the candidate. Review the results and notes. Keep the current default unless the evidence supports preferring the candidate.",
   preparationRecorded: "The original evaluation preparation is saved. Its history is kept; explicitly prepare and review current data before running it.",
   recordedReadFailed: "The original action is recorded. Current evidence could not be read; refresh it before continuing. Your newer input is kept.",
   checkUnknown: "The original check result is unconfirmed. Check the saved result first. A missing result does not mean preparation or the checker stopped; an explicit retry may repeat checking.",
@@ -26,6 +28,8 @@ export const strategyEn = {
 
 export const strategyZh = {
   checkingSaved: "正在核对原策略操作的已保存结果…",
+  checksIncomplete: "未来默认策略未更改：部分对比结果缺少独立 QA。请为每个评估条目的两个槽位完成必需 QA，再尝试采用。",
+  noImprovement: "未来默认策略未更改：已保存的留出项比较均未偏好候选。请复核结果与备注；只有证据支持候选更好时再记录相应比较，否则保留当前默认值。",
   preparationRecorded: "原评估准备已保存，历史保持可查。运行前请明确重新准备并审阅当前数据。",
   recordedReadFailed: "原操作已记录，但无法读取当前依据。请刷新后再继续，较新输入已保留。",
   checkUnknown: "尚未确认原检查结果，请先核对已保存结果。没有记录不代表准备或检查器已停止；明确重试可能重复检查。",

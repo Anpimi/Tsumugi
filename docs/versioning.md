@@ -1,5 +1,11 @@
 # Application versioning and changelog maintenance
 
+Confirmed context-strategy promotion rejections explain incomplete independent
+QA or missing holdout improvement separately from uncertain writes. This UI-only
+message correction changes no execution, authorization, API, schema, protocol,
+dependency or version source. Both Unreleased changelogs are synchronized; the
+existing post-`0.2.0-alpha.1` release boundary applies, with no local QA bump.
+
 Context-strategy suite acknowledgements and original-action recovery reuse the
 existing connection-reference equality for an omitted or null optional reference.
 All other captured inputs and real saved-profile identities remain exact. This

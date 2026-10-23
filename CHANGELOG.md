@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Explain confirmed context-strategy promotion rejections when independent QA is
+  incomplete or holdout comparisons show no improvement, while retaining the
+  original recovery instructions for uncertain writes.
+
 - Accept equivalent omitted and null connection references in fixed context-strategy
   suite acknowledgements and original-action recovery, while retaining exact
   configuration, scope and saved-profile checks.

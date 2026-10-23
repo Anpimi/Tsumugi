@@ -22,7 +22,8 @@ import { i18n } from "./i18n";
 import { enUS } from "./i18n/en-US";
 import reviewWire from "../test/fixtures/reviewCommands.contract.json";
 import resourceWire from "../test/fixtures/resourceCommands.contract.json";
-import type { ProjectView } from "./projectCommands";
+import errorWire from "../test/fixtures/commandErrors.contract.json";
+import { isCommandError, type ProjectView } from "./projectCommands";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -88,6 +89,42 @@ it("keeps newer text visible and exposes exact recovery after an uncertain candi
   await user.click(screen.getByRole("button", { name: enUS.strategy.reconcile }));
   await screen.findByRole("button", { name: enUS.strategy.retryOriginal });
   expect(reason).toHaveValue("Newer input B"); expect(strategyCommands.capture).toHaveBeenCalledOnce();
+});
+
+const rejectedGateCases = [
+  { language: "en-US", reason: "strategy-checks-incomplete", message: "The future default was not changed because some comparison results are missing independent QA. Complete the required QA for both slots of every evaluation entry, then try again." },
+  { language: "en-US", reason: "strategy-no-improvement", message: "The future default was not changed: none of the saved holdout comparisons prefers the candidate. Review the results and notes. Keep the current default unless the evidence supports preferring the candidate." },
+  { language: "zh-CN", reason: "strategy-checks-incomplete", message: "未来默认策略未更改：部分对比结果缺少独立 QA。请为每个评估条目的两个槽位完成必需 QA，再尝试采用。" },
+  { language: "zh-CN", reason: "strategy-no-improvement", message: "未来默认策略未更改：已保存的留出项比较均未偏好候选。请复核结果与备注；只有证据支持候选更好时再记录相应比较，否则保留当前默认值。" },
+];
+it.each(rejectedGateCases)("explains a confirmed strategy gate $reason in $language", async ({ language, reason, message }) => {
+  const user = await fill(); await act(async () => { await i18n.changeLanguage(language); });
+  const failure = { ...errorWire.errors[0], conflict: null, reason }; expect(isCommandError(failure)).toBe(true);
+  vi.mocked(strategyCommands.capture).mockRejectedValueOnce(failure);
+  const original = vi.spyOn(strategyCommands, "action").mockResolvedValue(null);
+  await user.click(screen.getByRole("button", { name: i18n.t("strategy.create") }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(screen.queryByText(i18n.t("strategy.failed"))).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: i18n.t("strategy.reconcile") })).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: i18n.t("strategy.reason") })).toBeEnabled();
+  expect(screen.getByRole("textbox", { name: i18n.t("strategy.reason") })).toHaveValue("Preserve the extracted scene");
+  expect(original).not.toHaveBeenCalled();
+});
+
+it.each(["unknown-outcome", "untyped-reason", "unknown-action-read"] as const)("keeps an unconfirmed strategy outcome for %s", async kind => {
+  const user = await fill(), reason = "strategy-checks-incomplete";
+  const rejected = { ...errorWire.errors[0], conflict: null, reason };
+  const failure = kind === "unknown-outcome" ? { ...rejected, outcome: "unknown" }
+    : kind === "untyped-reason" ? { reason, outcome: "rejected" } : new Error("Lost original strategy ACK");
+  vi.mocked(strategyCommands.capture).mockRejectedValueOnce(failure);
+  const original = vi.spyOn(strategyCommands, "action").mockResolvedValueOnce(null).mockRejectedValueOnce(rejected);
+  await user.click(screen.getByRole("button", { name: enUS.strategy.create }));
+  await screen.findByRole("button", { name: enUS.strategy.reconcile });
+  if (kind === "unknown-action-read") await user.click(screen.getByRole("button", { name: enUS.strategy.reconcile }));
+  await waitFor(() => expect(original).toHaveBeenCalledTimes(kind === "unknown-action-read" ? 2 : 1));
+  expect(screen.getAllByText(enUS.strategy.unknown).length).toBeGreaterThan(0);
+  for (const entry of rejectedGateCases.filter(entry => entry.language === "en-US")) expect(screen.queryByText(entry.message)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: enUS.strategy.reconcile })).toBeVisible();
 });
 
 it.each(["failed", "cancelled", "unavailable"] as const)("allows a fresh independent QA after a saved %s receipt without rerunning the model", async outcome => {

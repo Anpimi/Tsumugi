@@ -10,7 +10,7 @@ import { ReviewCheckerDetails, checkerIdentity, ruleIdentity } from "./ReviewChe
 import { CommandFailureDetails, commandFailure, failureReason } from "./CommandFailure";
 import { sourceReads } from "./sourceQueries";
 import { mandatoryChecksClean, type AiConfig } from "./aiCommands";
-import type { ProjectView } from "./projectCommands";
+import { isCommandError, type ProjectView } from "./projectCommands";
 import type { ArenaView } from "./arenaCommands";
 import { reviewRuleLabel } from "./reviewLabels";
 import { useWorkbenchCommands } from "./workbenchCommands";
@@ -70,6 +70,8 @@ function StrategyPanel({ area, project, active, disabled, config, onOpenConnecti
   const failure = state.failure ?? (failedRead ? commandFailure(failedRead) : null);
   const diagnostic = failureReason(failure), localFailure = diagnostic === "strategy-report" ? "strategy.invalidReport"
     : diagnostic === "strategy-correction" ? "strategy.invalidCorrection" : diagnostic === "strategy-correction-stale" ? "strategy.correctionStale" : null;
+  const rejectedGate = !state.pending?.uncertain && isCommandError(failure) && failure.outcome === "rejected"
+    ? failure.reason === "strategy-checks-incomplete" ? "strategy.checksIncomplete" : failure.reason === "strategy-no-improvement" ? "strategy.noImprovement" : null : null;
   const loading = source.isFetching || page.isFetching || candidates.isFetching || evaluations.isFetching || future.isFetching || defaultCandidate.isFetching || history.isFetching || evaluation.isFetching || arena.isFetching;
   useEffect(() => { if (state.failure) failureRef.current?.focus(); }, [state.failure]);
   const locked = disabled || owner.reserved() || !owner.available();
@@ -96,7 +98,7 @@ function StrategyPanel({ area, project, active, disabled, config, onOpenConnecti
       </select></label>
       {!owner.available() ? <p role="alert">{t("ai.errors.ai-locale")}</p> : null}
       {loading ? <p role="status">{t("strategy.loading")}</p> : null}
-      {failure ? <div role="alert" tabIndex={-1} ref={failureRef}><p>{t(localFailure ?? (state.pending?.uncertain ? "strategy.unknown" : state.notice === "recordedReadFailed" ? "strategy.recordedReadFailed" : "strategy.failed"))}</p>
+      {failure ? <div role="alert" tabIndex={-1} ref={failureRef}><p>{t(localFailure ?? (state.pending?.uncertain ? "strategy.unknown" : rejectedGate ?? (state.notice === "recordedReadFailed" ? "strategy.recordedReadFailed" : "strategy.failed")))}</p>
         <CommandFailureDetails failure={failure} /><button type="button" className="secondary-button" disabled={state.busy} onClick={refresh}>{t("strategy.refresh")}</button></div> : null}
       {state.notice ? <p role="status">{t(`strategy.${state.notice}`)}</p> : null}
       {state.pending?.uncertain ? <div role="status"><p>{t(state.checkingAction ? "strategy.checkingSaved" : state.pending.kind === "check" || state.pending.kind === "prepare-check" ? "strategy.checkUnknown" : "strategy.unknown")}</p>
