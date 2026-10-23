@@ -1208,6 +1208,21 @@ installation receipt cannot create a verified repository witness. Failed later
 metadata cannot discard previously verified progress. Only a verified exact
 member can supply its repository origin to a separate package decision.
 
+The opt-in `repository` test
+`reviewed_fixed_artifacts_are_signed_and_tampering_is_rejected` exercises already
+built, explicitly reviewed archives without running their code. Set
+`TSUMUGI_TEST_REVIEWED_ARTIFACTS` to a JSON file with `formatVersion: 1`,
+`reviewed: true`, and a `packages` array. Each member supplies `archive` (a local
+path), `archiveSha256`, `plugin`, `packageDigest`, `sourceRepository`,
+`sourceCommit`, and the complete `sdkArtifact` lock object. Run it with
+`cargo test --locked --offline -p tsumugi-plugin-host --test repository reviewed_fixed_artifacts_are_signed_and_tampering_is_rejected -- --ignored --exact --nocapture`.
+Transport, package identity/digest and SDK mismatches are rejected before the
+existing fixture signs anything; the real TUF consumer then verifies the fixed
+package and rejects package or unsigned metadata changes. Its ephemeral
+in-memory test keys are never exported.
+Source declarations are not independent build provenance, and the exercise is
+neither a production signing tool nor publication.
+
 Attempt JavaScript generation components may explicitly opt into the existing
 component-input wrapper and declared read-only prepared query services. Every
 facade is bound to the caller's exact dispatch scope; callee grants and execution

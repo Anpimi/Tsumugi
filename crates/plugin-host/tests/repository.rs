@@ -82,6 +82,230 @@ fn stored_version(storage: &MemoryStorage, key: &str) -> u64 {
         .unwrap()
 }
 
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReviewedArtifactSelection {
+    format_version: u32,
+    reviewed: bool,
+    packages: Vec<ReviewedArtifact>,
+}
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReviewedArtifact {
+    archive: std::path::PathBuf,
+    archive_sha256: String,
+    plugin: tsumugi_plugin_sdk::PluginIdentity,
+    package_digest: String,
+    source_repository: String,
+    source_commit: String,
+    sdk_artifact: Value,
+}
+
+// Test-only review admission. Every input is checked before the existing
+// fixture can create its ephemeral key or sign any metadata. Source fields are
+// reviewed declarations, not independently authenticated build provenance.
+async fn sign_reviewed_artifacts(
+    selection: &ReviewedArtifactSelection,
+    signing_started: &AtomicUsize,
+) -> Result<Vec<Fixture>, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    use tsumugi_plugin_host::{PackageImage, repository::RepositoryPackageDeclaration};
+
+    if selection.format_version != 1 || !selection.reviewed || selection.packages.is_empty() {
+        return Err("an explicit nonempty reviewed selection is required".into());
+    }
+    let mut prepared = Vec::new();
+    for reviewed in &selection.packages {
+        if !reviewed.source_repository.starts_with("https://")
+            || reviewed.source_commit.len() != 40
+            || !reviewed
+                .source_commit
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("complete reviewed source declarations are required".into());
+        }
+        let bytes = fs::read(&reviewed.archive).map_err(|error| error.to_string())?;
+        if format!("{:x}", Sha256::digest(&bytes)) != reviewed.archive_sha256 {
+            return Err("reviewed transport digest mismatch".into());
+        }
+        let image = PackageImage::capture_archive(&bytes, &reviewed.package_digest, || true)
+            .map_err(|error| format!("reviewed package rejected: {error:?}"))?;
+        let inspection = image.inspection();
+        if inspection.plugin != reviewed.plugin {
+            return Err("reviewed plugin identity mismatch".into());
+        }
+        // Re-encode only the Host-admitted immutable image. The tar library
+        // materializes this image later; it does not admit an arbitrary archive.
+        let encoded = image.encode_archive(|| true).unwrap();
+        let mut sdk_lock = None;
+        for entry in tar::Archive::new(encoded.as_slice()).entries().unwrap() {
+            let mut entry = entry.unwrap();
+            if entry.path().unwrap().as_ref() == std::path::Path::new("sdk/lock.json") {
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes).unwrap();
+                sdk_lock = Some(serde_json::from_slice::<Value>(&bytes).unwrap());
+            }
+        }
+        if sdk_lock.as_ref() != Some(&reviewed.sdk_artifact) {
+            return Err("reviewed SDK artifact mismatch".into());
+        }
+        prepared.push((inspection, encoded));
+    }
+
+    let mut signed = Vec::new();
+    for (inspection, encoded) in prepared {
+        signing_started.fetch_add(1, Ordering::AcqRel);
+        signed.push(
+            Fixture::new_with_package(false, move |repository| {
+                let directory = repository.join("packages/reviewed");
+                fs::create_dir_all(&directory).unwrap();
+                tar::Archive::new(encoded.as_slice())
+                    .unpack(&directory)
+                    .unwrap();
+                assert_eq!(
+                    PackageImage::capture_directory(&directory, &inspection.package_digest, || {
+                        true
+                    })
+                    .unwrap()
+                    .inspection(),
+                    inspection
+                );
+                RepositoryPackageDeclaration {
+                    directory: "reviewed".into(),
+                    plugin: inspection.plugin,
+                    package_digest: inspection.package_digest,
+                    publisher_id: "reviewed-fixture-publisher".into(),
+                }
+            })
+            .await,
+        );
+    }
+    Ok(signed)
+}
+
+#[tokio::test]
+#[ignore = "requires an explicit reviewed selection of already built package archives"]
+async fn reviewed_fixed_artifacts_are_signed_and_tampering_is_rejected() {
+    let input = std::env::var_os("TSUMUGI_TEST_REVIEWED_ARTIFACTS")
+        .expect("set the reviewed selection JSON path explicitly");
+    let selection: ReviewedArtifactSelection =
+        serde_json::from_slice(&fs::read(input).unwrap()).unwrap();
+    let signing_started = AtomicUsize::new(0);
+    for (field, expected) in [
+        (
+            "review",
+            "an explicit nonempty reviewed selection is required",
+        ),
+        ("transport", "reviewed transport digest mismatch"),
+        ("package", "reviewed package rejected: PackageMismatch"),
+        ("identity", "reviewed plugin identity mismatch"),
+        ("sdk", "reviewed SDK artifact mismatch"),
+    ] {
+        let mut rejected = selection.clone();
+        // Reject the last member before signing even an earlier valid member.
+        let package = rejected.packages.last_mut().unwrap();
+        match field {
+            "review" => rejected.reviewed = false,
+            "transport" => package.archive_sha256 = "0".repeat(64),
+            "package" => package.package_digest = "0".repeat(64),
+            "identity" => package.plugin.version.push_str("-unreviewed"),
+            "sdk" => package.sdk_artifact["sha256"] = json!("0".repeat(64)),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            sign_reviewed_artifacts(&rejected, &signing_started)
+                .await
+                .err()
+                .unwrap(),
+            expected
+        );
+        assert_eq!(signing_started.load(Ordering::Acquire), 0, "{field}");
+        println!("review mismatch rejected before signing: {field}");
+    }
+
+    let fixtures = sign_reviewed_artifacts(&selection, &signing_started)
+        .await
+        .unwrap();
+    assert_eq!(
+        signing_started.load(Ordering::Acquire),
+        selection.packages.len()
+    );
+    for (fixture, reviewed) in fixtures.iter().zip(&selection.packages) {
+        let verified = fixture
+            .capture()
+            .verify(
+                "reviewed-source",
+                &fixture.anchor,
+                Arc::new(MemoryStorage::default()),
+                || true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(verified.packages().len(), 1);
+        assert_eq!(verified.packages()[0].plugin(), &reviewed.plugin);
+        assert_eq!(
+            verified.packages()[0].package_digest(),
+            reviewed.package_digest
+        );
+        assert_eq!(
+            verified.packages()[0].image().package_digest(),
+            reviewed.package_digest
+        );
+
+        let package_file = fixture.directory.join("packages/reviewed/sdk/lock.json");
+        let original = fs::read(&package_file).unwrap();
+        let mut changed = original.clone();
+        changed.push(b' ');
+        fs::write(&package_file, changed).unwrap();
+        assert_eq!(
+            fixture
+                .capture()
+                .verify(
+                    "reviewed-source",
+                    &fixture.anchor,
+                    Arc::new(MemoryStorage::default()),
+                    || true
+                )
+                .await
+                .unwrap_err(),
+            RepositoryError::Capture(HostError::PackageMismatch)
+        );
+        fs::write(&package_file, original).unwrap();
+        let metadata_file = fixture.directory.join("metadata/timestamp.json");
+        let mut metadata: Value =
+            serde_json::from_slice(&fs::read(&metadata_file).unwrap()).unwrap();
+        metadata["signed"]["version"] = json!(20);
+        fs::write(&metadata_file, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert_eq!(
+            fixture
+                .capture()
+                .verify(
+                    "reviewed-source",
+                    &fixture.anchor,
+                    Arc::new(MemoryStorage::default()),
+                    || true
+                )
+                .await
+                .unwrap_err(),
+            RepositoryError::SignatureRejected
+        );
+        println!(
+            "{}",
+            json!({
+                "plugin": reviewed.plugin, "archiveSha256": reviewed.archive_sha256,
+                "packageDigest": reviewed.package_digest, "sourceRepository": reviewed.source_repository,
+                "declaredSourceCommit": reviewed.source_commit, "sdkArtifact": reviewed.sdk_artifact,
+                "signedVerification": "passed", "packageMutationRejected": true,
+                "unsignedMetadataMutationRejected": true, "sourceProvenanceIndependentlyVerified": false,
+                "publication": "not-run", "key": "ephemeral-memory-only"
+            })
+        );
+    }
+}
+
 #[tokio::test]
 async fn rejects_signed_delegations_before_any_working_state_callback() {
     let fixture = Fixture::new(false).await;
