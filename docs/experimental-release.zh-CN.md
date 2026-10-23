@@ -5,6 +5,14 @@
 `0.1.0-alpha.1` 包；应用清单固定其源码、SDK 与完整包身份。插件批准、安装、
 启用及每次执行仍须分别决定。安装应用不会替换已有项目绑定或授予执行许可。
 
+应用名为 **Tsumugi Experimental**，使用独立的 `com.tsumugi.experimental`
+应用数据标识，不自动打开其他构建的 profile。固定资源准备好后，构建命令在运行环境
+profile 之上叠加该实验标识：
+
+```sh
+CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json --config src-tauri/tauri.experimental.conf.json --no-sign -- --locked --offline
+```
+
 请先使用合成或可丢弃项目。仅支持当前项目 schema 61；应用拒绝更早的开发目录，
 不自动迁移或重置。请保留旧目录，在新项目重新导入原始源文件。格式及工作流限制见
 [支持的集成](integrations.md)和[更新日志](../CHANGELOG.zh-CN.md)。

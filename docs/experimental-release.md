@@ -8,6 +8,15 @@ Plugin approval, installation, enablement and each execution decision remain
 separate actions. Installing this application does not replace an existing
 project binding or grant execution permission.
 
+The application is named **Tsumugi Experimental** and uses the separate
+`com.tsumugi.experimental` application-data identity. It does not automatically
+open another build's profile. To build this flavor after preparing the fixed
+resources, layer the experimental identity over the runtime profile:
+
+```sh
+CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json --config src-tauri/tauri.experimental.conf.json --no-sign -- --locked --offline
+```
+
 Use synthetic or disposable projects first. Only the current project schema 61
 is supported. Earlier development directories are refused without application
 migration or reset; preserve them and reimport original source into a new
