@@ -6,6 +6,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Accept Core's canonical item order in multi-entry AI work-plan previews while
+  verifying complete, unique entry coverage and preserving the original selection.
+
 - Support declared, host-rendered reference-query views from the same component
   and package as their tool Resource. Reuse the existing query controls and
   execution consent, reject ambiguous bindings and preserve drafts and uncertain

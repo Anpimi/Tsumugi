@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+AI work-plan preparation accepts Core's canonical preview item order while
+retaining complete identity checks, the immutable preview and the user's original
+selection. This UI correction changes no API, schema, protocol, persisted format,
+dependency or version source. It stays in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with bilingual Unreleased entries and
+no additional bump.
+
 Declared reference-query Ui contributions now select the existing host-rendered
 tool controls through an exact same-package, same-component Resource binding.
 A new read-only Desktop IPC command rechecks installed approval, enablement and

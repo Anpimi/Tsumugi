@@ -250,6 +250,57 @@ it("keeps the complete ordered selection rather than shrinking preparation to th
   expect(owner.selected).toEqual(payload.unitIds);
 });
 
+it("accepts canonical input order for work-plan previews without reordering either capture", async () => {
+  await open();
+  const second = { ...item, unitId: fixtureIdentity(303), sourceRevisionId: fixtureIdentity(304), nativeKey: "second", sourceText: "Second source" };
+  act(() => {
+    owner.setSelected([second.unitId, item.unitId]);
+  });
+  const original = invoke.getMockImplementation()!;
+  let response!: WorkPlanView;
+  invoke.mockImplementation((command: string, request: { request: { config: AiConfig } }) => {
+    if (command !== "prepare_work_plan") return original(command, request);
+    response = aiWorkPlanFixture({ ...prepared, preview: { ...prepared.preview, config: request.request.config, items: [item, second] } }, saveOnlyOptions);
+    expect(validateResponseWorkPlan(response)).toBe(true);
+    return Promise.resolve(response);
+  });
+  const selected = [...owner.selected];
+  await act(async () => { expect(registry.dispatch("ai.preview", scope, previewPayload())).toBe(true); });
+  await waitFor(() => expect(owner.busy).toBe(false));
+  expect(owner.failure).toBeNull();
+  expect(owner.preparedPlan).toEqual(response);
+  expect(owner.preparedPlan?.preview?.items.map(row => row.unitId)).toEqual([item.unitId, second.unitId]);
+  expect(owner.selected).toEqual(selected);
+  expect(payloads("prepare_work_plan")[0].unitIds).toEqual(selected);
+  expect(calls("authorize_work_plan")).toHaveLength(0);
+  expect(calls("start_work_plan")).toHaveLength(0);
+});
+
+it.each(["duplicate", "missing", "foreign", "revision"] as const)("rejects invalid work-plan preview coverage: %s", async mismatch => {
+  await open();
+  const second = { ...item, unitId: fixtureIdentity(303), sourceRevisionId: fixtureIdentity(304), nativeKey: "second", sourceText: "Second source" };
+  act(() => owner.setSelected([item.unitId, second.unitId]));
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, request: { request: { config: AiConfig } }) => {
+    if (command !== "prepare_work_plan") return original(command, request);
+    const response = aiWorkPlanFixture({ ...prepared, preview: { ...prepared.preview, config: request.request.config, items: [item, second] } }, saveOnlyOptions);
+    const rows = response.preview!.items;
+    if (mismatch === "duplicate") rows[1] = structuredClone(rows[0]);
+    else if (mismatch === "missing") rows.pop();
+    else if (mismatch === "foreign") rows[1].unitId = fixtureIdentity(306);
+    else rows[1].sourceRevisionId = fixtureIdentity(307);
+    expect(validateResponseWorkPlan(response)).toBe(true);
+    return Promise.resolve(response);
+  });
+  await act(async () => { expect(registry.dispatch("ai.preview", scope, previewPayload())).toBe(true); });
+  await waitFor(() => expect(owner.busy).toBe(false));
+  expect(owner.preparedPlan).toBeNull();
+  expect(owner.failure).not.toBeNull();
+  expect(owner.selected).toEqual([item.unitId, second.unitId]);
+  expect(calls("authorize_work_plan")).toHaveLength(0);
+  expect(calls("start_work_plan")).toHaveLength(0);
+});
+
 it("restores preview presentation from the current locale props without requiring an unrelated Query refresh", async () => {
   const { rendered } = await open();
   const original = previewPayload(), contentReads = calls("read_source_content").length;

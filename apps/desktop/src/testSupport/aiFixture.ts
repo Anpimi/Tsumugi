@@ -56,7 +56,7 @@ export function arenaViewFixture(item: AiItem, config?: import("../arenaCommands
   return view;
 }
 
-/** Core canonicalizes the plan basis while preserving the ordered AI preview. */
+/** Keep the supplied preview order independent of the canonical plan scope. */
 export function aiWorkPlanFixture(prepared:AiPrepared,options?:PlanOptions):WorkPlanView {
   const value:unknown=structuredClone(workPlan.responses.plan);
   if(!validateResponseWorkPlan(value))throw new Error("Invalid work-plan fixture");
