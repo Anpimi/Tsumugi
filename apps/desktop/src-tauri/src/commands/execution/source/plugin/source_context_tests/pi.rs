@@ -1,6 +1,8 @@
 //! Installed source facts reach an actual Pi process through captured requests.
 #[path = "pi/webvtt.rs"]
 mod webvtt;
+#[path = "pi/maintenance.rs"]
+mod maintenance;
 
 use super::*;
 use std::{
