@@ -22,7 +22,7 @@ import { validateRequestActivity, validateRequestApplicationShutdown } from "./g
 import type { PluginBuildPrepareRequest } from "./releaseCommands";
 import type { ArenaConfig, ArenaPrepared, ArenaView } from "./arenaCommands";
 import type { SessionReads } from "./sessionReads";
-import type { AttemptDetail } from "./executionCommands";
+import type { AttemptDetail, TaskActivity } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import type { ContentScope } from "./sourceCommands";
 import { sourceKeys } from "./sourceQueries";
@@ -770,6 +770,93 @@ describe("project lifecycle workbench", () => {
     expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("你好改写");
     expect(mocks.invoke.mock.calls.some(([command]) => ["adopt_execution", "save_translation_revision", "select_translation_revision"].includes(command))).toBe(false);
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_work_plan")).toHaveLength(1);
+  });
+
+  it("keeps an accepted running AI task in the Dock while its panel closes for manual editing", async () => {
+    const editorFixture = installTranslationEditor(), ai = installAiPreparation();
+    const original = mocks.invoke.getMockImplementation()!;
+    let started = false;
+    function runningView(): AiView {
+      const view = ai.view(), row = view.rows[0];
+      const detail = view.detail.items.find(item => item.status.itemId === row.itemId)!;
+      view.detail.progress = { total: 1, running: 1, queued: 0, succeeded: 0, failed: 0, cancelled: 0, unknown: 0, adopted: 0 };
+      Object.assign(row, { output: null, resultId: null, savedRevisionId: null, automation: null });
+      detail.resultId = null;
+      Object.assign(detail.status, { execution: "dispatched", validation: "absent", adoption: "unapplied",
+        cancellationRequested: false, retrySafe: false, diagnostic: null });
+      for (const unit of view.detail.recovery.units) Object.assign(unit, {
+        remainingItemIds: [], resultIds: [], actions: [], blockedReason: "still-running", receiptId: null,
+      });
+      if (view.budget) view.budget.unresolved = 1;
+      return view;
+    }
+    mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+      if (command === "start_work_plan") {
+        const result = await original(command, args);
+        started = true;
+        return result;
+      }
+      if (command === "read_ai_translation") {
+        expect(started).toBe(true);
+        return runningView();
+      }
+      if (command === "read_execution_task_activity") {
+        if (!validateRequestActivity(args.request)) throw new Error("Invalid task activity read request");
+        if (!started) return emptyTaskActivity(args.request);
+        const view = runningView();
+        return { total: "1", active: "1", attention: "0", saved: "0", rows: [{
+          taskId: view.detail.taskId, attemptId: view.detail.attemptId, operation: "ai-translation",
+          sequence: "7", phase: "active", progress: { ...view.detail.progress },
+        }] } satisfies TaskActivity;
+      }
+      if (command === "execution_status") return { ...executionFixture.status, active: started };
+      return original(command, args);
+    });
+    const user = userEvent.setup(); await renderApp(); await createProject(user); await prepareAiInApp(user);
+    await user.click(screen.getByRole("button", { name: "Send and generate candidates" }));
+    await screen.findByRole("heading", { name: "Generated results" });
+    const reads = mocks.reads!, key = reads.key(["aiCommands", aiAttempt]);
+    const accepted = reads.client.getQueryData<AiView>(key)!;
+    expect(accepted.detail.progress.running).toBe(1);
+    expect(accepted.detail.items[0].status.execution).toBe("dispatched");
+    expect(accepted.rows[0].output).toBeNull();
+    const originalTask = { taskId: accepted.detail.taskId, attemptId: accepted.detail.attemptId };
+
+    await user.click(screen.getByRole("button", { name: "Compare and select in editor" }));
+    const draft = await editableDraft();
+    expect(document.querySelector("section.ai-dialog")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Translations" })).toBeVisible();
+    const text = "Manual work continues 👩🏽‍💻 é";
+    await user.type(draft, text);
+    expect(draft).toHaveValue(text);
+    expect(mocks.drafts.get("session-1")?.current()?.text).toBe(text);
+    expect(editorFixture.saves()).toHaveLength(0);
+    expect(mocks.reads).toBe(reads);
+
+    const activityReads = () => mocks.invoke.mock.calls.filter(([command]) => command === "read_execution_task_activity").length;
+    const beforeRefresh = activityReads();
+    await act(async () => { reads.invalidate(["execution"]); });
+    await waitFor(() => expect(activityReads()).toBeGreaterThan(beforeRefresh));
+    await user.click(screen.getByRole("button", { name: "View background tasks" }));
+    const dock = screen.getByRole("complementary", { name: "Background tasks" });
+    await within(dock).findByText(/1 running · 0 queued · 0 of 1 outputs saved/);
+    expect(within(dock).getByRole("button", { name: "AI work · Task 7" })).toBeVisible();
+    const activity = reads.client.getQueryData<TaskActivity>(reads.key(["task-activity", 12]))!;
+    expect(activity.rows).toHaveLength(1);
+    expect(activity.rows[0]).toMatchObject({ ...originalTask, phase: "active", progress: { running: 1, cancelled: 0, succeeded: 0 } });
+    expect(draft).toHaveValue(text);
+
+    await user.click(screen.getByRole("button", { name: "Return to AI work" }));
+    expect(await screen.findByRole("heading", { name: "Generated results" })).toBeVisible();
+    expect(reads.client.getQueryData<AiView>(key)?.detail).toMatchObject({ ...originalTask, progress: { running: 1, cancelled: 0 } });
+    expect(mocks.drafts.get("session-1")?.current()?.text).toBe(text);
+    for (const command of ["prepare_work_plan", "authorize_work_plan", "start_work_plan"]) {
+      expect(mocks.invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(1);
+    }
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "start_ai_translation"
+      || command === "cancel_execution_task" || command === "quiesce_execution" || command === "control_work_plan"
+      || command.startsWith("stop_"))).toBe(false);
+    expect(editorFixture.saves()).toHaveLength(0);
   });
 
   it.each(["AI","Arena"] as const)("opens application connection settings from %s preparation and keeps its captured input through a changed current read",async area=>{
