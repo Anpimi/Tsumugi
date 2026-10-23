@@ -9,9 +9,10 @@ not need a development Node, Rust, Python, pnpm or Git installation. Preparing
 and building that application is a separate developer operation; an empty
 machine is not promised an offline source build.
 
-The current selection remains an experimental, undistributed candidate. The
-preparation command does not claim a signed release, authenticated network
-updates, complete Host/Worker compatibility or a clean-system offline run.
+The current selection uses the published unsigned experimental plugin archives
+for the [Mac application prerelease](experimental-release.md). The preparation
+command does not authenticate a publisher or establish signed network updates,
+a clean-system offline run, or compatibility outside the recorded combination.
 
 ## Inputs and ownership
 
@@ -36,10 +37,12 @@ these capabilities.
 
 The public [plugin repository](https://github.com/Anpimi/tsumugi-plugins) owns
 package production, recipes, domain dependencies and deterministic uncompressed
-candidate `.tar` files. Obtain the reviewed bytes matching this catalog through
-your approved artifact supply process. There is currently no published artifact
-URL in this catalog, and the preparer performs no network access, source checkout
-or dependency compilation. A missing archive is a failure, not permission to
+candidate `.tar` files. Obtain the exact [WebVTT](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/webvtt/v0.1.0-alpha.1)
+and [SMAPI](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/stardew-smapi/v0.1.0-alpha.1)
+release archives matching this catalog, then name the local files `webvtt.tar`
+and `stardew-smapi.tar`. Verify the fixed transport digests. The preparer performs
+no network access, source checkout or dependency compilation. A missing archive
+is a failure, not permission to
 fetch a branch or rebuild a different candidate.
 
 Transport SHA-256 identifies exact archive bytes. `packageDigest` is a different

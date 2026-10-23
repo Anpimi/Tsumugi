@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+## [0.2.0-alpha.1] - 2026-10-23
+
+- Select the published WebVTT and SMAPI `0.1.0-alpha.1` archives by exact source,
+  SDK, transport and complete package digests for the experimental Apple silicon
+  Mac application. Existing installed approvals and project execution bindings
+  remain unchanged.
+
 - Keep manual editing reachable after inspecting or rejecting an AI candidate,
   including when a fresh read reuses an equal cached editor snapshot.
   Preserve the candidate decision and existing draft safeguards.
@@ -20,7 +27,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 Current development compatibility is project schema 61 and internal member
 protocol 3. Earlier format numbers below describe feature introduction baselines
-within this same undistributed batch.
+within this prerelease batch.
 
 - Preserve original Unicode when pasting into the translation editor on macOS.
   Keep newer input and the original draft when a paste is cancelled or cannot be

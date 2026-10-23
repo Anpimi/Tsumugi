@@ -5,8 +5,8 @@ WebVTT 和 SMAPI 两个预构建包；随附运行环境要求 macOS 13.5 或以
 应用不要求用户安装开发用 Node、Rust、Python、pnpm 或 Git。准备和构建应用属于
 开发操作，不承诺空机器可以离线从源码构建。
 
-当前组合仍是实验性、未分发的候选。准备命令不证明签名发行、可信网络更新、
-完整 Host/Worker 兼容性或清洁系统离线运行已经通过。
+当前组合为 [Mac 应用实验预发布](experimental-release.zh-CN.md) 选择已发布的未签名实验插件归档。
+准备命令不认证发布者，不证明签名网络更新、清洁系统离线运行或记录组合以外的兼容性。
 
 ## 输入与责任
 
@@ -24,8 +24,11 @@ profile 和 SDK process protocol。构建与应用设置会拒绝不同 profile/
 alpha 版本选择旧归档，可能丢失这些能力。
 
 [公开插件仓库](https://github.com/Anpimi/tsumugi-plugins)拥有包生产、文件配方、领域
-依赖和确定性的未压缩候选 `.tar`。应通过已批准的产物供应流程取得与清单匹配的准确
-字节。清单目前没有已发布的产物下载地址，准备器不联网、不检出源码、不编译依赖。
+依赖和确定性的未压缩候选 `.tar`。取得与清单匹配的准确
+[WebVTT](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/webvtt/v0.1.0-alpha.1) 和
+[SMAPI](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/stardew-smapi/v0.1.0-alpha.1)
+归档，分别以 `webvtt.tar` 和 `stardew-smapi.tar` 保存在本地，核验固定传输摘要。
+准备器不联网、不检出源码、不编译依赖。
 归档缺失会报错，不因此下载某个分支或重新构建另一候选。
 
 传输 SHA-256 固定归档字节；`packageDigest` 由原 Rust Host 按完整包内容和可执行位

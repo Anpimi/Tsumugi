@@ -255,15 +255,16 @@ includes its translation-import resources and parser runtime. Their archive
 transport hashes and Host package digests are different identities. The catalog
 records a fixed SDK artifact as well as its alpha version; an alpha version
 alone cannot identify a development contract snapshot. Its runtime profile and
-process protocol must match the captured bundled runtime. These fixed development
-candidates do not claim complete two-domain release acceptance. The catalog's
-`sourceCommit` records the candidate build's declared source baseline,
-`53d3a1d9db711b1942a9d38a13610173090da9bb`; the build record marks
-`sourceDirty: true`. This is provenance, not proof of a clean or authenticated
-build or a release. Use the exact archive SHA-256, Host `packageDigest` and SDK
-artifact SHA-256 to identify the matching package bytes and SDK. These digests
-are distinct, and a later clean source commit cannot stand in for these build
-artifacts. See
+process protocol must match the captured bundled runtime. The selection uses
+the published unsigned experimental WebVTT and SMAPI
+`0.1.0-alpha.1` archives, both declared from clean source
+`d0e8c826ef099cceeab059c7aed5370034296c54`. Their published build and compatibility
+records describe the exact supported Host endpoint. The SDK has its own fixed
+producer and archive. Source declarations do not authenticate build provenance.
+Use the exact archive SHA-256, Host `packageDigest` and SDK artifact SHA-256 to
+identify the matching bytes; these are distinct identities. The application
+[experimental release scope](../../docs/experimental-release.md) keeps remaining
+acceptance limits explicit. See
 [fixed offline extension preparation](../../docs/plugin-distribution.md) and
 [中文说明](../../docs/plugin-distribution.zh-CN.md) for recovery and evidence limits.
 

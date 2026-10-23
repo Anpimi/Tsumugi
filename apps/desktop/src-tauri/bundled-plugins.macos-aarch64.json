@@ -16,8 +16,8 @@
         "version": "0.1.0-alpha.1"
       },
       "packageDigest": "243408d0679991d7df5901d515df00f04f217078276ff89ac43b295a5d8d6efa",
-      "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
-      "sourceCommit": "43cfe34ff5ec22c56d02b2f8d88527d81f68656e",
+      "sourceRepository": "https://github.com/Anpimi/Tsumugi-plugins",
+      "sourceCommit": "d0e8c826ef099cceeab059c7aed5370034296c54",
       "sdkVersion": "0.1.0-alpha.1",
       "sdkArtifactSha256": "bc5e8f533ebedd770a41fa25cf4a557cd6a7bab03f930d7a8e40f66e957e5409",
       "archiveName": "webvtt.tar",
@@ -31,13 +31,13 @@
         "id": "stardew-smapi",
         "version": "0.1.0-alpha.1"
       },
-      "packageDigest": "263e123282984dfae49f3a74913422231c3140e7463e00ea928bc1bd2bd4e76a",
-      "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
-      "sourceCommit": "53d3a1d9db711b1942a9d38a13610173090da9bb",
+      "packageDigest": "426b58bbc89068ee77df8ff3a634ec41d17a96f7c9f156559d63d294bb652be6",
+      "sourceRepository": "https://github.com/Anpimi/Tsumugi-plugins",
+      "sourceCommit": "d0e8c826ef099cceeab059c7aed5370034296c54",
       "sdkVersion": "0.1.0-alpha.1",
       "sdkArtifactSha256": "bc5e8f533ebedd770a41fa25cf4a557cd6a7bab03f930d7a8e40f66e957e5409",
       "archiveName": "stardew-smapi.tar",
-      "archiveSha256": "c8af33b9afc8229c4e6abe9d0c291d4628db65901f9ebb207139ba4949dec7c6"
+      "archiveSha256": "68ad88b4fd1f475d3c1a2e40e3c7e146c5a6980a9dc7cf87028a8e209e26c1c5"
     }
   ]
 }

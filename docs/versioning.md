@@ -1979,7 +1979,7 @@ Use `alpha.N` while the target is under development. A move to `beta.N`, `rc.N` 
 
 Assess the whole unreleased batch, including earlier commits. A new feature in a fix batch changes its target; a new incompatibility requires a fresh compatibility review even if a version was already chosen. Routine commits and internal validation builds can share a pending version. Freeze that version when an explicitly designated prerelease/release snapshot is distributed or tagged; subsequent snapshots must use a new version. Record the source commit and artifact digest to distinguish internal builds.
 
-The first managed target is `0.2.0-alpha.1`. It consolidates development commits through `7febd7e`, including new workflows and storage incompatibilities, after the original `0.1.0` scaffold version. There are no historical release tags to reconstruct. These changes remain **Unreleased**; the version assignment does not assert publication or completed release acceptance.
+The first managed target is `0.2.0-alpha.1`. It consolidates development commits through `7febd7e`, including new workflows and storage incompatibilities, after the original `0.1.0` scaffold version. There are no historical release tags to reconstruct. The first distributed snapshot uses this version and the experimental scope in [the release notes](experimental-release.md). Historical per-change assessments below describe the then-undistributed batch; they do not establish completed acceptance of the whole refactor.
 
 The desktop's optional included-extension setup adds a required nullable
 `defaultsOffer` to the experimental inventory DTO and a fixed-selection setup
