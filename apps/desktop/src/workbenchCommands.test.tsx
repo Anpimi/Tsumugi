@@ -10,7 +10,8 @@ import { describe, expect, it, vi } from "vitest";
 import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
 import translationFixture from "../test/fixtures/translation-commands.json";
 import { validateResponseDelivery } from "./generated/release.validators";
-import { WorkbenchCommands, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type ProjectMetadataReconcileCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
+import { validateRequestWorkPlanAuthorize } from "./generated/ai.validators";
+import { WorkbenchCommands, type AiStartCommandPayload, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type ProjectMetadataReconcileCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
 
 const scope = { projectId: "project-a", sessionToken: "session-a", area: "overview" as const };
 
@@ -323,6 +324,32 @@ describe("AI command payloads", () => {
     binding: null, risk: "captures-ai" as const, confirmation: "none" as const };
   const item = { attemptId: "attempt", taskId: "task", itemId: "item", translationUnitId: "unit", locale: "zh-CN",
     sourceRevisionId: "revision", sourceSnapshotId: "snapshot" };
+  const teamStart: AiStartCommandPayload = { kind: "ai-start", attemptId: "attempt", editSeq: 2,
+    planId: workPlanWire.responses.plan.planId, digest: workPlanWire.responses.plan.digest, minutes: 60, confirmed: true,
+    checkerExecutions: [], toolExecution: false, applicationToolExecutions: [],
+    effects: ["save-candidate", "run-checks", "publish-discussion", "dispatch-team-work", "send-team-message"] };
+  describe("AI start effect validation", () => {
+    it("dispatches the generated contract's team automation effects to the live owner", () => {
+      expect(validateRequestWorkPlanAuthorize({ ...workPlanWire.requests.authorize, effects: teamStart.effects })).toBe(true);
+      const commands = new WorkbenchCommands(), handler = vi.fn();
+      commands.register({ ...metadata, id: "ai.start", payloadKind: "ai-start", availability: () => ({ enabled: true }), handler });
+      expect(commands.dispatch("ai.start", aiScope, teamStart)).toBe(true);
+      expect(handler).toHaveBeenCalledExactlyOnceWith(teamStart);
+      expect(commands.describe("ai.start", aiScope, teamStart)?.availability.enabled).toBe(true);
+    });
+    it.each([
+      ["unknown", [...teamStart.effects, "unknown-effect"]],
+      ["duplicate", [...teamStart.effects, "send-team-message"]],
+    ])("rejects %s effects before invoking the live owner", (_kind, effects) => {
+      const commands = new WorkbenchCommands(), handler = vi.fn(), availability = vi.fn(() => ({ enabled: true }));
+      commands.register({ ...metadata, id: "ai.start", payloadKind: "ai-start", availability, handler });
+      const payload = { ...teamStart, effects };
+      expect(Reflect.apply(commands.dispatch, commands, ["ai.start", aiScope, payload])).toBe(false);
+      expect(Reflect.apply(commands.describe, commands, ["ai.start", aiScope, payload])?.availability.enabled).toBe(false);
+      expect(availability).not.toHaveBeenCalled();
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
   it.each([
     ["ai.plan.pause", { kind: "ai-plan-control", command: "pause", planId: workPlanWire.requests.control.planId, expectedGeneration: workPlanWire.requests.control.expectedGeneration, minutes: 10, confirmed: true, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] }, [{ command: "other" }, { expectedGeneration: "01" }, { minutes: NaN }]],
     ["ai.plan.stop", { kind: "ai-plan-control", command: "stop", planId: workPlanWire.requests.control.planId, expectedGeneration: workPlanWire.requests.control.expectedGeneration, minutes: 10, confirmed: true, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] }, [{ command: "other" }, { expectedGeneration: "01" }, { minutes: NaN }]],

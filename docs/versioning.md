@@ -1,5 +1,11 @@
 # Application versioning and changelog maintenance
 
+Workbench AI start validation reuses the existing generated automation-effect
+enum, allowing the already-defined team work and message effects to reach the
+original authorization boundary. Unknown effects remain rejected. This fix adds
+no contract, stored format, dependency or version source. Bilingual Unreleased
+entries follow the existing post-`0.2.0-alpha.1` boundary; local QA does not bump.
+
 Confirmed context-strategy promotion rejections explain incomplete independent
 QA or missing holdout improvement separately from uncertain writes. This UI-only
 message correction changes no execution, authorization, API, schema, protocol,

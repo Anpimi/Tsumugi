@@ -6,6 +6,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Start explicitly authorized bounded teams through the workbench command registry
+  using the generated automation-effect contract, including team work and messages.
+
 - Explain confirmed context-strategy promotion rejections when independent QA is
   incomplete or holdout comparisons show no improvement, while retaining the
   original recovery instructions for uncertain writes.
