@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Captured terminology views describe file, saved-correction and tool sources
+without mislabelling their provenance, and reuse available source entry names.
+Strategy status messages distinguish rechecking evidence from a confirmed change
+and describe edits during saving conditionally.
+This UI correction changes no API, SDK, protocol, persisted format, dependency
+or version source. It is recorded in bilingual Unreleased entries after the
+published `0.2.0-alpha.1`; the next distributed application snapshot must use
+`0.2.0-alpha.2` or a later version chosen by this policy. No release is prepared
+by this correction, so the current source metadata remains unchanged.
+
 Ordinary translation navigation uses the existing query cache's shared snapshot
 and accepts the draft only after the final navigation checks. Manual editing
 remains reachable after candidate inspection or rejection, without changing

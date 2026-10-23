@@ -558,7 +558,7 @@ it("confirms a decision after the view is removed without continuing its preview
   let finishRead!: (value: unknown) => void;
   const reads = invoke.getMockImplementation()!;
   invoke.mockImplementation((name: string, payload: unknown) => name === "read_resource_preview" ? new Promise(resolve => { finishRead = resolve; }) : reads(name, payload));
-  await user.click(screen.getByRole("button", { name: "Read this captured file again" }));
+  await user.click(screen.getByRole("button", { name: "Read this captured source again" }));
   await waitFor(() => expect(previewReads()).toHaveLength(readsBeforeDecision + 1));
   view.rerender(null);
   await act(async () => { finishRead(checkedPreview); });
@@ -571,7 +571,7 @@ it("confirms a decision after the view is removed without continuing its preview
   invoke.mockImplementation(reads);
   view.rerender(<ResourceView project={project} />);
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
-  await user.click(screen.getByRole("button", { name: "Read this captured file again" }));
+  await user.click(screen.getByRole("button", { name: "Read this captured source again" }));
   await waitFor(() => expect(resourceOwner.current().previewNeedsRefresh).toBe(false));
   expect(previewReads()).toHaveLength(readsBeforeDecision + 2);
   expect(previewReads().every(([, payload]) => payload.request.captureId === checkedCapture.captureId)).toBe(true);
@@ -708,10 +708,10 @@ it("retains the chosen capture after preview failure and uses its actual languag
   await screen.findByRole("option", { name: "barrel" });
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await user.click(screen.getByRole("button", { name: "Choose glossary file" }));
-  await screen.findByRole("button", { name: "Read this captured file again" });
+  await screen.findByRole("button", { name: "Read this captured source again" });
   view.rerender(null); view.rerender(<ResourceView project={available} />);
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
-  await user.click(screen.getByRole("button", { name: "Read this captured file again" }));
+  await user.click(screen.getByRole("button", { name: "Read this captured source again" }));
   const row = await screen.findByRole("row", { name: /Barrel/ });
   expect(screen.getByRole("combobox", { name: "Target language" })).toHaveValue("zh-CN");
   await user.click(within(row).getByRole("button", { name: "Keep current" }));
@@ -863,7 +863,7 @@ it("refreshes the current comparison without adopting it or changing its origina
   await waitFor(() => expect(resourceReads.client.getQueryState(resourceReads.key(["resource-preview-current", current.capture.captureId]))).toMatchObject({ status: "success", fetchStatus: "idle", isInvalidated: false }));
   expect(resourceOwner.current().preview).toBe(baseline); expect(resourceOwner.current().previewSourceBasis).toBe(sourceBasis);
   expect(resourceRegistry.dispatch("resource.decide-entry", resourceScope, decisionInput())).toBe(false);
-  await user.click(screen.getByRole("button", { name: "Read this captured file again" }));
+  await user.click(screen.getByRole("button", { name: "Read this captured source again" }));
   await waitFor(() => expect(resourceOwner.current().preview?.rows[0].current?.revisionId).toBe(fixtureIdentity(470)));
   // A new source scope can leave a project-wide preview row byte-for-byte equal.
   const accepted = resourceOwner.current().preview, acceptedBasis = resourceOwner.current().previewSourceBasis;
@@ -872,7 +872,7 @@ it("refreshes the current comparison without adopting it or changing its origina
   await waitFor(() => expect(resourceReads.client.getQueryState(resourceReads.key(["resource-preview-current", current.capture.captureId]))).toMatchObject({ status: "success", fetchStatus: "idle", isInvalidated: false }));
   expect(resourceOwner.current().preview).toBe(accepted); expect(resourceOwner.current().previewSourceBasis).toBe(acceptedBasis);
   expect(resourceRegistry.dispatch("resource.decide-entry", resourceScope, decisionInput())).toBe(false);
-  await user.click(screen.getByRole("button", { name: "Read this captured file again" }));
+  await user.click(screen.getByRole("button", { name: "Read this captured source again" }));
   await waitFor(() => expect(resourceOwner.current().previewSourceBasis).toEqual({ revision: "3", snapshotId: fixtureIdentity(454) }));
   await waitFor(() => expect(resourceRegistry.describe("resource.decide-entry", resourceScope, decisionInput())?.availability.enabled).toBe(true));
 });

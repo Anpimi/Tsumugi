@@ -407,9 +407,12 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     return fetching ? <p role="status">{t("resource.loading")}</p> : error ? <div role="alert"><p>{t("resource.readFailed", { reason: t(`resource.errors.${failureReason(commandFailure(error))}`, { defaultValue: failureReason(commandFailure(error)) ?? "" }) })}</p><CommandFailureDetails failure={commandFailure(error)} /><button className="secondary-button" onClick={retry}>{t("resource.retryRead")}</button></div> : null;
   }
   const sourceRows = sourcePage?.rows ?? [];
+  function correctionUnitLabel(unitId: string) {
+    return sourceRows.find(row => row.unitId === unitId)?.occurrence.key ?? unitId;
+  }
   function captureLabel(capture: GlossaryCapture) { return capture.origin.kind === "file" ? `${capture.origin.resourceId} · ${capture.origin.revision}`
     : capture.origin.kind === "mcp" ? t("mcpRetrieval.captureOrigin", { tool: capture.origin.provenance.tool.toolName })
-      : t("correctionFeedback.candidateScope", { unit: capture.origin.basis.unitId, locale: capture.targetLocale }); }
+      : t("correctionFeedback.candidateScope", { unit: correctionUnitLabel(capture.origin.basis.unitId), locale: capture.targetLocale }); }
   async function openMcpCapture(capture: GlossaryCapture) {
     const before = owner.current(); if (!owner.canReceiveMcp(capture)) return false;
     const originalProject = committed.current.project;
@@ -501,7 +504,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
                   <label>{t("mcpRetrieval.fixedQuery")}<textarea readOnly rows={3} value={preview.capture.origin.provenance.query}/></label>
                   <pre>{JSON.stringify(preview.capture.origin.provenance, null, 2)}</pre></details></section> : null}
               {preview.correction ? <section aria-label={t("correctionFeedback.evidence")}><p role="status">{t(preview.correction.evidence.current ? "correctionFeedback.current" : "correctionFeedback.stale")}</p>
-                <p>{t("correctionFeedback.scope", { unit: preview.correction.evidence.basis.unitId, locale: preview.correction.evidence.basis.locale })}</p>
+                <p>{t("correctionFeedback.scope", { unit: correctionUnitLabel(preview.correction.evidence.basis.unitId), locale: preview.correction.evidence.basis.locale })}</p>
                 <details><summary>{t("correctionFeedback.evidence")}</summary><label>{t("correctionFeedback.sourceText")}<textarea readOnly rows={4} value={preview.correction.evidence.sourceText} /></label>
                   <label>{t("correctionFeedback.before")}<textarea readOnly rows={4} value={preview.correction.evidence.beforeText} /></label><label>{t("correctionFeedback.after")}<textarea readOnly rows={4} value={preview.correction.evidence.afterText} /></label>
                   {preview.rows.map(row => <div key={row.entry.id}><label>{t("resource.reason")}<textarea readOnly rows={3} value={row.entry.reason} /></label><label><input type="checkbox" checked={row.entry.protected} disabled />{t("resource.protected")}</label></div>)}

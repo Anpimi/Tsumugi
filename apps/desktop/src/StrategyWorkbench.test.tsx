@@ -74,6 +74,7 @@ it("offers a saved correction by entry name and reaches the real immutable-candi
   expect(vi.mocked(strategyCommands.capture).mock.calls[0][0].capture).toMatchObject({ basis: resourceWire.responses.correctionBasis.basis,
     reason: "Preserve the extracted scene", exceptions: "Only this project and target language", sourceContext: { extracted: true, inferred: false, neighbors: false } });
   await screen.findByText(/Saved candidate: Preserve the extracted scene/);
+  expect(screen.getByText("The captured strategy version was saved. Any edits made during saving are kept separately.")).toBeVisible();
   expect(screen.getByRole("heading", { name: enUS.strategy.suite })).toBeVisible();
   expect(screen.queryByRole("textbox", { name: /selectionId|candidateId|unitId/i })).not.toBeInTheDocument();
 });

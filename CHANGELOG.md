@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Describe captured terminology sources without labelling saved corrections or tool
+  results as files, and show available entry names for local correction scopes.
+  Strategy save and recheck messages do not assert that newer edits or changed
+  evidence exist.
+
 ## [0.2.0-alpha.1] - 2026-10-23
 
 - Select the published WebVTT and SMAPI `0.1.0-alpha.1` archives by exact source,

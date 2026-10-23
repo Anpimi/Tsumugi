@@ -267,10 +267,18 @@ it("keeps the original correction request when a typed action read changes its r
   expect(term).toBeNull();
 });
 
-it("uses only the saved correction and requires explicit candidate creation and adoption", async () => {
+it.each(["en-US", "zh-CN"])("uses only the saved correction and labels its provenance before explicit adoption (%s)", async language => {
+  await i18n.changeLanguage(language);
   const user = await openEditor();
   expect(invoke.mock.calls.some(([command]) => ["capture_correction_term", "decide_resource_entry", "save_term"].includes(command))).toBe(false);
   await openCandidate(user); await captureCandidate(user);
+  const labels = language === "en-US"
+    ? { ready: "The source was captured. Review every change before adopting it.", history: "Previously captured sources", evidence: "Captured source evidence" }
+    : { ready: "来源已捕获。请逐项审阅后再采纳。", history: "先前捕获的来源", evidence: "捕获来源依据" };
+  expect(await screen.findByText(labels.ready)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: labels.history })).toBeInTheDocument();
+  expect(screen.getByText(labels.evidence)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.candidateScope", { unit: "entry", locale: evidence.basis.locale }) })).toBeInTheDocument();
   const capture = invoke.mock.calls.find(([command]) => command === "capture_correction_term")?.[1].request.capture;
   expect(capture).toMatchObject({ basis: evidence.basis, source: "Barrel", target: "木桶", reason: "Reviewed local correction" });
   expect(JSON.stringify(capture)).not.toContain("manual B"); expect(term).toBeNull();
