@@ -191,6 +191,16 @@ pub struct Fixture {
 
 impl Fixture {
     pub async fn new(consistent: bool) -> Self {
+        Self::new_with_package(consistent, |directory| {
+            package(directory, "current", "1.0.0")
+        })
+        .await
+    }
+
+    pub async fn new_with_package(
+        consistent: bool,
+        make_package: impl FnOnce(&Path) -> RepositoryPackageDeclaration,
+    ) -> Self {
         let temporary = tempfile::tempdir().unwrap();
         let directory = temporary.path().join("repository");
         fs::create_dir_all(directory.join("metadata")).unwrap();
@@ -202,7 +212,7 @@ impl Fixture {
         let catalog = RepositoryCatalog {
             format_version: 1,
             display_name: "Offline repository".into(),
-            packages: vec![package(&directory, "current", "1.0.0")],
+            packages: vec![make_package(&directory)],
         };
         let fixture = Self {
             _temporary: temporary,
