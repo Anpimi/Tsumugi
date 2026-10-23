@@ -8,7 +8,7 @@ import type { SessionRequest } from "./executionCommands";
 import { TeamMemberChoice } from "./TeamMemberChoice";
 import { newTeamMember } from "./TeamExecutionDraft";
 import { recoveryDraftProblem } from "./TeamRecoveryDraft";
-import { teamRecoveryAvailable, type TeamRecoverySession } from "./TeamRecoverySession";
+import { teamRecoveryAvailable, teamRecoveryHasCapacity, type TeamRecoverySession } from "./TeamRecoverySession";
 import { TeamRecoveryDisclosure } from "./TeamRecoveryDisclosure";
 import { AiProviderBudget } from "./AiUsage";
 import { useWorkbenchCommands, type AiTeamRecoveryCommandPayload, type CommandAvailability } from "./workbenchCommands";
@@ -38,7 +38,9 @@ export function TeamRecoveryControls({ context, status, session, open, disabled,
   const ready = state.ready?.capture.value.preview.planId === planId ? state.ready : null;
   const reviewedTools = capture?.value.tools ?? plan.tools, reviewedCheckers = capture?.value.checkers ?? plan.checkers;
   const applicationTools = useWorkPlanApplicationTools(reviewedTools?.entries ?? [], open);
-  const canPrepare = !!observation && !!view && teamRecoveryAvailable(observation) && jsonIdentity(view.effectiveVersion) === jsonIdentity(observation.state.effectiveVersion);
+  const limits = plan.options.teamExecution?.limits;
+  const capacityExhausted = !!observation && !!limits && !teamRecoveryHasCapacity(observation.state, limits);
+  const canPrepare = !!observation && !!view && !!limits && teamRecoveryAvailable(observation, limits) && jsonIdentity(view.effectiveVersion) === jsonIdentity(observation.state.effectiveVersion);
   const problem = observation && observation.state.unresolvedWork.length > 16 ? "unresolvedLimit" : draft && view
     ? observation?.state.unresolvedWork.some(reference => !draft.priorWork.some(value => jsonIdentity(value) === jsonIdentity(reference))) ? "unresolved" : recoveryDraftProblem(draft, plan, view) : null;
   const basisCurrent = !!capture && !!observation && canPrepare && jsonIdentity(observation.state.lease) === jsonIdentity(capture.value.preview.baseLease)
@@ -102,8 +104,10 @@ export function TeamRecoveryControls({ context, status, session, open, disabled,
     <button type="button" className="secondary-button" disabled={read.isFetching || team.isFetching} onClick={() => { void Promise.all([read.refetch(), team.refetch()]); }}>{t("ai.recovery.refresh")}</button>
     {read.isFetching || team.isFetching ? <p role="status">{t("ai.recovery.loading")}</p> : null}
     {failure ? <div ref={errorRef} tabIndex={-1} role="alert"><p>{t("ai.recovery.failed")}</p><CommandFailureDetails failure={failure}/></div> : null}
-    {observation ? <><p role="status">{t(expired || observation.state.state === "stopped" || !observation.runtime?.originalDeadlineAvailable ? "ai.recovery.newPlan"
-      : observation.state.state === "active" ? "ai.recovery.pauseFirst" : canPrepare ? "ai.recovery.available" : "ai.recovery.draining")}</p>
+    {observation ? <><p role="status">{t(capacityExhausted ? "ai.recovery.exhausted"
+      : expired || observation.state.state === "stopped" || !observation.runtime?.originalDeadlineAvailable ? "ai.recovery.newPlan"
+      : observation.state.state === "active" ? "ai.recovery.pauseFirst" : canPrepare ? "ai.recovery.available"
+      : !observation.runtime.producersDrained || !observation.hostCallbacksDrained ? "ai.recovery.draining" : "ai.recovery.refreshRequired")}</p>
       <p>{t("ai.recovery.counters", { activations: String(observation.state.activations), completions: String(observation.state.unconfirmedCompletions) })}</p>
       <p>{t("ai.recovery.deadline", { date: new Date(Number(observation.state.expiresAtMs)).toLocaleString(i18n.language) })}</p>
       <AiProviderBudget budget={observation.state.budget}/>

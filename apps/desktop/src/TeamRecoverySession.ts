@@ -9,7 +9,7 @@ import { jsonIdentity } from "./pluginToolChoices";
 import { hasUnknownOutcome } from "./projectCommands";
 import { workPlanCommands, type WorkPlanView, type TeamExecutionView } from "./workPlanCommands";
 import type { WorkPlanTeamRecoveryPrepareRequest, WorkPlanTeamRecoveryAuthorizeRequest, WorkPlanStartRequest, AutomationEffect, TeamWorkReference } from "./generated/ai.requests";
-import type { WorkPlanTeamRecoveryPreviewView, WorkPlanTeamRecoveryStateView, TeamRecoveryReceipt } from "./generated/ai.responses";
+import type { WorkPlanTeamRecoveryPreviewView, WorkPlanTeamRecoveryStateView, TeamRecoveryReceipt, TeamExecutionLimits } from "./generated/ai.responses";
 import { recoveryDraft, unchangedRecoveryMember, recoveryDraftProblem, type TeamRecoveryDraft } from "./TeamRecoveryDraft";
 
 type Capture = { request: WorkPlanTeamRecoveryPrepareRequest; value: WorkPlanTeamRecoveryPreviewView; plan: WorkPlanView; effects: AutomationEffect[]; memberKeys: number[]; unresolvedWork: TeamWorkReference[]; editSeq: number };
@@ -23,9 +23,14 @@ interface RecoveryState {
   failure: CommandFailure | null; notice: "authorized" | "started" | "absent" | "newer" | "ended" | "closed" | "closeAbsent" | null;
 }
 const initial = (): RecoveryState => ({ draft: null, editSeq: 0, dirty: false, preparing: false, capture: null, consent: false, pending: null, ready: null, failure: null, notice: null });
-export function teamRecoveryAvailable(value: WorkPlanTeamRecoveryStateView): boolean {
+export function teamRecoveryHasCapacity(state: WorkPlanTeamRecoveryStateView["state"], limits: TeamExecutionLimits): boolean {
+  return state.activations < limits.maxActivations && state.unconfirmedCompletions < limits.maxNoProgress
+    && state.budget.dispatched + state.budget.legacyHeld < state.budget.limit;
+}
+export function teamRecoveryAvailable(value: WorkPlanTeamRecoveryStateView, limits: TeamExecutionLimits): boolean {
   return (value.state.state === "paused" || value.state.state === "taken-over") && value.runtime?.originalDeadlineAvailable === true
-    && value.runtime.producersDrained && value.hostCallbacksDrained && BigInt(value.state.expiresAtMs) > BigInt(Date.now());
+    && value.runtime.producersDrained && value.hostCallbacksDrained && BigInt(value.state.expiresAtMs) > BigInt(Date.now())
+    && teamRecoveryHasCapacity(value.state, limits);
 }
 function sameBasis(value: WorkPlanTeamRecoveryStateView, capture: Capture): boolean {
   const preview = capture.value.preview;
@@ -67,7 +72,8 @@ export function useTeamRecoverySession(live: () => boolean, context: SessionRequ
   }
   async function prepare(plan: WorkPlanView, view: TeamExecutionView, observation: WorkPlanTeamRecoveryStateView, effects: AutomationEffect[]) {
     const before = current(), draft = before.draft && structuredClone(before.draft), editSeq = before.editSeq, generation = captureGeneration.current;
-    if (!liveRef.current() || !available() || blocked() || !draft || draft.planId !== plan.planId || !teamRecoveryAvailable(observation)
+    if (!liveRef.current() || !available() || blocked() || !draft || draft.planId !== plan.planId || !plan.options.teamExecution
+      || !teamRecoveryAvailable(observation, plan.options.teamExecution.limits)
       || recoveryDraftProblem(draft, plan, view) || observation.state.unresolvedWork.length > 16
       || observation.state.unresolvedWork.some(reference => !draft.priorWork.some(value => jsonIdentity(value) === jsonIdentity(reference))) || draft.members.some(member => !connectionConfigCurrent(connections.current(), member.config))) return;
     update(value => ({ ...value, preparing: true, capture: null, consent: false, failure: null, notice: null }));

@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+Bounded-team recovery checks the original activation, completion and request
+capacity before offering a new preparation, and explains exhaustion separately
+from draining or stale evidence. Core limits and uncertain-action recovery remain
+unchanged. This UI-only correction changes no API, schema, protocol, dependency
+or version source; bilingual Unreleased entries use the existing next-release
+boundary without a local QA bump.
+
 Workbench AI start validation reuses the existing generated automation-effect
 enum, allowing the already-defined team work and message effects to reach the
 original authorization boundary. Unknown effects remain rejected. This fix adds

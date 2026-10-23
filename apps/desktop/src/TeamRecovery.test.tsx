@@ -93,6 +93,77 @@ async function prepare() {
   return user;
 }
 
+function exhaustRecoveryCapacity(limit: "activations" | "completions" | "budget") {
+  const limits = source.status.plan.options.teamExecution!.limits;
+  if (limit === "activations") source.state.state.activations = limits.maxActivations;
+  else if (limit === "completions") {
+    source.state.state.activations = limits.maxNoProgress;
+    source.state.state.unconfirmedCompletions = limits.maxNoProgress;
+  } else {
+    source.state.state.budget.dispatched = source.state.state.budget.limit - 1;
+    source.state.state.budget.legacyHeld = 1;
+    source.view.budget = structuredClone(source.state.state.budget);
+  }
+}
+it.each((["en-US", "zh-CN"] as const).flatMap(locale =>
+  (["activations", "completions", "budget"] as const).map(limit => [locale, limit] as const)))
+  ("blocks cumulative recovery capacity at the %s %s ceiling while preserving history", async (locale, limit) => {
+    await i18n.changeLanguage(locale); exhaustRecoveryCapacity(limit);
+    expect(validators.validateResponseWorkPlanTeamRecoveryState(source.state)).toBe(true);
+    render(<Harness/>, project);
+    const begin = await screen.findByRole("button", { name: i18n.t("ai.recovery.edit") });
+    await waitFor(() => expect(begin).toBeDisabled());
+    expect(await screen.findByText(i18n.t("ai.recovery.exhausted"))).toBeVisible();
+    expect(screen.queryByText(i18n.t("ai.recovery.available"))).not.toBeInTheDocument();
+    expect(screen.queryByText(i18n.t("ai.recovery.draining"))).not.toBeInTheDocument();
+    await userEvent.setup().click(begin);
+    expect(owner.recovery.current().draft).toBeNull();
+    expect(calls("prepare_work_plan_team_recovery")).toHaveLength(0);
+    expect(calls("authorize_work_plan_team_recovery")).toHaveLength(0);
+  });
+it("blocks cumulative recovery capacity before preparing an existing draft without clearing its input", async () => {
+  render(<Harness/>, project); const user = await editing();
+  expect(screen.getByRole("button", { name: i18n.t("ai.recovery.prepare") })).toBeEnabled();
+  exhaustRecoveryCapacity("budget");
+  await user.click(screen.getByRole("button", { name: i18n.t("ai.recovery.refresh") }));
+  expect(await screen.findByText(i18n.t("ai.recovery.exhausted"))).toBeVisible();
+  const button = screen.getByRole("button", { name: i18n.t("ai.recovery.prepare") }); expect(button).toBeDisabled();
+  await user.click(button);
+  await act(async () => { await owner.recovery.prepare(source.status.plan, source.view, source.state, source.status.effects); });
+  expect(calls("prepare_work_plan_team_recovery")).toHaveLength(0);
+  expect(screen.getByRole("textbox", { name: i18n.t("ai.recovery.instructions") })).toHaveValue("Human A: revisit the original rejected claim.");
+});
+it("keeps receipt-first unknown recovery available after cumulative recovery capacity is exhausted", async () => {
+  render(<Harness/>, project); const user = await prepare(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, payload) => command === "authorize_work_plan_team_recovery"
+    ? Promise.reject({ outcome: "unknown" }) : original(command, payload));
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.recovery.consent") }));
+  await user.click(screen.getByRole("button", { name: i18n.t("ai.recovery.authorize") }));
+  await screen.findByText(i18n.t("ai.recovery.unknown"));
+  const request = structuredClone(owner.recovery.current().pending!.request);
+  exhaustRecoveryCapacity("activations");
+  await user.click(screen.getByRole("button", { name: i18n.t("ai.recovery.refresh") }));
+  expect(await screen.findByText(i18n.t("ai.recovery.exhausted"))).toBeVisible();
+  expect(screen.getByRole("button", { name: i18n.t("ai.recovery.endPreparation") })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: i18n.t("ai.recovery.check") }));
+  await screen.findByText(i18n.t("ai.recovery.notices.absent"));
+  expect(calls("read_work_plan_team_recovery_action")[0][1].request).toEqual(request);
+  await user.click(screen.getByRole("button", { name: i18n.t("ai.recovery.endPreparation") }));
+  await screen.findByText(i18n.t("ai.recovery.notices.closed"));
+  expect(calls("end_work_plan_team_recovery")[0][1].request).toEqual(request);
+  expect(calls("authorize_work_plan_team_recovery")).toHaveLength(1);
+  expect(owner.recovery.current().pending).toBeNull();
+  expect(owner.recovery.current().draft!.instructions).toBe("Human A: revisit the original rejected claim.");
+});
+it("distinguishes stopped producers from mismatched recovery observations", async () => {
+  source.view.effectiveVersion = { ...source.view.effectiveVersion, digest: "c".repeat(64) };
+  render(<Harness/>, project);
+  await screen.findByRole("button", { name: i18n.t("ai.recovery.edit") });
+  expect(await screen.findByText(i18n.t("ai.recovery.refreshRequired"))).toBeVisible();
+  expect(screen.queryByText(i18n.t("ai.recovery.draining"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: i18n.t("ai.recovery.edit") })).toBeDisabled();
+});
+
 it("requires actual drain and a live original deadline, refreshes readiness without granting consent and preserves stable member identity", async () => {
   source.state.runtime!.producersDrained = false; render(<Harness/>, project);
   const button = await screen.findByRole("button", { name: i18n.t("ai.recovery.edit") }); expect(button).toBeDisabled();

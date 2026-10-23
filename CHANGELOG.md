@@ -6,6 +6,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Explain when a team's original activation, completion or request capacity is
+  exhausted before offering recovery; retain history and uncertain-action recovery.
+
 - Start explicitly authorized bounded teams through the workbench command registry
   using the generated automation-effect contract, including team work and messages.
 
