@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useSessionAlive, useSessionReads } from "./SessionReadProvider";
-import { strategyCommands, strategyKeys, sameStrategyValue, confirmStrategyCandidate, type ContextStrategyCandidate,
+import { strategyCommands, strategyKeys, sameStrategyValue, sameSuiteCaptureRequest, confirmStrategyCandidate, type ContextStrategyCandidate,
   type StrategySuite, type Prepared, type StrategyEvaluationView, type StrategyActionReceipt } from "./strategyCommands";
 import { defaultAiConfig, validSourceContextSelection, sameAiConfig, type AiConfig } from "./aiCommands";
 import { arenaCommands, type ArenaView } from "./arenaCommands";
@@ -126,7 +126,7 @@ function useStrategyOwner(project: ProjectView) {
   }
   function confirmSuite(entry: Extract<Pending, { kind: "suite" }>, suite: StrategySuite) {
     const request = entry.request.capture, ids = [...request.calibrationUnitIds, ...request.holdoutUnitIds];
-    if (!sameStrategyValue(suite.request, request) || suite.suiteId !== request.actionId || suite.projectId !== session.projectId || suite.candidateId !== request.candidateId || suite.locale !== entry.candidate.locale
+    if (!sameSuiteCaptureRequest(suite.request, request) || suite.suiteId !== request.actionId || suite.projectId !== session.projectId || suite.candidateId !== request.candidateId || suite.locale !== entry.candidate.locale
       || suite.units.length !== ids.length || new Set(suite.units.map(unit => unit.unitId)).size !== ids.length
       || suite.units.some(unit => !ids.includes(unit.unitId) || unit.holdout !== request.holdoutUnitIds.includes(unit.unitId))
       || suite.preview.config.variants.length !== 2 || !suite.preview.config.blind
@@ -344,7 +344,8 @@ function useStrategyOwner(project: ProjectView) {
   function confirmRecovered(entry: Pending, receipt: StrategyActionReceipt) {
     switch (entry.kind) {
       case "candidate": if (receipt.kind !== "candidate" || !sameStrategyValue(receipt.request, entry.request.capture)) throw new Error("Mismatched strategy action"); confirmStrategyCandidate(entry.request.capture, receipt.candidate); break;
-      case "suite": case "prepare": if (receipt.kind !== (entry.kind === "suite" ? "suite" : "evaluation") || !("request" in receipt) || !sameStrategyValue(receipt.request, entry.request.capture)) throw new Error("Mismatched strategy action"); break;
+      case "suite": if (receipt.kind !== "suite" || !sameSuiteCaptureRequest(receipt.request, entry.request.capture)) throw new Error("Mismatched strategy action"); break;
+      case "prepare": if (receipt.kind !== "evaluation" || !sameStrategyValue(receipt.request, entry.request.capture)) throw new Error("Mismatched strategy action"); break;
       case "judgment": if (receipt.kind !== "judgment" || !sameStrategyValue(receipt.judgment.request, entry.request.judgment)) throw new Error("Mismatched strategy action"); break;
       case "promote": if (receipt.kind !== "promoted" || !sameStrategyValue(receipt.request, entry.request.promotion)) throw new Error("Mismatched strategy action"); break;
       case "withdraw": if (receipt.kind !== "withdrawn" || !sameStrategyValue(receipt.request, entry.request.withdrawal)) throw new Error("Mismatched strategy action"); break;

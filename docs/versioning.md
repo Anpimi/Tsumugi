@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Context-strategy suite acknowledgements and original-action recovery reuse the
+existing connection-reference equality for an omitted or null optional reference.
+All other captured inputs and real saved-profile identities remain exact. This
+UI correction changes no API, schema, protocol, dependency or version source.
+It is recorded in bilingual Unreleased entries after published `0.2.0-alpha.1`;
+the next distributed snapshot follows the existing `0.2.0-alpha.2` or later
+release boundary. This local QA update does not prepare a release or bump.
+
 Captured terminology views describe file, saved-correction and tool sources
 without mislabelling their provenance, and reuse available source entry names.
 Strategy status messages distinguish rechecking evidence from a confirmed change

@@ -1,4 +1,5 @@
 import { checkedInvoke } from "./ipc";
+import { sameAiConfig } from "./aiCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import type * as R from "./generated/strategy.requests";
 import type * as S from "./generated/strategy.responses";
@@ -18,6 +19,10 @@ function requireMatch(valid: boolean): asserts valid {
   if (!valid) throw Object.assign(new Error("Invalid strategy acknowledgement"), { outcome: "unknown" });
 }
 export function sameStrategyValue(left: unknown, right: unknown) { return jsonIdentity(left) === jsonIdentity(right); }
+export function sameSuiteCaptureRequest(left: R.SuiteCaptureRequest["capture"], right: R.SuiteCaptureRequest["capture"]): boolean {
+  const { config: leftConfig, ...leftBasis } = left, { config: rightConfig, ...rightBasis } = right;
+  return sameStrategyValue(leftBasis, rightBasis) && sameAiConfig(leftConfig, rightConfig);
+}
 export function confirmStrategyCandidate(request: R.CaptureRequest["capture"], value: ContextStrategyCandidate) {
   requireMatch(value.candidateId === request.actionId && value.projectId === request.basis.projectId && value.locale === request.basis.locale
     && sameStrategyValue(value.evidence.basis, request.basis) && sameStrategyValue(value.sourceContext, request.sourceContext)
@@ -41,7 +46,7 @@ export const strategyCommands = {
       && value.rows.every(row => row.projectId === request.projectId && row.locale === request.locale)),
   suite: async (request: R.SuiteCaptureRequest) => {
     const value = await checkedInvoke("capture_strategy_suite", request, validators.validateResponseSuite);
-    requireMatch(value.suiteId === request.capture.actionId && sameStrategyValue(value.request, request.capture)); return value;
+    requireMatch(value.suiteId === request.capture.actionId && sameSuiteCaptureRequest(value.request, request.capture)); return value;
   },
   prepare: async (request: R.EvaluationPrepareRequest) => {
     const value = await checkedInvoke("prepare_strategy_evaluation", request, validators.validateResponsePrepared);

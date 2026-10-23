@@ -21,7 +21,8 @@ import type { AiItem } from "./aiCommands";
 import { validateResponseCorrectionBasis } from "./generated/resource.validators";
 import errorWire from "../test/fixtures/commandErrors.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import type { ProjectView } from "./projectCommands";
+import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
+import { validateResponseSuite } from "./generated/strategy.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -45,6 +46,29 @@ function revision(value: ContextStrategyCandidate, revisionId = fixtureIdentity(
   return { revisionId, actionId: revisionId, projectId: project.metadata.projectId, locale: "zh-CN", previousRevisionId: null,
     evaluationId: fixtureIdentity(2402), reference: { projectId: project.metadata.projectId, candidateId: value.candidateId, revisionId } };
 }
+function suiteFixture(request: Parameters<typeof strategyCommands.suite>[0]["capture"], savedCandidate = candidate()): StrategySuite {
+  const run: unknown = structuredClone(reviewWire.responses.check);
+  if (!validateResponseCheck(run) || !run.evidence) throw new Error("Complete canonical Review fixture required");
+  const sourceBinding = run.evidence.sourceBinding;
+  const ids = [...request.calibrationUnitIds, ...request.holdoutUnitIds];
+  const item: AiItem = { unitId: ids[0], sourceRevisionId: evidence.basis.sourceRevisionId, sourceSnapshotId: evidence.basis.sourceSnapshotId,
+    nativeKey: "synthetic-suite", sourceLocale: "en", targetLocale: "zh-CN", sourceText: evidence.sourceText, terms: [], context: null,
+    sourceContext: { kind: "not-selected" }, projectContext: { kind: "not-selected" }, omissions: ["terms-not-shared", "context-not-shared"], resourceBaseline: "0" };
+  return { suiteId: request.actionId, request, projectId: request.projectId, candidateId: request.candidateId, locale: "zh-CN", digest: "c".repeat(64),
+    units: ids.map(unitId => ({ unitId, holdout: request.holdoutUnitIds.includes(unitId), sourceRevisionId: item.sourceRevisionId,
+      reviewBasis: { ...run.basisEvidence, sourceSnapshotId: item.sourceSnapshotId, sourceRevisionId: item.sourceRevisionId },
+      terms: { unitId, locale: "zh-CN", sourceRevisionId: item.sourceRevisionId, entries: [] }, sourceBinding })),
+    preview: { digest: "d".repeat(64), config: { ...defaultArenaConfig(), blind: true, maxItems: ids.length, maxRequests: ids.length * 2,
+      variants: [request.config, { ...request.config, sourceContext: savedCandidate.sourceContext }] },
+    items: ids.flatMap((unitId, sourceOrder) => [0, 1].map(slot => ({ slot, sourceOrder, item: { ...item, unitId } }))) } };
+}
+function suiteCapture(config: AiConfig = { ...defaultAiConfig, connectionProfile: null }) {
+  return { actionId: fixtureIdentity(2463), projectId: project.metadata.projectId, candidateId: candidate().candidateId,
+    config, calibrationUnitIds: [evidence.basis.unitId], holdoutUnitIds: [fixtureIdentity(2460)] };
+}
+function withoutConnectionProfile(request: Parameters<typeof strategyCommands.suite>[0]["capture"]) {
+  const canonical = structuredClone(request); delete canonical.config.connectionProfile; return canonical;
+}
 beforeEach(() => {
   vi.restoreAllMocks(); invoke.mockReset(); invoke.mockImplementation(async (command: string) => { if (command === "read_context_strategy_default") return null; throw new Error(command); });
   const source: unknown = structuredClone(resourceWire.responses.correctionBasis); if (!validateResponseCorrectionBasis(source)) throw new Error("Invalid canonical correction fixture"); evidence = source;
@@ -65,6 +89,69 @@ async function correction() {
   await act(async () => owner.inspectCorrection());
   act(() => { owner.edit("sourceContext", { ...defaultAiConfig.sourceContext, extracted: true }); owner.edit("reason", "Saved correction A"); owner.edit("exceptions", "No inferred context or other languages"); });
 }
+
+it.each(["ipc-ack", "owner-ack", "lost-ack", "manual-reconcile"] as const)("accepts an omitted no-profile suite through %s", async mode => {
+  render(<Harness />, project); await correction(); await act(async () => owner.capture());
+  const savedCandidate = owner.state.candidate; if (!savedCandidate) throw new Error("Saved candidate required");
+  act(() => { owner.copyConfig({ ...defaultAiConfig, connectionProfile: null, model: "synthetic-manual", maxItems: 2, maxRequests: 4 });
+    owner.edit("roles", { [evidence.basis.unitId]: "calibration", [fixtureIdentity(2460)]: "holdout" }); });
+  let original: StrategySuite | null = null;
+  const respond = (request: Parameters<typeof strategyCommands.suite>[0]) => {
+    expect(request.capture.config.connectionProfile).toBeNull();
+    original = suiteFixture(withoutConnectionProfile(request.capture), savedCandidate);
+    expect(validateResponseSuite(original)).toBe(true); return original;
+  };
+  if (mode === "owner-ack") vi.spyOn(strategyCommands, "suite").mockImplementation(async request => respond(request));
+  let actionReads = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Parameters<typeof strategyCommands.suite>[0] }) => {
+    if (command === "capture_strategy_suite") {
+      const value = respond(args.request);
+      if (mode === "lost-ack" || mode === "manual-reconcile") throw new Error("Lost original suite ACK");
+      return value;
+    }
+    if (command === "read_strategy_action") {
+      actionReads++;
+      return mode === "manual-reconcile" && actionReads === 1 ? null : { kind: "suite", request: original!.request, suite: original };
+    }
+    throw new Error(command);
+  });
+  await act(async () => owner.captureSuite());
+  if (mode === "manual-reconcile") {
+    expect(owner.state.pending?.uncertain).toBe(true); expect(owner.state.pending?.retryAllowed).toBe(true);
+    await act(async () => owner.reconcile());
+  }
+  expect(owner.state.pending).toBeNull(); expect(owner.state.suite).toEqual(original); expect(owner.state.failure).toBeNull();
+  expect(owner.dirty()).toBe(false); expect(owner.state.consent).toBe(false);
+  if (mode !== "owner-ack") expect(invoke.mock.calls.filter(([command]) => command === "capture_strategy_suite")).toHaveLength(1);
+  expect(actionReads).toBe(mode === "manual-reconcile" ? 2 : mode === "lost-ack" ? 1 : 0);
+});
+
+it.each(["storeId", "profileId", "revision", "digest"] as const)("rejects a genuinely changed suite connection profile %s", async field => {
+  const config = { ...defaultAiConfig, connectionProfile: { storeId: fixtureIdentity(2495), profileId: fixtureIdentity(2496), revision: "1", digest: "a".repeat(64) } };
+  const capture = suiteCapture(config), changed = structuredClone(capture);
+  changed.config.connectionProfile![field] = field === "digest" ? "b".repeat(64) : field === "revision" ? "2" : fixtureIdentity(2497);
+  const value = suiteFixture(changed); expect(validateResponseSuite(value)).toBe(true);
+  invoke.mockResolvedValueOnce(value);
+  await expect(strategyCommands.suite({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, capture })).rejects.toSatisfy(hasUnknownOutcome);
+});
+
+it.each(["config", "candidate", "calibration", "holdout", "slot", "source-order"] as const)("keeps an omitted no-profile suite unknown for changed %s", async field => {
+  render(<Harness />, project); await correction(); await act(async () => owner.capture());
+  act(() => { owner.copyConfig({ ...defaultAiConfig, connectionProfile: null }); owner.edit("roles", { [evidence.basis.unitId]: "calibration", [fixtureIdentity(2460)]: "holdout" }); });
+  vi.spyOn(strategyCommands, "suite").mockImplementation(async request => {
+    const value = suiteFixture(withoutConnectionProfile(request.capture), owner.state.candidate!);
+    if (field === "config") value.request.config.maxRequests++;
+    if (field === "candidate") value.request.candidateId = fixtureIdentity(2498);
+    if (field === "calibration") value.request.calibrationUnitIds = [fixtureIdentity(2498)];
+    if (field === "holdout") value.request.holdoutUnitIds = [fixtureIdentity(2498)];
+    if (field === "slot") value.preview.items[0].slot = 1;
+    if (field === "source-order") value.preview.items[0].sourceOrder = 1;
+    expect(validateResponseSuite(value)).toBe(true); return value;
+  });
+  vi.spyOn(strategyCommands, "action").mockResolvedValue(null);
+  await act(async () => owner.captureSuite());
+  expect(owner.state.pending?.uncertain).toBe(true); expect(owner.state.suite).toBeNull(); expect(owner.dirty()).toBe(true);
+});
 
 it("captures only the exact saved manual correction and preserves newer candidate input", async () => {
   render(<Harness />, project); await correction();

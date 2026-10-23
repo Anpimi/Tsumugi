@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Accept equivalent omitted and null connection references in fixed context-strategy
+  suite acknowledgements and original-action recovery, while retaining exact
+  configuration, scope and saved-profile checks.
+
 - Describe captured terminology sources without labelling saved corrections or tool
   results as files, and show available entry names for local correction scopes.
   Strategy save and recheck messages do not assert that newer edits or changed
