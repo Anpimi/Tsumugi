@@ -1192,7 +1192,9 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
-        let _ = source_basis(connection, project, unit)?;
+        if !super::content::unit_owned_by_project(connection, project, unit)? {
+            return Err(error(ErrorCode::Unauthorized, "translation-project"));
+        }
         let total: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM translation_revisions
@@ -1282,11 +1284,7 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
-        let owned: bool = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM source_units WHERE unit_id=?1 AND project_id=?2 AND project_id=(SELECT project_id FROM project_metadata WHERE row_id=1))",
-            params![unit.to_string(), project.to_string()], |r| r.get(0),
-        ).map_err(super::ledger::sql_error)?;
-        if !owned {
+        if !super::content::unit_owned_by_project(connection, project, unit)? {
             return Err(error(ErrorCode::Unauthorized, "translation-project"));
         }
         let selection = selection_by_action(connection, action)?
