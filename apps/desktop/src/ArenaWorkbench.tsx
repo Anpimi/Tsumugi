@@ -12,7 +12,7 @@ import {sourceCommands,type ContentPage} from "./sourceCommands";
 import {aiTarget,defaultAiConfig,type AiConfig,type AiStart} from "./aiCommands";
 import {arenaCommands as arena,defaultArenaConfig,type ArenaConfig,type ArenaPrepared,type ArenaView,type ComparisonView,type ComparisonSummary,type CompareRequest,type MergeRequest} from "./arenaCommands";
 import {translationCommands as translations,type TranslationHistory,type TranslationSelectRequest} from "./translationCommands";
-import type {AiHandle} from "./AiWorkbench";
+import type {AttemptWorkbenchHandle} from "./WorkbenchFrame";
 import type {EditorTarget} from "./TranslationWorkbench";
 
 type Pending={kind:"start";request:AiStart}|{kind:"adopt";request:PrepareRequest}|{kind:"compare";request:CompareRequest}|{kind:"merge";request:MergeRequest}|{kind:"select";request:TranslationSelectRequest}|{kind:"cancel";request:CancelRequest;attemptId:string}|{kind:"reveal";request:{sessionToken:string;projectId:string;comparisonId:string;actionId:string}};
@@ -20,7 +20,7 @@ const stage=(e:unknown)=>commandFailure(e,"outcome-unknown");
 const unknown=hasUnknownOutcome;
 const letter=(i:number)=>String.fromCharCode(65+i);
 
-export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>boolean}) {
+export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project:ProjectView;disabled:boolean;ref?:Ref<AttemptWorkbenchHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>boolean}) {
  const {t}=useTranslation(),context=executionContext(project);
  const [open,setOpen]=useWorkbenchView("arena"),[config,setConfig]=useState<ArenaConfig>(defaultArenaConfig),[locale,setLocale]=useState(project.metadata.targetLocales[0]??"");
  const [page,setPage]=useState<ContentPage|null>(null),[selected,setSelected]=useState<string[]>([]),[unit,setUnit]=useState("");

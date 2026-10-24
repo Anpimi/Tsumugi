@@ -55,10 +55,13 @@ export class SessionReads {
   private affected = new Set<ChangeScope>();
   private failed = false;
   private statusListeners = new Set<() => void>();
+  private changeListeners = new Set<(scopes: readonly ChangeScope[]) => void>();
   constructor(readonly context: SessionRequest, private readonly wire = transport) {}
   key(key: QueryKey): QueryKey { return [this.context.projectId, this.context.sessionToken, ...key]; }
   status = () => this.failed;
   subscribeStatus = (receive: () => void) => { this.statusListeners.add(receive); return () => { this.statusListeners.delete(receive); }; };
+  subscribeChanges = (receive: (scopes: readonly ChangeScope[]) => void) => { this.changeListeners.add(receive); return () => { this.changeListeners.delete(receive); }; };
+  private notifyChanges(scopes: readonly ChangeScope[]) { this.changeListeners.forEach(receive => receive(scopes)); }
   private report(failed: boolean) { if (this.failed !== failed) { this.failed = failed; this.statusListeners.forEach(receive => receive()); } }
 
   start(): () => void {
@@ -99,7 +102,8 @@ export class SessionReads {
     };
   }
 
-  invalidate(affected: readonly ChangeScope[]) {
+  invalidate(affected: readonly ChangeScope[], semanticChange = true) {
+    if (semanticChange) this.notifyChanges(affected);
     const queries = this.client.getQueryCache().findAll({ predicate: query => depends(query, affected) });
     for (const query of queries) {
       if (query.state.fetchStatus === "fetching") this.pending.add(query.queryHash);
@@ -116,6 +120,7 @@ export class SessionReads {
       this.observeEpoch(event.epoch);
       this.sequence = this.verified = event.sequence;
       this.progress = this.verifiedProgress = "0";
+      this.notifyChanges(["project"]);
       void this.synchronize(true); return;
     }
     const previous = event.kind === "progress" ? this.progress : this.sequence;
@@ -154,7 +159,9 @@ export class SessionReads {
         this.sequence = this.verified = next.sequence; this.progress = this.verifiedProgress = next.progressSequence;
         const oldRuntime = this.client.getQueryData<RuntimeStatus>(this.key(["runtime"]));
         this.client.setQueryData(this.key(["runtime"]), next.runtime);
-        if (force || reset || this.failed) this.invalidate(["project"]);
+        // A routine focus/registration check refreshes Query but must not revoke
+        // an unchanged, explicitly consented AI preparation.
+        if (force || reset || this.failed) this.invalidate(["project"], reset || changed);
         else {
           if (changed) this.invalidate(next.scopes);
           if (progressed || JSON.stringify(oldRuntime) !== JSON.stringify(next.runtime)) this.invalidate(["execution"]);

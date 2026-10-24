@@ -1,8 +1,8 @@
 import { SessionReadProvider, SessionReadStatus } from "./SessionReadProvider";
 import { CommandFailureDetails } from "./CommandFailure";
-import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "./WorkbenchFrame";
+import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea, type AttemptWorkbenchHandle } from "./WorkbenchFrame";
 import { sourceCommands } from "./sourceCommands";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -37,10 +37,14 @@ import type { TranslationKey } from "./i18n/types";
 import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
 import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
+import { TranslationDraftSession } from "./TranslationDraftSession";
+import { ReviewDraftSession } from "./ReviewDraftSession";
 import { ResourceWorkbench, type ResourceHandle } from "./ResourceWorkbench";
 import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
 import { ReleaseWorkbench, type ReleaseHandle } from "./ReleaseWorkbench";
 import { AiWorkbench, type AiHandle } from "./AiWorkbench";
+import { AiPreparationSession } from "./AiPreparationSession";
+import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
 import { ArenaWorkbench } from "./ArenaWorkbench";
 import { executionCommands, executionContext } from "./executionCommands";
 import {
@@ -326,6 +330,7 @@ function renderFeedbackMessage(t: TFunction, feedback: Feedback) {
 }
 
 function App() {
+  const [commandRegistry] = useState(() => new WorkbenchCommands());
   const { t, i18n: translation } = useTranslation();
   const resolvedLanguage = translation.resolvedLanguage ?? translation.language ?? "en-US";
   const locale: Locale = isLocale(resolvedLanguage) ? resolvedLanguage : "en-US";
@@ -345,6 +350,7 @@ function App() {
   const [openPanel, setOpenPanel] = useState(false);
   const [activeForm, setActiveForm] = useState<ActiveForm | null>(null);
   const [navigationIntent, setNavigationIntent] = useState<NavigationIntent | null>(null);
+  const currentNavigationIntent = useRef<NavigationIntent | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>(() => readRecentProjects());
   const [restoreCandidate, setRestoreCandidate] = useState<RecentProject | null>(() => readLastOpenProject());
   const [restorePromptOpen, setRestorePromptOpen] = useState(false);
@@ -357,7 +363,7 @@ function App() {
   const resourceWorkbench = useRef<ResourceHandle>(null);
   const reviewWorkbench = useRef<ReviewHandle>(null);
   const aiWorkbench = useRef<AiHandle>(null);
-  const arenaWorkbench = useRef<AiHandle>(null);
+  const arenaWorkbench = useRef<AttemptWorkbenchHandle>(null);
   const translationWorkbench = useRef<TranslationHandle>(null);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
@@ -387,6 +393,8 @@ function App() {
   const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
   const busy = operation !== "idle" || stopping || stopIntent !== null;
   const status = statusFor(t, operation, dirty || createDraftDirty);
+
+  useLayoutEffect(() => { currentNavigationIntent.current = navigationIntent; }, [navigationIntent]);
 
   useEffect(() => {
     document.documentElement.lang = resolvedLanguage;
@@ -482,7 +490,13 @@ function App() {
   function requestNavigation(intent: NavigationIntent) {
     const focused = document.activeElement;
     dialogReturnFocus.current = focused instanceof HTMLElement ? focused : null;
+    currentNavigationIntent.current = intent;
     setNavigationIntent(intent);
+  }
+
+  function clearNavigationIntent() {
+    currentNavigationIntent.current = null;
+    setNavigationIntent(null);
   }
 
   function beginEditor(kind: FormKind, metadata: ProjectMetadataView) {
@@ -875,10 +889,10 @@ function App() {
     if (nextMetadata) beginEditor(intent.formKind, nextMetadata);
   }
 
-  async function resolveNavigation(choice: "save" | "discard" | "cancel") {
+  async function resolveNavigation(choice: "discard" | "cancel") {
     if (!navigationIntent) return;
     if (choice === "cancel") {
-      setNavigationIntent(null);
+      clearNavigationIntent();
       return;
     }
     const intent = navigationIntent;
@@ -890,18 +904,17 @@ function App() {
         editorForm.reset(EDITOR_DEFAULT_VALUES);
         setActiveForm(null);
       }
-      setNavigationIntent(null);
+      clearNavigationIntent();
       await continueNavigation(intent);
-      return;
     }
-    if (!activeForm) {
-      setNavigationIntent(null);
-      await continueNavigation(intent);
-      return;
-    }
-    const result = await saveForm(activeForm, editorForm.getValues("value"));
+  }
+
+  async function saveAndContinueMetadata(intent: NavigationIntent, form: ActiveForm, sessionToken: string, value: string) {
+    if (currentSession.current !== sessionToken || currentNavigationIntent.current !== intent) return;
+    const result = await saveForm(form, value);
     if (!result.ok) return;
-    setNavigationIntent(null);
+    if (currentSession.current !== sessionToken || currentNavigationIntent.current !== intent) return;
+    clearNavigationIntent();
     setFeedback({ tone: "success", messageKey: "feedback.savedBeforeContinue" });
     await continueNavigation(intent, result.metadata);
   }
@@ -1046,6 +1059,37 @@ function App() {
     setFeedback(localValidation(field));
   }
 
+  useLayoutEffect(() => {
+    if (!project) return;
+    return commandRegistry.register({
+      id: "project.metadata.save", nameKey: navigationIntent ? "action.saveAndContinue" : "editor.save", category: "project",
+      scope: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: navigationIntent ? area : "overview" },
+      binding: navigationIntent ? null : "Mod+S", risk: "writes-project", confirmation: navigationIntent ? "required" : "none",
+      availability: () => !activeForm || (!navigationIntent && area !== "overview")
+        ? { enabled: false, reason: "hidden" }
+        : busy || restorePromptOpen || areaNavigation.current || (navigationIntent && createDraftDirty)
+          ? { enabled: false, reason: "busy" }
+        : !dirty || operation !== "idle" || pendingSave.current
+            ? { enabled: false, reason: "no-changes" }
+            : { enabled: true },
+      handler: () => {
+        const intent = navigationIntent;
+        const form = activeForm;
+        const sessionToken = project.sessionToken;
+        void editorForm.handleSubmit(({ value }) => {
+          if (currentSession.current !== sessionToken) return;
+          if (intent) {
+            if (form && currentNavigationIntent.current === intent) void saveAndContinueMetadata(intent, form, sessionToken, value);
+            return;
+          }
+          if (!currentNavigationIntent.current) handleSave(value);
+        }, () => {
+          if (currentSession.current === sessionToken && currentNavigationIntent.current === intent) handleEditorInvalid();
+        })();
+      },
+    });
+  });
+
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (area === "overview" && event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
@@ -1066,12 +1110,12 @@ function App() {
       if (event.isComposing || compositionActive.current || navigationIntent || restorePromptOpen || busy || areaNavigation.current
         || (event.target instanceof HTMLInputElement && event.target.type === "password")
         || document.querySelector('[role="dialog"]')) return;
-      if (area === "translation") translationWorkbench.current?.saveCurrent();
-      else if (area === "overview" && activeForm && dirty && operation === "idle") handleSave();
+      if (project) commandRegistry.dispatch(area === "translation" ? "translation.save" : "project.metadata.save",
+        { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area });
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area, busy]);
+  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area, busy, project, commandRegistry]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1132,6 +1176,9 @@ function App() {
     areaNavigation.current = true;
     try {
       if (area === "source") { if (sourceWorkbench.current && !await sourceWorkbench.current.allowNavigate()) return; }
+      else if (area === "ai") { if (aiWorkbench.current && !await aiWorkbench.current.allowNavigate()) return; }
+      else if (area === "translation") { if (translationWorkbench.current && !await translationWorkbench.current.allowNavigate()) return; }
+      else if (area === "review") { if (reviewWorkbench.current && !await reviewWorkbench.current.allowNavigate()) return; }
       else if (area !== "overview" && handles[area].current && !await handles[area].current!.allowLeave()) return;
       if (currentSession.current === session) setArea(next);
     } finally { areaNavigation.current = false; }
@@ -1167,7 +1214,7 @@ function App() {
   ) : null;
 
   return (
-    <WorkspaceViewProvider value={viewOwner}><main className="shell" onCompositionStartCapture={beginComposition} onCompositionEndCapture={endComposition}>
+    <WorkbenchCommandsProvider commands={commandRegistry}><WorkspaceViewProvider value={viewOwner}><main className="shell" onCompositionStartCapture={beginComposition} onCompositionEndCapture={endComposition}>
       <DialogRoot open={stopIntent !== null} onOpenChange={open => { if (!open && !stopping) setStopIntent(null); }}>
         <DialogPortal><DialogOverlay className="dialog-backdrop lifecycle-confirm-backdrop" /><DialogContent className="confirm-dialog lifecycle-confirm-dialog" onEscapeKeyDown={event => { if (stopping) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <DialogTitle>{t("execution.stopTitle")}</DialogTitle><DialogDescription>{t("execution.stopHelp")}</DialogDescription>
@@ -1526,7 +1573,7 @@ function App() {
                 ) : null}
 
                 {activeForm ? (
-                  <form className="editor-card" onChange={clearEditorFeedback} onSubmit={editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)}>
+                  <form className="editor-card" onChange={clearEditorFeedback} onSubmit={event => { event.preventDefault(); if (project) commandRegistry.dispatch("project.metadata.save", { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area }); }}>
                     <fieldset className="editor-fields" disabled={busy}>
                     <div className="editor-heading">
                       <div>
@@ -1594,13 +1641,13 @@ function App() {
               </section>
             )}
           </div>
-          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></SessionReadProvider> : null}
+          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><TranslationDraftSession project={project}><ReviewDraftSession project={project}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiPreparationSession initialLocale={project.metadata.targetLocales[0] ?? ""} targetLocales={project.metadata.targetLocales}><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /></AiPreparationSession><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></ReviewDraftSession></TranslationDraftSession></SessionReadProvider> : null}
         </div>
 
         <DialogRoot
           open={Boolean(navigationIntent)}
           onOpenChange={(open) => {
-            if (!open && !busy) setNavigationIntent(null);
+            if (!open && !busy) clearNavigationIntent();
           }}
         >
           <DialogPortal>
@@ -1653,10 +1700,14 @@ function App() {
               <div className="dialog-actions">
                 <button ref={cancelDialogButton} className="secondary-button" type="button" onClick={() => void resolveNavigation("cancel")} disabled={busy}>{createDraftDirty ? t("action.keepEditing") : t("action.cancel")}</button>
                 {activeForm || createDraftDirty ? <button className="danger-button" type="button" onClick={() => void resolveNavigation("discard")} disabled={busy}>{t("action.discard")}</button> : null}
-                {activeForm && !createDraftDirty ? <button className="primary-button" type="button" onClick={() => void resolveNavigation("save")} disabled={busy}>{t("action.saveAndContinue")}</button> : null}
+                {activeForm && !createDraftDirty ? <button className="primary-button" type="button" onClick={() => {
+                  if (project) commandRegistry.dispatch("project.metadata.save", {
+                    projectId: project.metadata.projectId, sessionToken: project.sessionToken, area,
+                  });
+                }} disabled={busy}>{t("action.saveAndContinue")}</button> : null}
                 {!activeForm && !createDraftDirty ? <button className="primary-button" type="button" disabled={busy} onClick={() => {
                   const intent = navigationIntent;
-                  setNavigationIntent(null);
+                  clearNavigationIntent();
                   if (intent) void continueNavigation(intent);
                 }}>{t("action.continue")}</button> : null}
               </div>
@@ -1687,7 +1738,7 @@ function App() {
           </DialogPortal>
         </DialogRoot>
       </section>
-    </main></WorkspaceViewProvider>
+    </main></WorkspaceViewProvider></WorkbenchCommandsProvider>
   );
 }
 

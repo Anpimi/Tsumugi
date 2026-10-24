@@ -101,3 +101,20 @@ it("resynchronizes when an empty store is reopened and ignores a retired epoch",
   await vi.advanceTimersByTimeAsync(50); await settle();
   expect(fixture.wire.snapshot).toHaveBeenCalledTimes(calls);
 });
+it("reports semantic scopes without revoking preparation for unchanged focus checks", async () => {
+  const fixture = setup(); await settle();
+  const changes = vi.fn(); const unsubscribe = fixture.reads.subscribeChanges(changes);
+  await fixture.reads.synchronize(true); await settle();
+  expect(changes).not.toHaveBeenCalled();
+  fixture.set({ ...snapshot("1"), scopes: ["resources"] });
+  await fixture.reads.synchronize(true); await settle();
+  expect(changes).toHaveBeenCalledWith(["project"]);
+  changes.mockClear();
+  fixture.emit({ ...context, epoch, kind: "change", afterSequence: "1", sequence: "2", scopes: ["source"] });
+  await vi.advanceTimersByTimeAsync(50); await settle();
+  expect(changes).toHaveBeenCalledWith(["source"]);
+  changes.mockClear();
+  fixture.emit({ ...context, epoch: "1717ef0a-6f02-4645-95a4-1790d37e708c", kind: "resync", afterSequence: "2", sequence: "0", scopes: ["project"] });
+  expect(changes).toHaveBeenCalledWith(["project"]);
+  unsubscribe();
+});

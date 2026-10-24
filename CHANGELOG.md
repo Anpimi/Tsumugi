@@ -46,13 +46,25 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Save-and-next retains newer edits and original uncertain save requests, and stops late navigation after leaving the workspace or changing the target language.
+
+- Validate project names and target languages before saving from the leave dialog, keeping invalid drafts available to edit.
+
+- Review reasons, reviewer details, fixed selections and original pending actions survive closing the panel or remounting its view. Late confirmations preserve newer edits, while checks and batches retain their original cancellation controls. Returning to an entry retains the content its reason refers to; changed content can be compared and explicitly accepted without losing the reason. Stale checks remain separate from current evidence, and actual project leave still requires confirmation.
+
+- Review retains reasons and original unknown actions when a target language is removed. It blocks new work for that language, checks the scope again after waiting, and reports unstarted entries when a batch stops. An uncertain request remains reserved for exact reconciliation even after its language is restored.
+
+- Translation drafts and their original save requests belong to the project session. Leaving the editing view keeps newer input and pending confirmations; a late save acknowledgement updates its basis without replacing edits made while saving.
+
 - Resuming undispatched work and retrying safe failures retain the original action, selected items and cancellation basis after a lost confirmation. Exact lookup or replay returns the recorded attempt without another enqueue or dispatch. Modified requests conflict; an unrecorded request cannot refresh its cancellation basis. The Tasks view can inspect the original recovery history. Anonymous resume/retry IPC calls are now refused; outcome queries and output validation keep their existing behavior.
 
 - A recorded task cancellation remains unconfirmed if reading a running worker's state fails. Rechecking the original request preserves its cancellation revision and does not cancel explicitly resumed work.
 
+- AI preparation keeps connection settings, selected scope, preview and consent when navigating between workspaces. Source, resource or sharing changes require a fresh preview and consent; late previews cannot restore obsolete preparation.
+
 - Target-language changes recheck the active translation scope. Drafts for removed languages remain available with a return-to-settings recovery action, while new reads and writes for an unavailable language are blocked.
 
-- Ctrl+S and Command+S save the active translation draft from its list or reference panel. Composition, modal dialogs, pending saves and unknown outcomes prevent unintended shortcut mutations.
+- Ctrl+S and Command+S save the active translation draft from its list or reference panel. Project-name shortcuts use the same required-name validation as the save button and keep invalid input available for correction. Composition, modal dialogs, pending saves and unknown outcomes prevent unintended shortcut mutations; an uncertain translation save can only be checked or retried explicitly.
 
 - Unsupported SQLite storage settings now have a distinct refusal instead of being reported as corrupt project data. The original project and its settings are preserved. Core Rust callers with exhaustive error matches must handle `UnsupportedStorage`; the desktop wire uses `unsupported-schema` with `reason: "storage-mode"`.
 

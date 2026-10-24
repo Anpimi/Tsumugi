@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {createRef} from "react";
 import {ArenaWorkbench} from "./ArenaWorkbench";
-import type {AiHandle} from "./AiWorkbench";
+import type {AttemptWorkbenchHandle} from "./WorkbenchFrame";
 import type {ProjectView} from "./projectCommands";
 import {defaultArenaConfig,type ArenaPrepared,type ComparisonView} from "./arenaCommands";
 import {i18n} from "./i18n";
@@ -187,7 +187,7 @@ it("reconciles an uncertain cancellation before allowing another action",async()
  expect(invoke.mock.calls.filter(([c])=>c==="cancel_execution_task")).toHaveLength(1);
  expect(invoke.mock.calls.find(([c])=>c==="cancel_execution_task")?.[1].request).toMatchObject({taskId:aiTask,requestId:fixtureIdentity(1)});
 });
-it("drops a late preview after the project session is replaced",async()=>{const user=userEvent.setup();const ref=createRef<AiHandle>();const rendered=render(<ArenaWorkbench key="old" ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await user.click(await screen.findByRole("checkbox",{name:/first: Hello/}));let finish:(p:ArenaPrepared)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="preview_arena_translation"?new Promise<ArenaPrepared>(done=>{finish=done;}):original(c,a));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<ArenaWorkbench key="new" ref={ref} project={{...project,sessionToken:"new"}} disabled={false} onOpenTranslation={()=>true}/>);finish(prepared);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await waitFor(()=>expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument());});
+it("drops a late preview after the project session is replaced",async()=>{const user=userEvent.setup();const ref=createRef<AttemptWorkbenchHandle>();const rendered=render(<ArenaWorkbench key="old" ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await user.click(await screen.findByRole("checkbox",{name:/first: Hello/}));let finish:(p:ArenaPrepared)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="preview_arena_translation"?new Promise<ArenaPrepared>(done=>{finish=done;}):original(c,a));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<ArenaWorkbench key="new" ref={ref} project={{...project,sessionToken:"new"}} disabled={false} onOpenTranslation={()=>true}/>);finish(prepared);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await waitFor(()=>expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument());});
 
 it("shows shared durable request exposure and known usage in both languages",async()=>{
  const user=await open();const original=invoke.getMockImplementation()!;
