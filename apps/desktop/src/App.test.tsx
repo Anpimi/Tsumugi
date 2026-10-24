@@ -88,13 +88,14 @@ function installTranslationEditor() {
         attemptId: null, resultId: null, itemId: null, artifactId: null, logicalPath: null, declaredLocale: null, nativeKey: null, fileDigest: null } };
   };
   mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const locale = String(args?.request?.locale ?? "zh-CN");
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(500) };
     if (command === "read_source_content") return sourcePageFixture({ snapshotId: fixtureIdentity(500), scope: { revision: "2", currentSnapshot: fixtureIdentity(500) }, namespace: "Example.Mod", rows: [], total: 1 });
-    if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor({ ...target, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text })]);
+    if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor({ ...target, locale, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text })]);
     if (command === "read_review_editor_snapshot") return {
-      target: { ...target, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text },
-      translations: { unitId: fixtureIdentity(501), locale: "zh-CN", total: selection?.sequence ?? "0", rows: [], nextOrdinal: null, currentText: text, current: selection },
-      terms: { unitId: fixtureIdentity(501), locale: "zh-CN", sourceRevisionId: fixtureIdentity(502), entries: [] },
+      target: { ...target, locale, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text },
+      translations: { unitId: fixtureIdentity(501), locale, total: selection?.sequence ?? "0", rows: [], nextOrdinal: null, currentText: text, current: selection },
+      terms: { unitId: fixtureIdentity(501), locale, sourceRevisionId: fixtureIdentity(502), entries: [] },
       context: null, readVersion: "view",
     };
     if (command === "create_execution_identity") return fixtureIdentity(1 + mocks.invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length);
@@ -107,6 +108,40 @@ function installTranslationEditor() {
 }
 
 describe("project lifecycle workbench", () => {
+  it("rebases a clean translation selection after the project's target language changes in the same session", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const fixture = installTranslationEditor();
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) =>
+      command === "set_target_locales"
+        ? { ...projectView("Demo", "2"), metadata: { ...metadata("Demo", "2"), targetLocales: ["ja-JP"] }, outcome: "changed", directoryChanged: false }
+        : original(command, args));
+
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await screen.findByRole("button", { name: "first" });
+    expect(screen.getByRole("combobox", { name: "Target language" })).toHaveValue("zh-CN");
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await user.click(screen.getByRole("button", { name: "Edit target languages" }));
+    const targets = screen.getByRole("textbox", { name: "Target locales" });
+    await user.clear(targets); await user.type(targets, "ja-JP");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Target locales" })).not.toBeInTheDocument());
+
+    const afterChange = mocks.invoke.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    expect(await screen.findByRole("combobox", { name: "Target language" })).toHaveValue("ja-JP");
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "New language draft");
+    await user.click(screen.getByRole("button", { name: "Save revision" }));
+    await waitFor(() => expect(fixture.saves()).toHaveLength(1));
+
+    const scopedCalls = mocks.invoke.mock.calls.slice(afterChange)
+      .filter(([, args]) => typeof args?.request?.locale === "string");
+    expect(scopedCalls.map(([command]) => command)).toEqual(expect.arrayContaining(["read_review_summary_page", "read_review_editor_snapshot", "save_translation_revision"]));
+    expect(new Set(scopedCalls.map(([, args]) => args.request.locale))).toEqual(new Set(["ja-JP"]));
+    expect(fixture.saves()[0][1].request).toMatchObject({ locale: "ja-JP", text: "New language draft", unitId: fixtureIdentity(501) });
+  });
+
   it("confirms stopping active work before closing and permits returning without cancellation", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     let stopped = false;

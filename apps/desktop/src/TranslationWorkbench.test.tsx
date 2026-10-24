@@ -1,6 +1,6 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { createRef } from "react";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
@@ -36,6 +36,13 @@ function saveReceipt(request: Record<string, unknown>) {
     logicalPath: null, declaredLocale: null, nativeKey: null, fileDigest: null };
   return { projectId: String(request.projectId), actionId, selection, revision,
     basis: { sourceSnapshotId: revision.sourceSnapshotId, sourceRevisionId: revision.sourceRevisionId, selectionId: selection.eventId } };
+}
+function seedSelectedTranslation(text = "Saved base") {
+  const receipt = saveReceipt({ projectId: project.metadata.projectId, actionId: fixtureIdentity(601),
+    unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), expectedSelectionId: null, text });
+  history = { ...emptyHistory, total: receipt.revision.ordinal, current: receipt.selection,
+    currentText: receipt.revision.text, rows: [receipt.revision] };
+  return receipt;
 }
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
@@ -78,6 +85,280 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it("keeps an unavailable-language draft and its save basis until the original target is restored", async () => {
+  const originalSelection = seedSelectedTranslation();
+  const user = userEvent.setup();
+  const ref = createRef<TranslationHandle>();
+  const { rerender } = render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  expect(editor).toHaveValue("Saved base");
+  await user.type(editor, " with newer input");
+  const callsBeforeRemoval = invoke.mock.calls.length;
+
+  const withoutOriginal = { ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2" } };
+  rerender(<TranslationWorkbench ref={ref} project={withoutOriginal} disabled={false} />);
+  const recovery = await screen.findByRole("alert");
+  expect(recovery).toHaveTextContent("zh-CN");
+  expect(recovery).toHaveTextContent(/restore|add .*back|project settings/i);
+  expect(editor).toHaveValue("Saved base with newer input");
+  expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
+  expect(screen.getByText("Original", { selector: ".editor-source pre" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Discard draft" })).toBeEnabled();
+  await act(async () => ref.current!.saveCurrent());
+  expect(invoke.mock.calls.slice(callsBeforeRemoval).filter(([, args]) => args?.request?.locale === "zh-CN")).toHaveLength(0);
+
+  const restored = { ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP", "zh-CN"], metadataRevision: "3" } };
+  rerender(<TranslationWorkbench ref={ref} project={restored} disabled={false} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+  expect(editor).toHaveValue("Saved base with newer input");
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1));
+  const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
+  expect(saves[0][1].request).toMatchObject({ unitId: fixtureIdentity(204), locale: "zh-CN",
+    sourceRevisionId: fixtureIdentity(205), expectedSelectionId: originalSelection.selection.eventId,
+    text: "Saved base with newer input" });
+});
+
+it("keeps the original unavailable-language draft when Core rejects its restored save basis", async () => {
+  const originalSelection = seedSelectedTranslation();
+  const originalInvoke = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "save_translation_revision") throw { ...errorFixture.errors[1], reason: "translation-selection" };
+    return originalInvoke(command, args);
+  });
+  const user = userEvent.setup();
+  const { rerender } = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, " with newer input");
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2" } }} disabled={false} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN"], metadataRevision: "3" } }} disabled={false} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(i18n.t("commandError.recovery.review-current")));
+  expect(editor).toHaveValue("Saved base with newer input");
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")[0][1].request)
+    .toMatchObject({ locale: "zh-CN", expectedSelectionId: originalSelection.selection.eventId,
+      sourceRevisionId: fixtureIdentity(205), text: "Saved base with newer input" });
+});
+
+it("returns to project settings with an unavailable-language draft while project leave still requires confirmation", async () => {
+  const originalSelection = seedSelectedTranslation();
+  const ref = createRef<TranslationHandle>();
+  const user = userEvent.setup();
+  const { rerender } = render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, " kept through settings");
+  const removed = { ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2" } };
+  rerender(<TranslationWorkbench ref={ref} project={removed} disabled={false} />);
+  await user.click(await screen.findByRole("button", { name: "Back to project settings, keep this work" }));
+  expect(screen.getByRole("button", { name: "Project overview" })).toHaveAttribute("aria-current", "page");
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(0);
+
+  let leave!: Promise<boolean>;
+  await act(async () => { leave = ref.current!.allowLeave(); });
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("Leave with an unsaved translation?");
+  await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+  expect(await leave).toBe(false);
+  expect(editor).toHaveValue("Saved base kept through settings");
+  await user.click(screen.getByRole("button", { name: "Back to project settings, keep this work" }));
+
+  const restored = { ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP", "zh-CN"], metadataRevision: "3" } };
+  rerender(<TranslationWorkbench ref={ref} project={restored} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Saved base kept through settings");
+  expect(screen.getByText("Original", { selector: ".editor-source pre" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1));
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")[0][1].request)
+    .toMatchObject({ locale: "zh-CN", unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(205),
+      expectedSelectionId: originalSelection.selection.eventId, text: "Saved base kept through settings" });
+});
+
+it("ignores old list and editor reads that finish after the target language changes", async () => {
+  const originalInvoke = invoke.getMockImplementation()!;
+  const summary = (locale: string, nativeKey: string) => reviewSummaryPageFixture([
+    reviewSummaryFor(reviewTargetFixture({ locale, nativeKey, unitId: fixtureIdentity(204),
+      sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205),
+      sourceText: "Original", selectionId: null, revisionId: null, translationText: null })),
+  ]);
+  let releaseOldSummary!: () => void;
+  let releaseOldEditor!: () => void;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page" && args.request.locale === "zh-CN")
+      return new Promise(resolve => { releaseOldSummary = () => resolve(summary("zh-CN", "old-entry")); });
+    if (command === "read_review_summary_page" && args.request.locale === "ja-JP") return summary("ja-JP", "ja-entry");
+    if (command === "read_review_summary_page" && args.request.locale === "fr-FR") return summary("fr-FR", "fr-entry");
+    if (command === "read_review_editor_snapshot" && args.request.locale === "ja-JP")
+      return new Promise(resolve => { releaseOldEditor = () => resolve(originalInvoke(command, args)); });
+    return originalInvoke(command, args);
+  });
+  const user = userEvent.setup();
+  const { rerender } = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await waitFor(() => expect(releaseOldSummary).toBeDefined());
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2" } }} disabled={false} />);
+  await screen.findByRole("button", { name: "ja-entry" });
+  await act(async () => releaseOldSummary());
+  expect(screen.queryByRole("button", { name: "old-entry" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "ja-entry" }));
+  await waitFor(() => expect(releaseOldEditor).toBeDefined());
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["fr-FR"], metadataRevision: "3" } }} disabled={false} />);
+  await act(async () => releaseOldEditor());
+  await screen.findByRole("button", { name: "fr-entry" });
+  expect(screen.queryByRole("textbox", { name: "Your draft" })).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Target language" })).toHaveValue("fr-FR");
+});
+
+it("accepts an in-flight save acknowledgement after removal without overwriting newer input", async () => {
+  seedSelectedTranslation();
+  const originalInvoke = invoke.getMockImplementation()!;
+  let releaseSave!: () => void;
+  let delayFirst = true;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "save_translation_revision" && delayFirst) {
+      delayFirst = false;
+      return new Promise(resolve => { releaseSave = () => resolve(originalInvoke(command, args)); });
+    }
+    return originalInvoke(command, args);
+  });
+  const user = userEvent.setup();
+  const { rerender } = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "A");
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await waitFor(() => expect(releaseSave).toBeDefined());
+  await user.type(editor, "B");
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2" } }} disabled={false} />);
+  await act(async () => releaseSave());
+  expect(editor).toHaveValue("Saved baseAB");
+  expect(await screen.findByText(/Your newer draft is still here/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
+  const confirmedSelection = history.current!.eventId;
+
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN"], metadataRevision: "3" } }} disabled={false} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(2));
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")[1][1].request)
+    .toMatchObject({ locale: "zh-CN", expectedSelectionId: confirmedSelection, text: "Saved baseAB" });
+});
+
+it("checks an uncertain original save action after removal before accepting its exact replay", async () => {
+  seedSelectedTranslation();
+  const originalInvoke = invoke.getMockImplementation()!;
+  let loseFirstResponse = true;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "save_translation_revision" && loseFirstResponse) {
+      loseFirstResponse = false;
+      await originalInvoke(command, args);
+      throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true };
+    }
+    if (command === "read_translation_action") return history.current;
+    return originalInvoke(command, args);
+  });
+  const user = userEvent.setup();
+  const { rerender } = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "A");
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await screen.findByRole("alert");
+  await user.type(editor, "B");
+  const firstSave = invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1].request;
+  const identitiesBeforeCheck = invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2" } }} disabled={false} />);
+  expect(screen.getByRole("button", { name: i18n.t("translation.retryAction") })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  expect(await screen.findByText(/The original save was confirmed/)).toBeInTheDocument();
+  expect(editor).toHaveValue("Saved baseAB");
+  const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
+  expect(saves).toHaveLength(2);
+  expect(saves[1][1].request).toEqual(firstSave);
+  expect(invoke.mock.calls.find(([name]) => name === "read_translation_action")?.[1].request)
+    .toMatchObject({ unitId: fixtureIdentity(204), locale: "zh-CN", actionId: firstSave.actionId });
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeCheck);
+});
+
+it("keeps an in-flight import attempt and an uncertain adoption checkable after target removal", async () => {
+  const originalInvoke = invoke.getMockImplementation()!;
+  let releaseStart!: () => void;
+  let delayStart = true;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "start_translation_import" && delayStart) {
+      delayStart = false;
+      return new Promise(resolve => { releaseStart = () => resolve(fixtureIdentity(210)); });
+    }
+    if (command === "adopt_execution") return Promise.reject({ code: "outcome-unknown", outcome: "unknown", stage: "adopt", recoveryRequired: true });
+    if (command === "read_execution_receipt") return null;
+    return originalInvoke(command, args);
+  });
+  const user = userEvent.setup();
+  const { rerender } = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(screen.getByRole("button", { name: "Import file" }));
+  await user.click(await screen.findByRole("button", { name: "Choose Mod folder" }));
+  await user.click(await screen.findByRole("button", { name: "Check file" }));
+  await user.click(screen.getByRole("checkbox", { name: /I confirm that zh.json belongs to zh-CN/ }));
+  await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await waitFor(() => expect(releaseStart).toBeDefined());
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2" } }} disabled={false} />);
+  await act(async () => releaseStart());
+  await screen.findByRole("heading", { name: "Review translation matches" });
+  expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "start_translation_import")).toHaveLength(1);
+
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN"], metadataRevision: "3" } }} disabled={false} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Apply 1 unique matches" }));
+  await screen.findByRole("button", { name: "Check the uncertain action's receipt" });
+  const originalAction = invoke.mock.calls.find(([name]) => name === "adopt_execution")![1].request.actionId;
+  rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "4" } }} disabled={false} />);
+  expect(screen.getByRole("button", { name: "Retry the same action" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Check the uncertain action's receipt" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "read_execution_receipt")).toBe(true));
+  expect(invoke.mock.calls.find(([name]) => name === "read_execution_receipt")?.[1].request.actionId).toBe(originalAction);
+  expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+});
+
+it("shows the removed target and recovery for a task-opened import after a clean target rebase", async () => {
+  const user = userEvent.setup();
+  const ref = createRef<TranslationHandle>();
+  const { rerender } = render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await screen.findByRole("combobox", { name: "Target language" });
+
+  rerender(<TranslationWorkbench ref={ref} project={{ ...project, metadata: {
+    ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "2",
+  } }} disabled={false} />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Target language" })).toHaveValue("ja-JP"));
+  await user.click(screen.getByRole("button", { name: "Project overview" }));
+  await act(async () => ref.current!.showAttempt(preview.attemptId));
+
+  await screen.findByRole("heading", { name: "Review translation matches" });
+  expect(invoke.mock.calls.find(([name]) => name === "read_translation_preview")?.[1].request.attemptId)
+    .toBe(preview.attemptId);
+  expect(screen.getByRole("combobox", { name: "Target language" })).toHaveValue("zh-CN");
+  expect(screen.getByRole("alert")).toHaveTextContent("zh-CN");
+  expect(screen.getByRole("alert")).toHaveTextContent(/restore|project settings/i);
+  expect(screen.getByRole("button", { name: "Back to project settings, keep this work" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "prepare_translation_adoption" || name === "adopt_execution"))
+    .toHaveLength(0);
+});
 
 it("keeps the rejecting basis beside newer input without replaying the save", async () => {
   const original = invoke.getMockImplementation()!;
