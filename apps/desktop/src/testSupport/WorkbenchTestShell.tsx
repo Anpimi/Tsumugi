@@ -6,7 +6,10 @@ import { render, act } from "@testing-library/react";
 import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "../WorkbenchFrame";
 import { TranslationDraftSession } from "../TranslationDraftSession";
 import { ReviewDraftSession } from "../ReviewDraftSession";
+import { SourceDraftSession } from "../SourceDraftSession";
+import { ResourceDraftSession } from "../ResourceDraftSession";
 import { WorkbenchCommands, WorkbenchCommandsProvider } from "../workbenchCommands";
+import type { ChangeScope } from "../sessionReads";
 
 let currentReads: ReturnType<typeof useSessionReads> | undefined;
 function ReadControl() {
@@ -15,7 +18,9 @@ function ReadControl() {
   return null;
 }
 /** Synthetic invalidation, independent of native registration and heartbeat timing. */
-export async function refreshWorkbenchReads() { await act(async () => { currentReads?.invalidate(["execution"]); }); }
+export async function refreshWorkbenchReads(scopes: ChangeScope[] = ["execution"]) {
+  await act(async () => { currentReads?.invalidate(scopes); });
+}
 
 function WorkbenchTestShell({ children, project: retainedProject }: { children: ReactNode; project?: ProjectView }) {
   const [area, setArea] = useState<WorkspaceArea>("overview");
@@ -23,7 +28,7 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
   const project = (isValidElement<{project?: ProjectView}>(children) ? children.props.project : undefined) ?? retainedProject;
   return <WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
     <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
-    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><ReviewDraftSession project={project}>{children}</ReviewDraftSession></TranslationDraftSession></SessionReadProvider> : children}
+    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>{children}</SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationDraftSession></SessionReadProvider> : children}
   </WorkspaceViewProvider></WorkbenchCommandsProvider>;
 }
 
