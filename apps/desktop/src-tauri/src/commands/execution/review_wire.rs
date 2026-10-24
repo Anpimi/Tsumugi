@@ -295,4 +295,3 @@ impl TryFrom<tsumugi_core::ReviewSummaryPage> for ReviewSummaryPage {
         })
     }
 }
-
